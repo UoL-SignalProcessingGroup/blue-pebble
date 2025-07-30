@@ -1,0 +1,54 @@
+[build-system]
+requires = ["setuptools>=61", "wheel"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "nereus"
+version = "1.0.0"
+description = "A Python framework for underwater acoustic tracking."
+readme = "README.md"
+authors = [
+    { name = "Joshua J Wakefield", email = "sgjwakef@liverpool.ac.uk" }
+]
+license = { text = "MIT" }
+keywords = ["nereus", "state estimation", "tracking", "sonar", "underwater-acoustics"]
+classifiers = [
+    "Development Status :: 5 - Production/Stable",
+    "Intended Audience :: Science/Research",
+    "Programming Language :: Python :: 3",
+    "Programming Language :: Python :: 3.10",
+    "Programming Language :: Python :: 3.11",
+    "Programming Language :: Python :: 3.12",
+    "Topic :: Scientific/Engineering",
+]
+dependencies = [
+    "numpy",
+    "scipy",
+    "matplotlib",
+    "seaborn",
+    "rich",
+    "pyehm",
+    "numba",
+    "rocket-fft",
+    "ipykernel",
+    "ipywidgets",
+    "tqdm",
+]
+
+[project.urls]
+Repository = "https://github.com/jjwakefield/Nereus"
+
+[project.optional-dependencies]
+dev = [
+    "ruff",
+    "pytest",
+]
+
+[tool.ruff]
+line-length = 88
+
+[tool.ruff.lint]
+select = ["F", "E", "W", "I", "B", "D", "UP"]
+
+[tool.setuptools.packages.find]
+where = ["."]
