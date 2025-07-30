@@ -26,7 +26,7 @@ dependencies = [
     "scipy",
     "matplotlib",
     "seaborn",
-    "rich",
+    "tqdm",
     "pyehm",
     "numba",
     "rocket-fft",

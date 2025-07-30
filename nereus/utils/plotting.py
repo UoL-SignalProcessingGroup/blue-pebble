@@ -17,7 +17,7 @@ import seaborn as sns
 from matplotlib.animation import FuncAnimation
 from matplotlib.axes import Axes
 from matplotlib.patches import Ellipse, Patch
-from rich.progress import Progress
+from tqdm.auto import tqdm
 
 from nereus.types.angles import Bearing
 from nereus.types.detections import Clutter, Detection, MissedDetection, TrueDetection
@@ -278,7 +278,7 @@ class BasePlotter(ABC):
             return self._update_plot_objects(timesteps[k], data, plot_objects, mapping)
 
         self.anim = FuncAnimation(
-            self.fig, _update, frames=range(len(timesteps)), repeat=False, interval=100
+            self.fig, _update, frames=range(len(timesteps)), repeat=True, interval=100
         )
 
         return self.ax, self.anim
@@ -303,7 +303,7 @@ class BasePlotter(ABC):
         plt.show()
 
     def save(self, filename: str, **kwargs: Any) -> None:
-        """Save the plot or animation to a file.
+        """Save the plot or animation to a file using a tqdm progress bar.
 
         This method can save static plots (e.g., 'figure.png') or animations
         (e.g., 'animation.gif' or 'animation.mp4').
@@ -315,16 +315,16 @@ class BasePlotter(ABC):
 
         """
         if self.anim:
-            with Progress() as pbar:
-                task = pbar.add_task(f"Saving {filename}...", total=self.num_timesteps)
-
+            # 1. Create a tqdm instance
+            with tqdm(total=self.num_timesteps, desc=f"Saving {filename}") as pbar:
+                # 2. Define a callback function for matplotlib
                 def update_func(frame, total_frames):
-                    pbar.update(task, advance=1)
+                    pbar.update(1)
 
+                # 3. Call anim.save with the callback
                 self.anim.save(
                     filename,
                     progress_callback=update_func,
-                    bbox_inches="tight",
                     **kwargs,
                 )
             self.anim = None
@@ -335,6 +335,11 @@ class BasePlotter(ABC):
             raise ValueError(
                 "No plot or animation to save. Call plot() or animate() first."
             )
+
+    def close(self):
+        """Close the current plot figure."""
+        if self.fig:
+            plt.close(self.fig)
 
     def _setup_figure(self, ax: Axes | None = None) -> None:
         """Initialise the matplotlib figure and axes objects.
