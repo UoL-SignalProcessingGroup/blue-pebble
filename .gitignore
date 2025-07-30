@@ -1,0 +1,63 @@
+# ==================================
+# Operating System & IDE
+# ==================================
+.DS_Store
+.vscode/
+
+# ==================================
+# Python & Virtual Environments
+# ==================================
+__pycache__/
+*.py[cod]
+*$py.class
+
+# Environments
+.env
+.venv
+env/
+venv/
+ENV/
+env.bak/
+venv.bak/
+
+# ==================================
+# Project-Specific
+# ==================================
+# Ignore the Bellhop executable
+Nereus/models/bellhop/bellhopcxx.exe
+
+# ==================================
+# Distribution / Packaging
+# ==================================
+.Python
+build/
+develop-eggs/
+dist/
+downloads/
+eggs/
+.eggs/
+lib/
+lib64/
+parts/
+sdist/
+var/
+wheels/
+share/python-wheels/
+*.egg-info/
+.installed.cfg
+*.egg
+
+# ==================================
+# Documentation & Testing
+# ==================================
+# Sphinx documentation
+docs/_build/
+
+# Jupyter Notebook
+.ipynb_checkpoints
+
+# Pytest
+.pytest_cache/
+
+# Ruff Linter
+.ruff_cache/
