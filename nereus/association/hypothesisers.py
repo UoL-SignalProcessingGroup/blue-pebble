@@ -338,6 +338,11 @@ class JPDAHypothesiser(ProbabilisticHypothesiser):
 
         """
         num_states = len(states)
+
+        # Handle edge case: no states
+        if num_states == 0:
+            return {}, set(detections)
+
         predictions = [self._predict_measurement_and_covar(state) for state in states]
         pred_means, pred_covars = zip(*predictions)
 
