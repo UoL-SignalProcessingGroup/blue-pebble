@@ -24,8 +24,8 @@ venv.bak/
 # Project-Specific
 # ==================================
 # Ignore the Bellhop executable
-Nereus/models/bellhop/bellhopcxx.exe
-
+nereus/models/bellhop/bellhopcxx.exe
+nereus/models/bellhop/bellhopcxx
 # ==================================
 # Distribution / Packaging
 # ==================================

@@ -53,8 +53,8 @@ import numpy as np
 from nereus.association.hypothesisers import BasicHypothesiser
 from nereus.filters.predictors import KalmanPredictor
 from nereus.filters.updaters import KalmanUpdater
-from nereus.models.measurement_models import LinearGaussianMeasurementModel
-from nereus.models.transition_models import (
+from nereus.models.measurement import LinearGaussianMeasurementModel
+from nereus.models.transition import (
     CombinedLinearGaussianTransitionModel,
     NearlyConstantVelocity,
 )
