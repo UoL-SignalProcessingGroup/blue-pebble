@@ -110,13 +110,16 @@ class LinearGaussianMeasurementModel(MeasurementModel):
     @property
     def H(self) -> np.ndarray:
         """The measurement matrix H."""
-        H = np.zeros((self.ndim_meas, self.ndim_state))
-        H[np.arange(self.ndim_meas), self.mapping] = 1
+        ndim_mapped = len(self.mapping)
+        H = np.zeros((self.ndim_meas, ndim_mapped))
+        H[np.arange(self.ndim_meas), np.arange(self.ndim_meas)] = 1
         return H
 
     def jacobian(self, state: State | None = None) -> np.ndarray:
         """Return the Jacobian matrix (H) for the linear model."""
-        return self.H
+        H = np.zeros((self.ndim_meas, self.ndim_state))
+        H[np.arange(self.ndim_meas), self.mapping] = 1
+        return H
 
     def function(self, state: State | np.ndarray, noise: bool = False) -> np.ndarray:
         """Compute the measurement using the linear transformation y = Hx - c.
@@ -129,30 +132,39 @@ class LinearGaussianMeasurementModel(MeasurementModel):
             np.ndarray: The measurement vector.
 
         """
-        measurement = self.H @ state.state_vector - self.translation_offset
+        # 1. First, select the relevant components from the state vector
+        mapped_state_vector = self._get_state_vector_from_input(state)
+
+        # 2. Then, apply the linear transformation H
+        measurement = self.H @ mapped_state_vector - self.translation_offset
+
+        # 3. Finally, add noise if requested
         if noise:
             noise_sample = np.random.multivariate_normal(
                 np.zeros(self.ndim_meas), self.R, size=measurement.shape[1]
             ).T
             measurement = measurement + noise_sample
+
         return measurement
 
-    def inverse_function(self, state: State) -> np.ndarray:
-        """Compute the state vector via pseudoinverse of the measurement matrix.
+    def inverse_function(self, state: State | np.ndarray) -> np.ndarray:
+        """Compute the full state vector from a given measurement state."""
+        # Extract the numerical vector from the measurement state
+        if isinstance(state, State):
+            measurement_vector = state.state_vector
+        else:
+            measurement_vector = state
 
-        Note:
-            This computes the state from the model y = Hx - c, which gives
-            x = pinv(H) * (y + c).
+        # Invert the measurement to get the value of the mapped state components
+        mapped_state = np.linalg.pinv(self.H) @ (
+            measurement_vector + self.translation_offset
+        )
 
-        Args:
-            state (State): The measurement state (y).
+        # Create a full state vector and place the result in the correct positions
+        full_state = np.zeros((self.ndim_state, mapped_state.shape[1]))
+        full_state[self.mapping, :] = mapped_state
 
-        Returns:
-            np.ndarray: The corresponding state vector (x).
-
-        """
-        # Add the offset back to the measurement before applying the pseudoinverse
-        return np.linalg.pinv(self.H) @ (state.state_vector + self.translation_offset)
+        return full_state
 
 
 class CartesianToRangeBearingMeasurementModel(MeasurementModel):
