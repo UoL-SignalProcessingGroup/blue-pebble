@@ -65,15 +65,6 @@ class State:
         """The timestamp of the state."""
         return self._timestamp
 
-    # @property
-    # def ndim(self) -> int:
-    #     """The number of dimensions in the state vector."""
-    #     return (
-    #         self.state_vector.shape[0]
-    #         if isinstance(self.state_vector, StateVector)
-    #         else self.state_vector.shape[1]
-    #     )
-
 
 class GroundTruthState(State):
     """A state representing the ground truth of a target."""

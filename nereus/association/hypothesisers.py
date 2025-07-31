@@ -160,7 +160,7 @@ class ProbabilisticHypothesiser(Hypothesiser, ABC):
             mean_prediction = self.measurement_model.function(
                 state, noise=False
             ).astype(np.float64)
-            H = self.measurement_model.H
+            H = self.measurement_model.jacobian(state)
             covar = H @ state.covar @ H.T + self.measurement_model.R
         else:
             raise TypeError("State must be either ParticleState or GaussianState")
