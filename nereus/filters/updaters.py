@@ -69,7 +69,7 @@ class KalmanUpdater(Updater):
         pred_measurement = hypothesis.measurement_prediction
 
         # Get measurement model matrix (Jacobian)
-        H = self.measurement_model.H
+        H = self.measurement_model.jacobian()
 
         # Compute innovation and its covariance
         innovation = measurement.state_vector - pred_measurement
