@@ -20,8 +20,8 @@ from nereus.stonesoup.propagators import AcousticPropagationModel
 from nereus.stonesoup.signals import AcousticSignalModel, NoiseModel
 
 
-class SonarProcessingChainDetector(Detector):
-    """A high-fidelity sonar detector.
+class PassiveSonarProcessingChainDetector(Detector):
+    """A high-fidelity passive sonar detector.
 
     Simulates the entire processing chain from signal generation to target detection.
     This component orchestrates a series of models (propagation, signal, noise,
