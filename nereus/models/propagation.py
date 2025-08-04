@@ -87,7 +87,7 @@ class CylindricalAcousticPropagationModel(AcousticPropagationModel):
         """Propagates a signal using a cylindrical spreading loss model.
 
         This method calculates the transmission loss based on a simple model that
-        combines cylindrical spreading (20*log10(r)) with a frequency-
+        combines cylindrical spreading (10*log10(r)) with a frequency-
         independent absorption term.
 
         Args:
