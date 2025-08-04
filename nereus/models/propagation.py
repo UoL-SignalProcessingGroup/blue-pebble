@@ -67,7 +67,7 @@ class CylindricalAcousticPropagationModel(AcousticPropagationModel):
 
     """
 
-    def __init__(self, ssp: SoundSpeedProfile, attentuation_factor=0.001):
+    def __init__(self, ssp: SoundSpeedProfile, attentuation_factor=0.5):
         """Initialise the cylindrical acoustic propagation model.
 
         Args:
