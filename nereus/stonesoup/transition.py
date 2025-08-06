@@ -1,54 +1,126 @@
-from datetime import timedelta
+"""Defines a transition model for a follower platform.
+
+© Copyright 2025 Joshua J. Wakefield.
+Licensed under the MIT License.
+"""
 
 import numpy as np
-from stonesoup.models.transition.base import TransitionModel
 from stonesoup.movable import MovingMovable
-from stonesoup.types.groundtruth import GroundTruthState
+from stonesoup.types.array import StateVector
 
 
-class FollowerModel(TransitionModel):
-    """A transition model that causes a movable to follow another movable (the "leader")."""
+class FollowerModel:
+    """A transition model that causes a movable to follow another movable.
 
-    # This model defines a 3D position [x, y, z]
-    ndim_state = 3
+    A generic TransitionModel that causes a movable to follow a leader in 3D space.
+    It maintains a fixed 3D distance from the leader.
 
-    def __init__(self, leader: MovingMovable, offset: float, *args, **kwargs):
+    Attributes:
+        leader (MovingMovable): The leader platform that the follower will follow.
+        offset (float): The distance the follower should maintain from the leader in
+            3D space.
+
+    """
+
+    def __init__(self, leader: MovingMovable, offset: float) -> None:
         """Initialise the FollowerModel.
 
         Args:
-            leader (MovingMovable): The movable object to follow.
-            offset (float): The distance to maintain behind the leader.
-            *args: Positional arguments passed to the parent TransitionModel.
-            **kwargs: Keyword arguments passed to the parent TransitionModel.
+            leader (MovingMovable): The leader platform that the follower will follow.
+            offset (float): The distance the follower should maintain from the leader
+                in 3D space.
 
         """
-        super().__init__(*args, **kwargs)
         self.leader = leader
         self.offset = offset
 
-    def function(
-        self, state: GroundTruthState, time_interval: timedelta, **kwargs
-    ) -> np.ndarray:
-        """Calculate the new position of the follower.
+    def function(self, state, **kwargs) -> StateVector:
+        """Calculate the new 3D position of the follower.
 
-        Note: We assume the leader has already been moved to the new timestamp.
+        Args:
+            state (GroundTruthState): The current state of the follower.
+            **kwargs: Additional keyword arguments. Only used for compatibility with
+                the TransitionModel interface.
+
+        Returns:
+            StateVector: The new position of the follower, maintaining the specified
+                offset from the leader.
+
         """
         follower_pos_old = state.state_vector
-
-        # Get the leader's position at the new time.
         leader_pos_new = self.leader.position
-
-        # Calculate the vector from the follower's old position to the leader's new one.
         vec_to_leader = leader_pos_new - follower_pos_old
         dist_to_leader = np.linalg.norm(vec_to_leader)
-
-        # Avoid division by zero if they are in the same spot
         if np.isclose(dist_to_leader, 0):
-            # Default to being straight behind on the x-axis
             direction_vec = np.array([-1.0, 0.0, 0.0])
         else:
             direction_vec = vec_to_leader / dist_to_leader
-
-        # The new position is the leader's position, displaced backwards by the cable length.
         new_position = leader_pos_new - self.offset * direction_vec
-        return new_position
+        return StateVector(new_position)
+
+
+class TowedArrayFollowerModel(FollowerModel):
+    """A specialised follower model for a towed array segment.
+
+    This model overrides the base behavior to enforce that the follower
+    maintains a fixed depth, with the "follow" logic only applying to the
+    horizontal XY plane.
+
+    Attributes:
+        leader (MovingMovable): The leader platform that the follower will follow.
+        offset (float): The distance the follower should maintain from the leader in
+            the horizontal plane.
+
+    """
+
+    array_depth: float
+
+    def __init__(self, leader: MovingMovable, offset: float, array_depth: float):
+        """Initialise the TowedArraySegmentModel.
+
+        Args:
+            leader (MovingMovable): The leader platform that the follower will follow.
+            offset (float): The distance the follower should maintain from the leader
+                in the horizontal plane.
+            array_depth (float): The fixed depth at which the follower should be
+                maintained.
+
+        """
+        super().__init__(leader=leader, offset=offset)
+        self.array_depth = array_depth
+
+    def function(self, state, **kwargs) -> StateVector:
+        """Calculate the new position in 2D while keeping the depth fixed.
+
+        Args:
+            state (GroundTruthState): The current state of the follower.
+            **kwargs: Additional keyword arguments. Only used for compatibility with
+                the TransitionModel interface.
+
+        Returns:
+            StateVector: The new position of the follower, maintaining a fixed depth.
+
+        """
+        follower_pos_old = state.state_vector
+        leader_pos_new = self.leader.position
+
+        follower_pos_old_xy = follower_pos_old[:2]
+        leader_pos_new_xy = leader_pos_new[:2]
+
+        depth_difference = abs(leader_pos_new[2, 0] - self.array_depth)
+        if self.offset**2 < depth_difference**2:
+            horizontal_offset = 0
+        else:
+            horizontal_offset = np.sqrt(self.offset**2 - depth_difference**2)
+
+        vec_to_leader_xy = leader_pos_new_xy - follower_pos_old_xy
+        dist_to_leader_xy = np.linalg.norm(vec_to_leader_xy)
+        if np.isclose(dist_to_leader_xy, 0):
+            direction_vec_xy = np.array([[-1.0], [0.0]])
+        else:
+            direction_vec_xy = vec_to_leader_xy / dist_to_leader_xy
+
+        new_position_xy = leader_pos_new_xy - horizontal_offset * direction_vec_xy
+
+        new_position = np.vstack([new_position_xy, [[self.array_depth]]])
+        return StateVector(new_position)
