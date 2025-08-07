@@ -129,7 +129,7 @@ class TowedArrayPlatform:
         self.sensors = sensors
         self.array_depth = array_depth
 
-    def move(self, timestamp: datetime) -> None:
+    def move(self, timestamp: datetime, noise=False) -> None:
         """Move the leader and all followers to their new positions.
 
         This method updates the ship's position based on its transition model,
@@ -138,6 +138,7 @@ class TowedArrayPlatform:
 
         Args:
             timestamp (datetime): The current timestamp for the movement update.
+            noise (bool): Whether to apply noise to the movement. Defaults to False.
 
         Note:
             The followers do not have noise applied to their movements.
