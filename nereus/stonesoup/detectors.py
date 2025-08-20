@@ -10,14 +10,11 @@ from stonesoup.models.measurement.base import MeasurementModel
 from stonesoup.platform.base import Platform
 from stonesoup.types.detection import Detection
 
-from nereus.stonesoup.beamformers import (
-    Beamformer,
-    SteeringCalculator,
-    calculate_directional_power,
-)
+from nereus.stonesoup.beamformers import Beamformer, SteeringCalculator
 from nereus.stonesoup.detection_algorithms import DetectionAlgorithm
 from nereus.stonesoup.propagators import AcousticPropagationModel
 from nereus.stonesoup.signals import AcousticSignalModel, NoiseModel
+from nereus.stonesoup.targets import AcousticTarget
 
 
 class PassiveSonarProcessingChainDetector(Detector):
@@ -43,14 +40,14 @@ class PassiveSonarProcessingChainDetector(Detector):
         """The measurement model used to create formal Detection objects."""
         return self._measurement_model
 
-    def detections_gen(self, ground_truths, **kwargs):
+    def detections_gen(self, targets: list[AcousticTarget], **kwargs):
         """Iterate through ground truths to generate detections.
 
         This method iterates through each time step, simulates the full passive
         sonar processing chain, and yields a set of detections.
 
         Args:
-            ground_truths (GroundTruthPath): A container of ground truth states.
+            targets (list[AcousticTarget]): A list of AcousticTarget objects.
             **kwargs: Additional keyword arguments for flexibility.
 
         Yields:
@@ -58,12 +55,29 @@ class PassiveSonarProcessingChainDetector(Detector):
             generated at that timestamp.
 
         """
-        for time, truths in ground_truths.items():
+        # Get all unique timestamps from the scenario
+        all_timestamps = sorted(
+            list(set(state.timestamp for state in self.platform.states))
+        )
+
+        for time in all_timestamps:
             detections = set()
             platform_state = self.platform.get_state(time)
 
+            current_targets = []
+            for target in targets:
+                target_state = target.get_state(time)
+                if target_state is not None:
+                    current_targets.append(target)
+
+            if not current_targets:
+                yield time, detections
+                continue
+
             # --- Step 1: Generate Sensor Signals ---
-            sensor_signals = self._generate_sensor_signals(truths, platform_state)
+            sensor_signals = self._generate_sensor_signals(
+                current_targets, platform_state, time
+            )
 
             # --- Step 2: Beamform the Signals ---
             steering_delays_s = self.steering_calculator.calculate(platform_state)
@@ -75,7 +89,8 @@ class PassiveSonarProcessingChainDetector(Detector):
             if beamformed_signals.size > 0:
                 # Calculate power from the time-series beamformed signals
                 directional_power_db = 10 * np.log10(
-                    calculate_directional_power(beamformed_signals) + 1e-12
+                    self.signal_model.calculate_directional_power(beamformed_signals)
+                    + 1e-12
                 )
                 # Run the detection chain
                 raw_detections = self._run_detection_chain(directional_power_db)
@@ -103,7 +118,7 @@ class PassiveSonarProcessingChainDetector(Detector):
             # Yield the detections for this time step (can be an empty set)
             yield time, detections
 
-    def _generate_sensor_signals(self, truths, platform_state):
+    def _generate_sensor_signals(self, targets, platform_state, timestamp):
         """Generate the combined noisy signal array."""
         num_sensors = len(self.platform.sensors)
         num_samples = self.signal_model.num_samples
@@ -112,15 +127,17 @@ class PassiveSonarProcessingChainDetector(Detector):
             (num_sensors, num_samples), dtype=np.complex128
         )
 
-        for truth in truths:
+        for target in targets:
+            target_state = target.get_state(timestamp)
+
             tloss_db, prop_time_s = self.propagation_model.propagate(
-                platform_state, truth
+                platform_state, target_state
             )
             sensor_delays_s = self.propagation_model.compute_sensor_delays(
-                platform_state, truth
+                platform_state, target_state
             )
             combined_noiseless_signal += self.signal_model.generate(
-                truth, sensor_delays_s, tloss_db, prop_time_s
+                target, sensor_delays_s, tloss_db, prop_time_s
             )
 
         sensor_signals = combined_noiseless_signal

@@ -55,6 +55,58 @@ class AcousticPropagationModel(ABC):
         return delays
 
 
+class CylindricalAcousticPropagationModel(AcousticPropagationModel):
+    """A simple acoustic model based on cylindrical spreading and absorption loss.
+
+    This model provides a basic estimate of transmission loss without the
+    computational overhead of more complex models like Bellhop.
+
+    Attributes:
+        attenuation_factor (float): The absorption loss factor in dB/km.
+        ssp (SoundSpeedProfile): An instance of a sound speed profile.
+
+    """
+
+    def __init__(self, ssp: SoundSpeedProfile, attenuation_factor=0.5):
+        """Initialise the cylindrical acoustic propagation model.
+
+        Args:
+            ssp (SoundSpeedProfile): An instance of a sound speed profile.
+            attenuation_factor (float): The absorption loss factor in dB/km.
+
+        Raises:
+            ValueError: If the attenuation factor is negative.
+
+        """
+        if attenuation_factor < 0:
+            raise ValueError("Attenuation factor must be non-negative.")
+        self.attenuation_factor = attenuation_factor
+        super().__init__(ssp)
+
+    def propagate(self, platform, source):
+        """Propagates a signal using a cylindrical spreading loss model.
+
+        This method calculates the transmission loss based on a simple model that
+        combines cylindrical spreading (10*log10(r)) with a frequency-
+        independent absorption term.
+
+        Args:
+            platform: An object representing the sensor platform.
+            source: An object representing the acoustic source.
+
+        Returns:
+            A tuple containing:
+            - tloss (float): The transmission loss in decibels (dB).
+            - time (float): The direct path signal travel time in seconds.
+
+        """
+        distance = np.linalg.norm(source.state_vector - platform.origin)
+        speed = self.ssp.calculate(platform.origin[2])
+        time = distance / speed
+        tloss = 10 * np.log10(distance) + self.attenuation_factor * (distance / 1000)
+        return tloss, time
+
+
 class SphericalAcousticPropagationModel(AcousticPropagationModel):
     """A simple acoustic model based on spherical spreading and absorption loss.
 

@@ -12,6 +12,10 @@ import numpy as np
 class AcousticSignalModel:
     """Generates a complete, noiseless signal array for a given source."""
 
+    duration_s: float
+    sampling_rate_hz: int
+    num_samples: int
+
     def __init__(self, duration_s: float, sampling_rate_hz: int, **kwargs):
         """Initialise the signal model.
 
@@ -47,17 +51,15 @@ class AcousticSignalModel:
         # Create a 1D array representing the time vector for the signal snapshot
         time_array_s = np.arange(self.num_samples) / self.sampling_rate_hz
 
-        # Attenuate the source amplitude based on transmission loss
-        received_amplitude_upa = source.metadata["amplitude_upa"] * 10 ** (
-            -tloss_db / 20.0
-        )
+        # Attenuate the source amplitude(s) based on transmission loss
+        received_amplitude_upa = source.amplitudes_upa * 10 ** (-tloss_db / 20.0)
 
         # --- Use NumPy broadcasting to perform calculations efficiently ---
         # Reshape arrays to dimensions: (sensors, tonals, samples)
         time_reshaped = time_array_s[np.newaxis, np.newaxis, :]
         delays_reshaped = sensor_delays_s[:, np.newaxis, np.newaxis]
-        freq_reshaped = source.metadata["frequency_hz"][np.newaxis, :, np.newaxis]
-        phase_reshaped = source.metadata["phase_rad"][np.newaxis, :, np.newaxis]
+        freq_reshaped = source.frequencies_hz[np.newaxis, :, np.newaxis]
+        phase_reshaped = source.phases_rad[np.newaxis, :, np.newaxis]
 
         # Calculate the instantaneous phase for every sensor, for every tonal,
         # at every point in time.
@@ -113,19 +115,24 @@ class NoiseModel(ABC):
 class WhiteNoise(NoiseModel):
     """Generates complex white Gaussian noise with a flat power spectrum."""
 
+    amplitude_upa: float
+    duration_s: float
+    sampling_rate_hz: int
+    num_samples: int
+
     def __init__(
-        self, noise_level_db: float, duration_s: float, sampling_rate_hz: int, **kwargs
+        self, amplitude_upa: float, duration_s: float, sampling_rate_hz: int, **kwargs
     ):
         """Initialise the white noise model.
 
         Args:
-            noise_level_db (float): The noise level in decibels (e.g., re 1µPa).
+            amplitude_upa (float): The noise amplitude (e.g., in µPa).
             duration_s (float): The duration of the signal snapshot in seconds.
             sampling_rate_hz (int): The sampling rate in Hertz.
             **kwargs: Additional keyword arguments.
 
         """
-        self.noise_level_db = noise_level_db
+        self.amplitude_upa = amplitude_upa
         self.duration_s = duration_s
         self.sampling_rate_hz = sampling_rate_hz
         self.num_samples = int(duration_s * sampling_rate_hz)
@@ -143,20 +150,23 @@ class WhiteNoise(NoiseModel):
         # Generate the base noise with unit power
         white_noise = self._generate_unit_white_noise(num_sensors, self.num_samples)
 
-        # Convert the desired dB level to a linear amplitude
-        noise_amplitude_upa = 10 ** (self.noise_level_db / 20.0)
-
         # Scale the unit-power noise to the target amplitude
-        return noise_amplitude_upa * white_noise
+        return self.amplitude_upa * white_noise
 
 
 class ColouredNoise(NoiseModel):
     """Generates complex coloured noise using FFT filtering."""
 
+    spectral_exponent: float
+    amplitude_upa: float
+    duration_s: float
+    sampling_rate_hz: int
+    num_samples: int
+
     def __init__(
         self,
         spectral_exponent: float,
-        noise_level_db: float,
+        amplitude_upa: float,
         duration_s: float,
         sampling_rate_hz: int,
         **kwargs,
@@ -167,14 +177,14 @@ class ColouredNoise(NoiseModel):
             spectral_exponent (float): The power-law exponent for the noise spectrum
                 (e.g., -1 for pink noise, -2 for red noise, -3 for brown noise,
                 -4 for violet noise, -5 for grey noise).
-            noise_level_db (float): The noise level in decibels.
+            amplitude_upa (float): The noise amplitude.
             duration_s (float): The duration of the signal snapshot in seconds.
             sampling_rate_hz (int): The sampling rate in Hertz.
             **kwargs: Additional keyword arguments.
 
         """
         self.spectral_exponent = spectral_exponent
-        self.noise_level_db = noise_level_db
+        self.amplitude_upa = amplitude_upa
         self.duration_s = duration_s
         self.sampling_rate_hz = sampling_rate_hz
         self.num_samples = int(self.duration_s * self.sampling_rate_hz)
@@ -216,6 +226,4 @@ class ColouredNoise(NoiseModel):
         normalised_coloured_noise = coloured_noise / np.sqrt(power)
 
         # 7. Scale to the desired amplitude
-        target_amplitude_upa = 10 ** (self.noise_level_db / 20.0)
-
-        return target_amplitude_upa * normalised_coloured_noise
+        return self.amplitude_upa * normalised_coloured_noise

@@ -19,12 +19,12 @@ class Beamformer(ABC):
 
     @abstractmethod
     def beamform(
-        self, signal_array: np.ndarray, steering_delays: np.ndarray
+        self, sensor_signals: np.ndarray, steering_delays: np.ndarray
     ) -> np.ndarray:
         """Process sensor signals to form beams in specified directions.
 
         Args:
-            signal_array (np.ndarray): An array of sensor signals with shape
+            sensor_signals (np.ndarray): An array of sensor signals with shape
                 (num_sensors, num_samples).
             steering_delays (np.ndarray): An array of time delays for each
                 sensor and steering direction, with shape (num_directions, num_sensors).
