@@ -8,7 +8,6 @@ from abc import ABC, abstractmethod
 
 import numpy as np
 from numba import njit, prange, types
-from stonesoup.base import Base
 from stonesoup.platform.base import Platform
 
 from nereus.stonesoup.sound_speed_profiles import SoundSpeedProfile
@@ -264,23 +263,35 @@ def calculate_directional_power(beamformed_signals: np.ndarray) -> np.ndarray:
     return power_linear
 
 
-class SteeringCalculator(Base):
+class SteeringCalculator:
     """Calculates the geometric time delays for steering a sensor array in 3D."""
 
     # Parameters required for 3D steering
     steering_azimuths_rad: np.ndarray = None
     steering_elevations_rad: np.ndarray = None
-    ssp: SoundSpeedProfile
+    ssp: SoundSpeedProfile = None
 
-    def __init__(self, *args, **kwargs):
+    def __init__(
+        self,
+        ssp: SoundSpeedProfile,
+        steering_azimuths_rad: np.ndarray = None,
+        steering_elevations_rad: np.ndarray = None,
+    ):
         """Initialise the SteeringCalculator.
 
         Args:
-            *args: Variable length argument list.
-            **kwargs: Arbitrary keyword arguments.
+            ssp (SoundSpeedProfile): The sound speed profile to use for
+                calculating delays.
+            steering_azimuths_rad (np.ndarray, optional): The azimuth angles
+                for steering, in radians.
+            steering_elevations_rad (np.ndarray, optional): The elevation angles
+                for steering, in radians.
 
         """
-        super().__init__(*args, **kwargs)
+        self.steering_azimuths_rad = steering_azimuths_rad
+        self.steering_elevations_rad = steering_elevations_rad
+        self.ssp = ssp
+
         # Ensure that at least one steering angle is provided
         if self.steering_azimuths_rad is None and self.steering_elevations_rad is None:
             raise ValueError(

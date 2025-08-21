@@ -14,10 +14,9 @@ from typing import Self
 
 import numpy as np
 from scipy.signal import find_peaks
-from stonesoup.base import Base
 
 
-class DetectionAlgorithm(Base, ABC):
+class DetectionAlgorithm(ABC):
     """Abstract base class for all detector types."""
 
     @abstractmethod
@@ -30,7 +29,7 @@ class DetectionAlgorithm(Base, ABC):
         Returns:
             np.ndarray: A 2D NumPy array where each row contains two elements:
             the index of a detection and its corresponding value. Returns an
-            empty array if no detections are found.
+            empty array with shape (0, 2) if no detections are found.
 
         """
         raise NotImplementedError
@@ -68,7 +67,7 @@ class ThresholdDetector(DetectionAlgorithm):
         """Detect values in the data array that are above the threshold."""
         indices = np.where(data > self.threshold)[0]
         if indices.size == 0:
-            return np.array([])
+            return np.empty((0, 2))
         return np.column_stack((indices, data[indices]))
 
 
@@ -77,17 +76,15 @@ class PeakDetector(DetectionAlgorithm):
 
     This class is a wrapper around the `scipy.signal.find_peaks` function,
     providing a simple interface for peak detection. It identifies peaks that
-    meet a minimum threshold and are separated by a specified minimum distance.
+    are separated by a specified minimum distance.
 
     Attributes:
-        threshold (float | None): The minimum required value for a data point
-            to be considered a peak.
         distance (int): The minimum required horizontal distance (in number of
             samples) between neighbouring peaks.
 
     """
 
-    distance: int = 1
+    distance: int
 
     def __init__(self: Self, distance: int = 1, **kwargs) -> None:
         """Initialise the PeakDetector.
@@ -106,7 +103,7 @@ class PeakDetector(DetectionAlgorithm):
         """Find all peaks in the data array."""
         indices, _ = find_peaks(data, distance=self.distance)
         if indices.size == 0:
-            return np.array([])
+            return np.empty((0, 2))
         return np.column_stack((indices, data[indices]))
 
 
@@ -179,7 +176,7 @@ class CFARDetector(DetectionAlgorithm):
         Returns:
             np.ndarray: A 2D NumPy array where each row contains two elements:
             the index of a detection and its corresponding value in dB.
-            Returns an empty array if no detections are found.
+            Returns an empty array with shape (0, 2) if no detections are found.
 
         """
         # Convert dB to linear power, as CFAR averaging is done on power.
@@ -218,6 +215,6 @@ class CFARDetector(DetectionAlgorithm):
         indices = np.where(power > threshold)[0]
 
         if indices.size == 0:
-            return np.array([])
+            return np.empty((0, 2))
 
         return np.column_stack((indices, data[indices]))
