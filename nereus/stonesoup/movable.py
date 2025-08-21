@@ -112,7 +112,6 @@ class TowedArrayPlatform:
                     array_depth,
                 ]
             ).reshape(-1, 1)
-            # --- End Fix ---
 
             follower_init_state = GroundTruthState(
                 follower_init_pos, timestamp=state.timestamp

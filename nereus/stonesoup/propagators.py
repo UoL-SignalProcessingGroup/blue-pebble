@@ -10,25 +10,20 @@ from abc import ABC, abstractmethod
 from pathlib import Path
 
 import numpy as np
+from stonesoup.base import Property
+from stonesoup.models.base import Model
 
 from nereus.stonesoup.functions import read_shade_file
 from nereus.stonesoup.sound_speed_profiles import SoundSpeedProfile
 
 
-class AcousticPropagationModel(ABC):
+class AcousticPropagationModel(ABC, Model):
     """An abstract base class for all acoustic propagation models.
 
     It defines a common interface and implements shared functionality.
     """
 
-    def __init__(self, ssp: SoundSpeedProfile):
-        """Initialise the acoustic propagation model.
-
-        Args:
-            ssp (SoundSpeedProfile): An instance of a sound speed profile.
-
-        """
-        self.ssp = ssp
+    ssp = Property(SoundSpeedProfile, doc="Sound speed profile")
 
     @abstractmethod
     def propagate(self, platform, source) -> tuple:
@@ -67,21 +62,14 @@ class CylindricalAcousticPropagationModel(AcousticPropagationModel):
 
     """
 
-    def __init__(self, ssp: SoundSpeedProfile, attenuation_factor=0.5):
-        """Initialise the cylindrical acoustic propagation model.
+    attenuation_factor = Property(
+        float, default=0.5, doc="The absorption loss factor in dB/km"
+    )
 
-        Args:
-            ssp (SoundSpeedProfile): An instance of a sound speed profile.
-            attenuation_factor (float): The absorption loss factor in dB/km.
-
-        Raises:
-            ValueError: If the attenuation factor is negative.
-
-        """
-        if attenuation_factor < 0:
+    def __post_init__(self):
+        """Validate the attenuation factor after initialization."""
+        if self.attenuation_factor < 0:
             raise ValueError("Attenuation factor must be non-negative.")
-        self.attenuation_factor = attenuation_factor
-        super().__init__(ssp)
 
     def propagate(self, platform, source):
         """Propagates a signal using a cylindrical spreading loss model.
@@ -119,21 +107,14 @@ class SphericalAcousticPropagationModel(AcousticPropagationModel):
 
     """
 
-    def __init__(self, ssp: SoundSpeedProfile, attentuation_factor=0.001):
-        """Initialise the spherical acoustic propagation model.
+    attenuation_factor = Property(
+        float, default=0.001, doc="The absorption loss factor in dB/km"
+    )
 
-        Args:
-            ssp (SoundSpeedProfile): An instance of a sound speed profile.
-            attentuation_factor (float): The absorption loss factor in dB/km.
-
-        Raises:
-            ValueError: If the attenuation factor is negative.
-
-        """
-        if attentuation_factor < 0:
+    def __post_init__(self):
+        """Validate the attenuation factor after initialization."""
+        if self.attenuation_factor < 0:
             raise ValueError("Attenuation factor must be non-negative.")
-        self.attenuation_factor = attentuation_factor
-        super().__init__(ssp)
 
     def propagate(self, platform, source):
         """Propagates a signal using a spherical spreading loss model.
@@ -174,28 +155,18 @@ class BellhopAcousticPropagationModel(AcousticPropagationModel):
 
     """
 
-    def __init__(self, env_depth: float, ssp: SoundSpeedProfile, exe_path: str | Path):
-        """Initialise the Bellhop acoustic propagation model.
+    env_depth = Property(float, doc="The depth of the environment in meters")
+    exe_path = Property(str, doc="The path to the Bellhop executable")
 
-        Args:
-            env_depth (float): The depth of the environment in meters.
-            ssp (SoundSpeedProfile): An instance of a sound speed profile.
-            exe_path (str | Path): The path to the Bellhop executable.
-
-        Raises:
-            ValueError: If the provided executable path does not exist or is not a file.
-
-        """
-        super().__init__(ssp)
-        self.env_depth = env_depth
-
-        exe_path_obj = Path(exe_path)
+    def __post_init__(self):
+        """Initialize the Bellhop acoustic propagation model."""
+        exe_path_obj = Path(self.exe_path)
         if not exe_path_obj.is_file():
-            raise FileNotFoundError(f"Bellhop executable not found at: {exe_path}")
+            raise FileNotFoundError(f"Bellhop executable not found at: {self.exe_path}")
         self.exe_path = exe_path_obj
 
-        depth = np.arange(0, env_depth + 1, 100)
-        sound_speed = ssp.calculate(depth)
+        depth = np.arange(0, self.env_depth + 1, 100)
+        sound_speed = self.ssp.calculate(depth)
         self.sound_speed_profile = np.column_stack((depth, sound_speed))
 
     def propagate(self, platform, source):
@@ -356,3 +327,9 @@ class BellhopAcousticPropagationModel(AcousticPropagationModel):
         filename_env = output_dir / "env.env"
         with open(filename_env, "w") as file:
             file.write(env_template)
+
+    def _write_bathy_file(self, bathy, filename, output_dir):
+        """Write bathymetry file for complex bottom topography."""
+        # This method would write a .bty file for complex bathymetry
+        # For now, it's a placeholder since we use simple flat bottom
+        pass
