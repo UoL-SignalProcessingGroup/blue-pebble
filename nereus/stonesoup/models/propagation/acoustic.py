@@ -10,14 +10,13 @@ from abc import ABC, abstractmethod
 from pathlib import Path
 
 import numpy as np
-from stonesoup.base import Property
-from stonesoup.models.base import Model
+from stonesoup.base import Base, Property
 
-from nereus.stonesoup.functions import read_shade_file
-from nereus.stonesoup.sound_speed_profiles import SoundSpeedProfile
+from nereus.stonesoup.models.environment import SoundSpeedProfile
+from nereus.stonesoup.utils import read_shade_file
 
 
-class AcousticPropagationModel(ABC, Model):
+class AcousticPropagationModel(ABC, Base):
     """An abstract base class for all acoustic propagation models.
 
     It defines a common interface and implements shared functionality.
@@ -36,17 +35,25 @@ class AcousticPropagationModel(ABC, Model):
     def compute_sensor_delays(self, platform, source) -> np.ndarray:
         """Compute time delays for each sensor in an array.
 
+        Args:
+            platform: The platform object representing the sensor array.
+            source: The source object representing the acoustic source.
+
         This method is shared by all propagation models.
 
         """
         # Calculate distance from each sensor to the source
-        distances = np.linalg.norm(source.state_vector - platform.state_vector, axis=0)
-        # Calculate distance from the origin sensor to the source
-        origin_distance = np.linalg.norm(source.state_vector - platform.origin)
+        distances = np.linalg.norm(
+            source.state_vector[[0, 2, 4]] - platform.array.state_vector, axis=0
+        )
+        # Calculate distance from the reference sensor to the source
+        reference_distance = np.linalg.norm(
+            source.state_vector[[0, 2, 4]] - platform.array.ref_state_vector
+        )
         # Calculate speed of sound at the depth of each sensor
-        speeds = self.ssp.calculate(platform.state_vector[2, :])
+        speeds = self.ssp.calculate(platform.array.state_vector[2, :])
         # Calculate time delays
-        delays = (distances - origin_distance) / speeds
+        delays = (distances - reference_distance) / speeds
         return delays
 
 
@@ -88,8 +95,10 @@ class CylindricalAcousticPropagationModel(AcousticPropagationModel):
             - time (float): The direct path signal travel time in seconds.
 
         """
-        distance = np.linalg.norm(source.state_vector - platform.origin)
-        speed = self.ssp.calculate(platform.origin[2])
+        distance = np.linalg.norm(
+            source.state_vector[[0, 2, 4]] - platform.array.ref_state_vector
+        )
+        speed = self.ssp.calculate(platform.array.state_vector[2, :])
         time = distance / speed
         tloss = 10 * np.log10(distance) + self.attenuation_factor * (distance / 1000)
         return tloss, time
@@ -133,8 +142,10 @@ class SphericalAcousticPropagationModel(AcousticPropagationModel):
             - time (float): The direct path signal travel time in seconds.
 
         """
-        distance = np.linalg.norm(source.state_vector - platform.origin)
-        speed = self.ssp.calculate(platform.origin[2])
+        distance = np.linalg.norm(
+            source.state_vector[[0, 2, 4]] - platform.array.ref_state_vector
+        )
+        speed = self.ssp.calculate(platform.array.ref_state_vector[2])
         time = distance / speed
         tloss = 20 * np.log10(distance) + self.attenuation_factor * (distance / 1000)
         return tloss, time
@@ -223,8 +234,10 @@ class BellhopAcousticPropagationModel(AcousticPropagationModel):
         tloss = np.abs(pressure)
         tloss = -20 * np.log10(tloss + 1e-12)  # Avoid log(0) by adding a small constant
 
-        distance = np.linalg.norm(source.state_vector - platform.origin)
-        speed = self.ssp.calculate(platform.origin[2])
+        distance = np.linalg.norm(
+            source.state_vector[[0, 2, 4]] - platform.array.ref_state_vector
+        )
+        speed = self.ssp.calculate(platform.array.ref_state_vector[2])
         time = distance / speed
 
         # Handle cases where pressure is zero, resulting in infinite tloss
@@ -234,7 +247,7 @@ class BellhopAcousticPropagationModel(AcousticPropagationModel):
 
     def _create_env_file(
         self,
-        receiver,
+        platform,
         source,
         output_dir=Path("."),
         options="SVW",
@@ -274,11 +287,13 @@ class BellhopAcousticPropagationModel(AcousticPropagationModel):
         # ==================================
         title = "'env'"
         frequency = source.frequency[np.argmax(source.amplitude)]
-        max_range_m = np.linalg.norm(source.state_vector - receiver.origin)
+        max_range_m = np.linalg.norm(
+            source.state_vector[[0, 2, 4]] - platform.array.ref_state_vector
+        )
 
         # Source and receiver depths
-        source_depth = np.abs(source.state_vector[2])
-        receiver_depth = np.abs(receiver.origin[2])
+        source_depth = np.abs(source.state_vector[4])
+        receiver_depth = np.abs(platform.array.ref_state_vector[2])
 
         # Define bathymetry and check if a .bty file is needed
         bathy = [[0, self.env_depth]]  # Simple flat bottom

@@ -1,4 +1,4 @@
-"""Defines utility functions.
+"""Defines Bellhop-specific utility functions.
 
 © Copyright 2025 Joshua J. Wakefield.
 Licensed under the MIT License.

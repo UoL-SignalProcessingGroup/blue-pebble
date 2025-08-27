@@ -14,9 +14,10 @@ from typing import Self
 
 import numpy as np
 from scipy.signal import find_peaks
+from stonesoup.base import Base, Property
 
 
-class DetectionAlgorithm(ABC):
+class DetectionAlgorithm(Base, ABC):
     """Abstract base class for all detector types."""
 
     @abstractmethod
@@ -32,7 +33,7 @@ class DetectionAlgorithm(ABC):
             empty array with shape (0, 2) if no detections are found.
 
         """
-        raise NotImplementedError
+        pass
 
 
 class ThresholdDetector(DetectionAlgorithm):
@@ -47,21 +48,9 @@ class ThresholdDetector(DetectionAlgorithm):
 
     """
 
-    threshold: float
-
-    def __init__(self: Self, threshold: float, **kwargs) -> None:
-        """Initialise the ThresholdDetector.
-
-        Args:
-            threshold (float): The value that data points must exceed to be
-                considered a detection.
-            **kwargs: Additional keyword arguments for flexibility. These are
-            passed to the parent class.
-
-        """
-        # Pass any unhandled keyword arguments to the parent class.
-        super().__init__(**kwargs)
-        self.threshold = threshold
+    threshold = Property(
+        float, doc="The value that data points must exceed to be considered a detection"
+    )
 
     def detect(self: Self, data: np.ndarray) -> np.ndarray:
         """Detect values in the data array that are above the threshold."""
@@ -84,20 +73,11 @@ class PeakDetector(DetectionAlgorithm):
 
     """
 
-    distance: int
-
-    def __init__(self: Self, distance: int = 1, **kwargs) -> None:
-        """Initialise the PeakDetector.
-
-        Args:
-            distance (int): The minimum required horizontal distance (in number
-                of samples) between neighbouring peaks. Defaults to 1.
-            **kwargs: Additional keyword arguments for flexibility. These are
-            passed to the parent class.
-
-        """
-        super().__init__(**kwargs)
-        self.distance = distance
+    distance: int = Property(
+        default=1,
+        doc="The minimum required horizontal distance (in number of samples) between "
+        "neighbouring peaks",
+    )
 
     def detect(self: Self, data: np.ndarray) -> np.ndarray:
         """Find all peaks in the data array."""
@@ -128,39 +108,27 @@ class CFARDetector(DetectionAlgorithm):
 
     """
 
-    num_guard_cells: int
-    num_training_cells: int
-    threshold_factor: float
-    mode: str = "valid"
-
-    def __init__(
-        self: Self,
-        num_guard_cells: int,
-        num_training_cells: int,
-        threshold_factor: float,
-        mode: str = "valid",
-        **kwargs,
-    ) -> None:
-        """Initialise the CFARDetector.
-
-        Args:
-            num_guard_cells (int): The number of cells to ignore on each side
-                of the Cell Under Test (CUT).
-            num_training_cells (int): The number of cells to use for noise
-                estimation on each side of the CUT.
-            threshold_factor (float): The scaling factor to apply to the noise
-                estimate.
-            mode (str): The convolution mode ('valid', 'same', or 'wrap').
-                Defaults to "valid".
-            **kwargs: Additional keyword arguments for flexibility. These are
-                passed to the parent class.
-
-        """
-        super().__init__(**kwargs)
-        self.num_guard_cells = num_guard_cells
-        self.num_training_cells = num_training_cells
-        self.threshold_factor = threshold_factor
-        self.mode = mode
+    num_guard_cells = Property(
+        int,
+        doc="The number of cells to ignore on each side of the Cell Under Test (CUT). "
+        "These cells are ignored to prevent signal leakage from the CUT into the noise "
+        "estimate",
+    )
+    num_training_cells = Property(
+        int,
+        doc="The number of cells to use for noise estimation on each side of the guard "
+        "cells",
+    )
+    threshold_factor = Property(
+        float,
+        doc="A scaling factor (alpha) used to set the detection threshold above the "
+        "estimated noise floor",
+    )
+    mode = Property(
+        str,
+        default="valid",
+        doc="The convolution mode for boundary handling ('valid', 'same', or 'wrap')",
+    )
 
     def detect(self: Self, data: np.ndarray) -> np.ndarray:
         """Detect signals in the data array using the CFAR algorithm.

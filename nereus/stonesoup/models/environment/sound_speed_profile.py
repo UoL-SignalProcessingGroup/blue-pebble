@@ -7,9 +7,10 @@ Licensed under the MIT License.
 from abc import ABC, abstractmethod
 
 import numpy as np
+from stonesoup.base import Base, Property
 
 
-class SoundSpeedProfile(ABC):
+class SoundSpeedProfile(ABC, Base):
     """Abstract base class for sound speed profile models."""
 
     @abstractmethod
@@ -18,7 +19,7 @@ class SoundSpeedProfile(ABC):
 
         This method must be implemented by subclasses.
         """
-        raise NotImplementedError
+        pass
 
     def _calc_temperature(self, depth: float) -> float:
         """Calculate ocean temperature based on vertical variation."""
@@ -32,15 +33,9 @@ class SoundSpeedProfile(ABC):
 class Munk(SoundSpeedProfile):
     """Munk sound speed profile model."""
 
-    def __init__(self, surface_speed: float = 1500.0):
-        """Initialise the Munk model.
-
-        Args:
-            surface_speed (float, optional): The speed of sound at the surface in m/s.
-                Defaults to 1500.0.
-
-        """
-        self.surface_speed = surface_speed
+    surface_speed: float = Property(
+        default=1500.0, doc="Speed of sound at the surface in m/s"
+    )
 
     def calculate(self, depth: float) -> float:
         """Calculate sound speed using the Munk equation."""

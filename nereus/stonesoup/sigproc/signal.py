@@ -7,27 +7,38 @@ Licensed under the MIT License.
 from abc import ABC, abstractmethod
 
 import numpy as np
+from stonesoup.base import Base, Property
 
 
-class AcousticSignalModel:
-    """Generates a complete, noiseless signal array for a given source."""
+class SignalModel(ABC, Base):
+    """Abstract base class for all signal generation models."""
 
-    duration_s: float
-    sampling_rate_hz: int
-    num_samples: int
+    duration_s: float = Property(doc="The duration of the signal snapshot in seconds")
+    sampling_rate_hz: int = Property(doc="The sampling rate in Hertz")
 
-    def __init__(self, duration_s: float, sampling_rate_hz: int, **kwargs):
-        """Initialise the signal model.
+    @property
+    def num_samples(self) -> int:
+        """Calculate the number of samples based on duration and sampling rate.
 
-        Args:
-            duration_s (float): The duration of the signal snapshot in seconds.
-            sampling_rate_hz (int): The sampling rate in Hertz.
-            **kwargs: Additional keyword arguments.
+        Returns:
+            The number of samples in the signal snapshot.
 
         """
-        self.duration_s = duration_s
-        self.sampling_rate_hz = sampling_rate_hz
-        self.num_samples = int(duration_s * sampling_rate_hz)
+        return int(self.duration_s * self.sampling_rate_hz)
+
+    @abstractmethod
+    def generate(self, *args, **kwargs) -> np.ndarray:
+        """Generate a signal array. Must be implemented by subclasses.
+
+        Returns:
+            A signal array with shape (num_sensors, num_samples).
+
+        """
+        pass
+
+
+class AcousticSignalModel(SignalModel):
+    """Generates a complete, noiseless signal array for a given source."""
 
     def generate(
         self, source, sensor_delays_s, tloss_db, propagation_time_s
@@ -35,31 +46,34 @@ class AcousticSignalModel:
         """Generate the signal received across all sensors from a single source.
 
         Args:
-            source (GroundTruthState): The source state. Must contain `amplitude_upa`,
+            source: The source state. Must contain `amplitude_upa`,
                 `frequency_hz`, and `phase_rad` in its metadata dictionary.
-            sensor_delays_s (np.ndarray): The relative time delay for each sensor
-                in the array.
-            tloss_db (float): The transmission loss in decibels.
-            propagation_time_s (float): The time in seconds for the signal to
-                propagate from the source to the array's origin.
+            sensor_delays_s: The relative time delay for each sensor in the array.
+            tloss_db: The transmission loss in decibels.
+            propagation_time_s: The time in seconds for the signal to propagate
+                from the source to the array's origin.
 
         Returns:
-            np.ndarray: An array of complex signals received by the sensors,
-                with shape (num_sensors, num_samples).
+            An array of complex signals received by the sensors,
+            with shape (num_sensors, num_samples).
 
         """
         # Create a 1D array representing the time vector for the signal snapshot
         time_array_s = np.arange(self.num_samples) / self.sampling_rate_hz
 
+        amplitudes_upa = source.metadata["amplitudes_upa"]
+        frequencies_hz = source.metadata["frequencies_hz"]
+        phases_rad = source.metadata["phases_rad"]
+
         # Attenuate the source amplitude(s) based on transmission loss
-        received_amplitude_upa = source.amplitudes_upa * 10 ** (-tloss_db / 20.0)
+        received_amplitude_upa = amplitudes_upa * 10 ** (-tloss_db / 20.0)
 
         # --- Use NumPy broadcasting to perform calculations efficiently ---
         # Reshape arrays to dimensions: (sensors, tonals, samples)
         time_reshaped = time_array_s[np.newaxis, np.newaxis, :]
         delays_reshaped = sensor_delays_s[:, np.newaxis, np.newaxis]
-        freq_reshaped = source.frequencies_hz[np.newaxis, :, np.newaxis]
-        phase_reshaped = source.phases_rad[np.newaxis, :, np.newaxis]
+        freq_reshaped = frequencies_hz[np.newaxis, :, np.newaxis]
+        phase_reshaped = phases_rad[np.newaxis, :, np.newaxis]
 
         # Calculate the instantaneous phase for every sensor, for every tonal,
         # at every point in time.
@@ -82,8 +96,10 @@ class AcousticSignalModel:
         return sensor_signals
 
 
-class NoiseModel(ABC):
+class NoiseModel(SignalModel):
     """Abstract base class for noise models."""
+
+    amplitude_upa: float = Property(doc="The noise amplitude (e.g., in µPa)")
 
     def _generate_unit_white_noise(
         self, num_sensors: int, num_samples: int
@@ -91,12 +107,11 @@ class NoiseModel(ABC):
         """Generate standard complex white noise with unit power.
 
         Args:
-            num_sensors (int): The number of sensors in the array.
-            num_samples (int): The number of samples in the signal snapshot.
+            num_sensors: The number of sensors in the array.
+            num_samples: The number of samples in the signal snapshot.
 
         Returns:
-            np.ndarray: A complex array of shape (num_sensors, num_samples) with
-                unit power.
+            A complex array of shape (num_sensors, num_samples) with unit power.
 
         """
         # Generate real and imaginary parts from a standard normal distribution
@@ -108,43 +123,28 @@ class NoiseModel(ABC):
 
     @abstractmethod
     def generate(self, num_sensors: int) -> np.ndarray:
-        """Generate a noise array. This must be implemented by subclasses."""
-        raise NotImplementedError
+        """Generate a noise array. This must be implemented by subclasses.
+
+        Args:
+            num_sensors: The number of sensors in the array.
+
+        Returns:
+            A noise array of shape (num_sensors, num_samples).
+
+        """
 
 
 class WhiteNoise(NoiseModel):
     """Generates complex white Gaussian noise with a flat power spectrum."""
 
-    amplitude_upa: float
-    duration_s: float
-    sampling_rate_hz: int
-    num_samples: int
-
-    def __init__(
-        self, amplitude_upa: float, duration_s: float, sampling_rate_hz: int, **kwargs
-    ):
-        """Initialise the white noise model.
-
-        Args:
-            amplitude_upa (float): The noise amplitude (e.g., in µPa).
-            duration_s (float): The duration of the signal snapshot in seconds.
-            sampling_rate_hz (int): The sampling rate in Hertz.
-            **kwargs: Additional keyword arguments.
-
-        """
-        self.amplitude_upa = amplitude_upa
-        self.duration_s = duration_s
-        self.sampling_rate_hz = sampling_rate_hz
-        self.num_samples = int(duration_s * sampling_rate_hz)
-
     def generate(self, num_sensors: int) -> np.ndarray:
         """Generate a complex white Gaussian noise array.
 
         Args:
-            num_sensors (int): The number of sensors in the array.
+            num_sensors: The number of sensors in the array.
 
         Returns:
-            np.ndarray: A complex array of white noise.
+            A complex array of white noise.
 
         """
         # Generate the base noise with unit power
@@ -157,46 +157,20 @@ class WhiteNoise(NoiseModel):
 class ColouredNoise(NoiseModel):
     """Generates complex coloured noise using FFT filtering."""
 
-    spectral_exponent: float
-    amplitude_upa: float
-    duration_s: float
-    sampling_rate_hz: int
-    num_samples: int
-
-    def __init__(
-        self,
-        spectral_exponent: float,
-        amplitude_upa: float,
-        duration_s: float,
-        sampling_rate_hz: int,
-        **kwargs,
-    ):
-        """Initialise the coloured noise model.
-
-        Args:
-            spectral_exponent (float): The power-law exponent for the noise spectrum
-                (e.g., -1 for pink noise, -2 for red noise, -3 for brown noise,
-                -4 for violet noise, -5 for grey noise).
-            amplitude_upa (float): The noise amplitude.
-            duration_s (float): The duration of the signal snapshot in seconds.
-            sampling_rate_hz (int): The sampling rate in Hertz.
-            **kwargs: Additional keyword arguments.
-
-        """
-        self.spectral_exponent = spectral_exponent
-        self.amplitude_upa = amplitude_upa
-        self.duration_s = duration_s
-        self.sampling_rate_hz = sampling_rate_hz
-        self.num_samples = int(self.duration_s * self.sampling_rate_hz)
+    spectral_exponent: float = Property(
+        doc="The power-law exponent for the noise spectrum "
+        "(e.g., -1 for pink noise, -2 for red noise, -3 for brown noise, "
+        "-4 for violet noise, -5 for grey noise)"
+    )
 
     def generate(self, num_sensors: int) -> np.ndarray:
         """Generate a complex coloured noise array.
 
         Args:
-            num_sensors (int): The number of sensors in the array.
+            num_sensors: The number of sensors in the array.
 
         Returns:
-            np.ndarray: A complex array of coloured noise.
+            A complex array of coloured noise.
 
         """
         # 1. Generate the base white noise with a flat spectrum
