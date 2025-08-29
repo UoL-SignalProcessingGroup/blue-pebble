@@ -42,16 +42,22 @@ class AcousticPropagationModel(ABC, Base):
         This method is shared by all propagation models.
 
         """
+        source_position = source.state_vector[source.metadata["position_mapping"]]
+        array_position = platform.array.state_vector
+        array_ref_position = platform.array.ref_state_vector
+
         # Calculate distance from each sensor to the source
         distances = np.linalg.norm(
-            source.state_vector[[0, 2, 4]] - platform.array.state_vector, axis=0
+            source_position - array_position,
+            axis=0,
         )
+
         # Calculate distance from the reference sensor to the source
-        reference_distance = np.linalg.norm(
-            source.state_vector[[0, 2, 4]] - platform.array.ref_state_vector
-        )
+        reference_distance = np.linalg.norm(source_position - array_ref_position)
+
         # Calculate speed of sound at the depth of each sensor
-        speeds = self.ssp.calculate(platform.array.state_vector[2, :])
+        speeds = self.ssp.calculate(array_position[2, :])
+
         # Calculate time delays
         delays = (distances - reference_distance) / speeds
         return delays
@@ -95,10 +101,11 @@ class CylindricalAcousticPropagationModel(AcousticPropagationModel):
             - time (float): The direct path signal travel time in seconds.
 
         """
-        distance = np.linalg.norm(
-            source.state_vector[[0, 2, 4]] - platform.array.ref_state_vector
-        )
-        speed = self.ssp.calculate(platform.array.state_vector[2, :])
+        source_position = source.state_vector[source.metadata["position_mapping"]]
+        array_ref_position = platform.array.ref_state_vector
+
+        distance = np.linalg.norm(source_position - array_ref_position)
+        speed = self.ssp.calculate(array_ref_position[2])
         time = distance / speed
         tloss = 10 * np.log10(distance) + self.attenuation_factor * (distance / 1000)
         return tloss, time
@@ -142,10 +149,11 @@ class SphericalAcousticPropagationModel(AcousticPropagationModel):
             - time (float): The direct path signal travel time in seconds.
 
         """
-        distance = np.linalg.norm(
-            source.state_vector[[0, 2, 4]] - platform.array.ref_state_vector
-        )
-        speed = self.ssp.calculate(platform.array.ref_state_vector[2])
+        source_position = source.state_vector[source.metadata["position_mapping"]]
+        array_ref_position = platform.array.ref_state_vector
+
+        distance = np.linalg.norm(source_position - array_ref_position)
+        speed = self.ssp.calculate(array_ref_position[2])
         time = distance / speed
         tloss = 20 * np.log10(distance) + self.attenuation_factor * (distance / 1000)
         return tloss, time

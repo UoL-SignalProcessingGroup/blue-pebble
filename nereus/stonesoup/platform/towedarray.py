@@ -83,6 +83,8 @@ class TowedArrayPlatform(MovingPlatform):
                 - sensor_spacing_m: Spacing between sensors in meters
                 - array_depth_m: Depth at which the array is towed in meters
                 - velocity_mapping: Indices for velocity in the state vector
+                - linear_array: If True, use linear array initialization instead of
+                  cable dynamics
                 - states: Initial platform state
                 - position_mapping: Indices for position in the state vector
                 - transition_model: Transition model for platform movement

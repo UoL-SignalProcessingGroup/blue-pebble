@@ -59,6 +59,7 @@ class AcousticSignalModel:
         phase_reshaped = source.phase[np.newaxis, :, np.newaxis]
 
         # Calculate phase for all sensors, tonals, and samples at once
+        # Shape = (num_sensors, num_tonals, num_samples)
         phase = (
             2
             * np.pi
@@ -66,6 +67,8 @@ class AcousticSignalModel:
             * (time_reshaped - propagation_time - delays_reshaped)
             + phase_reshaped
         )
+
+        # print(sensor_delays[-1])
 
         # Create complex signal components for all tonals
         # received_amplitude: (num_tonals,) -> (1, num_tonals, 1)
@@ -75,10 +78,10 @@ class AcousticSignalModel:
         # Sum the tonal components along the tonal axis (axis=1)
         signal_array = np.sum(all_components, axis=1)
 
-        # Apply hardware imperfections if they exist
-        if platform.has_gain_phase_errors:
-            # Reshape imperfections for broadcasting: (num_sensors,) -> (num_sensors, 1)
-            signal_array *= platform.complex_imperfections[:, np.newaxis]
+        # # Apply hardware imperfections if they exist
+        # if platform.has_gain_phase_errors:
+        #     # Reshape imperfections for broadcasting: (num_sensors,) -> (num_sensors, 1)
+        #     signal_array *= platform.complex_imperfections[:, np.newaxis]
 
         return signal_array
 

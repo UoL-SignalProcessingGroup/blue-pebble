@@ -74,8 +74,8 @@ class StateVector(Matrix):
         if array.ndim == 1:
             # If it's a 1D array, reshape it to a column vector
             array = array[:, None]
-        elif array.ndim != 2 or array.shape[1] != 1:
-            raise ValueError("StateVector data must be a column vector (shape N, 1).")
+        # elif array.ndim != 2 or array.shape[1] != 1:
+        #     raise ValueError("StateVector data must be a column vector (shape N, 1).")
         return array.view(cls)
 
     def mean(self, axis=None, **kwargs):

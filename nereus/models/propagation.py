@@ -46,6 +46,7 @@ class AcousticPropagationModel(ABC):
         """
         # Calculate distance from each sensor to the source
         distances = np.linalg.norm(source.state_vector - platform.state_vector, axis=0)
+        print(platform.state_vector[:, -2])
         # Calculate distance from the origin sensor to the source
         origin_distance = np.linalg.norm(source.state_vector - platform.origin)
         # Calculate speed of sound at the depth of each sensor

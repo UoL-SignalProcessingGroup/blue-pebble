@@ -115,6 +115,8 @@ class PassiveSonarArraySimulator(SensorSimulator):
                 target_state, sensor_delays_s, tloss_db, prop_time_s
             )
 
+            # print(np.max(np.abs(target_signal)))
+
             sensor_signals += target_signal
 
         # Add environmental noise

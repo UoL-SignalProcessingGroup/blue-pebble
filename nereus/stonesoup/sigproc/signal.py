@@ -75,8 +75,8 @@ class AcousticSignalModel(SignalModel):
         freq_reshaped = frequencies_hz[np.newaxis, :, np.newaxis]
         phase_reshaped = phases_rad[np.newaxis, :, np.newaxis]
 
-        # Calculate the instantaneous phase for every sensor, for every tonal,
-        # at every point in time.
+        # Calculate the instantaneous phase
+        # Shape = (num_sensors, num_tonals, num_samples)
         total_phase = (
             2
             * np.pi
