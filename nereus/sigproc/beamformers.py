@@ -253,6 +253,7 @@ def calculate_steering_delays(
 
     """
     sensor_positions = sensor_array.state_vector
+
     # Center the array by subtracting the mean position of all sensors.
     # The mean is taken along axis 1, which corresponds to the sensors.
     sensor_positions = sensor_positions - sensor_positions.mean(axis=1, keepdims=True)

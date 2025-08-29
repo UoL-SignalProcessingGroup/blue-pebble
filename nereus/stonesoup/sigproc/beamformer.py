@@ -285,42 +285,15 @@ def _frequency_das(
 
 
 class SteeringCalculator(Base):
-    """Calculates the geometric time delays for steering a sensor array in 3D."""
+    """Computes time delays for beamforming with a horizontal sensor array."""
 
     ssp = Property(SoundSpeedProfile, doc="Sound speed profile for calculating delays")
     steering_azimuths_rad = Property(
-        np.ndarray, default=None, doc="Azimuth angles for steering, in radians"
+        np.ndarray, doc="Azimuth angles for steering, in radians"
     )
-    steering_elevations_rad = Property(
-        np.ndarray, default=None, doc="Elevation angles for steering, in radians"
-    )
-
-    def __init__(self, *args, **kwargs):
-        """Initialise the SteeringCalculator.
-
-        Args:
-            *args: Positional arguments to pass to the parent class.
-            **kwargs: Keyword arguments to pass to the parent class.
-                Specifically expects:
-                - ssp (SoundSpeedProfile): The sound speed profile to use for
-                  calculating delays.
-                - steering_azimuths_rad (np.ndarray, optional): The azimuth angles
-                  for steering, in radians.
-                - steering_elevations_rad (np.ndarray, optional): The elevation angles
-                  for steering, in radians.
-
-        """
-        super().__init__(*args, **kwargs)
-
-        # Ensure that at least one steering angle is provided
-        if self.steering_azimuths_rad is None and self.steering_elevations_rad is None:
-            raise ValueError(
-                "Must provide at least one of steering_azimuths_rad or "
-                "steering_elevations_rad"
-            )
 
     def calculate(self, platform: Platform) -> np.ndarray:
-        """Calculate steering delays for the current 3D array geometry.
+        """Calculate steering delays for the current horizontal array geometry.
 
         Args:
             platform (Platform): The platform containing the sensor array.
@@ -330,18 +303,6 @@ class SteeringCalculator(Base):
             steering direction, with shape (num_directions, num_sensors,).
 
         """
-        # Default to 0 for the angle that is not provided
-        azimuths = (
-            self.steering_azimuths_rad
-            if self.steering_azimuths_rad is not None
-            else np.zeros_like(self.steering_elevations_rad)
-        )
-        elevations = (
-            self.steering_elevations_rad
-            if self.steering_elevations_rad is not None
-            else np.zeros_like(azimuths)
-        )
-
         # Get sensor positions - these are 3D positions [x, y, z] for each sensor
         sensor_positions = platform.array.state_vector  # Shape: (3, num_sensors)
 
@@ -349,13 +310,13 @@ class SteeringCalculator(Base):
         reference_position = platform.array.ref_state_vector  # Shape: (3, 1)
         sensor_positions_relative = sensor_positions - reference_position
 
-        # Calculate the 3D direction vectors for each steering direction
-        # For 2D arrays (horizontal), elevation = 0, so we get unit vectors in x-y plane
+        # Calculate the 2D direction vectors for each steering direction
+        # Elevation = 0 for horizontal array, so only x-y components
         direction_vectors = np.array(
             [
-                np.cos(elevations) * np.cos(azimuths),  # x component
-                np.cos(elevations) * np.sin(azimuths),  # y component
-                np.sin(elevations),  # z component
+                np.cos(self.steering_azimuths_rad),  # x component
+                np.sin(self.steering_azimuths_rad),  # y component
+                np.zeros_like(self.steering_azimuths_rad),  # z component (always 0)
             ]
         )  # Shape: (3, num_directions)
 
@@ -365,7 +326,9 @@ class SteeringCalculator(Base):
             direction_vectors.T, sensor_positions_relative
         )  # Shape: (num_directions, num_sensors)
 
-        sound_speed = self.ssp.calculate(sensor_positions[2, :])
+        # Get average sound speed at array depth
+        array_depth = sensor_positions[2, 0]  # z-coordinate of first sensor
+        sound_speed = self.ssp.calculate(array_depth)
 
         # Convert distances to time delays
         # Negative sign because we want delays to ADD to make signals arrive in-phase

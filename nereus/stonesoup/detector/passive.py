@@ -28,10 +28,7 @@ class PassiveSonarDetector(DetectionReader):
     )
     steering_azimuths_rad = Property(
         np.ndarray,
-        default=None,
-        doc="Array of steering azimuth angles in radians. If not provided, "
-        "detection indices will be used as bearing values "
-        "(for backward compatibility).",
+        doc="Array of steering azimuth angles in radians.",
     )
 
     def __init__(self, *args, **kwargs):
@@ -94,12 +91,7 @@ class PassiveSonarDetector(DetectionReader):
                         detection_index = int(raw_det[0])
 
                         # Convert detection index to bearing angle in radians
-                        if self.steering_azimuths_rad is not None:
-                            # Use the actual steering azimuth angle
-                            bearing_rad = self.steering_azimuths_rad[detection_index]
-                        else:
-                            # Backward compatibility: use index as bearing value
-                            bearing_rad = detection_index
+                        bearing_rad = self.steering_azimuths_rad[detection_index]
 
                         detections.add(
                             Detection(
