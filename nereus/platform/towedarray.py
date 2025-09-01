@@ -15,7 +15,7 @@ from stonesoup.platform.base import MovingPlatform
 from stonesoup.types.array import StateVector, StateVectors
 from stonesoup.types.groundtruth import GroundTruthState
 
-from nereus.stonesoup.models.positioning import TowedArrayFollowerModel
+from nereus.models.positioning import TowedArrayFollowerModel
 
 
 @dataclass

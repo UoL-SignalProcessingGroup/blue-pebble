@@ -8,7 +8,7 @@ from stonesoup.buffered_generator import BufferedGenerator
 from stonesoup.reader.base import DetectionReader
 from stonesoup.types.detection import Detection
 
-from nereus.stonesoup.detector import DetectionAlgorithm
+from nereus.detector import DetectionAlgorithm
 
 
 class PassiveSonarDetector(DetectionReader):

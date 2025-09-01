@@ -4,11 +4,12 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "nereus"
-version = "0.1.0"
-description = "A Python framework for underwater acoustic tracking."
+version = "1.0.0"
+description = "A Stone Soup plugin for underwater acoustic tracking."
 readme = "README.md"
 authors = [
-    { name = "Joshua J Wakefield", email = "sgjwakef@liverpool.ac.uk" }
+    { name = "Joshua J Wakefield", email = "J.J.Wakefield@liverpool.ac.uk" },
+    { name = "Fin Boulton", email = "F.Boulton@liverpool.ac.uk" },
 ]
 license = { text = "MIT" }
 keywords = ["nereus", "state estimation", "tracking", "sonar", "underwater-acoustics"]
@@ -36,7 +37,7 @@ dependencies = [
 ]
 
 [project.urls]
-Repository = "https://github.com/jjwakefield/Nereus"
+Repository = "https://github.com/jjwakefield/nereus"
 
 [project.optional-dependencies]
 dev = [

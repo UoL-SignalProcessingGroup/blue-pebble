@@ -12,8 +12,8 @@ from pathlib import Path
 import numpy as np
 from stonesoup.base import Base, Property
 
-from nereus.stonesoup.models.environment import SoundSpeedProfile
-from nereus.stonesoup.utils import read_shade_file
+from nereus.models.environment import SoundSpeedProfile
+from nereus.utils import read_shade_file
 
 
 class AcousticPropagationModel(ABC, Base):

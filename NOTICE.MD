@@ -1,12 +1,12 @@
 # Attribution and Project Origin
 
-This project is a derivative work of the open-source framework [Stone Soup](https://stonesoup.rtfd.io/).
+This project is a plugin for the open-source framework [Stone Soup](https://stonesoup.rtfd.io/).
 
-The architecture, class structure, and significant portions of the source code in this repository were adapted or directly copied from the Stone Soup project for research and educational purposes.
+The architecture and class structure in this repository inherit from Stone Soup's existing implementations.
 
 ## Original License and Copyright
 
-As a derivative work, this project is bound by the terms of the original MIT License under which Stone Soup is distributed. The full, original copyright notice and the license text are included below.
+As an extension to the original work, this project is bound by the terms of the original MIT License under which Stone Soup is distributed. The full, original copyright notice and the license text are included below.
 
 ---
 
@@ -20,7 +20,6 @@ As a derivative work, this project is bound by the terms of the original MIT Lic
 **© Copyright 2020-2025 Riskaware Ltd**
 **© Copyright 2021-2025 Roke Manor Research Ltd UK**
 **© Copyright 2023-2025 Loughborough University UK**
-**© Copyright 2025 Joshua J. Wakefield**
 
 Permission is hereby granted, free of charge, to any person obtaining a copy
 of this software and associated documentation files (the "Software"), to deal

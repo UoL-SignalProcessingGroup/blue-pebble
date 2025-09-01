@@ -17,11 +17,10 @@ import seaborn as sns
 from matplotlib.animation import FuncAnimation
 from matplotlib.axes import Axes
 from matplotlib.patches import Ellipse, Patch
+from stonesoup.types.detection import Clutter, Detection, MissedDetection, TrueDetection
+from stonesoup.types.groundtruth import GroundTruthPath
+from stonesoup.types.track import Track
 from tqdm.auto import tqdm
-
-from nereus.types.angles import Bearing
-from nereus.types.detections import Clutter, Detection, MissedDetection, TrueDetection
-from nereus.types.states import GroundTruthPath, Track
 
 # A default style guide for all plot appearances
 DEFAULT_STYLE_GUIDE = {
@@ -67,7 +66,7 @@ DEFAULT_STYLE_GUIDE = {
             "markerfacecolor": "none",
             "markeredgewidth": 1,
             "color": "#9467bd",
-            "alpha": 0.7,
+            "alpha": 0.5,
             "linewidth": 0,
             "zorder": 6,
         },
@@ -76,7 +75,7 @@ DEFAULT_STYLE_GUIDE = {
             "markersize": 4,
             "color": "grey",
             "linewidth": 0,
-            "alpha": 0.6,
+            "alpha": 0.5,
             "zorder": 5,
         },
     },
@@ -906,7 +905,7 @@ class BearingsPlotter(BasePlotter):
 
         for truth_id, state in current_data["truths"].items():
             history["truths"][truth_id]["bearing"].append(
-                np.rad2deg(Bearing(state.state_vector[mapping[0], 0]))
+                np.rad2deg(state.state_vector[mapping[0], 0])
             )
             history["truths"][truth_id]["time"].append(state.timestamp)
             plot_objects["truths"][truth_id].set_data(
@@ -916,7 +915,7 @@ class BearingsPlotter(BasePlotter):
 
         for track_id, state in current_data["tracks"].items():
             history["tracks"][track_id]["bearing"].append(
-                np.rad2deg(Bearing(state.state_vector[mapping[0], 0]))
+                np.rad2deg(state.state_vector[mapping[0], 0])
             )
             history["tracks"][track_id]["time"].append(state.timestamp)
             std_dev = 0
@@ -956,7 +955,7 @@ class BearingsPlotter(BasePlotter):
             if track_id in current_data["particles"]:
                 part_state = current_data["particles"][track_id]
                 bearings, times = (
-                    np.rad2deg(Bearing(part_state.state_vector[mapping[0], :])),
+                    np.rad2deg(part_state.state_vector[mapping[0], :]),
                     [part_state.timestamp]
                     * len(part_state.state_vector[mapping[0], :]),
                 )
@@ -1003,7 +1002,7 @@ class BearingsPlotter(BasePlotter):
         if not new_detections:
             return
         history_entry["bearing"].extend(
-            [np.rad2deg(Bearing(d.state_vector[mapping[0], 0])) for d in new_detections]
+            [np.rad2deg(d.state_vector[mapping[0], 0]) for d in new_detections]
         )
         history_entry["time"].extend([d.timestamp for d in new_detections])
         plot_artist.set_data(history_entry["bearing"], history_entry["time"])

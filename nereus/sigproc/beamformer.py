@@ -11,7 +11,7 @@ from numba import njit, prange, types
 from stonesoup.base import Base, Property
 from stonesoup.platform.base import Platform
 
-from nereus.stonesoup.models.environment import SoundSpeedProfile
+from nereus.models.environment import SoundSpeedProfile
 
 
 class Beamformer(Base, ABC):
