@@ -71,6 +71,6 @@ Once you have the Bellhop executable (`bellhopcxx.exe` or `bellhopcxx`), you mus
     The best approach is to add the directory containing the executable to your system's PATH environment variable. This allows Nereus and other programs to find it automatically.
 
 * **Option B: Place in Project Directory**
-    Alternatively, you can copy the executable into the `nereus/models/bellhop/` directory of this project. Note that you will need to do this manually, and the file will not be tracked by Git.
+    Alternatively, you can copy the executable directly into the `nereus/models/propagation/` directory of this project. Note that you will need to do this manually, and the file will not be tracked by Git.
 
 The Bellhop model will now function correctly.
