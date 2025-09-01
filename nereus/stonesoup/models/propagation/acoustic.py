@@ -294,14 +294,16 @@ class BellhopAcousticPropagationModel(AcousticPropagationModel):
         # 1. Calculate All Required Values
         # ==================================
         title = "'env'"
+
+        source_position = source.state_vector[source.metadata["position_mapping"]]
+        array_ref_position = platform.array.ref_state_vector
+
         frequency = source.frequency[np.argmax(source.amplitude)]
-        max_range_m = np.linalg.norm(
-            source.state_vector[[0, 2, 4]] - platform.array.ref_state_vector
-        )
+        max_range_m = np.linalg.norm(source_position - array_ref_position)
 
         # Source and receiver depths
-        source_depth = np.abs(source.state_vector[4])
-        receiver_depth = np.abs(platform.array.ref_state_vector[2])
+        source_depth = np.abs(source_position[2])
+        receiver_depth = np.abs(array_ref_position[2])
 
         # Define bathymetry and check if a .bty file is needed
         bathy = [[0, self.env_depth]]  # Simple flat bottom
