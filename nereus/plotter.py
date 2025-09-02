@@ -1195,21 +1195,3 @@ class CartesianPlotter(BasePlotter):
                 plots["uncertainty"][track_id] = self.ax.add_patch(ellipse)
 
         return plots
-        return plots
-        return plots
-        return plots
-        return plots
-        return plots
-        return plots
-        return plots
-        return plots
-        return plots
-        return plots
-        return plots
-        return plots
-        return plots
-        return plots
-        return plots
-        return plots
-        return plots
-        return plots
