@@ -676,12 +676,18 @@ class BearingsPlotter(BasePlotter):
 
     coord_names = ["bearing", "time"]  # Define coordinate names for the base class
 
-    def __init__(self, style_guide: dict | None = None) -> None:
+    def __init__(
+        self,
+        style_guide: dict | None = None,
+        bearing_range_deg: tuple[float, float] = (0, 180),
+    ) -> None:
         """Initialise the plotter using a comprehensive style guide.
 
         Args:
             style_guide (dict | None): A dictionary to override the
-                default styles for this plotter.
+                default styles for this plotter. If None, the default styles are used.
+            bearing_range_deg (tuple[float, float]): The range of bearing angles to
+                plot.
 
         """
         # Define the default styles specific to a bearings plot
@@ -690,6 +696,7 @@ class BearingsPlotter(BasePlotter):
         }
 
         super().__init__(defaults=bearings_defaults, style_guide=style_guide)
+        self.bearing_range_deg = bearing_range_deg
 
     def plot_snr(
         self,
@@ -743,8 +750,8 @@ class BearingsPlotter(BasePlotter):
             aspect="auto",
             origin="lower",
             extent=[
-                0,
-                180,
+                self.bearing_range_deg[0],
+                self.bearing_range_deg[1],
                 mdates.date2num(timesteps[0]),
                 mdates.date2num(timesteps[-1]),
             ],
@@ -783,10 +790,12 @@ class BearingsPlotter(BasePlotter):
             legend_handles.append(scatter)
             legend_labels.append("Detection")
 
-        self.ax.set_xlim([0, 180])
+        self.ax.set_xlim(self.bearing_range_deg)
         self.ax.set_ylim([timesteps[0], timesteps[-1] + timedelta(seconds=10)])
         self.ax.invert_yaxis()
-        self.ax.set_xticks(np.arange(0, 181, 30))
+        self.ax.set_xticks(
+            np.arange(self.bearing_range_deg[0], self.bearing_range_deg[1] + 1, 30)
+        )
         self.ax.set_xlabel("Bearing (°)")
 
         time_span = (timesteps[-1] - timesteps[0]).total_seconds()
@@ -838,10 +847,12 @@ class BearingsPlotter(BasePlotter):
         if not timesteps:
             return
 
-        self.ax.set_xlim([0, 180])
+        self.ax.set_xlim(self.bearing_range_deg)
         self.ax.set_ylim([timesteps[0], timesteps[-1] + timedelta(seconds=10)])
         self.ax.invert_yaxis()
-        self.ax.set_xticks(np.arange(0, 181, 30))
+        self.ax.set_xticks(
+            np.arange(self.bearing_range_deg[0], self.bearing_range_deg[1] + 1, 30)
+        )
         self.ax.set_xlabel(self.style_guide["axes"]["x_label"])
 
         # Call the new utility function for time axis formatting
@@ -1183,6 +1194,20 @@ class CartesianPlotter(BasePlotter):
                 ellipse = Ellipse(xy=(0, 0), width=0, height=0, color=color, **style)
                 plots["uncertainty"][track_id] = self.ax.add_patch(ellipse)
 
+        return plots
+        return plots
+        return plots
+        return plots
+        return plots
+        return plots
+        return plots
+        return plots
+        return plots
+        return plots
+        return plots
+        return plots
+        return plots
+        return plots
         return plots
         return plots
         return plots
