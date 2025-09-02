@@ -1186,9 +1186,7 @@ class CartesianPlotter(BasePlotter):
             plots["uncertainty"] = {}
             for track_id, track_artist in plots["tracks"].items():
                 color = track_artist.get_color()
-                style = element_styles[
-                    "uncertainty_cartesian"
-                ].copy()  # Or "uncertainty"
+                style = element_styles["uncertainty"].copy()  # Or "uncertainty"
 
                 # Create an initial, invisible ellipse for each track
                 ellipse = Ellipse(xy=(0, 0), width=0, height=0, color=color, **style)
