@@ -17,6 +17,7 @@ import seaborn as sns
 from matplotlib.animation import FuncAnimation
 from matplotlib.axes import Axes
 from matplotlib.patches import Ellipse, Patch
+from stonesoup.platform.base import Platform
 from stonesoup.types.detection import Clutter, Detection, MissedDetection, TrueDetection
 from stonesoup.types.groundtruth import GroundTruthPath
 from stonesoup.types.track import Track
@@ -50,6 +51,7 @@ DEFAULT_STYLE_GUIDE = {
         "y_label": "Y",
     },
     "elements": {
+        "platform": {"linestyle": "-.", "linewidth": 2, "alpha": 0.8, "zorder": 4},
         "truth": {"linestyle": "--", "linewidth": 3, "alpha": 0.6, "zorder": 4},
         "track": {"linewidth": 3, "zorder": 3},
         "uncertainty": {"alpha": 0.2, "zorder": 1},
@@ -198,6 +200,7 @@ class BasePlotter(ABC):
         all_detections: list[set[Detection]],
         timesteps: list[datetime],
         mapping: list[int],
+        platforms: list[Platform] | None = None,
         ax: Axes | None = None,
         **kwargs: Any,
     ) -> Axes:
@@ -213,6 +216,7 @@ class BasePlotter(ABC):
             timesteps (list[datetime]): A list of timestamps for the x-axis.
             mapping (list[int]): Mapping used by some subclasses to access
                 specific components of the state vector.
+            platforms (list[Platform] | None): A list of platform objects.
             ax (Axes | None): An existing matplotlib Axes object to plot on.
                 If None, a new figure and axes are created.
             **kwargs (Any): Additional keyword arguments passed to helper methods.
@@ -222,7 +226,7 @@ class BasePlotter(ABC):
 
         """
         data, plot_objects = self._setup_plot(
-            truths, tracks, all_detections, timesteps, mapping, ax, **kwargs
+            truths, tracks, all_detections, timesteps, mapping, platforms, ax, **kwargs
         )
 
         for t in timesteps:
@@ -238,6 +242,7 @@ class BasePlotter(ABC):
         all_detections: list[set[Detection]],
         timesteps: list[datetime],
         mapping: list[int],
+        platforms: list[Platform] | None = None,
         **kwargs: Any,
     ) -> tuple[Axes, FuncAnimation]:
         """Generate an animation of the tracking process over time.
@@ -251,6 +256,7 @@ class BasePlotter(ABC):
             all_detections (List[Set[Detection]]): A list of detection sets.
             timesteps (List[datetime]): A list of timestamps for each frame.
             mapping (List[int], optional): Mapping used by some subclasses.
+            platforms (List[Platform], optional): A list of platform objects.
             **kwargs (Any): Additional keyword arguments passed to helper methods.
 
         Returns:
@@ -260,7 +266,14 @@ class BasePlotter(ABC):
         """
         self.num_timesteps = len(timesteps)
         data, plot_objects = self._setup_plot(
-            truths, tracks, all_detections, timesteps, mapping, None, **kwargs
+            truths,
+            tracks,
+            all_detections,
+            timesteps,
+            mapping,
+            platforms,
+            None,
+            **kwargs,
         )
         self.fig.tight_layout()
 
@@ -361,6 +374,7 @@ class BasePlotter(ABC):
         all_detections: list[Detection],
         timesteps: list[datetime],
         mapping: dict,
+        platforms: list[Platform] | None,
         ax: Axes,
         **kwargs: Any,
     ) -> tuple[dict, dict]:
@@ -373,6 +387,7 @@ class BasePlotter(ABC):
                 timestep.
             timesteps (list[datetime]): A list of timestamps for the x-axis.
             mapping (dict): Mapping used by some subclasses.
+            platforms (list[Platform] | None): A list of platform objects.
             ax (Axes): An existing matplotlib Axes object to plot on.
             **kwargs: Additional keyword arguments for customisation.
 
@@ -399,7 +414,7 @@ class BasePlotter(ABC):
             )
 
         data, plot_kwargs = self._prepare_data(
-            truths, tracks, all_detections, timesteps, mapping, **kwargs
+            truths, tracks, all_detections, timesteps, mapping, platforms, **kwargs
         )
 
         self._configure_axes(data, timesteps)
@@ -437,6 +452,14 @@ class BasePlotter(ABC):
         """
         handles = []
         element_styles = self.style_guide["elements"]
+
+        if data["history"]["platforms"]:
+            style = {
+                k: v
+                for k, v in element_styles["platform"].items()
+                if k not in ["alpha", "zorder"]
+            }
+            handles.append(plt.Line2D([0], [0], color="k", label="Platform", **style))
 
         if data["history"]["truths"]:
             # Create a representative line for the legend from the style guide
@@ -538,6 +561,7 @@ class BasePlotter(ABC):
         all_detections: list[set[Detection]],
         timesteps: list[datetime],
         mapping: list | tuple,
+        platforms: list[Platform] | None = None,
         **kwargs,
     ) -> tuple[dict, dict]:
         """Structure input data for plotting.
@@ -552,6 +576,7 @@ class BasePlotter(ABC):
                 one for each timestep.
             timesteps (list[datetime]): A list of timestamps for the x-axis.
             mapping (list | tuple, optional): Mapping used by some subclasses.
+            platforms (list[Platform] | None, optional): A list of platform objects.
             **kwargs: Additional keyword arguments for customisation.
 
         Returns:
@@ -584,6 +609,7 @@ class BasePlotter(ABC):
                 "particles": {},
                 "measurements": [],
                 "clutter": [],
+                "platforms": {},
             }
             for t in timesteps
         }
@@ -601,6 +627,11 @@ class BasePlotter(ABC):
                         data[state.timestamp]["uncertainty"][track.id] = state
                     if plot_kwargs["plot_particles"] and hasattr(state, "state_vector"):
                         data[state.timestamp]["particles"][track.id] = state
+        if platforms:
+            for i, platform in enumerate(platforms):
+                for state in platform.states:
+                    if state.timestamp in data:
+                        data[state.timestamp]["platforms"][f"platform_{i}"] = state
         for det_set in all_detections:
             for det in det_set:
                 if isinstance(det, MissedDetection):
@@ -622,6 +653,10 @@ class BasePlotter(ABC):
             "tracks": {t.id: {coord1: [], coord2: [], "std_dev": []} for t in tracks},
             "measurements": {coord1: [], coord2: []},
             "clutter": {coord1: [], coord2: []},
+            "platforms": {
+                f"platform_{i}": {coord1: [], coord2: []}
+                for i in range(len(platforms or []))
+            },
         }
 
         return data, plot_kwargs
@@ -635,11 +670,18 @@ class BasePlotter(ABC):
 
         Returns:
             dict: A dictionary of plot objects, keyed by their type (e.g., "truths",
-            "tracks", "measurements", "clutter").
+            "tracks", "measurements", "clutter", "platforms").
 
         """
-        plots = {"truths": {}, "tracks": {}}
+        plots = {"truths": {}, "tracks": {}, "platforms": {}}
         element_styles = self.style_guide["elements"]
+
+        # Platforms
+        for platform_id in data["history"]["platforms"]:
+            style = element_styles["platform"].copy()
+            (plots["platforms"][platform_id],) = self.ax.plot(
+                [], [], color=self.get_color(), **style
+            )
 
         # Truths
         for truth_id in data["history"]["truths"]:
@@ -676,12 +718,18 @@ class BearingsPlotter(BasePlotter):
 
     coord_names = ["bearing", "time"]  # Define coordinate names for the base class
 
-    def __init__(self, style_guide: dict | None = None) -> None:
+    def __init__(
+        self,
+        style_guide: dict | None = None,
+        bearing_range_deg: tuple[float, float] = (0, 180),
+    ) -> None:
         """Initialise the plotter using a comprehensive style guide.
 
         Args:
             style_guide (dict | None): A dictionary to override the
-                default styles for this plotter.
+                default styles for this plotter. If None, the default styles are used.
+            bearing_range_deg (tuple[float, float]): The range of bearing angles to
+                plot.
 
         """
         # Define the default styles specific to a bearings plot
@@ -690,6 +738,7 @@ class BearingsPlotter(BasePlotter):
         }
 
         super().__init__(defaults=bearings_defaults, style_guide=style_guide)
+        self.bearing_range_deg = bearing_range_deg
 
     def plot_snr(
         self,
@@ -743,8 +792,8 @@ class BearingsPlotter(BasePlotter):
             aspect="auto",
             origin="lower",
             extent=[
-                0,
-                180,
+                self.bearing_range_deg[0],
+                self.bearing_range_deg[1],
                 mdates.date2num(timesteps[0]),
                 mdates.date2num(timesteps[-1]),
             ],
@@ -783,10 +832,12 @@ class BearingsPlotter(BasePlotter):
             legend_handles.append(scatter)
             legend_labels.append("Detection")
 
-        self.ax.set_xlim([0, 180])
+        self.ax.set_xlim(self.bearing_range_deg)
         self.ax.set_ylim([timesteps[0], timesteps[-1] + timedelta(seconds=10)])
         self.ax.invert_yaxis()
-        self.ax.set_xticks(np.arange(0, 181, 30))
+        self.ax.set_xticks(
+            np.arange(self.bearing_range_deg[0], self.bearing_range_deg[1] + 1, 30)
+        )
         self.ax.set_xlabel("Bearing (°)")
 
         time_span = (timesteps[-1] - timesteps[0]).total_seconds()
@@ -838,10 +889,12 @@ class BearingsPlotter(BasePlotter):
         if not timesteps:
             return
 
-        self.ax.set_xlim([0, 180])
+        self.ax.set_xlim(self.bearing_range_deg)
         self.ax.set_ylim([timesteps[0], timesteps[-1] + timedelta(seconds=10)])
         self.ax.invert_yaxis()
-        self.ax.set_xticks(np.arange(0, 181, 30))
+        self.ax.set_xticks(
+            np.arange(self.bearing_range_deg[0], self.bearing_range_deg[1] + 1, 30)
+        )
         self.ax.set_xlabel(self.style_guide["axes"]["x_label"])
 
         # Call the new utility function for time axis formatting
@@ -1059,6 +1112,9 @@ class CartesianPlotter(BasePlotter):
         """
         all_x, all_y = [], []
         for t in timesteps:
+            for state in data[t]["platforms"].values():
+                all_x.append(state.state_vector[0, 0])
+                all_y.append(state.state_vector[2, 0])
             for state in data[t]["truths"].values():
                 all_x.append(state.state_vector[0, 0])
                 all_y.append(state.state_vector[2, 0])
@@ -1102,6 +1158,18 @@ class CartesianPlotter(BasePlotter):
         """
         current_data = data[timestep]
         history = data["history"]
+
+        for platform_id, state in current_data["platforms"].items():
+            history["platforms"][platform_id]["x"].append(
+                state.state_vector[mapping[0], 0]
+            )
+            history["platforms"][platform_id]["y"].append(
+                state.state_vector[mapping[1], 0]
+            )
+            plot_objects["platforms"][platform_id].set_data(
+                history["platforms"][platform_id]["x"],
+                history["platforms"][platform_id]["y"],
+            )
 
         for truth_id, state in current_data["truths"].items():
             history["truths"][truth_id]["x"].append(state.state_vector[mapping[0], 0])
@@ -1175,14 +1243,17 @@ class CartesianPlotter(BasePlotter):
             plots["uncertainty"] = {}
             for track_id, track_artist in plots["tracks"].items():
                 color = track_artist.get_color()
-                style = element_styles[
-                    "uncertainty_cartesian"
-                ].copy()  # Or "uncertainty"
+                style = element_styles["uncertainty"].copy()  # Or "uncertainty"
 
                 # Create an initial, invisible ellipse for each track
                 ellipse = Ellipse(xy=(0, 0), width=0, height=0, color=color, **style)
                 plots["uncertainty"][track_id] = self.ax.add_patch(ellipse)
 
+        return plots
+        return plots
+        return plots
+        return plots
+        return plots
         return plots
         return plots
         return plots
