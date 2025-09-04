@@ -8,6 +8,7 @@ import subprocess
 import tempfile
 from abc import ABC, abstractmethod
 from pathlib import Path
+from shutil import which
 
 import numpy as np
 from stonesoup.base import Base, Property
@@ -169,24 +170,29 @@ class BellhopAcousticPropagationModel(AcousticPropagationModel):
     Attributes:
         env_depth (float): The depth of the environment in meters.
         ssp (SoundSpeedProfile): An instance of a sound speed profile.
-        exe_path (str | Path): The path to the Bellhop executable.
+        exe_path (str | Path): The path to the Bellhop executable. Defaults to
+            'bellhopcxx', assuming it's in the system's PATH.
         sound_speed_profile (np.ndarray): A two-column array of [depth, sound_speed].
 
     """
 
     env_depth = Property(float, doc="The depth of the environment in meters")
-    exe_path = Property(str, doc="The path to the Bellhop executable")
+    exe_path = Property(
+        str,
+        default="bellhopcxx",
+        doc="The path to Bellhop executable, defaults to 'bellhopcxx'",
+    )
 
     def __post_init__(self):
-        """Initialize the Bellhop acoustic propagation model."""
-        exe_path_obj = Path(self.exe_path)
-        if not exe_path_obj.is_file():
-            raise FileNotFoundError(f"Bellhop executable not found at: {self.exe_path}")
-        self.exe_path = exe_path_obj
-
-        depth = np.arange(0, self.env_depth + 1, 100)
-        sound_speed = self.ssp.calculate(depth)
-        self.sound_speed_profile = np.column_stack((depth, sound_speed))
+        """Initialise the Bellhop acoustic propagation model."""
+        bellhop_path = which(self.exe_path)
+        if bellhop_path is None:
+            raise FileNotFoundError(
+                f"Bellhop executable '{self.exe_path}' not found. "
+                "Ensure it is installed and in your system's PATH, "
+                "or provide the full path via the 'exe_path' property."
+            )
+        self.exe_path = bellhop_path
 
     def propagate(self, platform, source):
         """Run a Bellhop simulation for a single source and receiver.
@@ -264,8 +270,6 @@ class BellhopAcousticPropagationModel(AcousticPropagationModel):
         nbeams=0,
         beam_angles=None,
     ):
-        if beam_angles is None:
-            beam_angles = [-89.0, 89.0]
         """Create the Bellhop environment file (.env) from a template.
 
         This private method gathers all necessary simulation parameters,
@@ -291,14 +295,23 @@ class BellhopAcousticPropagationModel(AcousticPropagationModel):
                 compatibility.
 
         """
+        if beam_angles is None:
+            beam_angles = [-89.0, 89.0]
+
         # 1. Calculate All Required Values
         # ==================================
         title = "'env'"
 
+        depth = np.arange(0, self.env_depth + 1, 100)
+        sound_speed = self.ssp.calculate(depth)
+        ssp = np.column_stack((depth, sound_speed))
+
         source_position = source.state_vector[source.metadata["position_mapping"]]
         array_ref_position = platform.array.ref_state_vector
 
-        frequency = source.frequency[np.argmax(source.amplitude)]
+        frequency = source.metadata["frequencies_hz"][
+            np.argmax(source.metadata["amplitudes_upa"])
+        ]
         max_range_m = np.linalg.norm(source_position - array_ref_position)
 
         # Source and receiver depths
@@ -312,13 +325,8 @@ class BellhopAcousticPropagationModel(AcousticPropagationModel):
             self._write_bathy_file(bathy, "env", output_dir)
 
         # Prepare Sound Speed Profile (SSP) string
-        ssp_header = (
-            f"{self.sound_speed_profile[0, 0]:.1f} "
-            f"{self.sound_speed_profile[0, 1]:.1f}  /\n"
-        )
-        ssp_body = "\n".join(
-            [f"{z:.1f} {c:.1f}  /" for z, c in self.sound_speed_profile[1:]]
-        )
+        ssp_header = f"{ssp[0, 0]:.1f} {ssp[0, 1]:.1f}  /\n"
+        ssp_body = "\n".join([f"{z:.1f} {c:.1f}  /" for z, c in ssp[1:]])
         ssp_string = ssp_header + ssp_body
 
         # Bottom half-space properties
