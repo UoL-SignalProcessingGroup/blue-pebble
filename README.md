@@ -12,11 +12,41 @@ At its core, the framework features a multi-body kinematic model of a flexible t
 - Beamforming
 - Detection algorithms
 
-## Installation
+## Getting Started (Recommended Method: Dev Container)
+
+The easiest way to get started is by using the included Dev Container, which sets up a complete, pre-configured development environment with all dependencies, including the Bellhop acoustic model.
+
+### Prerequisites
+
+1.  **Docker Desktop**: Install it from the [official Docker website](https://www.docker.com/products/docker-desktop/).
+2.  **Visual Studio Code**: Install it from the [official VS Code website](https://code.visualstudio.com/).
+3.  **VS Code Dev Containers Extension**: Install this from the [VS Code Marketplace](https://marketplace.visualstudio.com/items?itemName=ms-vscode-remote.remote-containers).
+
+### Launching the Environment
 
 1.  **Clone the Repository**:
     ```bash
-    git clone [https://github.com/jjwakefield/nereus.git](https://github.com/jjwakefield/nereus.git)
+    git clone https://github.com/jjwakefield/nereus.git
+    cd nereus
+    ```
+2.  **Open in VS Code**:
+    ```bash
+    code .
+    ```
+3.  **Reopen in Container**:
+    A pop-up will appear in the bottom-right corner asking to "Reopen in Container". Click it.
+
+That's it! VS Code will build the container and connect to it. Your environment is now ready with all dependencies, including the compiled Bellhop executable.
+
+---
+
+## Manual Installation (Alternative Method)
+
+If you prefer not to use Docker, you can set up the project manually by following these steps.
+
+1.  **Clone the Repository**:
+    ```bash
+    git clone https://github.com/jjwakefield/nereus.git
     cd nereus
     ```
 
@@ -32,11 +62,9 @@ At its core, the framework features a multi-body kinematic model of a flexible t
     pip install -e .
     ```
 
-## Dependencies
+### Bellhop Acoustic Model Dependency
 
-### Bellhop Acoustic Model
-
-This project uses the **Bellhop** acoustic ray tracing model for underwater propagation modeling. To use this functionality, you must install a compatible version of Bellhop yourself, as the executable is not distributed with this project due to licensing requirements.
+This project uses the **Bellhop** acoustic ray tracing model. If you are installing manually, you must install a compatible version of Bellhop yourself, as the executable is not distributed with this project.
 
 We recommend using the **bellhopcxx / bellhopcuda** project, which is a modern, multithreaded C++/CUDA port of the original Bellhop.
 
@@ -56,7 +84,7 @@ If you are not on Windows or want to build the latest version from source, follo
 
 1.  **Clone the Repository:**
     ```bash
-    git clone [https://github.com/A-New-BellHope/bellhopcuda.git](https://github.com/A-New-BellHope/bellhopcuda.git)
+    git clone https://github.com/A-New-BellHope/bellhopcuda.git
     ```
 2.  **Follow Build Instructions:**
     Navigate into the cloned directory and follow the build instructions provided in their `README.md`.
@@ -73,4 +101,4 @@ Once you have the Bellhop executable (`bellhopcxx.exe` or `bellhopcxx`), you mus
 * **Option B: Place in Project Directory**
     Alternatively, you can copy the executable directly into the `nereus/models/propagation/` directory of this project. Note that you will need to do this manually, and the file will not be tracked by Git.
 
-The Bellhop model will now function correctly.
+The Bellhop model will now
