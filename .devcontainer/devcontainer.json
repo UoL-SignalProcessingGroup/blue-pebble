@@ -31,7 +31,8 @@
             "extensions": [
                 "ms-python.python",
                 "ms-toolsai.jupyter",
-                "charliermarsh.ruff"
+                "charliermarsh.ruff",
+                "ritwickdey.live"
             ]
         }
     },
