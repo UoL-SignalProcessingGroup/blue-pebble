@@ -17,8 +17,10 @@ from nereus.sigproc.signal import AcousticSignalModel, NoiseModel
 class PassiveSonarSensorData(SensorData):
     """Custom sensor data for passive sonar arrays.
 
-    Contains acoustic sensor array data including raw signals,
-    beamformed data, and associated metadata.
+    This class extends Stone Soup's ``SensorData`` to include data specific
+    to passive sonar simulation. It holds the raw time-series signals from
+    each sensor, the final beamformed power map, and the timestamp of the
+    data snapshot.
     """
 
     raw_signals = Property(np.ndarray, doc="Raw acoustic signals from sensor array")
@@ -31,6 +33,18 @@ class PassiveSonarArraySimulator(SensorSimulator):
 
     Simulates acoustic sensor data by generating signals from targets,
     applying propagation effects, adding noise, and performing beamforming.
+    This simulator orchestrates various models (propagation, signal, noise)
+    and a beamformer to produce realistic ``PassiveSonarSensorData``.
+
+    Attributes:
+        platform (TowedArrayPlatform): The towed array platform providing geometry.
+        propagation_model (AcousticPropagationModel): Model for acoustic propagation.
+        signal_model (AcousticSignalModel): Model for generating target signals.
+        noise_model (NoiseModel): Model for generating ambient noise.
+        beamformer (Beamformer): The beamforming algorithm to apply.
+        steering_calculator (SteeringCalculator): Calculator for steering delays.
+        ground_truth_paths (list): A list of ``GroundTruthPath`` objects representing
+            targets.
     """
 
     platform = Property(TowedArrayPlatform, doc="Towed array platform")
@@ -46,10 +60,15 @@ class PassiveSonarArraySimulator(SensorSimulator):
     )
 
     def sensor_data_gen(self) -> Iterator[tuple[datetime, set[SensorData]]]:
-        """Generate sensor data over time.
+        """Generate sensor data for each timestamp in the platform's trajectory.
+
+        This generator iterates through all unique timestamps defined in the
+        platform's movement controller, yielding a set of sensor data for each
+        point in time.
 
         Yields:
-            tuple: (timestamp, set of sensor data) for each time step
+            tuple: A tuple containing the timestamp and a set of
+            ``PassiveSonarSensorData`` objects for that timestamp.
 
         """
         all_timestamps = sorted(
@@ -68,14 +87,19 @@ class PassiveSonarArraySimulator(SensorSimulator):
             yield timestamp, sensor_data_set
 
     def _generate_sensor_data_at(self, timestamp) -> PassiveSonarSensorData | None:
-        """Generate sensor data at a specific timestamp.
+        """Generate a single snapshot of sensor data at a specific timestamp.
+
+        This method performs the core simulation steps for a single moment in
+        time. It generates signals for all active targets, sums them, adds
+        ambient noise, and then processes the result through a beamformer.
 
         Args:
-            timestamp: The timestamp to generate data for
+            timestamp (datetime): The timestamp for which to generate data.
 
         Returns:
-            PassiveSonarSensorData: Sensor data containing beamformed signals
-                                    and metadata, or None if no platform state
+            PassiveSonarSensorData | None: A data object containing the raw
+            signals and beamformed output, or ``None`` if no platform state
+            exists at the specified timestamp.
 
         """
         platform = self.platform.get_platform_state_at(timestamp)

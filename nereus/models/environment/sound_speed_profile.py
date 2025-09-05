@@ -57,7 +57,16 @@ class SoundSpeedProfile(ABC, Base):
 
 
 class Munk(SoundSpeedProfile):
-    """Munk sound speed profile model."""
+    """Munk sound speed profile model.
+
+    This model describes the sound speed profile using an analytical equation
+    proposed by Walter Munk. It is characterized by a deep sound channel axis
+    and is widely used in ocean acoustics.
+
+    Attributes:
+        surface_speed (float): The speed of sound at the surface in m/s.
+            Defaults to 1500.0 m/s.
+    """
 
     surface_speed: float = Property(
         default=1500.0, doc="Speed of sound at the surface in m/s"
@@ -83,7 +92,13 @@ class Munk(SoundSpeedProfile):
 
 
 class Mackenzie(SoundSpeedProfile):
-    """Mackenzie sound speed profile model."""
+    """Mackenzie sound speed profile model.
+
+    This model calculates the sound speed using the nine-term Mackenzie
+    equation, which is an empirical formula based on temperature, salinity,
+    and depth. This implementation uses internal models for temperature and
+    salinity as a function of depth.
+    """
 
     def calculate(self, depth: float) -> float:
         """Calculate sound speed using the Mackenzie nine-term equation.

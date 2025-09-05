@@ -19,15 +19,16 @@ class Beamformer(Base, ABC):
 
     @abstractmethod
     def beamform(
-        self, sensor_signals: np.ndarray, steering_delays: np.ndarray
+        self, sensor_signals: np.ndarray, steering_delays_s: np.ndarray
     ) -> np.ndarray:
         """Process sensor signals to form beams in specified directions.
 
         Args:
             sensor_signals (np.ndarray): An array of sensor signals with shape
                 (num_sensors, num_samples).
-            steering_delays (np.ndarray): An array of time delays for each
-                sensor and steering direction, with shape (num_directions, num_sensors).
+            steering_delays_s (np.ndarray): An array of time delays in seconds
+                for each sensor and steering direction, with shape
+                (num_directions, num_sensors).
 
         Returns:
             np.ndarray: An array of beamformed signals with shape
@@ -255,6 +256,10 @@ def _frequency_das(
         sampling_rate_hz (float): The sampling frequency of the sensor
             signals, in Hz.
 
+    Returns:
+        np.ndarray: An array of beamformed signals with shape
+            (num_directions, num_samples).
+
     """
     num_directions, num_sensors = steering_delays_s.shape
     num_samples = sensor_signals.shape[1]
@@ -295,12 +300,16 @@ class SteeringCalculator(Base):
     def calculate(self, platform: Platform) -> np.ndarray:
         """Calculate steering delays for the current horizontal array geometry.
 
+        This method assumes the platform has an `array` attribute which is an
+        object with `state_vector` and `ref_state_vector` attributes, such as
+        the one configured by `TowedArrayPlatform`.
+
         Args:
             platform (Platform): The platform containing the sensor array.
 
         Returns:
             np.ndarray: An array of steering delays for each sensor relative to the
-            steering direction, with shape (num_directions, num_sensors,).
+            steering direction, with shape (num_directions, num_sensors).
 
         """
         # Get sensor positions - these are 3D positions [x, y, z] for each sensor

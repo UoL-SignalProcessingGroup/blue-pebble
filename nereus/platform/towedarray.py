@@ -54,6 +54,12 @@ class TowedArrayPlatform(MovingPlatform):
     including movement capabilities, sensor management, and state tracking.
 
     Attributes:
+        num_sensors (int): Number of sensors in the array.
+        cable_length_m (float): Length of the main tow cable in meters.
+        sensor_spacing_m (float): Spacing between sensors in meters.
+        array_depth_m (float): Depth at which the array is towed in meters.
+        velocity_mapping (Sequence[int]): Indices for velocity in the state vector.
+        reference_sensor_idx (int): Index of the reference sensor.
         towed_sensors (list[MovingMovable]): A list of follower platforms
             representing the towed sensor array (separate from platform-mounted
             sensors).
@@ -76,19 +82,11 @@ class TowedArrayPlatform(MovingPlatform):
         """Initialise the TowedArrayPlatform.
 
         Args:
-            *args: Positional arguments passed to MovingPlatform
-            **kwargs: Arguments including:
-                - num_sensors: Number of sensors in the array
-                - cable_length_m: Length of the main tow cable in meters
-                - sensor_spacing_m: Spacing between sensors in meters
-                - array_depth_m: Depth at which the array is towed in meters
-                - velocity_mapping: Indices for velocity in the state vector
-                - linear_array: If True, use linear array initialization instead of
-                  cable dynamics
-                - states: Initial platform state
-                - position_mapping: Indices for position in the state vector
-                - transition_model: Transition model for platform movement
-                - Other MovingPlatform arguments
+            *args: Positional arguments passed to MovingPlatform.
+            **kwargs: Keyword arguments passed to MovingPlatform, including properties
+                like `num_sensors`, `cable_length_m`, `sensor_spacing_m`,
+                `array_depth_m`, `states`, `position_mapping`, and
+                `transition_model`.
 
         """
         super().__init__(*args, **kwargs)
@@ -106,7 +104,16 @@ class TowedArrayPlatform(MovingPlatform):
             self._capture_platform_state(self.states[0].timestamp)
 
     def _initialise_sensor_array(self):
-        """Initialise the towed sensor array."""
+        """Initialise the towed sensor array's geometry and follower models.
+
+        This method sets up the initial positions of all sensors in the towed
+        array. It calculates a backwards heading from the host vehicle's
+        initial velocity. It then iteratively creates each sensor as a
+        `MovingMovable` with a `TowedArrayFollowerModel`, forming a
+        leader-follower chain where each sensor follows the one ahead of it.
+        The initial positions are calculated based on cable geometry, accounting
+        for the depth difference between nodes.
+        """
         # Get the host platform's initial state and position
         try:
             host_state = self.states[0]

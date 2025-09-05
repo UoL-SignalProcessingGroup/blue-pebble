@@ -4,7 +4,7 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "nereus"
-version = "2.2.0"
+version = "2.3.0"
 description = "A Stone Soup plugin for underwater acoustic tracking."
 readme = "README.md"
 authors = [
@@ -40,6 +40,12 @@ Repository = "https://github.com/jjwakefield/nereus"
 dev = [
     "ruff",
     "pytest",
+]
+docs = [
+    "sphinx",
+    "sphinx-rtd-theme",
+    "myst-parser",
+    "myst-nb"
 ]
 examples = [
     "ipykernel",
