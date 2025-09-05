@@ -4,7 +4,7 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "nereus"
-version = "2.2.1"
+version = "2.3.0"
 description = "A Stone Soup plugin for underwater acoustic tracking."
 readme = "README.md"
 authors = [
