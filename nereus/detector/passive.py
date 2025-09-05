@@ -14,9 +14,22 @@ from nereus.detector import DetectionAlgorithm
 class PassiveSonarDetector(DetectionReader):
     """A passive sonar detector that processes beamformed sensor data.
 
-    This detector takes PassiveSonarSensorData as input, extracts the
-    beamformed power map, and runs a chain of detection algorithms to
-    find targets.
+    This detector takes ``PassiveSonarSensorData`` as input, extracts the
+    beamformed power map, calculates the Signal-to-Noise Ratio (SNR) for each
+    beam, and then runs a chain of detection algorithms to find targets.
+
+    The SNR is calculated by estimating noise power as the minimum power
+    observed across all beams and assuming the remaining power is signal.
+    Detections are generated with bearing information derived from the steering
+    azimuths.
+
+    Attributes:
+        detection_chain (list[DetectionAlgorithm]): A list of detection
+            algorithms to apply sequentially to the SNR map.
+        sensor_data_gen (Generator): A generator that yields
+            ``PassiveSonarSensorData`` objects.
+        steering_azimuths_rad (np.ndarray): An array of steering azimuth
+            angles in radians, corresponding to the beams.
     """
 
     detection_chain = Property(
@@ -52,8 +65,13 @@ class PassiveSonarDetector(DetectionReader):
     def detections_gen(self):
         """Generate detections from sensor data.
 
+        This generator iterates through the `sensor_data_gen`, processes each
+        `PassiveSonarSensorData` object to calculate an SNR map, and applies
+        the `detection_chain` to identify detections.
+
         Yields:
-            tuple: (timestamp, set of Detection objects)
+            tuple: A tuple containing the timestamp and a set of `Detection`
+            objects for that timestamp.
 
         """
         for timestamp, sensor_data_set in self.sensor_data_gen:
@@ -107,7 +125,22 @@ class PassiveSonarDetector(DetectionReader):
             yield timestamp, detections
 
     def _run_detection_chain(self, initial_snr_map: np.ndarray) -> np.ndarray:
-        """Process a data map through a sequential chain of detection algorithms."""
+        """Process a data map through a sequential chain of detection algorithms.
+
+        This method applies each algorithm in the `detection_chain` in order.
+        The output of one algorithm becomes the input for the next. The input
+        to subsequent algorithms is a sparse map containing only the values of
+        the detections from the previous stage.
+
+        Args:
+            initial_snr_map (np.ndarray): The initial 1D data map (e.g., SNR)
+                to be processed.
+
+        Returns:
+            np.ndarray: A 2D array of final detections, where each row is
+            [index, value]. Returns an empty array if no detections are found
+            at any stage.
+        """
         if not self.detection_chain:
             return np.empty((0, 2))
 

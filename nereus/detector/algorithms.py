@@ -105,6 +105,8 @@ class CFARDetector(DetectionAlgorithm):
             estimation on each side of the guard cells.
         threshold_factor (float): A scaling factor (alpha) used to set the
             detection threshold above the estimated noise floor.
+        mode (str): The convolution mode for boundary handling. Can be
+            'valid', 'same', or 'wrap'. Defaults to 'valid'.
 
     """
 
@@ -133,9 +135,9 @@ class CFARDetector(DetectionAlgorithm):
     def detect(self: Self, data: np.ndarray) -> np.ndarray:
         """Detect signals in the data array using the CFAR algorithm.
 
-        Note: This method assumes the input data is in decibels (dB) and
-        converts it to linear power for processing, as CFAR averaging is
-        performed on power, not dB values.
+        This method applies the Cell-Averaging CFAR (CA-CFAR) algorithm. It
+        assumes the input data is in decibels (dB) and converts it to linear
+        power for processing, as the averaging is performed on power values.
 
         Args:
             data (np.ndarray): A 1D NumPy array of signal data (e.g., SNR) in

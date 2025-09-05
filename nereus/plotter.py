@@ -251,16 +251,17 @@ class BasePlotter(ABC):
         showing the evolution of the tracking scenario over time.
 
         Args:
-            truths (List[GroundTruthPath]): A list of ground truth paths.
-            tracks (List[Track]): A list of track objects.
-            all_detections (List[Set[Detection]]): A list of detection sets.
-            timesteps (List[datetime]): A list of timestamps for each frame.
-            mapping (List[int], optional): Mapping used by some subclasses.
-            platforms (List[Platform], optional): A list of platform objects.
+            truths (list[GroundTruthPath]): A list of ground truth paths.
+            tracks (list[Track]): A list of track objects.
+            all_detections (list[set[Detection]]): A list of detection sets.
+            timesteps (list[datetime]): A list of timestamps for each frame.
+            mapping (list[int]): A list of indices used by subclasses to access
+                specific components of the state vector (e.g., `[0, 2]` for x and y).
+            platforms (list[Platform], optional): A list of platform objects.
             **kwargs (Any): Additional keyword arguments passed to helper methods.
 
         Returns:
-            Tuple[Axes, FuncAnimation]: The axes and the animation object. The
+            tuple[Axes, FuncAnimation]: The axes and the animation object. The
             animation object must be kept in scope to be displayed.
 
         """
@@ -749,7 +750,7 @@ class BearingsPlotter(BasePlotter):
         ax: Axes = None,
         add_colorbar: bool = True,
         colorbar_ax: list[Axes] = None,
-    ) -> Axes:
+    ) -> tuple[Axes, Any]:
         """Plot a heatmap of SNR vs. time, with detections overlaid.
 
         This method generates a "waterfall" plot to visualise the raw SNR
@@ -759,20 +760,21 @@ class BearingsPlotter(BasePlotter):
         Args:
             snr_array (np.ndarray): A 2D array of SNR values from the
                 simulation loop.
-            timesteps (List[datetime]): A list of all simulation timestamps.
-            all_detections (List[Set[Detection]]): A list of detection sets
+            timesteps (list[datetime]): A list of all simulation timestamps.
+            all_detections (list[set[Detection]]): A list of detection sets
                 to overlay on the heatmap.
-            truths (List[GroundTruthPath], optional): A list of ground truth
+            truths (list[GroundTruthPath], optional): A list of ground truth
                 paths to overlay for context. Defaults to None.
             ax (Axes, optional): An existing matplotlib Axes object to plot on.
                 If None, a new figure and axes are created.
             add_colorbar (bool): Whether to add a colorbar to the plot.
                 Defaults to True.
-            colorbar_ax (List[Axes], optional): If provided, the colorbar will
+            colorbar_ax (list[Axes], optional): If provided, the colorbar will
                 be added to this Axes object instead of the main Axes.
 
         Returns:
-            Axes: The matplotlib Axes object containing the plot.
+            tuple[Axes, Any]: The matplotlib Axes object containing the plot and
+            the image object created by `imshow`.
 
         """
         self._setup_figure(ax)
@@ -1071,7 +1073,14 @@ class CartesianPlotter(BasePlotter):
     coord_names = ["x", "y"]  # Define coordinate names for the base class
 
     def __init__(self, style_guide: dict = None, offset: int = 100) -> None:
-        """Initialise the Cartesian plotter with a style guide and offset."""
+        """Initialise the Cartesian plotter with a style guide and offset.
+
+        Args:
+            style_guide (dict, optional): A dictionary to override the default
+                styles for this plotter. Defaults to None.
+            offset (int, optional): The padding in meters to add around the
+                data when setting axis limits. Defaults to 100.
+        """
         cartesian_defaults = {
             "axes": {"x_label": "X (metres)", "y_label": "Y (metres)"},
             "figure": {"figsize": (10, 10)},
@@ -1249,13 +1258,4 @@ class CartesianPlotter(BasePlotter):
                 ellipse = Ellipse(xy=(0, 0), width=0, height=0, color=color, **style)
                 plots["uncertainty"][track_id] = self.ax.add_patch(ellipse)
 
-        return plots
-        return plots
-        return plots
-        return plots
-        return plots
-        return plots
-        return plots
-        return plots
-        return plots
         return plots

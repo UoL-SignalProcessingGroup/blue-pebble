@@ -8,6 +8,7 @@ import numpy as np
 from stonesoup.base import Base, Property
 from stonesoup.movable.movable import MovingMovable
 from stonesoup.types.array import StateVector
+from stonesoup.types.state import State
 
 
 class FollowerModel(Base):
@@ -30,11 +31,12 @@ class FollowerModel(Base):
         float, doc="The distance the follower should maintain from the leader."
     )
 
-    def function(self, state, **kwargs) -> StateVector:
+    def function(self, state: State, **kwargs) -> StateVector:
         """Calculate the new 3D position of the follower.
 
         Args:
-            state (GroundTruthState): The current state of the follower.
+            state (State): The current state of the follower, containing its
+                position in the `state_vector`.
             **kwargs: Additional keyword arguments. Only used for compatibility with
                 the TransitionModel interface.
 
@@ -59,8 +61,11 @@ class TowedArrayFollowerModel(FollowerModel):
     """A specialised follower model for a towed array segment.
 
     This model overrides the base behavior to enforce that the follower
-    maintains a fixed depth, with the "follow" logic only applying to the
-    horizontal XY plane.
+    maintains a fixed depth. The `offset` property is treated as the total
+    slant distance between the leader and the follower. The horizontal
+    separation is calculated based on this slant distance and the difference
+    in depth, ensuring the follower remains on the correct XY position relative
+    to the leader while holding its specified depth.
 
     Attributes:
         leader (MovingMovable): The leader platform that the follower will follow.
@@ -75,11 +80,16 @@ class TowedArrayFollowerModel(FollowerModel):
         float, doc="The fixed depth at which the follower should be maintained."
     )
 
-    def function(self, state, **kwargs) -> StateVector:
+    def function(self, state: State, **kwargs) -> StateVector:
         """Calculate the new position in 2D while keeping the depth fixed.
 
+        This method calculates the required horizontal offset from the leader
+        using the Pythagorean theorem, based on the total `offset` (slant range)
+        and the vertical separation between the leader and the target array depth.
+
         Args:
-            state (GroundTruthState): The current state of the follower.
+            state (State): The current state of the follower, containing its
+                position in the `state_vector`.
             **kwargs: Additional keyword arguments. Only used for compatibility with
                 the TransitionModel interface.
 

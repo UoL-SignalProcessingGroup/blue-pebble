@@ -36,11 +36,16 @@ class AcousticPropagationModel(ABC, Base):
     def compute_sensor_delays(self, platform, source) -> np.ndarray:
         """Compute time delays for each sensor in an array.
 
+        This method calculates the time difference of arrival (TDOA) for a
+        signal at each sensor in an array relative to a reference sensor. It
+        accounts for the speed of sound at the depth of each individual sensor.
+
         Args:
             platform: The platform object representing the sensor array.
             source: The source object representing the acoustic source.
 
-        This method is shared by all propagation models.
+        Returns:
+            np.ndarray: A 1D array of time delays in seconds for each sensor.
 
         """
         source_position = source.state_vector[source.metadata["position_mapping"]]
@@ -172,7 +177,6 @@ class BellhopAcousticPropagationModel(AcousticPropagationModel):
         ssp (SoundSpeedProfile): An instance of a sound speed profile.
         exe_path (str | Path): The path to the Bellhop executable. Defaults to
             'bellhopcxx', assuming it's in the system's PATH.
-        sound_speed_profile (np.ndarray): A two-column array of [depth, sound_speed].
 
     """
 
@@ -277,7 +281,7 @@ class BellhopAcousticPropagationModel(AcousticPropagationModel):
         precise formatting required by the Bellhop executable.
 
         Args:
-            receiver: An object representing the sensor platform, containing its state.
+            platform: An object representing the sensor platform, containing its state.
             source: An object representing the acoustic source, containing its state.
             output_dir (Path, optional): The directory to save the file in.
                 Defaults to the current directory.
@@ -291,8 +295,6 @@ class BellhopAcousticPropagationModel(AcousticPropagationModel):
                 0 lets Bellhop choose. Defaults to 0.
             beam_angles (List[float], optional): The minimum and maximum beam
                 launch angles in degrees. Defaults to [-89.0, 89.0].
-            **kwargs: Absorbs any other unused keyword arguments for backward
-                compatibility.
 
         """
         if beam_angles is None:
