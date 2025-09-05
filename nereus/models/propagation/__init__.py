@@ -1,5 +1,6 @@
 from .acoustic import (
     AcousticPropagationModel,
+    BellhopAcousticPropagationModel,
     CylindricalAcousticPropagationModel,
     SphericalAcousticPropagationModel,
 )

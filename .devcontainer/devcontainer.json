@@ -1,0 +1,41 @@
+{
+    "name": "Nereus Development",
+    "build": {
+        "dockerfile": "../Dockerfile",
+        "context": ".."
+    },
+
+    "features": {
+        "ghcr.io/devcontainers/features/github-cli:1": {}
+    },
+
+    // Mount the entire project folder into the container
+    "workspaceMount": "source=${localWorkspaceFolder},target=/workspaces/${localWorkspaceFolderBasename},type=bind",
+    "workspaceFolder": "/workspaces/${localWorkspaceFolderBasename}",
+
+    // Forward the Jupyter port
+    "forwardPorts": [8888],
+
+    // Run commands after the container is created
+    "postCreateCommand": "pip install --no-cache-dir -e '.[dev,examples]'",
+
+    // Start a Jupyter server automatically
+    "postStartCommand": "jupyter lab --ip=0.0.0.0 --port=8888 --no-browser --allow-root --NotebookApp.token='' --NotebookApp.password='' --NotebookApp.disable_check_xsrf=True",
+
+    // Configure VS Code settings and extensions for the container
+    "customizations": {
+        "vscode": {
+            "settings": {
+                "python.defaultInterpreterPath": "/usr/local/bin/python"
+            },
+            "extensions": [
+                "ms-python.python",
+                "ms-toolsai.jupyter",
+                "charliermarsh.ruff"
+            ]
+        }
+    },
+
+    // Keep the container running even when the VS Code window is closed
+    "shutdownAction": "none"
+}

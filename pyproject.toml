@@ -27,13 +27,10 @@ dependencies = [
     "scipy",
     "matplotlib",
     "seaborn",
-    "tqdm",
-    "pyehm",
+    "stonesoup",
     "numba",
     "rocket-fft",
-    "ipykernel",
-    "ipywidgets",
-    "tqdm",
+    "tqdm"
 ]
 
 [project.urls]
@@ -43,6 +40,11 @@ Repository = "https://github.com/jjwakefield/nereus"
 dev = [
     "ruff",
     "pytest",
+]
+examples = [
+    "ipykernel",
+    "ipywidgets",
+    "jupyterlab"
 ]
 
 [tool.ruff]
