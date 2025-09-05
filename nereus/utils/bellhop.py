@@ -29,10 +29,14 @@ def read_shade_file(
     Returns:
         tuple[np.ndarray, dict[str, np.ndarray]] | tuple[None, None]:
             A tuple containing:
-            - ``pressure``: A complex NumPy array with the pressure field, with
-              shape `(n_theta, n_sd, n_rd, n_rr)`.
-            - ``geometry``: A dictionary with dimension information (frequencies,
-              depths, ranges, etc.).
+
+            - ``pressure``:
+                A complex NumPy array with the pressure field, with
+                shape `(n_theta, n_sd, n_rd, n_rr)`.
+            - ``geometry``:
+                A dictionary with dimension information (frequencies,
+                depths, ranges, etc.).
+
             Returns `(None, None)` if the file cannot be read.
 
     """
