@@ -1,4 +1,3 @@
-/source/nereus.utils.rst
 `nereus.utils`
 ==============
 
