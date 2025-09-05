@@ -1,5 +1,3 @@
-# Nereus
-
 Nereus is intended as a high-fidelity simulation framework for underwater acoustic scenarios, built using the components of Stone Soup. It provides a toolkit for generating realistic sensor data and testing state estimation algorithms.
 
 At its core, the framework features a multi-body kinematic model of a flexible towed hydrophone array, simulating the 'follow-the-leader' dynamics of a vessel towing a chain of sensors in 3D space. Targets are modelled as acoustic objects, each with a dynamic ground truth path and an acoustic signature defined by a spectrum of discrete tonal frequencies.
@@ -101,4 +99,4 @@ Once you have the Bellhop executable (`bellhopcxx.exe` or `bellhopcxx`), you mus
 * **Option B: Place in Project Directory**
     Alternatively, you can copy the executable directly into the `nereus/models/propagation/` directory of this project. Note that you will need to do this manually, and the file will not be tracked by Git.
 
-The Bellhop model will now
+The Bellhop model will now be accessible.
