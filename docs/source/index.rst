@@ -1,4 +1,4 @@
-Nereus Documentation
+Welcome
 ====================
 
 .. include:: ../../README.md
