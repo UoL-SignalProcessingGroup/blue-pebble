@@ -8,6 +8,7 @@ from abc import ABC, abstractmethod
 
 import numpy as np
 from numba import njit, prange, types
+from scipy.linalg import cho_factor, cho_solve
 from stonesoup.base import Base, Property
 from stonesoup.platform.base import Platform
 
@@ -287,6 +288,138 @@ def _frequency_das(
     beamformed_signals = np.fft.ifft(beamformed_f, axis=1)
 
     return beamformed_signals
+
+
+class MinimumVarianceDistortionlessResponseBeamformer(Beamformer):
+    """A Minimum Variance Distortionless Response (MVDR) beamformer.
+
+    This implementation uses an STFT-based broadband approach: the sensor
+    time-series are transformed into short-time frequency bins, a
+    frequency-domain Capon (MVDR) beamformer is applied in each bin, and the
+    narrowband outputs are integrated over frequency to produce power as a
+    function of steering direction and time-frame.
+    """
+    # Properties for broadband operation
+    sampling_rate_hz = Property(float, doc="The sampling frequency of the sensor signals, in Hz")
+    shading = Property(np.ndarray, default=None, doc="An array of shading weights to apply to each sensor. If None, uniform weights are used.")
+    nfft = Property(int, default=256, doc="STFT window size (samples)")
+    overlap = Property(int, default=0, doc="STFT overlap (samples)")
+    f0 = Property(float, default=0.0, doc="Carrier frequency for baseband data (Hz)")
+    fmin = Property(float, default=None, doc="Minimum frequency to integrate (Hz)")
+    fmax = Property(float, default=None, doc="Maximum frequency to integrate (Hz)")
+
+    def beamform(self, sensor_signals: np.ndarray, steering_delays_s: np.ndarray) -> np.ndarray:
+        """Perform broadband MVDR beamforming and return power time-series.
+
+        Returns:
+            np.ndarray: Array of beamformed power with shape
+                (num_directions, num_time_frames).
+        """
+        num_sensors, _ = sensor_signals.shape
+        if num_sensors != steering_delays_s.shape[1]:
+            raise ValueError("Number of sensors must match the number of steering delays")
+
+        # Use shading if provided (not typical for MVDR but supported)
+        if self.shading is not None and len(self.shading) != num_sensors:
+            raise ValueError("Shading length must match number of sensors")
+
+        return self._mvdr_broadband(
+            sensor_signals,
+            self.sampling_rate_hz,
+            self.nfft,
+            steering_delays_s,
+            f0=self.f0,
+            fmin=self.fmin,
+            fmax=self.fmax,
+            overlap=self.overlap,
+        )
+
+    @staticmethod
+    def _covariance(x: np.ndarray) -> np.ndarray:
+        if x.ndim == 1:
+            x = x[:, np.newaxis]
+        return (x @ x.conj().T) / float(x.shape[1])
+
+    @staticmethod
+    def _regularize(R: np.ndarray) -> np.ndarray:
+        cond = np.linalg.cond(R)
+        if cond > 1e4:
+            eps = np.max(np.abs(R)) / 1e6
+            R = R + eps * np.eye(R.shape[0])
+        return R
+
+    @staticmethod
+    def _stft(x: np.ndarray, nfft: int, overlap: int) -> np.ndarray:
+        num_sensors, nsamples = x.shape
+        hop = nfft - overlap if overlap < nfft else 1
+        if hop <= 0:
+            hop = 1
+        window = np.hanning(nfft)
+        n_frames = 1 + max(0, (nsamples - nfft) // hop)
+        if nsamples < nfft:
+            pad = nfft - nsamples
+            x = np.pad(x, ((0, 0), (0, pad)), mode='constant')
+            nsamples = x.shape[1]
+            n_frames = 1
+
+        frames = np.zeros((num_sensors, n_frames, nfft), dtype=np.complex128)
+        for s in range(num_sensors):
+            for i in range(n_frames):
+                start = i * hop
+                seg = x[s, start:start + nfft]
+                if seg.shape[0] < nfft:
+                    seg = np.pad(seg, (0, nfft - seg.shape[0]), mode='constant')
+                frames[s, i, :] = seg * window
+        return np.fft.fft(frames, axis=2)
+
+
+    def _mvdr_broadband(self, x: np.ndarray, fs: float, nfft: int, sd: np.ndarray, f0: float = 0, fmin: float = None, fmax: float = None, overlap: int = 0) -> np.ndarray:
+        if nfft / fs < (np.max(sd) - np.min(sd)):
+            raise ValueError('nfft too small for this array')
+
+        nyq = 2 if f0 == 0 and np.all(np.isreal(x)) else 1
+        X = MinimumVarianceDistortionlessResponseBeamformer._stft(x, nfft, overlap)
+        n_frames = X.shape[1]
+        nbins = nfft // nyq
+        bfo = np.zeros((sd.shape[0], n_frames, nbins), dtype=np.complex128)
+
+        # Work per-bin: compute steering vectors, covariance, factorise once, solve for all steering
+        for i in range(nbins):
+            f = i if i < nfft / 2 else i - nfft
+            f = f0 + f * float(fs) / nfft
+            if (fmin is None or f >= fmin) and (fmax is None or f <= fmax):
+                # snapshots shape: (M, n_frames)
+                snapshots = X[:, :, i]
+
+                # steering matrix a: (Ndir, M)
+                if f == 0:
+                    a = np.ones_like(sd, dtype=np.complex128) / np.sqrt(sd.shape[1])
+                else:
+                    a = np.exp(-2j * np.pi * f * sd) / np.sqrt(sd.shape[1])
+
+                # Build A = a.T (M x Ndir)
+                A = a.T
+
+                # Covariance from snapshots -> R (M x M)
+                R = MinimumVarianceDistortionlessResponseBeamformer._covariance(snapshots)
+                R = MinimumVarianceDistortionlessResponseBeamformer._regularize(R)
+
+                # SciPy Cholesky solve
+                c, lower = cho_factor(R, overwrite_a=False, check_finite=False)
+                RinvA = cho_solve((c, lower), A, overwrite_b=False, check_finite=False)
+
+                # Denominator: a_j^H R^{-1} a_j  (Ndir,)
+                den = np.sum(A.conj() * RinvA, axis=0)
+
+                # Weights: W (Ndir, M)
+                W = (RinvA / den[None, :]).T
+
+                # Apply to snapshots: (Ndir, M) @ (M, n_frames) -> (Ndir, n_frames)
+                out = W.conj() @ snapshots
+                bfo[:, :, i] = out
+
+        return nyq * (np.abs(bfo) ** 2).sum(axis=-1)
+
 
 
 class SteeringCalculator(Base):
