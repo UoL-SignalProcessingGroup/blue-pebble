@@ -335,90 +335,106 @@ class MinimumVarianceDistortionlessResponseBeamformer(Beamformer):
         )
 
     @staticmethod
-    def _covariance(x: np.ndarray) -> np.ndarray:
-        if x.ndim == 1:
-            x = x[:, np.newaxis]
-        return (x @ x.conj().T) / float(x.shape[1])
-
-    @staticmethod
-    def _regularize(R: np.ndarray) -> np.ndarray:
-        cond = np.linalg.cond(R)
-        if cond > 1e4:
-            eps = np.max(np.abs(R)) / 1e6
-            R = R + eps * np.eye(R.shape[0])
-        return R
-
-    @staticmethod
     def _stft(x: np.ndarray, nfft: int, overlap: int) -> np.ndarray:
-        num_sensors, nsamples = x.shape
-        hop = nfft - overlap if overlap < nfft else 1
-        if hop <= 0:
-            hop = 1
-        window = np.hanning(nfft)
-        n_frames = 1 + max(0, (nsamples - nfft) // hop)
-        if nsamples < nfft:
-            pad = nfft - nsamples
+        # x: (M, T) complex
+        M, T = x.shape
+        hop = max(1, nfft - overlap)
+        # pad to fit last frame exactly
+        n_frames = 1 + (max(0, T - nfft) // hop)
+        pad = (n_frames - 1) * hop + nfft - T
+        if pad > 0:
             x = np.pad(x, ((0, 0), (0, pad)), mode='constant')
-            nsamples = x.shape[1]
-            n_frames = 1
+            T = x.shape[1]
 
-        frames = np.zeros((num_sensors, n_frames, nfft), dtype=np.complex128)
-        for s in range(num_sensors):
-            for i in range(n_frames):
-                start = i * hop
-                seg = x[s, start:start + nfft]
-                if seg.shape[0] < nfft:
-                    seg = np.pad(seg, (0, nfft - seg.shape[0]), mode='constant')
-                frames[s, i, :] = seg * window
+        window = np.hanning(nfft).astype(x.real.dtype)
+        # Make a 3D view: (M, n_frames, nfft)
+        stride_t = x.strides[1]
+        frames = np.lib.stride_tricks.as_strided(
+            x,
+            shape=(M, n_frames, nfft),
+            strides=(x.strides[0], hop * stride_t, stride_t),
+            writeable=False
+        )
+        frames = frames * window  # broadcasts over last axis
         return np.fft.fft(frames, axis=2)
 
-
-    def _mvdr_broadband(self, x: np.ndarray, fs: float, nfft: int, sd: np.ndarray, f0: float = 0, fmin: float = None, fmax: float = None, overlap: int = 0) -> np.ndarray:
+    def _mvdr_broadband(
+        self, x: np.ndarray, fs: float, nfft: int, sd: np.ndarray,
+        f0: float = 0, fmin: float = None, fmax: float = None, overlap: int = 0
+    ) -> np.ndarray:
+        # x: (M, T), sd: (Ndir, M)
+        M, _ = x.shape
         if nfft / fs < (np.max(sd) - np.min(sd)):
             raise ValueError('nfft too small for this array')
 
-        nyq = 2 if f0 == 0 and np.all(np.isreal(x)) else 1
-        X = MinimumVarianceDistortionlessResponseBeamformer._stft(x, nfft, overlap)
-        n_frames = X.shape[1]
-        nbins = nfft // nyq
-        bfo = np.zeros((sd.shape[0], n_frames, nbins), dtype=np.complex128)
+        # STFT (M, n_frames, nfft)
+        X = self._stft(x, nfft, overlap)
+        M, n_frames, nfft = X.shape
 
-        # Work per-bin: compute steering vectors, covariance, factorise once, solve for all steering
-        for i in range(nbins):
-            f = i if i < nfft / 2 else i - nfft
-            f = f0 + f * float(fs) / nfft
-            if (fmin is None or f >= fmin) and (fmax is None or f <= fmax):
-                # snapshots shape: (M, n_frames)
-                snapshots = X[:, :, i]
+        # frequency bins (full complex spectrum as signal is complex/baseband)
+        # bin index -> analog frequency in Hz
+        k = np.arange(nfft)
+        # map to centered FFT frequency bins: [0 ... nfft/2-1, -nfft/2 ... -1]
+        k_centered = np.where(k <= nfft//2, k, k - nfft)
+        f_bins = f0 + (fs / nfft) * k_centered
 
-                # steering matrix a: (Ndir, M)
-                if f == 0:
-                    a = np.ones_like(sd, dtype=np.complex128) / np.sqrt(sd.shape[1])
-                else:
-                    a = np.exp(-2j * np.pi * f * sd) / np.sqrt(sd.shape[1])
+        # active bins mask
+        if fmin is None:
+            fmin = f_bins.min()
+        if fmax is None:
+            fmax = f_bins.max()
+        active = (f_bins >= fmin) & (f_bins <= fmax)
+        active_idx = np.nonzero(active)[0]
 
-                # Build A = a.T (M x Ndir)
-                A = a.T
+        # Optional shading
+        if self.shading is not None:
+            if len(self.shading) != M:
+                raise ValueError("Shading length must match number of sensors")
+            X = X * self.shading[:, None, None]          # (M, n_frames, nfft)
+            sd_eff = sd * self.shading[None, :]          # (Ndir, M)
+        else:
+            sd_eff = sd
 
-                # Covariance from snapshots -> R (M x M)
-                R = MinimumVarianceDistortionlessResponseBeamformer._covariance(snapshots)
-                R = MinimumVarianceDistortionlessResponseBeamformer._regularize(R)
+        # Output power accumulator: (Ndir, n_frames)
+        P = np.zeros((sd.shape[0], n_frames), dtype=np.float64)
 
-                # SciPy Cholesky solve
-                c, lower = cho_factor(R, overwrite_a=False, check_finite=False)
-                RinvA = cho_solve((c, lower), A, overwrite_b=False, check_finite=False)
+        # Loop only the active bins
+        for i in active_idx:
+            f = f_bins[i]
 
-                # Denominator: a_j^H R^{-1} a_j  (Ndir,)
-                den = np.sum(A.conj() * RinvA, axis=0)
+            # Snapshots for this bin: (M, n_frames)
+            S = X[:, :, i]
 
-                # Weights: W (Ndir, M)
-                W = (RinvA / den[None, :]).T
+            # Covariance: (M, M)
+            # Using frames as snapshots, average over time
+            R = (S @ S.conj().T) / float(n_frames)
 
-                # Apply to snapshots: (Ndir, M) @ (M, n_frames) -> (Ndir, n_frames)
-                out = W.conj() @ snapshots
-                bfo[:, :, i] = out
+            # Diagonal loading
+            dl = 1e-3 * np.trace(R).real / M
+            R.flat[::M+1] += dl
 
-        return nyq * (np.abs(bfo) ** 2).sum(axis=-1)
+            # Steering matrix A: (M, Ndir)
+            # (we build as (Ndir, M) then transpose for solve)
+            A = np.exp(-2j * np.pi * f * sd_eff).T  # (M, Ndir)
+
+            # Solve R X = A  -> X = R^{-1} A using Cholesky once
+            c, lower = cho_factor(R, overwrite_a=False, check_finite=False)
+            RinvA = cho_solve((c, lower), A, overwrite_b=False, check_finite=False)  # (M, Ndir)
+
+            # Denominator: diag(A^H R^{-1} A) -> (Ndir,)
+            den = np.sum(A.conj() * RinvA, axis=0)
+
+            # Weights W = R^{-1} a / (a^H R^{-1} a) for all dirs -> (Ndir, M)
+            W = (RinvA / den[None, :]).T  # (Ndir, M)
+
+            # Beamform outputs across frames: (Ndir, M) @ (M, n_frames)
+            Y = W.conj() @ S  # (Ndir, n_frames)
+
+            # Accumulate power; not storing per-bin outputs
+            P += np.abs(Y)**2
+
+        return P
+
 
 
 
