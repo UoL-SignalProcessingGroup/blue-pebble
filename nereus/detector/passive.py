@@ -84,22 +84,17 @@ class PassiveSonarDetector(DetectionReader):
 
                 if beamformed_data.size == 0:
                     continue
-
+                
+                # Calculate directional power for each beam
                 directional_power = np.mean(np.abs(beamformed_data) ** 2, axis=1)
 
-                # Estimate the noise power by finding the minimum power across beams.
-                # This assumes at least one beam is pointing at a quiet direction.
-                noise_power_estimate = np.min(directional_power)
+                # Estimate noise power as the 10th percentile of directional power
+                # More stable than minimum, avoids outliers and division by zero
+                noise_power_estimate = np.percentile(directional_power, 10)
 
-                # Subtract the estimated noise power to get signal-only power
-                signal_power = directional_power - noise_power_estimate
-
-                epsilon = np.finfo(float).eps  # Small value to avoid division by zero
-                # Calculate SNR using the estimated noise power as the reference
-                snr = 10 * np.log10(
-                    np.maximum(signal_power, 0) / (noise_power_estimate + epsilon)
-                    + epsilon
-                )
+                # Calculate SNR
+                epsilon = np.finfo(float).eps
+                snr = 10 * np.log10((directional_power + epsilon) / (noise_power_estimate + epsilon))
 
                 # Run the detection chain on the SNR map
                 raw_detections = self._run_detection_chain(snr)
