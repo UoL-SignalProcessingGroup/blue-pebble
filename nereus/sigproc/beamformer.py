@@ -418,6 +418,7 @@ class MinimumVarianceDistortionlessResponseBeamformer(Beamformer):
             A = np.exp(-2j * np.pi * f * sd_eff).T  # (M, Ndir)
 
             # Solve R X = A  -> X = R^{-1} A using Cholesky once
+            # scipy LAPACK is faster than np.linalg.solve or numba
             c, lower = cho_factor(R, overwrite_a=False, check_finite=False)
             RinvA = cho_solve((c, lower), A, overwrite_b=False, check_finite=False)  # (M, Ndir)
 
