@@ -307,6 +307,13 @@ class MinimumVarianceDistortionlessResponseBeamformer(Beamformer):
     f0 = Property(float, default=0.0, doc="Carrier frequency for baseband data (Hz)")
     fmin = Property(float, default=None, doc="Minimum frequency to integrate (Hz)")
     fmax = Property(float, default=None, doc="Maximum frequency to integrate (Hz)")
+    diagonal_loading_factor = Property(
+        float,
+        default=1e-3,
+        doc="Diagonal loading factor for covariance matrix regularization. "
+            "This is multiplied by the average diagonal element (trace/M) to stabilize "
+            "the matrix inversion. Typical values range from 1e-4 to 1e-2."
+    )
 
     def beamform(self, sensor_signals: np.ndarray, steering_delays_s: np.ndarray) -> np.ndarray:
         """Perform broadband MVDR beamforming and return power time-series.
@@ -332,6 +339,7 @@ class MinimumVarianceDistortionlessResponseBeamformer(Beamformer):
             fmin=self.fmin,
             fmax=self.fmax,
             overlap=self.overlap,
+            diagonal_loading_factor=self.diagonal_loading_factor,
         )
 
     @staticmethod
@@ -360,7 +368,8 @@ class MinimumVarianceDistortionlessResponseBeamformer(Beamformer):
 
     def _mvdr_broadband(
         self, x: np.ndarray, fs: float, nfft: int, sd: np.ndarray,
-        f0: float = 0, fmin: float = None, fmax: float = None, overlap: int = 0
+        f0: float = 0, fmin: float = None, fmax: float = None, overlap: int = 0,
+        diagonal_loading_factor: float = 1e-3
     ) -> np.ndarray:
         # x: (M, T), sd: (Ndir, M)
         M, _ = x.shape
@@ -408,7 +417,7 @@ class MinimumVarianceDistortionlessResponseBeamformer(Beamformer):
             R = (S @ S.conj().T) / float(n_frames)
 
             # Diagonal loading
-            dl = 1e-3 * np.trace(R).real / M
+            dl = diagonal_loading_factor * np.trace(R).real / M
             R.flat[::M+1] += dl
 
             # Steering matrix A: (M, Ndir)
