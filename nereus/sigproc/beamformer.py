@@ -388,8 +388,6 @@ class MinimumVarianceDistortionlessResponseBeamformer(Beamformer):
 
         # Optional shading
         if self.shading is not None:
-            if len(self.shading) != M:
-                raise ValueError("Shading length must match number of sensors")
             X = X * self.shading[:, None, None]          # (M, n_frames, nfft)
             sd_eff = sd * self.shading[None, :]          # (Ndir, M)
         else:
