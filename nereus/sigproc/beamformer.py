@@ -311,6 +311,13 @@ class MinimumVarianceDistortionlessResponseBeamformer(Beamformer):
     def beamform(self, sensor_signals: np.ndarray, steering_delays_s: np.ndarray) -> np.ndarray:
         """Perform broadband MVDR beamforming and return power time-series.
 
+        Args:
+            sensor_signals (np.ndarray): An array of sensor signals with shape
+                (num_sensors, num_samples).
+            steering_delays_s (np.ndarray): An array of time delays for each
+                sensor and steering direction, with shape
+                (num_directions, num_sensors).
+
         Returns:
             np.ndarray: Array of beamformed power with shape
                 (num_directions, num_time_frames).
@@ -336,15 +343,28 @@ class MinimumVarianceDistortionlessResponseBeamformer(Beamformer):
 
     @staticmethod
     def _stft(x: np.ndarray, nfft: int, overlap: int) -> np.ndarray:
+        """Compute the Short-Time Fourier Transform (STFT) of the input signal.
+        
+        Args:
+            x (np.ndarray): Input signal array of shape (M, T) where M is the
+                number of sensors and T is the number of time samples.
+            nfft (int): The number of FFT points (window size).
+            overlap (int): The number of overlapping samples between windows.
+
+        Returns:
+            np.ndarray: STFT of the input signal with shape (M, n_frames, nfft).
+        """
         # x: (M, T) complex
         M, T = x.shape
+        if T < nfft:
+            raise ValueError(f"Input signal length T={T} is less than window size nfft={nfft}.")
         hop = max(1, nfft - overlap)
         # pad to fit last frame exactly
         n_frames = 1 + (max(0, T - nfft) // hop)
         pad = (n_frames - 1) * hop + nfft - T
         if pad > 0:
             x = np.pad(x, ((0, 0), (0, pad)), mode='constant')
-            T = x.shape[1]
+            # T = x.shape[1]
 
         window = np.hanning(nfft).astype(x.real.dtype)
         # Make a 3D view: (M, n_frames, nfft)
@@ -362,6 +382,24 @@ class MinimumVarianceDistortionlessResponseBeamformer(Beamformer):
         self, x: np.ndarray, fs: float, nfft: int, sd: np.ndarray,
         f0: float = 0, fmin: float = None, fmax: float = None, overlap: int = 0
     ) -> np.ndarray:
+        """ Perform broadband MVDR beamforming.
+
+        Args:
+            x (np.ndarray): Input signal array of shape (M, T) where M is the
+                number of sensors and T is the number of time samples.
+            fs (float): Sampling frequency in Hz.
+            nfft (int): The number of FFT points (window size).
+            sd (np.ndarray): Steering delays array of shape (Ndir, M) where Ndir
+                is the number of steering directions.
+            f0 (float, optional): Carrier frequency for baseband data (Hz). Defaults to 0.
+            fmin (float, optional): Minimum frequency to integrate (Hz). Defaults to None.
+            fmax (float, optional): Maximum frequency to integrate (Hz). Defaults to None.
+            overlap (int, optional): The number of overlapping samples between windows. Defaults to 0.
+
+        Returns:
+            np.ndarray: Array of beamformed power with shape (Ndir, n_frames).
+        """
+
         # x: (M, T), sd: (Ndir, M)
         M, _ = x.shape
         if nfft / fs < (np.max(sd) - np.min(sd)):
@@ -369,14 +407,14 @@ class MinimumVarianceDistortionlessResponseBeamformer(Beamformer):
 
         # STFT (M, n_frames, nfft)
         X = self._stft(x, nfft, overlap)
-        M, n_frames, nfft = X.shape
+        M, n_frames, nfft_actual = X.shape
 
         # frequency bins (full complex spectrum as signal is complex/baseband)
         # bin index -> analog frequency in Hz
-        k = np.arange(nfft)
+        k = np.arange(nfft_actual)
         # map to centered FFT frequency bins: [0 ... nfft/2-1, -nfft/2 ... -1]
-        k_centered = np.where(k <= nfft//2, k, k - nfft)
-        f_bins = f0 + (fs / nfft) * k_centered
+        k_centered = np.where(k <= nfft_actual//2, k, k - nfft_actual)
+        f_bins = f0 + (fs / nfft_actual) * k_centered
 
         # active bins mask
         if fmin is None:
@@ -408,6 +446,7 @@ class MinimumVarianceDistortionlessResponseBeamformer(Beamformer):
             R = (S @ S.conj().T) / float(n_frames)
 
             # Diagonal loading
+            # 1e-3 to prevent singular covariance matrices for stability
             dl = 1e-3 * np.trace(R).real / M
             R.flat[::M+1] += dl
 
@@ -424,7 +463,8 @@ class MinimumVarianceDistortionlessResponseBeamformer(Beamformer):
             den = np.sum(A.conj() * RinvA, axis=0)
 
             # Weights W = R^{-1} a / (a^H R^{-1} a) for all dirs -> (Ndir, M)
-            W = (RinvA / den[None, :]).T  # (Ndir, M)
+            epsilon = np.finfo(np.float64).eps  # prevent division by zero
+            W = (RinvA / den[None, :] + epsilon).T  # (Ndir, M)
 
             # Beamform outputs across frames: (Ndir, M) @ (M, n_frames)
             Y = W.conj() @ S  # (Ndir, n_frames)
