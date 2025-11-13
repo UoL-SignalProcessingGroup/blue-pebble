@@ -8,6 +8,7 @@ from abc import ABC, abstractmethod
 
 import numpy as np
 from numba import njit, prange, types
+from scipy.linalg import cho_factor, cho_solve
 from stonesoup.base import Base, Property
 from stonesoup.platform.base import Platform
 
@@ -287,6 +288,193 @@ def _frequency_das(
     beamformed_signals = np.fft.ifft(beamformed_f, axis=1)
 
     return beamformed_signals
+
+
+class MinimumVarianceDistortionlessResponseBeamformer(Beamformer):
+    """A Minimum Variance Distortionless Response (MVDR) beamformer.
+
+    This implementation uses an STFT-based broadband approach: the sensor
+    time-series are transformed into short-time frequency bins, a
+    frequency-domain Capon (MVDR) beamformer is applied in each bin, and the
+    narrowband outputs are integrated over frequency to produce power as a
+    function of steering direction and time-frame.
+    """
+    # Properties for broadband operation
+    sampling_rate_hz = Property(float, doc="The sampling frequency of the sensor signals, in Hz")
+    shading = Property(np.ndarray, default=None, doc="An array of shading weights to apply to each sensor. If None, uniform weights are used.")
+    nfft = Property(int, default=256, doc="STFT window size (samples)")
+    overlap = Property(int, default=0, doc="STFT overlap (samples)")
+    f0 = Property(float, default=0.0, doc="Carrier frequency for baseband data (Hz)")
+    fmin = Property(float, default=None, doc="Minimum frequency to integrate (Hz)")
+    fmax = Property(float, default=None, doc="Maximum frequency to integrate (Hz)")
+
+    def beamform(self, sensor_signals: np.ndarray, steering_delays_s: np.ndarray) -> np.ndarray:
+        """Perform broadband MVDR beamforming and return power time-series.
+
+        Args:
+            sensor_signals (np.ndarray): An array of sensor signals with shape
+                (num_sensors, num_samples).
+            steering_delays_s (np.ndarray): An array of time delays for each
+                sensor and steering direction, with shape
+                (num_directions, num_sensors).
+
+        Returns:
+            np.ndarray: Array of beamformed power with shape
+                (num_directions, num_time_frames).
+        """
+        num_sensors, _ = sensor_signals.shape
+        if num_sensors != steering_delays_s.shape[1]:
+            raise ValueError("Number of sensors must match the number of steering delays")
+
+        # Use shading if provided (not typical for MVDR but supported)
+        if self.shading is not None and len(self.shading) != num_sensors:
+            raise ValueError("Shading length must match number of sensors")
+
+        return self._mvdr_broadband(
+            sensor_signals,
+            self.sampling_rate_hz,
+            self.nfft,
+            steering_delays_s,
+            f0=self.f0,
+            fmin=self.fmin,
+            fmax=self.fmax,
+            overlap=self.overlap,
+        )
+
+    @staticmethod
+    def _stft(x: np.ndarray, nfft: int, overlap: int) -> np.ndarray:
+        """Compute the Short-Time Fourier Transform (STFT) of the input signal.
+        
+        Args:
+            x (np.ndarray): Input signal array of shape (M, T) where M is the
+                number of sensors and T is the number of time samples.
+            nfft (int): The number of FFT points (window size).
+            overlap (int): The number of overlapping samples between windows.
+
+        Returns:
+            np.ndarray: STFT of the input signal with shape (M, n_frames, nfft).
+        """
+        # x: (M, T) complex
+        M, T = x.shape
+        if T < nfft:
+            raise ValueError(f"Input signal length T={T} is less than window size nfft={nfft}.")
+        hop = max(1, nfft - overlap)
+        # pad to fit last frame exactly
+        n_frames = 1 + (max(0, T - nfft) // hop)
+        pad = (n_frames - 1) * hop + nfft - T
+        if pad > 0:
+            x = np.pad(x, ((0, 0), (0, pad)), mode='constant')
+            # T = x.shape[1]
+
+        window = np.hanning(nfft).astype(x.real.dtype)
+        # Make a 3D view: (M, n_frames, nfft)
+        stride_t = x.strides[1]
+        frames = np.lib.stride_tricks.as_strided(
+            x,
+            shape=(M, n_frames, nfft),
+            strides=(x.strides[0], hop * stride_t, stride_t),
+            writeable=False
+        )
+        frames = frames * window  # broadcasts over last axis
+        return np.fft.fft(frames, axis=2)
+
+    def _mvdr_broadband(
+        self, x: np.ndarray, fs: float, nfft: int, sd: np.ndarray,
+        f0: float = 0, fmin: float = None, fmax: float = None, overlap: int = 0
+    ) -> np.ndarray:
+        """ Perform broadband MVDR beamforming.
+
+        Args:
+            x (np.ndarray): Input signal array of shape (M, T) where M is the
+                number of sensors and T is the number of time samples.
+            fs (float): Sampling frequency in Hz.
+            nfft (int): The number of FFT points (window size).
+            sd (np.ndarray): Steering delays array of shape (Ndir, M) where Ndir
+                is the number of steering directions.
+            f0 (float, optional): Carrier frequency for baseband data (Hz). Defaults to 0.
+            fmin (float, optional): Minimum frequency to integrate (Hz). Defaults to None.
+            fmax (float, optional): Maximum frequency to integrate (Hz). Defaults to None.
+            overlap (int, optional): The number of overlapping samples between windows. Defaults to 0.
+
+        Returns:
+            np.ndarray: Array of beamformed power with shape (Ndir, n_frames).
+        """
+
+        # x: (M, T), sd: (Ndir, M)
+        M, _ = x.shape
+        if nfft / fs < (np.max(sd) - np.min(sd)):
+            raise ValueError('nfft too small for this array')
+
+        # STFT (M, n_frames, nfft)
+        X = self._stft(x, nfft, overlap)
+        M, n_frames, nfft_actual = X.shape
+
+        # frequency bins (full complex spectrum as signal is complex/baseband)
+        # bin index -> analog frequency in Hz
+        k = np.arange(nfft_actual)
+        # map to centered FFT frequency bins: [0 ... nfft/2-1, -nfft/2 ... -1]
+        k_centered = np.where(k <= nfft_actual//2, k, k - nfft_actual)
+        f_bins = f0 + (fs / nfft_actual) * k_centered
+
+        # active bins mask
+        if fmin is None:
+            fmin = f_bins.min()
+        if fmax is None:
+            fmax = f_bins.max()
+        active = (f_bins >= fmin) & (f_bins <= fmax)
+        active_idx = np.nonzero(active)[0]
+
+        # Optional shading
+        if self.shading is not None:
+            X = X * self.shading[:, None, None]          # (M, n_frames, nfft)
+            sd_eff = sd * self.shading[None, :]          # (Ndir, M)
+        else:
+            sd_eff = sd
+
+        # Output power accumulator: (Ndir, n_frames)
+        P = np.zeros((sd.shape[0], n_frames), dtype=np.float64)
+
+        # Loop only the active bins
+        for i in active_idx:
+            f = f_bins[i]
+
+            # Snapshots for this bin: (M, n_frames)
+            S = X[:, :, i]
+
+            # Covariance: (M, M)
+            # Using frames as snapshots, average over time
+            R = (S @ S.conj().T) / float(n_frames)
+
+            # Diagonal loading
+            # 1e-3 to prevent singular covariance matrices for stability
+            dl = 1e-3 * np.trace(R).real / M
+            R.flat[::M+1] += dl
+
+            # Steering matrix A: (M, Ndir)
+            # (we build as (Ndir, M) then transpose for solve)
+            A = np.exp(-2j * np.pi * f * sd_eff).T  # (M, Ndir)
+
+            # Solve R X = A  -> X = R^{-1} A using Cholesky once
+            # scipy LAPACK is faster than np.linalg.solve or numba
+            c, lower = cho_factor(R, overwrite_a=False, check_finite=False)
+            RinvA = cho_solve((c, lower), A, overwrite_b=False, check_finite=False)  # (M, Ndir)
+
+            # Denominator: diag(A^H R^{-1} A) -> (Ndir,)
+            den = np.sum(A.conj() * RinvA, axis=0)
+
+            # Weights W = R^{-1} a / (a^H R^{-1} a) for all dirs -> (Ndir, M)
+            epsilon = np.finfo(np.float64).eps  # prevent division by zero
+            W = (RinvA / den[None, :] + epsilon).T  # (Ndir, M)
+
+            # Beamform outputs across frames: (Ndir, M) @ (M, n_frames)
+            Y = W.conj() @ S  # (Ndir, n_frames)
+
+            # Accumulate power; not storing per-bin outputs
+            P += np.abs(Y)**2
+
+        return P
+
+
 
 
 class SteeringCalculator(Base):
