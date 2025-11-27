@@ -50,7 +50,8 @@ docs = [
 examples = [
     "ipykernel",
     "ipywidgets",
-    "jupyterlab"
+    "jupyterlab",
+    "librosa"
 ]
 
 [tool.ruff]

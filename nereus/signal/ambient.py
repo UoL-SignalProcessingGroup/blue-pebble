@@ -50,7 +50,7 @@ class AmbientNoise(Base):
         ) / np.sqrt(2)
 
     @abstractmethod
-    def generate(self, num_sensors: int) -> np.ndarray:
+    def generate(self, num_sensors: int = 1) -> np.ndarray:
         """Generate a noise array. This must be implemented by subclasses.
 
         Args:
@@ -65,7 +65,7 @@ class AmbientNoise(Base):
 class WhiteNoise(AmbientNoise):
     """Generates complex white Gaussian noise with a flat power spectrum."""
 
-    def generate(self, num_sensors: int) -> np.ndarray:
+    def generate(self, num_sensors: int = 1) -> np.ndarray:
         """Generate a complex white Gaussian noise array.
 
         Args:
@@ -76,7 +76,7 @@ class WhiteNoise(AmbientNoise):
 
         """
         # Generate the base noise with unit power
-        white_noise = self._generate_unit_white_noise(num_sensors, self.num_samples)
+        white_noise = self._generate_unit_white_noise(num_sensors)
 
         # Scale the unit-power noise to the target amplitude
         return self.amplitude_upa * white_noise
@@ -90,7 +90,7 @@ class ColouredNoise(AmbientNoise):
         "(e.g., -1 for pink noise, -2 for red/brownian noise)."
     )
 
-    def generate(self, num_sensors: int) -> np.ndarray:
+    def generate(self, num_sensors: int = 1) -> np.ndarray:
         """Generate a complex coloured noise array.
 
         Args:
