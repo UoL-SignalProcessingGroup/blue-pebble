@@ -30,7 +30,7 @@ dependencies = [
     "stonesoup",
     "numba",
     "rocket-fft",
-    "tqdm"
+    "tqdm",
 ]
 
 [project.urls]
