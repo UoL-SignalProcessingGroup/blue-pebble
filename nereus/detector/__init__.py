@@ -1,4 +1,4 @@
-from .algorithms import (
+from .algorithms import (  # noqa: D104
     CFARDetector,
     DetectionAlgorithm,
     PeakDetector,
