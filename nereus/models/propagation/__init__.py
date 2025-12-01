@@ -1,4 +1,4 @@
-from .acoustic import (
+from .acoustic import (  # noqa: D104
     AcousticPropagationModel,
     BellhopAcousticPropagationModel,
     CylindricalAcousticPropagationModel,

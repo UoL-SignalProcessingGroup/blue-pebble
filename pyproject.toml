@@ -30,7 +30,7 @@ dependencies = [
     "stonesoup",
     "numba",
     "rocket-fft",
-    "tqdm"
+    "tqdm",
 ]
 
 [project.urls]
@@ -50,7 +50,8 @@ docs = [
 examples = [
     "ipykernel",
     "ipywidgets",
-    "jupyterlab"
+    "jupyterlab",
+    "librosa"
 ]
 
 [tool.ruff]
