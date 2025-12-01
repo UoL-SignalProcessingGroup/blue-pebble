@@ -51,8 +51,19 @@ class TonalSignal(Signal):
         frequencies_hz = source.metadata["frequencies_hz"]
         phases_rad = source.metadata["phases_rad"]
 
-        # Attenuate the source amplitude(s) based on transmission loss
-        received_amplitude_upa = amplitudes_upa * 10 ** (-tloss_db / 20.0)
+        # Handle per-frequency or single transmission loss
+        if isinstance(tloss_db, (np.ndarray, list)):
+            # Per-frequency transmission loss
+            tloss_db_array = np.array(tloss_db)
+            if len(tloss_db_array) != len(amplitudes_upa):
+                raise ValueError(
+                    f"Length of tloss_db array ({len(tloss_db_array)}) must match "
+                    f"number of frequencies ({len(amplitudes_upa)})"
+                )
+            received_amplitude_upa = amplitudes_upa * 10 ** (-tloss_db_array / 20.0)
+        else:
+            # Single transmission loss applied to all frequencies
+            received_amplitude_upa = amplitudes_upa * 10 ** (-tloss_db / 20.0)
 
         # --- Use NumPy broadcasting to perform calculations efficiently ---
         # Reshape arrays to dimensions: (sensors, tonals, samples)
