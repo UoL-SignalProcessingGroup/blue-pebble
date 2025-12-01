@@ -10,7 +10,8 @@ from stonesoup.types.sensordata import SensorData
 
 from nereus.models.propagation import AcousticPropagationModel
 from nereus.platform import TowedArrayPlatform
-from nereus.signal import AcousticSignalModel, NoiseModel
+from nereus.signal.ambient import AmbientNoise
+from nereus.signal.base import Signal
 from nereus.sigproc.beamformer import Beamformer, SteeringCalculator
 
 
@@ -39,8 +40,8 @@ class PassiveSonarArraySimulator(SensorSimulator):
     Attributes:
         platform (TowedArrayPlatform): The towed array platform providing geometry.
         propagation_model (AcousticPropagationModel): Model for acoustic propagation.
-        signal_model (AcousticSignalModel): Model for generating target signals.
-        noise_model (NoiseModel): Model for generating ambient noise.
+        signal_model (Signal): Model for generating target signals.
+        noise_model (AmbientNoise): Model for generating ambient noise.
         beamformer (Beamformer): The beamforming algorithm to apply.
         steering_calculator (SteeringCalculator): Calculator for steering delays.
         ground_truth_paths (list): A list of ``GroundTruthPath`` objects representing
@@ -52,8 +53,8 @@ class PassiveSonarArraySimulator(SensorSimulator):
     propagation_model = Property(
         AcousticPropagationModel, doc="Acoustic propagation model"
     )
-    signal_model = Property(AcousticSignalModel, doc="Acoustic signal model")
-    noise_model = Property(NoiseModel, doc="Noise model")
+    signal_model = Property(Signal, doc="Acoustic signal model")
+    noise_model = Property(AmbientNoise, doc="Noise model")
     beamformer = Property(Beamformer, doc="Beamforming algorithm")
     steering_calculator = Property(SteeringCalculator, doc="Steering calculator")
     ground_truth_paths = Property(
