@@ -31,6 +31,53 @@ class SoundSpeedProfile(ABC, Base):
         """
         pass
 
+    def get_3d_grid(
+        self, x_range: tuple, y_range: tuple, z_range: tuple, 
+        x_res: float = 5000.0, y_res: float = 5000.0, z_res: float = 100.0
+    ):
+        """Get a 3D grid representation of the sound speed profile.
+
+        Args:
+            x_range: Tuple of (x_min, x_max) in meters.
+            y_range: Tuple of (y_min, y_max) in meters.
+            z_range: Tuple of (z_min, z_max) in meters (negative depths).
+            x_res: Grid resolution in x direction in meters. Defaults to 5000.0.
+            y_res: Grid resolution in y direction in meters. Defaults to 5000.0.
+            z_res: Grid resolution in z direction in meters. Defaults to 100.0.
+
+        Returns:
+            Tuple of (x_grid, y_grid, z_grid, c_grid) where:
+                - x_grid: 1D array of x coordinates
+                - y_grid: 1D array of y coordinates
+                - z_grid: 1D array of z coordinates (negative depths)
+                - c_grid: 3D array of sound speeds, flattened in C order
+
+        """
+        x_min, x_max = x_range
+        y_min, y_max = y_range
+        z_min, z_max = z_range
+
+        # Create grid points
+        x_points = int((x_max - x_min) / x_res) + 1
+        y_points = int((y_max - y_min) / y_res) + 1
+        z_points = int(abs(z_max - z_min) / z_res) + 1
+
+        x_grid = np.linspace(x_min, x_max, max(2, x_points))
+        y_grid = np.linspace(y_min, y_max, max(2, y_points))
+        z_grid = np.linspace(z_min, z_max, max(2, z_points))
+
+        # Calculate sound speed at each depth (z values are negative)
+        c_at_depths = np.array([self.calculate(z) for z in z_grid])
+
+        # Create 3D grid by tiling the 1D profile across x and y
+        # Shape: (nx, ny, nz)
+        c_grid_3d = np.tile(c_at_depths, (len(x_grid), len(y_grid), 1))
+
+        # Flatten in C order (row-major) as expected by rtrs
+        c_grid_flat = c_grid_3d.flatten(order='C')
+
+        return x_grid, y_grid, z_grid, c_grid_flat
+
     def _calc_temperature(self, depth: float) -> float:
         """Calculate ocean temperature based on vertical variation.
 

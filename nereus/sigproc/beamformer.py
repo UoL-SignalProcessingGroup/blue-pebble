@@ -1,6 +1,7 @@
 """Defines beamforming algorithms for processing signals from an array of sensors.
 
 © Copyright 2025 Joshua J. Wakefield.
+© Copyright 2025 Finley Boulton.
 Licensed under the MIT License.
 """
 

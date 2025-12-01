@@ -1,6 +1,7 @@
 """Defines acoustic propagation models for simulating sound propagation.
 
 © Copyright 2025 Joshua J. Wakefield.
+© Copyright 2025 Finley Boulton.
 Licensed under the MIT License.
 """
 
@@ -13,7 +14,7 @@ from shutil import which
 import numpy as np
 from stonesoup.base import Base, Property
 
-from nereus.models.environment import SoundSpeedProfile
+from nereus.models.environment import Bathymetry, SoundSpeedProfile
 from nereus.utils import read_shade_file
 
 
@@ -261,6 +262,7 @@ class BellhopAcousticPropagationModel(AcousticPropagationModel):
         # Handle cases where pressure is zero, resulting in infinite tloss
         if np.isinf(tloss[-1]):
             return 999.0, time  # Return a large, finite loss value
+        
         return tloss[-1], time
 
     def _create_env_file(
@@ -270,7 +272,7 @@ class BellhopAcousticPropagationModel(AcousticPropagationModel):
         output_dir=Path("."),
         options="SVW",
         bottom_bc="A",
-        runtype="Ib",
+        runtype="Cb",
         nbeams=0,
         beam_angles=None,
     ):
@@ -368,3 +370,299 @@ class BellhopAcousticPropagationModel(AcousticPropagationModel):
         # This method would write a .bty file for complex bathymetry
         # For now, it's a placeholder since we use simple flat bottom
         pass
+
+
+class rtrsAcousticPropagationModel(AcousticPropagationModel):
+    """A class to represent a rtrs acoustic propagation model.
+
+    This model uses the rtrs python bindings to perform the propagation simulation
+    using 3D ray tracing with support for 3D sound speed profiles and 2D bathymetry.
+
+    Attributes:
+        ssp (SoundSpeedProfile): An instance of a sound speed profile.
+        bathymetry (Bathymetry): An instance of a bathymetry model.
+        step_m (float): Ray tracing step size in meters. Defaults to 10.0.
+        ssp_resolution (tuple): Resolution for SSP grid (x, y, z) in meters.
+            Defaults to (5000.0, 5000.0, 100.0).
+        bathy_resolution (float): Resolution for bathymetry grid in meters.
+            Defaults to 1000.0.
+        azimuth_search_width (float): Angular width in degrees to search for
+            azimuth angles that will hit the receiver. Defaults to 5.0.
+        azimuth_resolution (float): Angular resolution for azimuth search in
+            degrees. Defaults to 0.5.
+        elevation_range (tuple): Min and max elevation angles in degrees.
+            Defaults to (-20.0, 20.0).
+        elevation_resolution (float): Angular resolution for elevation in degrees.
+            Defaults to 1.0.
+        use_all_frequencies (bool): If True, run rtrs for all tonal frequencies
+            and return per-frequency TL values. If False, use only the loudest
+            frequency. Defaults to False.
+
+    """
+
+    bathymetry = Property(Bathymetry, doc="Bathymetry model")
+    step_m: float = Property(default=15.0, doc="Ray tracing step size in meters")
+    ssp_resolution: tuple = Property(
+        default=(5000.0, 5000.0, 100.0),
+        doc="Resolution for SSP grid (x, y, z) in meters",
+    )
+    bathy_resolution: float = Property(
+        default=1000.0, doc="Resolution for bathymetry grid in meters"
+    )
+    azimuth_search_width: float = Property(
+        default=1.0,
+        doc="Angular width in degrees to search for azimuth angles",
+    )
+    azimuth_resolution: float = Property(
+        default=0.5, doc="Angular resolution for azimuth search in degrees"
+    )
+    elevation_range: tuple = Property(
+        default=(-70.0, 70.0), doc="Min and max elevation angles in degrees"
+    )
+    elevation_resolution: float = Property(
+        default=1.0, doc="Angular resolution for elevation in degrees"
+    )
+    use_all_frequencies: bool = Property(
+        default=False,
+        doc="If True, run rtrs for all tonal frequencies. If False, use only the loudest frequency.",
+    )
+
+    def _calculate_launch_azimuths(self, source_position, receiver_position):
+        """Calculate launch azimuth angles to ensure rays cross the receiver.
+
+        Args:
+            source_position: 3D position vector of the source.
+            receiver_position: 3D position vector of the receiver.
+
+        Returns:
+            List of azimuth angles in degrees.
+
+        """
+        # Calculate the direct azimuth to the receiver
+        dx = receiver_position[0] - source_position[0]
+        dy = receiver_position[1] - source_position[1]
+
+        # Calculate azimuth in degrees (0° = +x axis, 90° = +y axis)
+        direct_azimuth = np.degrees(np.arctan2(dy, dx))
+
+        # Generate azimuth angles around the direct path
+        half_width = self.azimuth_search_width / 2.0
+        num_angles = int(self.azimuth_search_width / self.azimuth_resolution) + 1
+
+        azimuths = np.linspace(
+            direct_azimuth - half_width, direct_azimuth + half_width, num_angles
+        )
+
+        azimuths = - azimuths + 90
+
+        return azimuths.tolist()
+
+    def _calculate_max_steps_and_range(self, distance):
+        """Calculate max_steps and max_range based on source-receiver distance.
+
+        Args:
+            distance: Distance from source to receiver in meters.
+
+        Returns:
+            Tuple of (max_steps, max_range_m).
+
+        """
+        # Add 20% margin to the distance
+        max_range_m = distance * 1.2
+
+        # Calculate max_steps based on step size
+        max_steps = int(max_range_m / self.step_m) + 1000  # Add buffer
+
+        return max_steps, max_range_m
+
+    def propagate(self, platform, source):
+        """Run a rtrs simulation for a single source and receiver.
+
+        This method sets up the environment configuration, calculates appropriate
+        launch angles, runs the rtrs simulation, and computes transmission loss
+        and travel time.
+
+        Args:
+            platform: An object representing the sensor platform.
+            source: An object representing the acoustic source.
+
+        Returns:
+            A tuple containing:
+            - tloss (float or np.ndarray): The transmission loss in decibels (dB).
+              If use_all_frequencies is True, returns an array with TL for each
+              frequency. Otherwise, returns a single float value.
+            - time (float): The direct path signal travel time in seconds.
+
+        """
+        try:
+            import rtrs
+        except ImportError:
+            raise ImportError(
+                "rtrs package is not installed. "
+                "Please install it to use rtrsAcousticPropagationModel."
+            )
+
+        source_position = source.state_vector[list(source.metadata["position_mapping"])]
+        array_ref_position = platform.array.ref_state_vector
+
+        # Flatten to 1D arrays for easier indexing
+        source_pos = source_position.flatten()
+        array_pos = array_ref_position.flatten()
+
+        # Calculate distance and dynamic parameters
+        distance = np.linalg.norm(source_pos - array_pos)
+        max_steps, max_range_m = self._calculate_max_steps_and_range(distance)
+
+        # Calculate launch azimuths
+        launch_azimuths = self._calculate_launch_azimuths(
+            source_pos, array_pos
+        )
+
+
+        # Calculate launch elevations
+        num_elev = int(
+            (self.elevation_range[1] - self.elevation_range[0])
+            / self.elevation_resolution
+        ) + 1
+        launch_elevations = np.linspace(
+            self.elevation_range[0], self.elevation_range[1], num_elev
+        ).tolist()
+
+        # print(f"Launch azimuths: {launch_azimuths}")
+        # print(f"Number of elevations: {len(launch_elevations)}")
+        # print(f"Number of azimuths: {len(launch_azimuths)}")
+        # print(f"Number of rays: {len(launch_elevations) * len(launch_azimuths)}")
+        # print(f"Source position: {source_pos}")
+        # print(f"Array position: {array_pos}")
+        # print(f"Distance (m): {distance}")
+        # print(f"Max steps: {max_steps}, Max range (m): {max_range_m}")
+
+        # Determine spatial extent for grids
+        x_coords = [source_pos[0], array_pos[0]]
+        y_coords = [source_pos[1], array_pos[1]]
+        z_coords = [source_pos[2], array_pos[2]]
+
+        x_min, x_max = min(x_coords), max(x_coords)
+        y_min, y_max = min(y_coords), max(y_coords)
+        z_min, z_max = min(z_coords), max(z_coords)
+
+        # Add margins to spatial extent
+        margin = 0.1  # 10% margin
+        x_range_width = max(x_max - x_min, 1000.0)  # Minimum 1km width
+        y_range_width = max(y_max - y_min, 1000.0)
+        z_range_depth = abs(z_max - z_min)
+
+        x_margin = x_range_width * margin
+        y_margin = y_range_width * margin
+        z_margin = max(z_range_depth * margin, 500.0)  # Minimum 500m margin
+
+        x_range = (x_min - x_margin, x_max + x_margin)
+        y_range = (y_min - y_margin, y_max + y_margin)
+        z_range = (z_min - z_margin, min(z_max + z_margin, 0.0))  # Don't go above surface
+
+        # Get bathymetry depth at receiver for lower bound
+        bathy_depth_at_receiver = self.bathymetry.get_depth(
+            array_pos[0], array_pos[1]
+        )
+        z_range = (max(z_range[0], -bathy_depth_at_receiver), z_range[1])
+
+        # Generate 3D SSP grid
+        x_ssp, y_ssp, z_ssp, c_ssp = self.ssp.get_3d_grid(
+            x_range, y_range, z_range,
+            self.ssp_resolution[0], self.ssp_resolution[1], self.ssp_resolution[2]
+        )
+
+        # Generate 2D bathymetry grid
+        x_bty, y_bty, z_bty = self.bathymetry.get_grid(
+            x_range, y_range, self.bathy_resolution
+        )
+        z_bty_flat = z_bty.flatten(order='C')
+
+        # Get frequency/frequencies from source
+        if self.use_all_frequencies:
+            frequencies = source.metadata["frequencies_hz"].tolist()
+        else:
+            # Use only the peak frequency
+            frequency = source.metadata["frequencies_hz"][
+                np.argmax(source.metadata["amplitudes_upa"])
+            ]
+            frequencies = [float(frequency)]
+
+        # Build rtrs environment configuration
+        env_config = {
+            "ssp": {
+                "x_ssp_m": x_ssp.tolist(),
+                "y_ssp_m": y_ssp.tolist(),
+                "z_ssp_m": z_ssp.tolist(),
+                "c_m_s": c_ssp.tolist(),
+            },
+            "bathymetry": {
+                "x_bty_m": x_bty.tolist(),
+                "y_bty_m": y_bty.tolist(),
+                "z_bty_m": z_bty_flat.tolist(),
+            },
+            "source": {
+                "position": [
+                    float(source_pos[0]),
+                    float(source_pos[1]),
+                    float(-source_pos[2]),
+                ],
+                "freq_hz": frequencies,
+                "launch_elev_deg": launch_elevations,
+                "launch_azim_deg": launch_azimuths,
+            },
+            "receivers": {
+                "config_type": "array",
+                "x_rcvr_m": [float(array_pos[0])],
+                "y_rcvr_m": [float(array_pos[1])],
+                "z_rcvr_m": [-float(array_pos[2])],
+            },
+            "beam": {
+                "step_m": float(self.step_m),
+                "max_steps": int(max_steps),
+                "max_range_m": float(max_range_m),
+            },
+        }
+
+        # Run rtrs simulation
+        result = rtrs.run_simulation(env_config)
+
+        # Extract pressure field
+        pf = result["pressure_field"]
+        shape = tuple(pf["shape"])  # (nfreq, nreceivers, 1, 1)
+
+        # Reconstruct complex pressure
+        re = np.array(pf["pressure_re"], dtype=np.float32).reshape(shape)
+        im = np.array(pf["pressure_im"], dtype=np.float32).reshape(shape)
+        pressure = re + 1j * im
+
+        # Calculate transmission loss per frequency
+        if self.use_all_frequencies:
+            # Return TL for each frequency
+            tloss_per_freq = []
+            for freq_idx in range(len(frequencies)):
+                pressure_magnitude = np.abs(pressure[freq_idx, 0, 0, 0])
+                
+                # Handle zero pressure case
+                if pressure_magnitude < 1e-12:
+                    tloss_per_freq.append(999.0)
+                else:
+                    tloss_per_freq.append(-20 * np.log10(pressure_magnitude))
+            
+            tloss = np.array(tloss_per_freq)
+        else:
+            # Return single TL value
+            pressure_magnitude = np.abs(pressure[0, 0, 0, 0])
+            
+            # Handle zero pressure case
+            if pressure_magnitude < 1e-12:
+                tloss = 999.0
+            else:
+                tloss = -20 * np.log10(pressure_magnitude)
+
+        # Calculate travel time
+        speed = self.ssp.calculate(array_pos[2])
+        time = distance / speed
+
+        return tloss, time
+        
