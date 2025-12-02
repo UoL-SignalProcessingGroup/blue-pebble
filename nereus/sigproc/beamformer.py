@@ -299,16 +299,15 @@ class MinimumVarianceDistortionlessResponseBeamformer(Beamformer):
     frequency-domain Capon (MVDR) beamformer is applied in each bin, and the
     narrowband outputs are integrated over frequency to produce power as a
     function of steering direction and time-frame.
+
+    Note:
+        MVDR is an adaptive beamformer that computes optimal weights from the
+        data covariance matrix. Unlike DAS beamformers, shading/tapering is not
+        applied as it would interfere with the adaptive optimization.
     """
 
     sampling_rate_hz = Property(
         float, doc="The sampling frequency of the sensor signals, in Hz"
-    )
-    shading = Property(
-        np.ndarray,
-        default=None,
-        doc="An array of shading weights to apply to each sensor. If None, uniform"
-        " weights are used.",
     )
     nfft = Property(int, default=256, doc="STFT window size (samples)")
     overlap = Property(int, default=0, doc="STFT overlap (samples)")
@@ -330,8 +329,7 @@ class MinimumVarianceDistortionlessResponseBeamformer(Beamformer):
 
         Raises:
             ValueError: If the number of sensors in signal_array does not
-                match the number of sensors in steering_delays, or if shading
-                length does not match number of sensors.
+                match the number of sensors in steering_delays.
 
         Returns:
             np.ndarray: Array of beamformed power with shape
@@ -343,10 +341,6 @@ class MinimumVarianceDistortionlessResponseBeamformer(Beamformer):
             raise ValueError(
                 "Number of sensors must match the number of steering delays"
             )
-
-        # Use shading if provided (not typical for MVDR but supported)
-        if self.shading is not None and len(self.shading) != num_sensors:
-            raise ValueError("Shading length must match number of sensors")
 
         return self._mvdr_broadband(
             sensor_signals,
@@ -458,13 +452,6 @@ class MinimumVarianceDistortionlessResponseBeamformer(Beamformer):
         active = (f_bins >= fmin) & (f_bins <= fmax)
         active_idx = np.nonzero(active)[0]
 
-        # Optional shading
-        if self.shading is not None:
-            X = X * self.shading[:, None, None]  # (M, n_frames, nfft)
-            sd_eff = sd * self.shading[None, :]  # (Ndir, M)
-        else:
-            sd_eff = sd
-
         # Output power accumulator: (Ndir, n_frames)
         P = np.zeros((sd.shape[0], n_frames), dtype=np.float64)
 
@@ -486,7 +473,7 @@ class MinimumVarianceDistortionlessResponseBeamformer(Beamformer):
 
             # Steering matrix A: (M, Ndir)
             # (we build as (Ndir, M) then transpose for solve)
-            A = np.exp(-2j * np.pi * f * sd_eff).T  # (M, Ndir)
+            A = np.exp(-2j * np.pi * f * sd).T  # (M, Ndir)
 
             # Solve R X = A  -> X = R^{-1} A using Cholesky once
             # scipy LAPACK is faster than np.linalg.solve or numba
