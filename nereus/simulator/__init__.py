@@ -1,3 +1,11 @@
-from .acoustic import PassiveSonarArraySimulator, PassiveSonarSensorData  # noqa: D104
+from .acoustic import (  # noqa: D104
+    PassiveSonarArraySimulator,
+    PassiveSonarSensorData,
+    BroadbandPassiveSonarArraySimulator,
+)
 
-__all__ = ["PassiveSonarSensorData", "PassiveSonarArraySimulator"]
+__all__ = [
+    "PassiveSonarSensorData",
+    "PassiveSonarArraySimulator",
+    "BroadbandPassiveSonarArraySimulator",
+]

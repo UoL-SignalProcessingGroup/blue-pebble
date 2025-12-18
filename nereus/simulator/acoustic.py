@@ -164,3 +164,260 @@ class PassiveSonarArraySimulator(SensorSimulator):
         )
 
         return sensor_data
+
+
+class BroadbandPassiveSonarArraySimulator(SensorSimulator):
+    """Stone Soup sensor simulator for broadband passive sonar arrays.
+
+    This simulator uses STFT-based frequency-domain propagation for continuous
+    broadband signal processing. Unlike the standard PassiveSonarArraySimulator
+    which generates signals per-timestep, this simulator:
+
+    1. Generates a long-duration source signal once using BroadbandTonalSignal
+    2. Computes STFT of the source signal
+    3. At each timestep, runs rtrs propagation to get H(f) for all frequencies
+    4. Applies transfer functions to STFT frames
+    5. Reconstructs time-domain signals per sensor using overlap-add
+
+    This approach enables time-varying propagation (moving platforms) with
+    continuous phase-coherent signals across the full simulation duration.
+
+    Attributes:
+        platform: The towed array platform providing geometry.
+        propagation_model: Model for acoustic propagation (must support propagate_spectrum).
+        signal_model: BroadbandTonalSignal model for STFT-based generation.
+        noise_model: Model for generating ambient noise (optional).
+        beamformer: The beamforming algorithm to apply (optional).
+        steering_calculator: Calculator for steering delays (optional).
+        ground_truth_paths: List of GroundTruthPath objects representing targets.
+        fade_in_ms: Fade-in duration at signal arrival in milliseconds.
+    """
+
+    platform = Property(TowedArrayPlatform, doc="Towed array platform")
+    propagation_model = Property(
+        AcousticPropagationModel, doc="Acoustic propagation model (must support propagate_spectrum)"
+    )
+    signal_model = Property(Signal, doc="Broadband signal model (BroadbandTonalSignal)")
+    noise_model = Property(AmbientNoise, default=None, doc="Noise model (optional)")
+    beamformer = Property(Beamformer, default=None, doc="Beamforming algorithm (optional)")
+    steering_calculator = Property(
+        SteeringCalculator, default=None, doc="Steering calculator (optional)"
+    )
+    ground_truth_paths = Property(
+        list, default=[], doc="List of GroundTruthPath objects"
+    )
+    fade_in_ms = Property(
+        float, default=1000.0, doc="Fade-in duration at arrival (ms)"
+    )
+
+    def sensor_data_gen(self) -> Iterator[tuple[datetime, set[SensorData]]]:
+        """Generate continuous broadband sensor data using STFT processing.
+
+        This generator implements the BroadbandArrayProcessor methodology:
+        1. Compute source STFT once
+        2. For each timestep, get transfer functions H(f)
+        3. Interpolate H(f) between timesteps
+        4. Apply to STFT frames and reconstruct per sensor
+
+        Yields:
+            tuple: (timestamp, set of PassiveSonarSensorData) for each timestep.
+
+        """
+        # Import STFT utilities
+        from nereus.signal.utils import inverse_stft, apply_fade_in
+
+        # Get all timestamps
+        all_timestamps = sorted(
+            list(
+                set(
+                    state.timestamp
+                    for state in self.platform.movement_controller.states
+                )
+            )
+        )
+
+        if len(all_timestamps) < 2:
+            msg = "Need at least 2 timesteps for broadband processing"
+            raise ValueError(msg)
+
+        # Check that we have exactly one target (multi-target not implemented yet)
+        ground_truth_paths = self.ground_truth_paths or []
+        if len(ground_truth_paths) != 1:
+            msg = "BroadbandPassiveSonarArraySimulator currently supports only one target"
+            raise ValueError(msg)
+
+        target_path = ground_truth_paths[0]
+
+        # Get first target state to initialize STFT
+        first_state = next(iter(target_path))
+
+        # Compute STFT of source signal (only done once)
+        source_stft, frequencies, hop, window = self.signal_model.compute_stft(first_state)
+        num_frames = source_stft.shape[0]
+        num_freq_bins = source_stft.shape[1]
+
+        # Get source time-domain signal for reference
+        source_signal = self.signal_model.get_source_signal()
+
+        # Calculate timestep parameters
+        total_duration_s = len(source_signal) / self.signal_model.sampling_rate_hz
+        n_steps = len(all_timestamps)
+        step_duration_s = total_duration_s / n_steps
+
+        # Storage for transfer functions at each timestep
+        H_list_all = []  # List of (num_sensors, num_frequencies) per timestep
+        tdelay_list = []  # List of propagation delays per timestep
+
+        num_sensors = self.platform.num_sensors
+
+        # Run propagation simulation for each timestep to get H(f)
+        for timestamp in all_timestamps:
+            # Get platform state
+            platform_state = self.platform.get_platform_state_at(timestamp)
+
+            # Get target state at this timestamp
+            target_state = None
+            for state in target_path:
+                if state.timestamp == timestamp:
+                    target_state = state
+                    break
+
+            if target_state is None:
+                continue
+
+            # Run spectrum propagation to get H(f) for all sensors
+            H_sensors, prop_time_s = self.propagation_model.propagate_spectrum(
+                platform_state, target_state, frequencies
+            )
+
+            # Apply propagation delay as frequency-domain phase shift:
+            # exp(-j*omega*tau) gives exact time delay without broadband artifacts.
+            omega = 2.0 * np.pi * frequencies
+            phase_shift = np.exp(-1j * omega * prop_time_s)
+            H_sensors = H_sensors * phase_shift[np.newaxis, :]  # Broadcast over sensors
+
+            # H_sensors shape: (num_sensors, num_frequencies)
+            H_list_all.append(H_sensors)
+            tdelay_list.append(prop_time_s)
+
+        # Now reconstruct signals for each sensor using overlap-add
+        receiver_signals = []
+
+        # Reverse sensor order to match beamformer (expects back-to-front)
+        for sensor_idx in reversed(range(num_sensors)):
+            # Extract transfer function history for this sensor
+            H_sensor_history = [H_list[sensor_idx, :] for H_list in H_list_all]
+
+            # Interpolate H(f) across time for each STFT frame
+            STFT_out = np.zeros((num_frames, num_freq_bins), dtype=np.complex64)
+
+            for frame_idx in range(num_frames):
+                # Calculate time for this frame (center of frame)
+                frame_time_s = (frame_idx * hop + hop // 2) / self.signal_model.sampling_rate_hz
+
+                # Find which timestep this frame belongs to
+                step_idx_float = frame_time_s / step_duration_s
+                step_idx = int(np.floor(step_idx_float))
+
+                # Clamp to valid range
+                if step_idx >= n_steps - 1:
+                    step_idx = n_steps - 2
+
+                # Interpolation weight
+                alpha = step_idx_float - step_idx
+
+                # Interpolate H(f) between timesteps
+                H_current = H_sensor_history[step_idx]
+                H_next = H_sensor_history[step_idx + 1]
+                H_interp = H_current * (1 - alpha) + H_next * alpha
+
+                # Apply transfer function to source STFT
+                STFT_out[frame_idx, :] = source_stft[frame_idx, :] * H_interp
+
+            # Reconstruct time-domain signal using inverse STFT
+            signal_reconstructed = inverse_stft(STFT_out, self.signal_model.frame_len, hop, window)
+
+            # The delay has been handled in the frequency domain via phase shift.
+            # We only need to apply a fade-in if specified (to smooth the arrival).
+            if self.fade_in_ms > 0:
+                fade_samples = int(self.fade_in_ms * self.signal_model.sampling_rate_hz / 1000.0)
+                signal_with_arrival = apply_fade_in(signal_reconstructed, fade_samples)
+            else:
+                signal_with_arrival = signal_reconstructed
+
+            receiver_signals.append(signal_with_arrival)
+
+        # Ensure all signals have the same length
+        max_len = max(len(sig) for sig in receiver_signals)
+        for i in range(num_sensors):
+            if len(receiver_signals[i]) < max_len:
+                pad_len = max_len - len(receiver_signals[i])
+                receiver_signals[i] = np.concatenate([
+                    receiver_signals[i],
+                    np.zeros(pad_len, dtype=np.complex64)
+                ])
+
+        receiver_signals_array = np.array(receiver_signals)  # Shape: (num_sensors, total_samples)
+
+        # Now yield sensor data for each timestep by slicing the continuous signals
+        # Account for trimmed signal length from inverse_stft
+        actual_signal_len = receiver_signals_array.shape[1]
+        samples_per_step = actual_signal_len // n_steps
+
+        for step_idx, timestamp in enumerate(all_timestamps):
+            # Extract signal slice for this timestep
+            start_sample = step_idx * samples_per_step
+            end_sample = start_sample + samples_per_step
+            
+            # Ensure we don't exceed array bounds on last timestep
+            if step_idx == n_steps - 1:
+                end_sample = actual_signal_len
+
+            sensor_signals = receiver_signals_array[:, start_sample:end_sample]
+
+            # Add noise if provided
+            if self.noise_model:
+                # Get actual number of samples in this slice (may differ due to STFT trimming)
+                actual_samples = sensor_signals.shape[1]
+                
+                # Generate noise with the correct length
+                # Temporarily adjust noise model duration to match actual slice length
+                original_duration = self.noise_model.duration_s
+                actual_duration_s = actual_samples / self.signal_model.sampling_rate_hz
+                self.noise_model.duration_s = actual_duration_s
+                
+                noise = self.noise_model.generate(num_sensors)
+                
+                # Restore original duration
+                self.noise_model.duration_s = original_duration
+                
+                # Ensure noise matches signal length exactly (in case of rounding)
+                if noise.shape[1] != actual_samples:
+                    if noise.shape[1] > actual_samples:
+                        noise = noise[:, :actual_samples]
+                    else:
+                        # Pad with zeros if needed
+                        pad_len = actual_samples - noise.shape[1]
+                        noise = np.concatenate([noise, np.zeros((num_sensors, pad_len), dtype=noise.dtype)], axis=1)
+                
+                sensor_signals += noise
+
+            # Apply beamforming if provided
+            beamformed_data = None
+            if self.beamformer and self.steering_calculator:
+                platform_state = self.platform.get_platform_state_at(timestamp)
+                steering_delays_s = self.steering_calculator.calculate(platform_state)
+                
+                # Convert complex signals to real for beamforming
+                # Broadband signals are in baseband (complex) representation
+                sensor_signals_real = np.real(sensor_signals).astype(np.complex128)
+                beamformed_data = self.beamformer.beamform(sensor_signals_real, steering_delays_s)
+
+            # Create sensor data object
+            sensor_data = PassiveSonarSensorData(
+                raw_signals=sensor_signals,
+                beamformed_data=beamformed_data,
+                timestamp=timestamp,
+            )
+
+            yield timestamp, {sensor_data}
