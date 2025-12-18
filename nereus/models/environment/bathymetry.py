@@ -14,6 +14,10 @@ from stonesoup.base import Base, Property
 class Bathymetry(ABC, Base):
     """Abstract base class for bathymetry models."""
 
+    resolution: float = Property(
+        default=1000.0, doc="Default grid resolution in meters for gridded outputs"
+    )
+
     @abstractmethod
     def get_depth(self, x: float, y: float) -> float:
         """Get the seafloor depth at a given (x, y) position.
@@ -32,7 +36,7 @@ class Bathymetry(ABC, Base):
         pass
 
     @abstractmethod
-    def get_grid(self, x_range: tuple, y_range: tuple, resolution: float = 1000.0):
+    def get_grid(self, x_range: tuple, y_range: tuple):
         """Get a gridded representation of the bathymetry.
 
         Args:
@@ -84,7 +88,7 @@ class FlatBathymetry(Bathymetry):
         """
         return self.depth
 
-    def get_grid(self, x_range: tuple, y_range: tuple, resolution: float = 1000.0):
+    def get_grid(self, x_range: tuple, y_range: tuple):
         """Get a gridded representation of the flat bathymetry.
 
         Args:
@@ -100,8 +104,8 @@ class FlatBathymetry(Bathymetry):
         y_min, y_max = y_range
 
         # Create grid points
-        x_points = int((x_max - x_min) / resolution) + 1
-        y_points = int((y_max - y_min) / resolution) + 1
+        x_points = int((x_max - x_min) / self.resolution) + 1
+        y_points = int((y_max - y_min) /self.resolution) + 1
 
         x_grid = np.linspace(x_min, x_max, max(2, x_points))
         y_grid = np.linspace(y_min, y_max, max(2, y_points))
@@ -112,7 +116,7 @@ class FlatBathymetry(Bathymetry):
         return x_grid, y_grid, z_grid
 
 
-class SlopingBathymetry(Bathymetry):
+class WedgeBathymetry(Bathymetry):
     """A linearly sloping seafloor bathymetry model.
 
     Attributes:
@@ -149,7 +153,7 @@ class SlopingBathymetry(Bathymetry):
         depth = self.depth_at_origin + self.x_gradient * x + self.y_gradient * y
         return max(0.0, depth)  # Ensure depth is non-negative
 
-    def get_grid(self, x_range: tuple, y_range: tuple, resolution: float = 1000.0):
+    def get_grid(self, x_range: tuple, y_range: tuple):
         """Get a gridded representation of the sloping bathymetry.
 
         Args:
@@ -165,8 +169,8 @@ class SlopingBathymetry(Bathymetry):
         y_min, y_max = y_range
 
         # Create grid points
-        x_points = int((x_max - x_min) / resolution) + 1
-        y_points = int((y_max - y_min) / resolution) + 1
+        x_points = int((x_max - x_min) / self.resolution) + 1
+        y_points = int((y_max - y_min) / self.resolution) + 1
 
         x_grid = np.linspace(x_min, x_max, max(2, x_points))
         y_grid = np.linspace(y_min, y_max, max(2, y_points))
@@ -234,7 +238,7 @@ class SeamountBathymetry(Bathymetry):
 
         return depth
 
-    def get_grid(self, x_range: tuple, y_range: tuple, resolution: float = 1000.0):
+    def get_grid(self, x_range: tuple, y_range: tuple):
         """Get a gridded representation of the seamount bathymetry.
 
         Args:
@@ -250,8 +254,8 @@ class SeamountBathymetry(Bathymetry):
         y_min, y_max = y_range
 
         # Create grid points
-        x_points = int((x_max - x_min) / resolution) + 1
-        y_points = int((y_max - y_min) / resolution) + 1
+        x_points = int((x_max - x_min) / self.resolution) + 1
+        y_points = int((y_max - y_min) / self.resolution) + 1
 
         x_grid = np.linspace(x_min, x_max, max(2, x_points))
         y_grid = np.linspace(y_min, y_max, max(2, y_points))

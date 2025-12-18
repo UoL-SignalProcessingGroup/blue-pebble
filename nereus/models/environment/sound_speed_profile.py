@@ -25,9 +25,6 @@ class SoundSpeedProfile(ABC, Base):
         Returns:
             Sound speed in m/s.
 
-        Note:
-            This method must be implemented by subclasses.
-
         """
         pass
 
@@ -101,6 +98,106 @@ class SoundSpeedProfile(ABC, Base):
 
         """
         return 0.5 * (1 - np.tanh((depth - 200) / 100)) + 35
+    
+
+class Constant(SoundSpeedProfile):
+    """Constant sound speed profile model.
+
+    This model assumes a uniform sound speed throughout the water column.
+
+    Attributes:
+        speed (float): Constant sound speed in m/s.
+    """
+
+    speed: float = Property(default=1500.0, doc="Constant sound speed in m/s")
+
+    def calculate(self, depth: float) -> float:
+        """Return the constant sound speed.
+
+        Args:
+            depth: Depth in meters (not used in this model).
+
+        Returns:
+            Sound speed in m/s.
+
+        """
+        return self.speed
+
+
+class Linear(SoundSpeedProfile):
+    """Linear sound speed profile model.
+
+    This model assumes that the sound speed varies linearly with depth.
+
+    Attributes:
+        surface_speed (float): Sound speed at the surface in m/s.
+        gradient (float): Sound speed gradient in s^-1 (change per meter).
+    """
+
+    surface_speed: float = Property(
+        default=1500.0, doc="Sound speed at the surface in m/s"
+    )
+    gradient: float = Property(
+        default=0.017, doc="Sound speed gradient in s^-1 (change per meter)"
+    )
+
+    def calculate(self, depth: float) -> float:
+        """Calculate sound speed using a linear profile.
+
+        Args:
+            depth: Depth in meters. If negative (z-coordinate), converts to
+                  positive depth below surface for calculation.
+
+        Returns:
+            Sound speed in m/s.
+
+        """
+        # Convert negative z-coordinate to positive depth below surface
+        depth_positive = abs(depth)
+        c = self.surface_speed + self.gradient * depth_positive
+        return c
+    
+
+class Arctan(SoundSpeedProfile):
+    """Arctan sound speed profile model.
+
+    This model describes the sound speed profile using an arctangent
+    function, which can represent a smooth transition in sound speed with depth.
+
+    Attributes:
+        surface_speed (float): The speed of sound at the surface in m/s.
+            Defaults to 1500.0 m/s.
+        mid_depth (float): The depth at which the sound speed transition occurs
+            in meters. Defaults to 1000.0 m.
+        steepness (float): The steepness of the transition. Higher values
+            result in a sharper transition. Defaults to 0.005.
+    """
+
+    surface_speed: float = Property(
+        default=1500.0, doc="Speed of sound at the surface in m/s"
+    )
+    mid_depth: float = Property(
+        default=1000.0, doc="Depth at which sound speed transition occurs in meters"
+    )
+    steepness: float = Property(
+        default=0.005, doc="Steepness of the transition"
+    )
+
+    def calculate(self, depth: float) -> float:
+        """Calculate sound speed using the arctan profile.
+
+        Args:
+            depth: Depth in meters. If negative (z-coordinate), converts to
+                  positive depth below surface for calculation.
+
+        Returns:
+            Sound speed in m/s.
+
+        """
+        # Convert negative z-coordinate to positive depth below surface
+        depth_positive = abs(depth)
+        c = self.surface_speed + 50.0 * np.arctan(self.steepness * (depth_positive - self.mid_depth))
+        return c
 
 
 class Munk(SoundSpeedProfile):
