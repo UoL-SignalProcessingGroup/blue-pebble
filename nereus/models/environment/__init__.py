@@ -2,16 +2,26 @@ from .bathymetry import (
     Bathymetry,
     FlatBathymetry,
     SeamountBathymetry,
-    SlopingBathymetry,
+    WedgeBathymetry,
 )
-from .sound_speed_profile import Mackenzie, Munk, SoundSpeedProfile
+from .sound_speed_profile import (
+    SoundSpeedProfile,
+    Constant, 
+    Linear, 
+    Arctan, 
+    Munk, 
+    Mackenzie
+)
 
 __all__ = [
     "SoundSpeedProfile",
+    "Constant",
+    "Linear",
+    "Arctan",
     "Munk",
     "Mackenzie",
     "Bathymetry",
     "FlatBathymetry",
-    "SlopingBathymetry",
+    "WedgeBathymetry",
     "SeamountBathymetry",
 ]
