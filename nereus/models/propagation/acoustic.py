@@ -384,8 +384,6 @@ class rtrsAcousticPropagationModel(AcousticPropagationModel):
         step_m (float): Ray tracing step size in meters. Defaults to 10.0.
         ssp_resolution (tuple): Resolution for SSP grid (x, y, z) in meters.
             Defaults to (5000.0, 5000.0, 100.0).
-        bathy_resolution (float): Resolution for bathymetry grid in meters.
-            Defaults to 1000.0.
         azimuth_search_width (float): Angular width in degrees to search for
             azimuth angles that will hit the receiver. Defaults to 5.0.
         azimuth_resolution (float): Angular resolution for azimuth search in
@@ -405,9 +403,6 @@ class rtrsAcousticPropagationModel(AcousticPropagationModel):
     ssp_resolution: tuple = Property(
         default=(5000.0, 5000.0, 100.0),
         doc="Resolution for SSP grid (x, y, z) in meters",
-    )
-    bathy_resolution: float = Property(
-        default=1000.0, doc="Resolution for bathymetry grid in meters"
     )
     azimuth_search_width: float = Property(
         default=1.0,
@@ -574,7 +569,7 @@ class rtrsAcousticPropagationModel(AcousticPropagationModel):
 
         # Generate 2D bathymetry grid
         x_bty, y_bty, z_bty = self.bathymetry.get_grid(
-            x_range, y_range, self.bathy_resolution
+            x_range, y_range
         )
         z_bty_flat = z_bty.flatten(order='C')
 
@@ -665,4 +660,167 @@ class rtrsAcousticPropagationModel(AcousticPropagationModel):
         time = distance / speed
 
         return tloss, time
+
+    def propagate_spectrum(
+        self, platform, source, frequencies_hz: np.ndarray
+    ) -> tuple[np.ndarray, float]:
+        """Run rtrs simulation for broadband spectrum propagation.
+
+        This method computes complex transfer functions H(f) for each frequency
+        bin and each sensor in the array. It is designed for STFT-based broadband
+        processing where the simulator applies frequency-domain transfer functions
+        to each STFT frame.
+
+        Args:
+            platform: An object representing the sensor platform with array geometry.
+            source: An object representing the acoustic source position.
+            frequencies_hz: Array of frequencies in Hz (from STFT bins).
+
+        Returns:
+            tuple containing:
+                - transfer_functions: Complex array of shape (num_sensors, num_frequencies)
+                  containing H(f) = complex pressure / reference pressure for each
+                  sensor and frequency.
+                - propagation_time_s: Mean travel time in seconds (for delay calculation).
+
+        """
+        try:
+            import rtrs
+        except ImportError:
+            msg = (
+                "rtrs package is not installed. "
+                "Please install it to use rtrsAcousticPropagationModel."
+            )
+            raise ImportError(msg)
+
+        source_position = source.state_vector[list(source.metadata["position_mapping"])]
+        array_position = platform.array.state_vector
+        array_ref_position = platform.array.ref_state_vector
+
+        # Flatten to 1D
+        source_pos = source_position.flatten()
+        array_ref_pos = array_ref_position.flatten()
+
+        # Calculate distance and dynamic parameters
+        distance = np.linalg.norm(source_pos - array_ref_pos)
+        max_steps, max_range_m = self._calculate_max_steps_and_range(distance)
+
+        # Calculate launch angles
+        launch_azimuths = self._calculate_launch_azimuths(source_pos, array_ref_pos)
+
+        num_elev = int(
+            (self.elevation_range[1] - self.elevation_range[0])
+            / self.elevation_resolution
+        ) + 1
+        launch_elevations = np.linspace(
+            self.elevation_range[0], self.elevation_range[1], num_elev
+        ).tolist()
+
+        # Determine spatial extent for grids
+        # Include all sensor positions in the array
+        num_sensors = array_position.shape[1]  # Get from array dimensions
+        x_coords = [source_pos[0]] + array_position[0, :].tolist()
+        y_coords = [source_pos[1]] + array_position[1, :].tolist()
+        z_coords = [source_pos[2]] + array_position[2, :].tolist()
+
+        x_min, x_max = min(x_coords), max(x_coords)
+        y_min, y_max = min(y_coords), max(y_coords)
+        z_min, z_max = min(z_coords), max(z_coords)
+
+        # Add margins
+        margin = 0.1
+        x_range_width = max(x_max - x_min, 1000.0)
+        y_range_width = max(y_max - y_min, 1000.0)
+        z_range_depth = abs(z_max - z_min)
+
+        x_margin = x_range_width * margin
+        y_margin = y_range_width * margin
+        z_margin = max(z_range_depth * margin, 500.0)
+
+        x_range = (x_min - x_margin, x_max + x_margin)
+        y_range = (y_min - y_margin, y_max + y_margin)
+        z_range = (z_min - z_margin, min(z_max + z_margin, 0.0))
+
+        # Get bathymetry depth
+        bathy_depth_at_receiver = self.bathymetry.get_depth(
+            array_ref_pos[0], array_ref_pos[1]
+        )
+        z_range = (max(z_range[0], -bathy_depth_at_receiver), z_range[1])
+
+        # Generate 3D SSP grid
+        x_ssp, y_ssp, z_ssp, c_ssp = self.ssp.get_3d_grid(
+            x_range,
+            y_range,
+            z_range,
+            self.ssp_resolution[0],
+            self.ssp_resolution[1],
+            self.ssp_resolution[2],
+        )
+
+        # Generate 2D bathymetry grid
+        x_bty, y_bty, z_bty = self.bathymetry.get_grid(
+            x_range, y_range
+        )
+        z_bty_flat = z_bty.flatten(order="C")
+
+        # Build rtrs environment configuration with all sensors as receivers
+        env_config = {
+            "ssp": {
+                "x_ssp_m": x_ssp.tolist(),
+                "y_ssp_m": y_ssp.tolist(),
+                "z_ssp_m": z_ssp.tolist(),
+                "c_m_s": c_ssp.tolist(),
+            },
+            "bathymetry": {
+                "x_bty_m": x_bty.tolist(),
+                "y_bty_m": y_bty.tolist(),
+                "z_bty_m": z_bty_flat.tolist(),
+            },
+            "source": {
+                "position": [
+                    float(source_pos[0]),
+                    float(source_pos[1]),
+                    float(-source_pos[2]),
+                ],
+                "freq_hz": frequencies_hz.tolist(),
+                "launch_elev_deg": launch_elevations,
+                "launch_azim_deg": launch_azimuths,
+            },
+            "receivers": {
+                "config_type": "array",
+                "x_rcvr_m": array_position[0, :].tolist(),
+                "y_rcvr_m": array_position[1, :].tolist(),
+                "z_rcvr_m": (-array_position[2, :]).tolist(),  # Negate for rtrs convention
+            },
+            "beam": {
+                "step_m": float(self.step_m),
+                "max_steps": int(max_steps),
+                "max_range_m": float(max_range_m),
+            },
+        }
+
+        # Run rtrs simulation
+        result = rtrs.run_simulation(env_config)
+
+        # Extract pressure field
+        pf = result["pressure_field"]
+        shape = tuple(pf["shape"])  # (nfreq, nreceivers, 1, 1)
+
+        # Reconstruct complex pressure
+        re = np.array(pf["pressure_re"], dtype=np.float32).reshape(shape)
+        im = np.array(pf["pressure_im"], dtype=np.float32).reshape(shape)
+        pressure = re + 1j * im
+
+        # Extract transfer functions: shape (num_frequencies, num_sensors)
+        # rtrs returns shape (nfreq, nreceivers, 1, 1), squeeze to (nfreq, nreceivers)
+        transfer_functions = pressure[:, :, 0, 0]
+
+        # Transpose to (num_sensors, num_frequencies) for consistency with processing
+        transfer_functions = transfer_functions.T
+
+        # Calculate mean travel time
+        speed = self.ssp.calculate(array_ref_pos[2])
+        propagation_time_s = distance / speed
+
+        return transfer_functions, propagation_time_s
         
