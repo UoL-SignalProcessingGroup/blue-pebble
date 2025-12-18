@@ -24,6 +24,9 @@ venv.bak/
 # Project-Specific
 # ==================================
 # Ignore the Bellhop executable
+
+examples/dev/*
+examples/wavs/*
 nereus/models/propagation/bellhopcxx.exe
 nereus/models/propagation/bellhopcxx
 
