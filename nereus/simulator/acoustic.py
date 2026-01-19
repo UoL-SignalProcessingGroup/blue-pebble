@@ -286,15 +286,12 @@ class BroadbandPassiveSonarArraySimulator(SensorSimulator):
                 continue
 
             # Run spectrum propagation to get H(f) for all sensors
+            # NOTE: H_sensors already contains full phase information from rtrs,
+            # including propagation delay, multipath interference, and caustics.
+            # No additional phase shift is needed.
             H_sensors, prop_time_s = self.propagation_model.propagate_spectrum(
                 platform_state, target_state, frequencies
             )
-
-            # Apply propagation delay as frequency-domain phase shift:
-            # exp(-j*omega*tau) gives exact time delay without broadband artifacts.
-            omega = 2.0 * np.pi * frequencies
-            phase_shift = np.exp(-1j * omega * prop_time_s)
-            H_sensors = H_sensors * phase_shift[np.newaxis, :]  # Broadcast over sensors
 
             # H_sensors shape: (num_sensors, num_frequencies)
             H_list_all.append(H_sensors)

@@ -27,6 +27,7 @@ venv.bak/
 
 examples/dev/*
 examples/wavs/*
+examples/save_data/*
 nereus/models/propagation/bellhopcxx.exe
 nereus/models/propagation/bellhopcxx
 
