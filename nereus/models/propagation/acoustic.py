@@ -117,6 +117,65 @@ class CylindricalAcousticPropagationModel(AcousticPropagationModel):
         tloss = 10 * np.log10(distance) + self.attenuation_factor * (distance / 1000)
         return tloss, time
 
+    def propagate_spectrum(
+        self, platform, source, frequencies_hz: np.ndarray
+    ) -> tuple[np.ndarray, float]:
+        """Propagate spectrum using cylindrical spreading with frequency-dependent absorption.
+
+        This method calculates transfer functions H(f) for each sensor and frequency,
+        accounting for cylindrical spreading and frequency-dependent absorption.
+
+        Args:
+            platform: The platform object representing the sensor array.
+            source: The source object representing the acoustic source.
+            frequencies_hz: Array of frequencies in Hz for which to compute transfer functions.
+
+        Returns:
+            tuple: (H_sensors, propagation_time_s) where:
+                - H_sensors: Complex transfer function array of shape (num_sensors, num_frequencies)
+                - propagation_time_s: Propagation time from source to reference sensor (s)
+
+        """
+        source_position = source.state_vector[source.metadata["position_mapping"]]
+        array_position = platform.array.state_vector
+        array_ref_position = platform.array.ref_state_vector
+
+        # Calculate distances for each sensor
+        distances = np.linalg.norm(
+            source_position - array_position,
+            axis=0,
+        )  # Shape: (num_sensors,)
+
+        # Calculate reference distance and propagation time
+        reference_distance = np.linalg.norm(source_position - array_ref_position)
+        speed = self.ssp.calculate(array_ref_position[2])
+        propagation_time_s = reference_distance / speed
+
+        # Calculate cylindrical spreading loss: TL = 10*log10(r) + alpha*r
+        # where alpha is attenuation in dB/km
+        spreading_loss_db = 10 * np.log10(distances)  # Shape: (num_sensors,)
+        absorption_loss_db = self.attenuation_factor * (distances / 1000.0)
+        total_loss_db = spreading_loss_db + absorption_loss_db  # Shape: (num_sensors,)
+
+        # Convert to linear amplitude scaling
+        amplitude_scaling = 10 ** (-total_loss_db / 20.0)  # Shape: (num_sensors,)
+
+        # Calculate phase shift for each sensor and frequency
+        # Phase = 2pi * f * (d / c)
+        speeds_per_sensor = self.ssp.calculate(array_position[2, :])  # Shape: (num_sensors,)
+        time_delays = distances / speeds_per_sensor  # Shape: (num_sensors,)
+
+        # Broadcast to (num_sensors, num_frequencies)
+        phase_shifts = np.exp(
+            2j * np.pi * frequencies_hz[np.newaxis, :] * time_delays[:, np.newaxis]
+        )
+
+        # Combine amplitude and phase
+        # H(f) = amplitude * exp(-j*2pi*f*t)
+        H_sensors = amplitude_scaling[:, np.newaxis] * phase_shifts
+
+        return H_sensors, propagation_time_s
+
 
 class SphericalAcousticPropagationModel(AcousticPropagationModel):
     """A simple acoustic model based on spherical spreading and absorption loss.
@@ -164,6 +223,65 @@ class SphericalAcousticPropagationModel(AcousticPropagationModel):
         time = distance / speed
         tloss = 20 * np.log10(distance) + self.attenuation_factor * (distance / 1000)
         return tloss, time
+
+    def propagate_spectrum(
+        self, platform, source, frequencies_hz: np.ndarray
+    ) -> tuple[np.ndarray, float]:
+        """Propagate spectrum using spherical spreading with frequency-dependent absorption.
+
+        This method calculates transfer functions H(f) for each sensor and frequency,
+        accounting for spherical spreading and frequency-dependent absorption.
+
+        Args:
+            platform: The platform object representing the sensor array.
+            source: The source object representing the acoustic source.
+            frequencies_hz: Array of frequencies in Hz for which to compute transfer functions.
+
+        Returns:
+            tuple: (H_sensors, propagation_time_s) where:
+                - H_sensors: Complex transfer function array of shape (num_sensors, num_frequencies)
+                - propagation_time_s: Propagation time from source to reference sensor (s)
+
+        """
+        source_position = source.state_vector[source.metadata["position_mapping"]]
+        array_position = platform.array.state_vector
+        array_ref_position = platform.array.ref_state_vector
+
+        # Calculate distances for each sensor
+        distances = np.linalg.norm(
+            source_position - array_position,
+            axis=0,
+        )  # Shape: (num_sensors,)
+
+        # Calculate reference distance and propagation time
+        reference_distance = np.linalg.norm(source_position - array_ref_position)
+        speed = self.ssp.calculate(array_ref_position[2])
+        propagation_time_s = reference_distance / speed
+
+        # Calculate spherical spreading loss: TL = 20*log10(r) + alpha*r
+        # where alpha is attenuation in dB/km
+        spreading_loss_db = 20 * np.log10(distances)  # Shape: (num_sensors,)
+        absorption_loss_db = self.attenuation_factor * (distances / 1000.0)
+        total_loss_db = spreading_loss_db + absorption_loss_db  # Shape: (num_sensors,)
+
+        # Convert to linear amplitude scaling
+        amplitude_scaling = 10 ** (-total_loss_db / 20.0)  # Shape: (num_sensors,)
+
+        # Calculate phase shift for each sensor and frequency
+        # Phase = 2pi * f * (d / c)
+        speeds_per_sensor = self.ssp.calculate(array_position[2, :])  # Shape: (num_sensors,)
+        time_delays = distances / speeds_per_sensor  # Shape: (num_sensors,)
+
+        # Broadcast to (num_sensors, num_frequencies)
+        phase_shifts = np.exp(
+            2j * np.pi * frequencies_hz[np.newaxis, :] * time_delays[:, np.newaxis]
+        )
+
+        # Combine amplitude and phase
+        # H(f) = amplitude * exp(-j*2pi*f*t)
+        H_sensors = amplitude_scaling[:, np.newaxis] * phase_shifts
+
+        return H_sensors, propagation_time_s
 
 
 class BellhopAcousticPropagationModel(AcousticPropagationModel):
