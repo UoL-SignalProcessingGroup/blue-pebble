@@ -750,6 +750,7 @@ class BearingsPlotter(BasePlotter):
         ax: Axes = None,
         add_colorbar: bool = True,
         colorbar_ax: list[Axes] = None,
+        add_legend: bool = True,
     ) -> tuple[Axes, Any]:
         """Plot a heatmap of SNR vs. time, with detections overlaid.
 
@@ -771,6 +772,8 @@ class BearingsPlotter(BasePlotter):
                 Defaults to True.
             colorbar_ax (list[Axes], optional): If provided, the colorbar will
                 be added to this Axes object instead of the main Axes.
+            add_legend (bool): Whether to add a legend to the plot.
+                Defaults to True.
 
         Returns:
             tuple[Axes, Any]: The matplotlib Axes object containing the plot and
@@ -822,14 +825,17 @@ class BearingsPlotter(BasePlotter):
         # 3. Overlay the detections (if any)
         if detection_bearings and detection_times:
             detection_style = element_styles["detection"].copy()
-            detection_style["color"] = "red"  # Override color for visibility
+            # Use hollow circles with edge color for consistency with main plot
             scatter = self.ax.scatter(
                 detection_bearings,
                 detection_times,
-                s=20,  # Keep a fixed size for clarity
+                s=detection_style.get("markersize", 4) ** 2,  # scatter uses area
                 label="Detection",
                 marker=detection_style["marker"],
-                color=detection_style["color"],
+                facecolors="none",
+                edgecolors="#9467bd",  # Purple to match default detection color
+                linewidths=detection_style.get("markeredgewidth", 1),
+                alpha=detection_style.get("alpha", 0.5),
             )
             legend_handles.append(scatter)
             legend_labels.append("Detection")
@@ -838,7 +844,7 @@ class BearingsPlotter(BasePlotter):
         self.ax.set_ylim([timesteps[0], timesteps[-1] + timedelta(seconds=10)])
         self.ax.invert_yaxis()
         self.ax.set_xticks(
-            np.arange(self.bearing_range_deg[0], self.bearing_range_deg[1] + 1, 30)
+            np.arange(self.bearing_range_deg[0], self.bearing_range_deg[1] + 1, 60)
         )
         self.ax.set_xlabel("Bearing (°)")
 
@@ -857,23 +863,25 @@ class BearingsPlotter(BasePlotter):
             self.fig.colorbar(im, ax=cax, label="SNR (dB)")
 
         # --- Tidy up the Legend ---
-        if "Ground Truth" in legend_labels:
-            idx = legend_labels.index("Ground Truth")
-            legend_handles[idx] = plt.Line2D(
-                [0], [0], color="black", linestyle="--", label="Ground Truth"
-            )
+        if add_legend:
+            if "Ground Truth" in legend_labels:
+                idx = legend_labels.index("Ground Truth")
+                legend_handles[idx] = plt.Line2D(
+                    [0], [0], color="black", linestyle="--", label="Ground Truth"
+                )
 
-        if legend_handles:
-            self.ax.legend(
-                handles=legend_handles,
-                labels=legend_labels,
-                loc="upper left",
-                bbox_to_anchor=(1.35, 1),
-                fancybox=True,
-                shadow=False,
-                frameon=True,
-                framealpha=0.95,
-            )
+            if legend_handles:
+                self.ax.legend(
+                    handles=legend_handles,
+                    labels=legend_labels,
+                    loc="upper center",
+                    bbox_to_anchor=(0.5, -0.12),
+                    ncol=len(legend_handles),
+                    fancybox=True,
+                    shadow=False,
+                    frameon=True,
+                    framealpha=0.95,
+                )
 
         self.ax.grid(False)
         self.fig.tight_layout()
@@ -895,7 +903,7 @@ class BearingsPlotter(BasePlotter):
         self.ax.set_ylim([timesteps[0], timesteps[-1] + timedelta(seconds=10)])
         self.ax.invert_yaxis()
         self.ax.set_xticks(
-            np.arange(self.bearing_range_deg[0], self.bearing_range_deg[1] + 1, 30)
+            np.arange(self.bearing_range_deg[0], self.bearing_range_deg[1] + 1, 60)
         )
         self.ax.set_xlabel(self.style_guide["axes"]["x_label"])
 
