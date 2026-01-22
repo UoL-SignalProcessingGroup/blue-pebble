@@ -240,18 +240,18 @@ class BroadbandPassiveSonarArraySimulator(SensorSimulator):
             msg = "Need at least 2 timesteps for broadband processing"
             raise ValueError(msg)
 
-        # Check that we have exactly one target (multi-target not implemented yet)
+        # Get all target paths
         ground_truth_paths = self.ground_truth_paths or []
-        if len(ground_truth_paths) != 1:
-            msg = "BroadbandPassiveSonarArraySimulator currently supports only one target"
+        if len(ground_truth_paths) == 0:
+            msg = "BroadbandPassiveSonarArraySimulator requires at least one target"
             raise ValueError(msg)
 
-        target_path = ground_truth_paths[0]
-
-        # Get first target state to initialize STFT
-        first_state = next(iter(target_path))
+        # Get first target state from first path to initialize STFT parameters
+        first_target_path = ground_truth_paths[0]
+        first_state = next(iter(first_target_path))
 
         # Compute STFT of source signal (only done once)
+        # All targets share the same STFT parameters
         source_stft, frequencies, hop, window = self.signal_model.compute_stft(first_state)
         num_frames = source_stft.shape[0]
         num_freq_bins = source_stft.shape[1]
@@ -264,75 +264,108 @@ class BroadbandPassiveSonarArraySimulator(SensorSimulator):
         n_steps = len(all_timestamps)
         step_duration_s = total_duration_s / n_steps
 
-        # Storage for transfer functions at each timestep
-        H_list_all = []  # List of (num_sensors, num_frequencies) per timestep
-        tdelay_list = []  # List of propagation delays per timestep
-
         num_sensors = self.platform.num_sensors
 
-        # Run propagation simulation for each timestep to get H(f)
-        for timestamp in all_timestamps:
-            # Get platform state
-            platform_state = self.platform.get_platform_state_at(timestamp)
+        # Storage for transfer functions at each timestep for each target
+        # Structure: list of dicts, one dict per target containing:
+        #   - 'H_list': list of (num_sensors, num_frequencies) per timestep
+        #   - 'tdelay_list': list of propagation delays per timestep
+        #   - 'source_stft': STFT of this target's source signal
+        targets_data = []
 
-            # Get target state at this timestamp
-            target_state = None
-            for state in target_path:
-                if state.timestamp == timestamp:
-                    target_state = state
-                    break
+        # Process each target
+        for target_path in ground_truth_paths:
+            # Get first state to generate STFT for this target
+            target_first_state = next(iter(target_path))
+            
+            # Compute STFT for this target's source signal
+            target_source_stft, _, _, _ = self.signal_model.compute_stft(target_first_state)
+            
+            H_list_all = []  # List of (num_sensors, num_frequencies) per timestep
+            tdelay_list = []  # List of propagation delays per timestep
 
-            if target_state is None:
-                continue
+            # Run propagation simulation for each timestep to get H(f)
+            for timestamp in all_timestamps:
+                # Get platform state
+                platform_state = self.platform.get_platform_state_at(timestamp)
 
-            # Run spectrum propagation to get H(f) for all sensors
-            # NOTE: H_sensors already contains full phase information from rtrs,
-            # including propagation delay, multipath interference, and caustics.
-            # No additional phase shift is needed.
-            H_sensors, prop_time_s = self.propagation_model.propagate_spectrum(
-                platform_state, target_state, frequencies
-            )
+                # Get target state at this timestamp
+                target_state = None
+                for state in target_path:
+                    if state.timestamp == timestamp:
+                        target_state = state
+                        break
 
-            # H_sensors shape: (num_sensors, num_frequencies)
-            H_list_all.append(H_sensors)
-            tdelay_list.append(prop_time_s)
+                if target_state is None:
+                    continue
+
+                # Run spectrum propagation to get H(f) for all sensors
+                # NOTE: H_sensors already contains full phase information from rtrs,
+                # including propagation delay, multipath interference, and caustics.
+                # No additional phase shift is needed.
+                H_sensors, prop_time_s = self.propagation_model.propagate_spectrum(
+                    platform_state, target_state, frequencies
+                )
+
+                # H_sensors shape: (num_sensors, num_frequencies)
+                H_list_all.append(H_sensors)
+                tdelay_list.append(prop_time_s)
+            
+            # Store this target's data
+            targets_data.append({
+                'H_list': H_list_all,
+                'tdelay_list': tdelay_list,
+                'source_stft': target_source_stft
+            })
 
         # Now reconstruct signals for each sensor using overlap-add
+        # For multiple targets, sum contributions in the frequency domain
         receiver_signals = []
 
         # Reverse sensor order to match beamformer (expects back-to-front)
         for sensor_idx in reversed(range(num_sensors)):
-            # Extract transfer function history for this sensor
-            H_sensor_history = [H_list[sensor_idx, :] for H_list in H_list_all]
+            # Accumulate STFT output from all targets
+            STFT_out_total = np.zeros((num_frames, num_freq_bins), dtype=np.complex64)
+            
+            # Process each target
+            for target_data in targets_data:
+                H_list_all = target_data['H_list']
+                target_source_stft = target_data['source_stft']
+                
+                # Extract transfer function history for this sensor and target
+                H_sensor_history = [H_list[sensor_idx, :] for H_list in H_list_all]
 
-            # Interpolate H(f) across time for each STFT frame
-            STFT_out = np.zeros((num_frames, num_freq_bins), dtype=np.complex64)
+                # Interpolate H(f) across time for each STFT frame
+                STFT_out_target = np.zeros((num_frames, num_freq_bins), dtype=np.complex64)
 
-            for frame_idx in range(num_frames):
-                # Calculate time for this frame (center of frame)
-                frame_time_s = (frame_idx * hop + hop // 2) / self.signal_model.sampling_rate_hz
+                for frame_idx in range(num_frames):
+                    # Calculate time for this frame (center of frame)
+                    frame_time_s = (frame_idx * hop + hop // 2) / self.signal_model.sampling_rate_hz
 
-                # Find which timestep this frame belongs to
-                step_idx_float = frame_time_s / step_duration_s
-                step_idx = int(np.floor(step_idx_float))
+                    # Find which timestep this frame belongs to
+                    step_idx_float = frame_time_s / step_duration_s
+                    step_idx = int(np.floor(step_idx_float))
 
-                # Clamp to valid range
-                if step_idx >= n_steps - 1:
-                    step_idx = n_steps - 2
+                    # Clamp to valid range
+                    if step_idx >= n_steps - 1:
+                        step_idx = n_steps - 2
 
-                # Interpolation weight
-                alpha = step_idx_float - step_idx
+                    # Interpolation weight
+                    alpha = step_idx_float - step_idx
 
-                # Interpolate H(f) between timesteps
-                H_current = H_sensor_history[step_idx]
-                H_next = H_sensor_history[step_idx + 1]
-                H_interp = H_current * (1 - alpha) + H_next * alpha
+                    # Interpolate H(f) between timesteps
+                    H_current = H_sensor_history[step_idx]
+                    H_next = H_sensor_history[step_idx + 1]
+                    H_interp = H_current * (1 - alpha) + H_next * alpha
 
-                # Apply transfer function to source STFT
-                STFT_out[frame_idx, :] = source_stft[frame_idx, :] * H_interp
+                    # Apply transfer function to this target's source STFT
+                    STFT_out_target[frame_idx, :] = target_source_stft[frame_idx, :] * H_interp
+                
+                # Add this target's contribution to total
+                STFT_out_total += STFT_out_target
 
-            # Reconstruct time-domain signal using inverse STFT
-            signal_reconstructed = inverse_stft(STFT_out, self.signal_model.frame_len, hop, window)
+            # Reconstruct time-domain signal using inverse STFT (sum of all targets)
+            signal_reconstructed = inverse_stft(STFT_out_total, self.signal_model.frame_len, hop, window)
 
             # The delay has been handled in the frequency domain via phase shift.
             # We only need to apply a fade-in if specified (to smooth the arrival).
