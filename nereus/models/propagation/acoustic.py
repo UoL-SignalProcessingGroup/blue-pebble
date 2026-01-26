@@ -839,33 +839,42 @@ class rtrsAcousticPropagationModel(AcousticPropagationModel):
         num_sensors = array_position.shape[1]  # Get from array dimensions
         x_coords = [source_pos[0]] + array_position[0, :].tolist()
         y_coords = [source_pos[1]] + array_position[1, :].tolist()
-        z_coords = [source_pos[2]] + array_position[2, :].tolist()
+        # z_coords = [source_pos[2]] + array_position[2, :].tolist()
 
         x_min, x_max = min(x_coords), max(x_coords)
         y_min, y_max = min(y_coords), max(y_coords)
-        z_min, z_max = min(z_coords), max(z_coords)
+        # z_min, z_max = min(z_coords), max(z_coords)
+        # print(z_min, z_max)
 
         # Add margins
         margin = 0.1
         x_range_width = max(x_max - x_min, 1000.0)
         y_range_width = max(y_max - y_min, 1000.0)
-        z_range_depth = abs(z_max - z_min)
+        # z_range_depth = abs(z_max - z_min)
 
         x_margin = x_range_width * margin
         y_margin = y_range_width * margin
-        z_margin = max(z_range_depth * margin, 500.0)
+        # z_margin = max(z_range_depth * margin, 500.0)
 
         x_range = (x_min - x_margin, x_max + x_margin)
         y_range = (y_min - y_margin, y_max + y_margin)
-        z_range = (z_min - z_margin, min(z_max + z_margin, 0.0))
+        # z_range = (z_min - z_margin, min(z_max + z_margin, 0.0))
 
         # Get bathymetry depth
-        bathy_depth_at_receiver = self.bathymetry.get_depth(
-            array_ref_pos[0], array_ref_pos[1]
+        # bathy_depth_at_receiver = self.bathymetry.get_depth(
+        #     array_ref_pos[0], array_ref_pos[1]
+        # )
+        # z_range = (max(z_range[0], -bathy_depth_at_receiver), z_range[1])
+
+        # Generate 2D bathymetry grid
+        x_bty, y_bty, z_bty = self.bathymetry.get_grid(
+            x_range, y_range
         )
-        z_range = (max(z_range[0], -bathy_depth_at_receiver), z_range[1])
+        z_bty_flat = -z_bty.flatten(order="C")
 
         # Generate 3D SSP grid
+        z_range = [0.0, np.max(z_bty_flat)]
+        # print(z_range)
         x_ssp, y_ssp, z_ssp, c_ssp = self.ssp.get_3d_grid(
             x_range,
             y_range,
@@ -874,12 +883,7 @@ class rtrsAcousticPropagationModel(AcousticPropagationModel):
             self.ssp_resolution[1],
             self.ssp_resolution[2],
         )
-
-        # Generate 2D bathymetry grid
-        x_bty, y_bty, z_bty = self.bathymetry.get_grid(
-            x_range, y_range
-        )
-        z_bty_flat = z_bty.flatten(order="C")
+        # print(c_ssp)
 
         # Build rtrs environment configuration with all sensors as receivers
         env_config = {
