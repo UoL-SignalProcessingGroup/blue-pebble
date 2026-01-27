@@ -10,6 +10,8 @@ from stonesoup.types.detection import Detection
 
 from nereus.detector import DetectionAlgorithm
 
+from tqdm import tqdm
+
 
 class PassiveSonarDetector(DetectionReader):
     """A passive sonar detector that processes beamformed sensor data.
@@ -62,7 +64,7 @@ class PassiveSonarDetector(DetectionReader):
         return np.array(self._snr_history)
 
     @BufferedGenerator.generator_method
-    def detections_gen(self):
+    def detections_gen(self, progress_bar: bool = False):
         """Generate detections from sensor data.
 
         This generator iterates through the `sensor_data_gen`, processes each
@@ -74,7 +76,11 @@ class PassiveSonarDetector(DetectionReader):
             objects for that timestamp.
 
         """
-        for timestamp, sensor_data_set in self.sensor_data_gen:
+        sensor_data_iterator = self.sensor_data_gen
+        if progress_bar:
+            sensor_data_iterator = tqdm(sensor_data_iterator, desc="Generating Detections")
+        
+        for timestamp, sensor_data_set in sensor_data_iterator:
             detections = set()
 
             # Process each sensor data object in the set
