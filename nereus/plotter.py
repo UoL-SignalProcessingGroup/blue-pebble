@@ -37,8 +37,11 @@ DEFAULT_STYLE_GUIDE = {
     },
     "legend": {
         "display": True,
-        "location": "upper left",
-        "anchor": (1.02, 1),
+        # "location": "upper left",
+        # "anchor": (1.02, 1),
+        "location": "upper center",
+        "anchor": (0.5, -0.15),
+        "ncol": 3,
         "fancybox": True,
         "shadow": False,
         "frameon": True,
@@ -515,6 +518,7 @@ class BasePlotter(ABC):
             self.ax.legend(
                 handles=handles,
                 loc=legend_cfg["location"],
+                ncol=legend_cfg["ncol"],
                 bbox_to_anchor=legend_cfg["anchor"],
                 fancybox=legend_cfg["fancybox"],
                 shadow=legend_cfg["shadow"],
@@ -833,7 +837,7 @@ class BearingsPlotter(BasePlotter):
                 label="Detection",
                 marker=detection_style["marker"],
                 facecolors="none",
-                edgecolors="#9467bd",  # Purple to match default detection color
+                edgecolors=detection_style.get("color"),  
                 linewidths=detection_style.get("markeredgewidth", 1),
                 alpha=detection_style.get("alpha", 0.5),
             )
