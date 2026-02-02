@@ -63,6 +63,11 @@ class DelayAndSumBeamformer(Beamformer):
         default="time",
         doc="The domain for beamforming, either 'time' or 'frequency'",
     )
+    nfft = Property(int, default=256, doc="STFT window size (samples)")
+    overlap = Property(int, default=0, doc="STFT overlap (samples)")
+    f0 = Property(float, default=0.0, doc="Carrier frequency for baseband data (Hz)")
+    fmin = Property(float, default=None, doc="Minimum frequency to integrate (Hz)")
+    fmax = Property(float, default=None, doc="Maximum frequency to integrate (Hz)")
 
     def __init__(self, *args, **kwargs):
         """Initialise the DelayAndSumBeamformer.
@@ -90,7 +95,7 @@ class DelayAndSumBeamformer(Beamformer):
         # Store number of sensors for consistent shading
         self._num_sensors = None
 
-        if self.domain not in ["time", "frequency"]:
+        if self.domain not in ["time", "frequency", "broadband_power"]:
             raise ValueError(
                 "Invalid beamforming domain. Must be 'time' or 'frequency'"
             )
@@ -142,13 +147,118 @@ class DelayAndSumBeamformer(Beamformer):
                 shading_weights,
                 self.sampling_rate_hz,
             )
-        else:
+        elif self.domain == "frequency":
             return _frequency_das(
                 sensor_signals,
                 steering_delays_s,
                 shading_weights,
                 self.sampling_rate_hz,
             )
+        elif self.domain == "broadband_power":
+            return self.das_broadband_power(
+                sensor_signals,
+                self.sampling_rate_hz,
+                self.nfft,
+                steering_delays_s,
+                shading_weights,
+                f0=self.f0,
+                fmin=self.fmin,
+                fmax=self.fmax,
+                overlap=self.overlap,
+            )
+        
+    @staticmethod
+    def _stft(x: np.ndarray, nfft: int, overlap: int) -> np.ndarray:
+        """Compute the Short-Time Fourier Transform (STFT) of the input signal.
+
+        Args:
+            x (np.ndarray): Input signal array of shape (M, T) where M is the
+                number of sensors and T is the number of time samples.
+            nfft (int): The number of FFT points (window size).
+            overlap (int): The number of overlapping samples between windows.
+
+        Returns:
+            np.ndarray: STFT of the input signal with shape (M, n_frames, nfft).
+
+        """
+        # x: (M, T) complex
+        M, T = x.shape
+        if T < nfft:
+            raise ValueError(
+                f"Input signal length T={T} is less than window size nfft={nfft}."
+            )
+        hop = max(1, nfft - overlap)
+        # pad to fit last frame exactly
+        n_frames = 1 + (max(0, T - nfft) // hop)
+        pad = (n_frames - 1) * hop + nfft - T
+        if pad > 0:
+            x = np.pad(x, ((0, 0), (0, pad)), mode="constant")
+
+        window = np.hanning(nfft).astype(x.real.dtype)
+        # Make a 3D view: (M, n_frames, nfft)
+        stride_t = x.strides[1]
+        frames = np.lib.stride_tricks.as_strided(
+            x,
+            shape=(M, n_frames, nfft),
+            strides=(x.strides[0], hop * stride_t, stride_t),
+            writeable=False,
+        )
+        frames = frames * window  # broadcasts over last axis
+        return np.fft.fft(frames, axis=2)
+    
+    def das_broadband_power(
+        self,
+        x: np.ndarray,              # (M, T)
+        fs: float,
+        nfft: int,
+        sd: np.ndarray,             # (Ndir, M) steering delays [s]
+        shading_weights: np.ndarray,# (M,)
+        f0: float = 0.0,
+        fmin: float | None = None,
+        fmax: float | None = None,
+        overlap: int = 0,
+    ) -> np.ndarray:
+        """
+        Return direction-time power P with shape (Ndir, n_frames),
+        computed by incoherent integration of DAS output power over frequency.
+        """
+
+        M, _ = x.shape
+        X = self._stft(x, nfft, overlap)          # (M, n_frames, nfft)
+        M, n_frames, nfft_actual = X.shape
+
+        k = np.arange(nfft_actual)
+        k_centered = np.where(k <= nfft_actual // 2, k, k - nfft_actual)
+        f_bins = f0 + (fs / nfft_actual) * k_centered
+
+        if fmin is None: fmin = f_bins.min()
+        if fmax is None: fmax = f_bins.max()
+        active = (f_bins >= fmin) & (f_bins <= fmax)
+        active_idx = np.nonzero(active)[0]
+
+        Ndir = sd.shape[0]
+        P = np.zeros((Ndir, n_frames), dtype=np.float64)
+
+        # Normalize weights
+        w = shading_weights.reshape(1, M, 1)      # (1, M, 1) for broadcasting
+
+        for i in active_idx:
+            f = f_bins[i]
+
+            # Snapshots at this bin: (M, n_frames)
+            S = X[:, :, i]
+
+            # Steering phase for all dirs/sensors: (Ndir, M)
+            A = np.exp(1j * 2 * np.pi * f * sd)
+
+            # Beamform: Y = sum_m w_m * A(dir,m) * S(m,frame)
+            # Result: (Ndir, n_frames)
+            Y = np.sum((A[:, :, None] * S[None, :, :]) * w, axis=1)
+
+            # Accumulate power over frequency bins
+            P += np.abs(Y) ** 2
+
+        return P
 
 
 @njit(
