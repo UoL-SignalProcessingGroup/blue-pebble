@@ -11,7 +11,7 @@ from datetime import datetime
 import numpy as np
 from stonesoup.base import Property
 from stonesoup.movable.movable import MovingMovable
-from stonesoup.platform.base import MovingPlatform
+from stonesoup.platform.base import MultiTransitionMovingPlatform
 from stonesoup.types.array import StateVector, StateVectors
 from stonesoup.types.groundtruth import GroundTruthState
 
@@ -49,7 +49,7 @@ class PlatformState:
         return self.host.state.state_vector[[0, 2, 4]]
 
 
-class TowedArrayPlatform(MovingPlatform):
+class TowedArrayPlatform(MultiTransitionMovingPlatform):
     """A Stone Soup compliant platform that can tow an array of sensors."""
 
     num_sensors = Property(int, doc="Number of sensors in the array")
