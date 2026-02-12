@@ -1,3 +1,3 @@
-from .follower import FollowerModel, TowedArrayFollowerModel  # noqa: D104
+"""Positioning models public API."""
 
-__all__ = ["FollowerModel", "TowedArrayFollowerModel"]
+__all__: list[str] = []

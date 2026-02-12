@@ -90,14 +90,21 @@ DEFAULT_STYLE_GUIDE = {
 def _get_time_axis_formatter(time_span_seconds: float) -> tuple:
     """Calculate the optimal matplotlib locator and formatter for a time axis.
 
-    Args:
-        time_span_seconds (float): The total duration of the time span in seconds.
+    Parameters
+    ----------
+        time_span_seconds  : float
+            The total duration of the time span in seconds.
 
-    Returns:
-        tuple: A tuple containing:
-            - locator (matplotlib.dates.DateLocator): The locator for the x-axis.
-            - formatter (matplotlib.dates.DateFormatter): The formatter for the x-axis.
-            - label (str): A label for the x-axis.
+    Returns
+    -------
+        tuple
+            A tuple containing:
+        - locator (matplotlib.dates.DateLocator)
+            The locator for the x-axis.
+        - formatter (matplotlib.dates.DateFormatter)
+            The formatter for the x-axis.
+        - label (str)
+            A label for the x-axis.
 
     """
     target_ticks = 6
@@ -148,10 +155,13 @@ class BasePlotter(ABC):
     ) -> None:
         """Initialise the plotter using a comprehensive style guide.
 
-        Args:
-            defaults (dict): A dictionary of default styles to apply to the plotter.
+        Parameters
+        ----------
+            defaults  : dict
+                A dictionary of default styles to apply to the plotter.
                 This is merged with the class-specific defaults.
-            style_guide (dict): A dictionary to override the default styles for this
+            style_guide  : dict
+                A dictionary to override the default styles for this
                 plotter. If None, the class defaults are used.
 
         """
@@ -211,21 +221,32 @@ class BasePlotter(ABC):
 
         This method plots all historical data up to the final timestep.
 
-        Args:
-            truths (list[GroundTruthPath]): A list of ground truth paths.
-            tracks (list[Track]): A list of track objects.
-            all_detections (list[set[Detection]]): A list of detection sets,
+        Parameters
+        ----------
+            truths  : list[GroundTruthPath]
+                A list of ground truth paths.
+            tracks  : list[Track]
+                A list of track objects.
+            all_detections  : list[set[Detection]]
+                A list of detection sets,
                 one for each timestep.
-            timesteps (list[datetime]): A list of timestamps for the x-axis.
-            mapping (list[int]): Mapping used by some subclasses to access
+            timesteps  : list[datetime]
+                A list of timestamps for the x-axis.
+            mapping  : list[int]
+                Mapping used by some subclasses to access
                 specific components of the state vector.
-            platforms (list[Platform] | None): A list of platform objects.
-            ax (Axes | None): An existing matplotlib Axes object to plot on.
+            platforms  : list[Platform] | None
+                A list of platform objects.
+            ax  : Axes | None
+                An existing matplotlib Axes object to plot on.
                 If None, a new figure and axes are created.
-            **kwargs (Any): Additional keyword arguments passed to helper methods.
+            **kwargs : Any
+                Additional keyword arguments passed to helper methods.
 
-        Returns:
-            Axes: The matplotlib Axes object containing the plot.
+        Returns
+        -------
+            Axes
+                The matplotlib Axes object containing the plot.
 
         """
         data, plot_objects = self._setup_plot(
@@ -253,18 +274,28 @@ class BasePlotter(ABC):
         This method creates an animation that updates the plot for each timestep,
         showing the evolution of the tracking scenario over time.
 
-        Args:
-            truths (list[GroundTruthPath]): A list of ground truth paths.
-            tracks (list[Track]): A list of track objects.
-            all_detections (list[set[Detection]]): A list of detection sets.
-            timesteps (list[datetime]): A list of timestamps for each frame.
-            mapping (list[int]): A list of indices used by subclasses to access
+        Parameters
+        ----------
+            truths  : list[GroundTruthPath]
+                A list of ground truth paths.
+            tracks  : list[Track]
+                A list of track objects.
+            all_detections  : list[set[Detection]]
+                A list of detection sets.
+            timesteps  : list[datetime]
+                A list of timestamps for each frame.
+            mapping  : list[int]
+                A list of indices used by subclasses to access
                 specific components of the state vector (e.g., `[0, 2]` for x and y).
-            platforms (list[Platform], optional): A list of platform objects.
-            **kwargs (Any): Additional keyword arguments passed to helper methods.
+            platforms  : list[Platform], optional
+                A list of platform objects.
+            **kwargs : Any
+                Additional keyword arguments passed to helper methods.
 
-        Returns:
-            tuple[Axes, FuncAnimation]: The axes and the animation object. The
+        Returns
+        -------
+            tuple[Axes, FuncAnimation]
+                The axes and the animation object. The
             animation object must be kept in scope to be displayed.
 
         """
@@ -284,11 +315,15 @@ class BasePlotter(ABC):
         def _update(k: int) -> list:
             """Update function for FuncAnimation.
 
-            Args:
-                k (int): The current frame index.
+            Parameters
+            ----------
+                k  : int
+                    The current frame index.
 
-            Returns:
-                list: The updated plot objects for the current frame.
+            Returns
+            -------
+                list
+                    The updated plot objects for the current frame.
 
             """
             return self._update_plot_objects(timesteps[k], data, plot_objects, mapping)
@@ -302,12 +337,16 @@ class BasePlotter(ABC):
     def show(self, tight_layout: bool = True) -> None:
         """Display the generated plot or animation.
 
-        Args:
-            tight_layout (bool): Whether to apply tight layout to the figure.
+        Parameters
+        ----------
+            tight_layout  : bool
+                Whether to apply tight layout to the figure.
                 Defaults to True. If False, the layout will not be adjusted.
 
-        Raises:
-            ValueError: If no plot or animation has been created.
+        Raises
+        ------
+            ValueError
+                If no plot or animation has been created.
 
         """
         if not self.fig and not self.anim:
@@ -324,9 +363,12 @@ class BasePlotter(ABC):
         This method can save static plots (e.g., 'figure.png') or animations
         (e.g., 'animation.gif' or 'animation.mp4').
 
-        Args:
-            filename (str): The path and name of the file to save.
-            **kwargs (Any): Additional keyword arguments passed to the underlying
+        Parameters
+        ----------
+            filename  : str
+                The path and name of the file to save.
+            **kwargs : Any
+                Additional keyword arguments passed to the underlying
                 matplotlib save function (e.g., `dpi`, `writer`).
 
         """
@@ -360,8 +402,10 @@ class BasePlotter(ABC):
     def _setup_figure(self, ax: Axes | None = None) -> None:
         """Initialise the matplotlib figure and axes objects.
 
-        Args:
-            ax (Axes | None): An existing matplotlib Axes object to use.
+        Parameters
+        ----------
+            ax  : Axes | None
+                An existing matplotlib Axes object to use.
 
         """
         if ax is None:
@@ -384,22 +428,35 @@ class BasePlotter(ABC):
     ) -> tuple[dict, dict]:
         """Handle the common setup sequence for both plots and animations.
 
-        Args:
-            truths (list[GroundTruthPath]): A list of ground truth paths.
-            tracks (list[Track]): A list of track objects.
-            all_detections (list[Detection]): A list of detection sets, one for each
+        Parameters
+        ----------
+            truths  : list[GroundTruthPath]
+                A list of ground truth paths.
+            tracks  : list[Track]
+                A list of track objects.
+            all_detections  : list[Detection]
+                A list of detection sets, one for each
                 timestep.
-            timesteps (list[datetime]): A list of timestamps for the x-axis.
-            mapping (dict): Mapping used by some subclasses.
-            platforms (list[Platform] | None): A list of platform objects.
-            ax (Axes): An existing matplotlib Axes object to plot on.
-            **kwargs: Additional keyword arguments for customisation.
+            timesteps  : list[datetime]
+                A list of timestamps for the x-axis.
+            mapping  : dict
+                Mapping used by some subclasses.
+            platforms  : list[Platform] | None
+                A list of platform objects.
+            ax  : Axes
+                An existing matplotlib Axes object to plot on.
+            **kwargs
+                Additional keyword arguments for customisation.
 
-        Returns:
-            tuple: A tuple containing:
-                - data (dict): A structured dictionary with keys for truths,
+        Returns
+        -------
+            tuple
+                A tuple containing:
+            - data (dict)
+                A structured dictionary with keys for truths,
                   tracks, uncertainty, particles, measurements, and clutter.
-                - plot_kwargs (dict): A dictionary of plot-specific parameters
+            - plot_kwargs (dict)
+                A dictionary of plot-specific parameters
                   derived from the input arguments.
 
         """
@@ -436,9 +493,12 @@ class BasePlotter(ABC):
         Subclasses must implement this to set appropriate limits, labels, and
         ticks for their specific coordinate system (e.g., Bearing vs. Time).
 
-        Args:
-            data (dict): The structured data containing truths, tracks, and detections.
-            timesteps (list[datetime]): The list of timesteps for the plot.
+        Parameters
+        ----------
+            data  : dict
+                The structured data containing truths, tracks, and detections.
+            timesteps  : list[datetime]
+                The list of timesteps for the plot.
 
         """
         raise NotImplementedError
@@ -449,9 +509,12 @@ class BasePlotter(ABC):
         This method creates legend handles based on the presence of truths, tracks,
         and detections in the data.
 
-        Args:
-            data (dict): The structured data containing truths, tracks, and detections.
-            **kwargs: Additional keyword arguments for customisation.
+        Parameters
+        ----------
+            data  : dict
+                The structured data containing truths, tracks, and detections.
+            **kwargs
+                Additional keyword arguments for customisation.
 
         """
         handles = []
@@ -539,16 +602,23 @@ class BasePlotter(ABC):
         This method is called for each timestep to update the data of the
         artists created by `_init_plot_objects`.
 
-        Args:
-            timestep (datetime): The current timestep to update the plot for.
-            data (dict): The structured data containing truths, tracks, and detections.
-            plot_objects (dict): The dictionary of plot objects created by
+        Parameters
+        ----------
+            timestep  : datetime
+                The current timestep to update the plot for.
+            data  : dict
+                The structured data containing truths, tracks, and detections.
+            plot_objects  : dict
+                The dictionary of plot objects created by
                 `_init_plot_objects`.
-            mapping (list[int]): A mapping used to access specific components of the
+            mapping  : list[int]
+                A mapping used to access specific components of the
                 state vector.
 
-        Returns:
-            list: A list of the updated artists, required by FuncAnimation.
+        Returns
+        -------
+            list
+                A list of the updated artists, required by FuncAnimation.
 
         """
         raise NotImplementedError
@@ -574,21 +644,33 @@ class BasePlotter(ABC):
         This method prepares the data for plotting by organising truths, tracks,
         and detections into a structured format.
 
-        Args:
-            truths (list[GroundTruthPath]): A list of ground truth paths.
-            tracks (list[Track]): A list of track objects.
-            all_detections (list[set[Detection]]): A list of detection sets,
+        Parameters
+        ----------
+            truths  : list[GroundTruthPath]
+                A list of ground truth paths.
+            tracks  : list[Track]
+                A list of track objects.
+            all_detections  : list[set[Detection]]
+                A list of detection sets,
                 one for each timestep.
-            timesteps (list[datetime]): A list of timestamps for the x-axis.
-            mapping (list | tuple, optional): Mapping used by some subclasses.
-            platforms (list[Platform] | None, optional): A list of platform objects.
-            **kwargs: Additional keyword arguments for customisation.
+            timesteps  : list[datetime]
+                A list of timestamps for the x-axis.
+            mapping  : list | tuple, optional
+                Mapping used by some subclasses.
+            platforms  : list[Platform] | None, optional
+                A list of platform objects.
+            **kwargs
+                Additional keyword arguments for customisation.
 
-        Returns:
-            tuple: A tuple containing:
-                - data (dict): A structured dictionary with keys for truths,
+        Returns
+        -------
+            tuple
+                A tuple containing:
+            - data (dict)
+                A structured dictionary with keys for truths,
                   tracks, uncertainty, particles, measurements, and clutter.
-                - plot_kwargs (dict): A dictionary of plot-specific parameters
+            - plot_kwargs (dict)
+                A dictionary of plot-specific parameters
                   derived from the input arguments.
 
         """
@@ -669,12 +751,17 @@ class BasePlotter(ABC):
     def _init_plot_objects(self, data: dict, **kwargs: Any) -> dict:
         """Create initial, empty plot artists for common elements.
 
-        Args:
-            data (dict): The structured data prepared for plotting.
-            **kwargs (Any): Additional keyword arguments for specific plot styles.
+        Parameters
+        ----------
+            data  : dict
+                The structured data prepared for plotting.
+            **kwargs : Any
+                Additional keyword arguments for specific plot styles.
 
-        Returns:
-            dict: A dictionary of plot objects, keyed by their type (e.g., "truths",
+        Returns
+        -------
+            dict
+                A dictionary of plot objects, keyed by their type (e.g., "truths",
             "tracks", "measurements", "clutter", "platforms").
 
         """
@@ -730,10 +817,13 @@ class BearingsPlotter(BasePlotter):
     ) -> None:
         """Initialise the plotter using a comprehensive style guide.
 
-        Args:
-            style_guide (dict | None): A dictionary to override the
+        Parameters
+        ----------
+            style_guide  : dict | None
+                A dictionary to override the
                 default styles for this plotter. If None, the default styles are used.
-            bearing_range_deg (tuple[float, float]): The range of bearing angles to
+            bearing_range_deg  : tuple[float, float]
+                The range of bearing angles to
                 plot.
 
         """
@@ -762,25 +852,36 @@ class BearingsPlotter(BasePlotter):
         data from the beamformer, which is useful for diagnosing the detection
         process.
 
-        Args:
-            snr_array (np.ndarray): A 2D array of SNR values from the
+        Parameters
+        ----------
+            snr_array  : np.ndarray
+                A 2D array of SNR values from the
                 simulation loop.
-            timesteps (list[datetime]): A list of all simulation timestamps.
-            all_detections (list[set[Detection]]): A list of detection sets
+            timesteps  : list[datetime]
+                A list of all simulation timestamps.
+            all_detections  : list[set[Detection]]
+                A list of detection sets
                 to overlay on the heatmap.
-            truths (list[GroundTruthPath], optional): A list of ground truth
+            truths  : list[GroundTruthPath], optional
+                A list of ground truth
                 paths to overlay for context. Defaults to None.
-            ax (Axes, optional): An existing matplotlib Axes object to plot on.
+            ax  : Axes, optional
+                An existing matplotlib Axes object to plot on.
                 If None, a new figure and axes are created.
-            add_colorbar (bool): Whether to add a colorbar to the plot.
+            add_colorbar  : bool
+                Whether to add a colorbar to the plot.
                 Defaults to True.
-            colorbar_ax (list[Axes], optional): If provided, the colorbar will
+            colorbar_ax  : list[Axes], optional
+                If provided, the colorbar will
                 be added to this Axes object instead of the main Axes.
-            add_legend (bool): Whether to add a legend to the plot.
+            add_legend  : bool
+                Whether to add a legend to the plot.
                 Defaults to True.
 
-        Returns:
-            tuple[Axes, Any]: The matplotlib Axes object containing the plot and
+        Returns
+        -------
+            tuple[Axes, Any]
+                The matplotlib Axes object containing the plot and
             the image object created by `imshow`.
 
         """
@@ -837,7 +938,7 @@ class BearingsPlotter(BasePlotter):
                 label="Detection",
                 marker=detection_style["marker"],
                 facecolors="none",
-                edgecolors=detection_style.get("color"),  
+                edgecolors=detection_style.get("color"),
                 linewidths=detection_style.get("markeredgewidth", 1),
                 alpha=detection_style.get("alpha", 0.5),
             )
@@ -894,10 +995,13 @@ class BearingsPlotter(BasePlotter):
     def _configure_axes(self, _data: dict, timesteps: list[datetime]) -> None:
         """Configure the axes for a bearing vs. time plot.
 
-        Args:
-            _data (dict): The structured data prepared for plotting. Unused here,
+        Parameters
+        ----------
+            _data  : dict
+                The structured data prepared for plotting. Unused here,
                 but kept for consistency with the base class.
-            timesteps (list[datetime]): The list of timestamps for the x-axis.
+            timesteps  : list[datetime]
+                The list of timestamps for the x-axis.
 
         """
         if not timesteps:
@@ -921,12 +1025,17 @@ class BearingsPlotter(BasePlotter):
     def _init_plot_objects(self, data: dict, **kwargs) -> dict:
         """Initialise artists, adding bearing-specific ones to the base artists.
 
-        Args:
-            data (dict): The structured data prepared for plotting.
-            **kwargs: Additional keyword arguments for customisation.
+        Parameters
+        ----------
+            data  : dict
+                The structured data prepared for plotting.
+            **kwargs
+                Additional keyword arguments for customisation.
 
-        Returns:
-            dict: A dictionary of matplotlib artists for the plot.
+        Returns
+        -------
+            dict
+                A dictionary of matplotlib artists for the plot.
 
         """
         # Get the common plot objects (truths, tracks, detections) from the parent
@@ -955,15 +1064,22 @@ class BearingsPlotter(BasePlotter):
         history and then updates the 'data' property of the corresponding
         matplotlib artist to redraw it on the canvas.
 
-        Args:
-            timestep (datetime): The timestamp for the current animation frame.
-            data (dict): The dictionary of all prepared simulation data.
-            plot_objects (dict): The dictionary of matplotlib artists to update.
-            mapping (list[int]): A mapping used to access specific components of the
+        Parameters
+        ----------
+            timestep  : datetime
+                The timestamp for the current animation frame.
+            data  : dict
+                The dictionary of all prepared simulation data.
+            plot_objects  : dict
+                The dictionary of matplotlib artists to update.
+            mapping  : list[int]
+                A mapping used to access specific components of the
                 state vector.
 
-        Returns:
-            list: A list of all updated artists, required by FuncAnimation
+        Returns
+        -------
+            list
+                A list of all updated artists, required by FuncAnimation
             for efficient rendering.
 
         """
@@ -1056,13 +1172,18 @@ class BearingsPlotter(BasePlotter):
     ) -> None:
         """Update history and plot data for detection types.
 
-        Args:
-            new_detections (list[Detection]): The list of new detections for
+        Parameters
+        ----------
+            new_detections  : list[Detection]
+                The list of new detections for
                 the current timestep.
-            history_entry (dict): The corresponding history dictionary to append
+            history_entry  : dict
+                The corresponding history dictionary to append
                 data to.
-            plot_artist (plt.Line2D): The matplotlib artist to update.
-            mapping (list[int]): A mapping used to access specific components of the
+            plot_artist  : plt.Line2D
+                The matplotlib artist to update.
+            mapping  : list[int]
+                A mapping used to access specific components of the
                 state vector.
 
         """
@@ -1087,11 +1208,15 @@ class CartesianPlotter(BasePlotter):
     def __init__(self, style_guide: dict = None, offset: int = 100) -> None:
         """Initialise the Cartesian plotter with a style guide and offset.
 
-        Args:
-            style_guide (dict, optional): A dictionary to override the default
+        Parameters
+        ----------
+            style_guide  : dict, optional
+                A dictionary to override the default
                 styles for this plotter. Defaults to None.
-            offset (int, optional): The padding in meters to add around the
+            offset  : int, optional
+                The padding in meters to add around the
                 data when setting axis limits. Defaults to 100.
+
         """
         cartesian_defaults = {
             "axes": {"x_label": "X (metres)", "y_label": "Y (metres)"},
@@ -1107,11 +1232,15 @@ class CartesianPlotter(BasePlotter):
         uses the model's `inverse_function` to perform the conversion.
         Otherwise, it assumes the measurement is already Cartesian.
 
-        Args:
-            measurement (Detection): The detection object to convert.
+        Parameters
+        ----------
+            measurement  : Detection
+                The detection object to convert.
 
-        Returns:
-            np.ndarray: The state vector in Cartesian coordinates [x, y, ...].
+        Returns
+        -------
+            np.ndarray
+                The state vector in Cartesian coordinates [x, y, ...].
 
         """
         if measurement.measurement_model:
@@ -1126,9 +1255,12 @@ class CartesianPlotter(BasePlotter):
         maximum x and y values, then sets the axes limits with a defined
         offset.
 
-        Args:
-            data (dict): The prepared data dictionary.
-            timesteps (list[datetime]): A list of all simulation timestamps.
+        Parameters
+        ----------
+            data  : dict
+                The prepared data dictionary.
+            timesteps  : list[datetime]
+                A list of all simulation timestamps.
 
         """
         all_x, all_y = [], []
@@ -1166,15 +1298,22 @@ class CartesianPlotter(BasePlotter):
         For a given timestep, this method appends new x/y coordinates to the
         history and updates the data of the corresponding matplotlib artists.
 
-        Args:
-            timestep (datetime): The timestamp for the current animation frame.
-            data (dict): The dictionary of all prepared simulation data.
-            plot_objects (dict): The dictionary of matplotlib artists to update.
-            mapping (list[int]): A mapping used to access specific components of the
+        Parameters
+        ----------
+            timestep  : datetime
+                The timestamp for the current animation frame.
+            data  : dict
+                The dictionary of all prepared simulation data.
+            plot_objects  : dict
+                The dictionary of matplotlib artists to update.
+            mapping  : list[int]
+                A mapping used to access specific components of the
                 state vector.
 
-        Returns:
-            List: A list of all updated artists, required by FuncAnimation.
+        Returns
+        -------
+            List
+                A list of all updated artists, required by FuncAnimation.
 
         """
         current_data = data[timestep]

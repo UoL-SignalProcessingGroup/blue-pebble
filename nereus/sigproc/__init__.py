@@ -1,4 +1,6 @@
-from .beamformer import (  # noqa: D104
+"""Signal processing package public API."""
+
+from .beamformer import (
     Beamformer,
     DelayAndSumBeamformer,
     MinimumVarianceDistortionlessResponseBeamformer,

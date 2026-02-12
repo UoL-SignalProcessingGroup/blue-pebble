@@ -17,37 +17,55 @@ class SoundSpeedProfile(ABC, Base):
     def calculate(self, depth: float) -> float:
         """Calculate the sound speed at a given depth.
 
-        Args:
-            depth: Depth in meters. Can be positive (oceanographic convention,
-                  measured downward from surface) or negative (3D coordinate
-                  system where surface=0, underwater is negative z).
+        Parameters
+        ----------
+        depth : float
+            Depth in meters. Can be positive (oceanographic convention,
+            measured downward from surface) or negative (3D coordinate system
+            where surface == 0 and underwater is negative z).
 
-        Returns:
+        Returns
+        -------
+        float
             Sound speed in m/s.
 
         """
         pass
 
     def get_3d_grid(
-        self, x_range: tuple, y_range: tuple, z_range: tuple, 
-        x_res: float = 5000.0, y_res: float = 5000.0, z_res: float = 100.0
+        self,
+        x_range: tuple,
+        y_range: tuple,
+        z_range: tuple,
+        x_res: float = 5000.0,
+        y_res: float = 5000.0,
+        z_res: float = 100.0,
     ):
         """Get a 3D grid representation of the sound speed profile.
 
-        Args:
-            x_range: Tuple of (x_min, x_max) in meters.
-            y_range: Tuple of (y_min, y_max) in meters.
-            z_range: Tuple of (z_min, z_max) in meters (negative depths).
-            x_res: Grid resolution in x direction in meters. Defaults to 5000.0.
-            y_res: Grid resolution in y direction in meters. Defaults to 5000.0.
-            z_res: Grid resolution in z direction in meters. Defaults to 100.0.
+        Parameters
+        ----------
+        x_range : tuple
+            Tuple of (x_min, x_max) in meters.
+        y_range : tuple
+            Tuple of (y_min, y_max) in meters.
+        z_range : tuple
+            Tuple of (z_min, z_max) in meters (negative depths).
+        x_res : float, optional
+            Grid resolution in x direction in meters (default 5000.0).
+        y_res : float, optional
+            Grid resolution in y direction in meters (default 5000.0).
+        z_res : float, optional
+            Grid resolution in z direction in meters (default 100.0).
 
-        Returns:
-            Tuple of (x_grid, y_grid, z_grid, c_grid) where:
-                - x_grid: 1D array of x coordinates
-                - y_grid: 1D array of y coordinates
-                - z_grid: 1D array of z coordinates (negative depths)
-                - c_grid: 3D array of sound speeds, flattened in C order
+        Returns
+        -------
+        tuple
+            ``(x_grid, y_grid, z_grid, c_grid)`` where
+            - ``x_grid`` : 1D array of x coordinates
+            - ``y_grid`` : 1D array of y coordinates
+            - ``z_grid`` : 1D array of z coordinates (negative depths)
+            - ``c_grid`` : 3D array of sound speeds, flattened in C order
 
         """
         x_min, x_max = x_range
@@ -71,17 +89,21 @@ class SoundSpeedProfile(ABC, Base):
         c_grid_3d = np.tile(c_at_depths, (len(x_grid), len(y_grid), 1))
 
         # Flatten in C order (row-major) as expected by rtrs
-        c_grid_flat = c_grid_3d.flatten(order='C')
+        c_grid_flat = c_grid_3d.flatten(order="C")
 
         return x_grid, y_grid, z_grid, c_grid_flat
 
     def _calc_temperature(self, depth: float) -> float:
         """Calculate ocean temperature based on vertical variation.
 
-        Args:
-            depth: Depth in meters (positive, below surface).
+        Parameters
+        ----------
+        depth : float
+            Depth in meters (positive, below surface).
 
-        Returns:
+        Returns
+        -------
+        float
             Temperature in degrees Celsius.
 
         """
@@ -90,23 +112,30 @@ class SoundSpeedProfile(ABC, Base):
     def _calc_salinity(self, depth: float) -> float:
         """Calculate ocean salinity model based on vertical variation.
 
-        Args:
-            depth: Depth in meters (positive, below surface).
+        Parameters
+        ----------
+        depth : float
+            Depth in meters (positive, below surface).
 
-        Returns:
+        Returns
+        -------
+        float
             Salinity in practical salinity units (PSU).
 
         """
         return 0.5 * (1 - np.tanh((depth - 200) / 100)) + 35
-    
+
 
 class Constant(SoundSpeedProfile):
     """Constant sound speed profile model.
 
     This model assumes a uniform sound speed throughout the water column.
 
-    Attributes:
-        speed (float): Constant sound speed in m/s.
+    Attributes
+    ----------
+    speed : float
+        Constant sound speed in m/s.
+
     """
 
     speed: float = Property(default=1500.0, doc="Constant sound speed in m/s")
@@ -114,10 +143,14 @@ class Constant(SoundSpeedProfile):
     def calculate(self, depth: float) -> float:
         """Return the constant sound speed.
 
-        Args:
-            depth: Depth in meters (not used in this model).
+        Parameters
+        ----------
+        depth : float
+            Depth in meters (not used in this model).
 
-        Returns:
+        Returns
+        -------
+        float
             Sound speed in m/s.
 
         """
@@ -129,9 +162,13 @@ class Linear(SoundSpeedProfile):
 
     This model assumes that the sound speed varies linearly with depth.
 
-    Attributes:
-        surface_speed (float): Sound speed at the surface in m/s.
-        gradient (float): Sound speed gradient in s^-1 (change per meter).
+    Attributes
+    ----------
+    surface_speed : float
+        Sound speed at the surface in m/s.
+    gradient : float
+        Sound speed gradient in s^-1 (change per meter).
+
     """
 
     surface_speed: float = Property(
@@ -144,11 +181,15 @@ class Linear(SoundSpeedProfile):
     def calculate(self, depth: float) -> float:
         """Calculate sound speed using a linear profile.
 
-        Args:
-            depth: Depth in meters. If negative (z-coordinate), converts to
-                  positive depth below surface for calculation.
+        Parameters
+        ----------
+        depth : float
+            Depth in meters. If negative (z-coordinate), converts to positive
+            depth below surface for calculation.
 
-        Returns:
+        Returns
+        -------
+        float
             Sound speed in m/s.
 
         """
@@ -156,21 +197,25 @@ class Linear(SoundSpeedProfile):
         depth_positive = abs(depth)
         c = self.surface_speed + self.gradient * depth_positive
         return c
-    
+
 
 class Arctan(SoundSpeedProfile):
     """Arctan sound speed profile model.
 
-    This model describes the sound speed profile using an arctangent
-    function, which can represent a smooth transition in sound speed with depth.
+    This model describes the sound speed profile using an arctangent function,
+    which can represent a smooth transition in sound speed with depth.
 
-    Attributes:
-        surface_speed (float): The speed of sound at the surface in m/s.
-            Defaults to 1500.0 m/s.
-        mid_depth (float): The depth at which the sound speed transition occurs
-            in meters. Defaults to 1000.0 m.
-        steepness (float): The steepness of the transition. Higher values
-            result in a sharper transition. Defaults to 0.005.
+    Attributes
+    ----------
+    surface_speed : float
+        The speed of sound at the surface in m/s. Defaults to 1500.0 m/s.
+    mid_depth : float
+        The depth at which the sound speed transition occurs in meters.
+        Defaults to 1000.0 m.
+    steepness : float
+        The steepness of the transition. Higher values result in a sharper
+        transition. Defaults to 0.005.
+
     """
 
     surface_speed: float = Property(
@@ -179,24 +224,28 @@ class Arctan(SoundSpeedProfile):
     mid_depth: float = Property(
         default=1000.0, doc="Depth at which sound speed transition occurs in meters"
     )
-    steepness: float = Property(
-        default=0.005, doc="Steepness of the transition"
-    )
+    steepness: float = Property(default=0.005, doc="Steepness of the transition")
 
     def calculate(self, depth: float) -> float:
         """Calculate sound speed using the arctan profile.
 
-        Args:
-            depth: Depth in meters. If negative (z-coordinate), converts to
-                  positive depth below surface for calculation.
+        Parameters
+        ----------
+        depth : float
+            Depth in meters. If negative (z-coordinate), converts to positive
+            depth below surface for calculation.
 
-        Returns:
+        Returns
+        -------
+        float
             Sound speed in m/s.
 
         """
         # Convert negative z-coordinate to positive depth below surface
         depth_positive = abs(depth)
-        c = self.surface_speed + 50.0 * np.arctan(self.steepness * (depth_positive - self.mid_depth))
+        c = self.surface_speed + 50.0 * np.arctan(
+            self.steepness * (depth_positive - self.mid_depth)
+        )
         return c
 
 
@@ -207,9 +256,11 @@ class Munk(SoundSpeedProfile):
     proposed by Walter Munk. It is characterized by a deep sound channel axis
     and is widely used in ocean acoustics.
 
-    Attributes:
-        surface_speed (float): The speed of sound at the surface in m/s.
-            Defaults to 1500.0 m/s.
+    Attributes
+    ----------
+    surface_speed : float
+        The speed of sound at the surface in m/s. Defaults to 1500.0 m/s.
+
     """
 
     surface_speed: float = Property(
@@ -219,11 +270,15 @@ class Munk(SoundSpeedProfile):
     def calculate(self, depth: float) -> float:
         """Calculate sound speed using the Munk equation.
 
-        Args:
-            depth: Depth in meters. If negative (z-coordinate), converts to
-                  positive depth below surface for calculation.
+        Parameters
+        ----------
+        depth : float
+            Depth in meters. If negative (z-coordinate), converts to positive
+            depth below surface for calculation.
 
-        Returns:
+        Returns
+        -------
+        float
             Sound speed in m/s.
 
         """
@@ -247,11 +302,15 @@ class Mackenzie(SoundSpeedProfile):
     def calculate(self, depth: float) -> float:
         """Calculate sound speed using the Mackenzie nine-term equation.
 
-        Args:
-            depth: Depth in meters. If negative (z-coordinate), converts to
-                  positive depth below surface for calculation.
+        Parameters
+        ----------
+        depth : float
+            Depth in meters. If negative (z-coordinate), converts to positive
+            depth below surface for calculation.
 
-        Returns:
+        Returns
+        -------
+        float
             Sound speed in m/s.
 
         """

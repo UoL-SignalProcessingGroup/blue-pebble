@@ -24,13 +24,17 @@ class DetectionAlgorithm(Base, ABC):
     def detect(self: Self, data: np.ndarray) -> np.ndarray:
         """Detect signals in the data array.
 
-        Args:
-            data (np.ndarray): A 1D NumPy array of numerical data to process.
+        Parameters
+        ----------
+        data : np.ndarray
+            A 1D NumPy array of numerical data to process.
 
-        Returns:
-            np.ndarray: A 2D NumPy array where each row contains two elements:
-            the index of a detection and its corresponding value. Returns an
-            empty array with shape (0, 2) if no detections are found.
+        Returns
+        -------
+        np.ndarray
+            A 2D NumPy array where each row contains two elements: the index of a
+            detection and its corresponding value. Returns an empty array with
+            shape (0, 2) if no detections are found.
 
         """
         pass
@@ -42,9 +46,10 @@ class ThresholdDetector(DetectionAlgorithm):
     This detector performs a simple comparison, identifying all indices in an
     array where the value is greater than the specified threshold.
 
-    Attributes:
-        threshold (float): The value that data points must exceed to be
-            considered a detection.
+    Attributes
+    ----------
+    threshold : float
+        The value that data points must exceed to be considered a detection.
 
     """
 
@@ -67,9 +72,11 @@ class PeakDetector(DetectionAlgorithm):
     providing a simple interface for peak detection. It identifies peaks that
     are separated by a specified minimum distance.
 
-    Attributes:
-        distance (int): The minimum required horizontal distance (in number of
-            samples) between neighbouring peaks.
+    Attributes
+    ----------
+    distance : int
+        The minimum required horizontal distance (in number of samples)
+        between neighbouring peaks.
 
     """
 
@@ -97,16 +104,21 @@ class CFARDetector(DetectionAlgorithm):
 
     This implementation is a Cell-Averaging CFAR (CA-CFAR).
 
-    Attributes:
-        num_guard_cells (int): The number of cells to ignore on each side of
-            the Cell Under Test (CUT). These cells are ignored to prevent
-            signal leakage from the CUT into the noise estimate.
-        num_training_cells (int): The number of cells to use for noise
-            estimation on each side of the guard cells.
-        threshold_factor (float): A scaling factor (alpha) used to set the
-            detection threshold above the estimated noise floor.
-        mode (str): The convolution mode for boundary handling. Can be
-            'valid', 'same', or 'wrap'. Defaults to 'valid'.
+    Attributes
+    ----------
+    num_guard_cells : int
+        The number of cells to ignore on each side of the Cell Under Test (CUT).
+        These cells are ignored to prevent signal leakage from the CUT into the
+        noise estimate.
+    num_training_cells : int
+        The number of cells to use for noise estimation on each side of the
+        guard cells.
+    threshold_factor : float
+        A scaling factor (alpha) used to set the detection threshold above the
+        estimated noise floor.
+    mode : str
+        The convolution mode for boundary handling. Can be 'valid', 'same', or
+        'wrap'. Defaults to 'valid'.
 
     """
 
@@ -139,14 +151,17 @@ class CFARDetector(DetectionAlgorithm):
         assumes the input data is in decibels (dB) and converts it to linear
         power for processing, as the averaging is performed on power values.
 
-        Args:
-            data (np.ndarray): A 1D NumPy array of signal data (e.g., SNR) in
-                decibels.
+        Parameters
+        ----------
+        data : np.ndarray
+            A 1D NumPy array of signal data (e.g., SNR) in decibels.
 
-        Returns:
-            np.ndarray: A 2D NumPy array where each row contains two elements:
-            the index of a detection and its corresponding value in dB.
-            Returns an empty array with shape (0, 2) if no detections are found.
+        Returns
+        -------
+        np.ndarray
+            A 2D NumPy array where each row contains two elements: the index of
+            a detection and its corresponding value in dB. Returns an empty
+            array with shape (0, 2) if no detections are found.
 
         """
         # Convert dB to linear power, as CFAR averaging is done on power.

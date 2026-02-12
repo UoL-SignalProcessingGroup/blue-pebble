@@ -7,10 +7,9 @@ from stonesoup.base import Property
 from stonesoup.buffered_generator import BufferedGenerator
 from stonesoup.reader.base import DetectionReader
 from stonesoup.types.detection import Detection
+from tqdm import tqdm
 
 from nereus.detector import DetectionAlgorithm
-
-from tqdm import tqdm
 
 
 class PassiveSonarDetector(DetectionReader):
@@ -20,18 +19,20 @@ class PassiveSonarDetector(DetectionReader):
     beamformed power map, calculates the Signal-to-Noise Ratio (SNR) for each
     beam, and then runs a chain of detection algorithms to find targets.
 
-    The SNR is calculated by estimating noise power as the minimum power
-    observed across all beams and assuming the remaining power is signal.
-    Detections are generated with bearing information derived from the steering
-    azimuths.
+    The SNR is calculated by estimating noise power as the 10th-percentile of
+    directional power (robust to outliers). Detections are produced with
+    bearing values derived from the provided steering azimuths.
 
-    Attributes:
-        detection_chain (list[DetectionAlgorithm]): A list of detection
-            algorithms to apply sequentially to the SNR map.
-        sensor_data_gen (Generator): A generator that yields
-            ``PassiveSonarSensorData`` objects.
-        steering_azimuths_rad (np.ndarray): An array of steering azimuth
-            angles in radians, corresponding to the beams.
+    Attributes
+    ----------
+    detection_chain : list[DetectionAlgorithm]
+        A list of detection algorithms to apply sequentially to the SNR map.
+    sensor_data_gen : Generator
+        A generator that yields ``PassiveSonarSensorData`` objects.
+    steering_azimuths_rad : np.ndarray
+        An array of steering azimuth angles in radians corresponding to the
+        beams.
+
     """
 
     detection_chain = Property(
@@ -53,10 +54,13 @@ class PassiveSonarDetector(DetectionReader):
 
     @property
     def snr_history(self):
-        """Get the recorded SNR history as a 2D numpy array.
+        """Recorded SNR history.
 
-        Returns:
-            np.ndarray: Shape (num_timesteps, num_beams) containing SNR values
+        Returns
+        -------
+        np.ndarray
+            Array of shape (num_timesteps, num_beams) containing SNR values. If
+            no history is available an empty array is returned.
 
         """
         if not self._snr_history:
@@ -67,19 +71,29 @@ class PassiveSonarDetector(DetectionReader):
     def detections_gen(self, progress_bar: bool = False):
         """Generate detections from sensor data.
 
-        This generator iterates through the `sensor_data_gen`, processes each
-        `PassiveSonarSensorData` object to calculate an SNR map, and applies
-        the `detection_chain` to identify detections.
+        The generator iterates through ``sensor_data_gen``, computes an SNR map
+        for each beamformed frame, runs the configured ``detection_chain`` and
+        yields Stone Soup ``Detection`` objects (bearing-only measurements).
 
-        Yields:
-            tuple: A tuple containing the timestamp and a set of `Detection`
-            objects for that timestamp.
+        Parameters
+        ----------
+        progress_bar : bool, optional
+            If True, wrap the input generator with a progress bar (default is
+            False).
+
+        Yields
+        ------
+        tuple
+            A tuple of ``(timestamp, set[Detection])`` for each processed
+            timestep.
 
         """
         sensor_data_iterator = self.sensor_data_gen
         if progress_bar:
-            sensor_data_iterator = tqdm(sensor_data_iterator, desc="Generating Detections")
-        
+            sensor_data_iterator = tqdm(
+                sensor_data_iterator, desc="Generating Detections"
+            )
+
         for timestamp, sensor_data_set in sensor_data_iterator:
             detections = set()
 
@@ -90,7 +104,7 @@ class PassiveSonarDetector(DetectionReader):
 
                 if beamformed_data.size == 0:
                     continue
-                
+
                 # Calculate directional power for each beam
                 directional_power = np.mean(np.abs(beamformed_data) ** 2, axis=1)
 
@@ -100,7 +114,9 @@ class PassiveSonarDetector(DetectionReader):
 
                 # Calculate SNR
                 epsilon = np.finfo(float).eps
-                snr = 10 * np.log10((directional_power + epsilon) / (noise_power_estimate + epsilon))
+                snr = 10 * np.log10(
+                    (directional_power + epsilon) / (noise_power_estimate + epsilon)
+                )
 
                 # Run the detection chain on the SNR map
                 raw_detections = self._run_detection_chain(snr)
@@ -128,19 +144,21 @@ class PassiveSonarDetector(DetectionReader):
     def _run_detection_chain(self, initial_snr_map: np.ndarray) -> np.ndarray:
         """Process a data map through a sequential chain of detection algorithms.
 
-        This method applies each algorithm in the `detection_chain` in order.
-        The output of one algorithm becomes the input for the next. The input
-        to subsequent algorithms is a sparse map containing only the values of
-        the detections from the previous stage.
+        Each algorithm in ``detection_chain`` is applied in sequence; the set
+        of detections produced by one stage is converted to a sparse input map
+        for the next stage (non-detected indices set to -inf).
 
-        Args:
-            initial_snr_map (np.ndarray): The initial 1D data map (e.g., SNR)
-                to be processed.
+        Parameters
+        ----------
+        initial_snr_map : np.ndarray
+            The initial 1D data map (for example, SNR in dB) to be processed.
 
-        Returns:
-            np.ndarray: A 2D array of final detections, where each row is
-            [index, value]. Returns an empty array if no detections are found
-            at any stage.
+        Returns
+        -------
+        np.ndarray
+            A 2D array of final detections where each row is ``[index, value]``.
+            Returns an empty array if no detections are found at any stage.
+
         """
         if not self.detection_chain:
             return np.empty((0, 2))

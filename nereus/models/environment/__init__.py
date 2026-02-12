@@ -1,3 +1,5 @@
+"""Environment models public API."""
+
 from .bathymetry import (
     Bathymetry,
     FlatBathymetry,
@@ -5,23 +7,23 @@ from .bathymetry import (
     WedgeBathymetry,
 )
 from .sound_speed_profile import (
+    Arctan,
+    Constant,
+    Linear,
+    Mackenzie,
+    Munk,
     SoundSpeedProfile,
-    Constant, 
-    Linear, 
-    Arctan, 
-    Munk, 
-    Mackenzie
 )
 
 __all__ = [
-    "SoundSpeedProfile",
-    "Constant",
-    "Linear",
     "Arctan",
-    "Munk",
-    "Mackenzie",
     "Bathymetry",
+    "Constant",
     "FlatBathymetry",
-    "WedgeBathymetry",
+    "Linear",
+    "Mackenzie",
+    "Munk",
     "SeamountBathymetry",
+    "SoundSpeedProfile",
+    "WedgeBathymetry",
 ]

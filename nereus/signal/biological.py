@@ -24,13 +24,19 @@ def _get_snap_rate_from_temp(
     seasonal trend of higher snap rates in warmer months and lower rates in
     colder months.
 
-    Args:
-        temperature_celsius (float): Water temperature in Celsius.
-        slope (float): Slope of the linear regression model.
-        intercept (float): Intercept of the linear regression model.
+    Parameters
+    ----------
+    temperature_celsius  : float
+        Water temperature in Celsius.
+    slope  : float
+        Slope of the linear regression model.
+    intercept  : float
+        Intercept of the linear regression model.
 
-    Returns:
-        float: Snap rate per second. Returns 0 if the calculated rate is negative.
+    Returns
+    -------
+    float
+        Snap rate per second. Returns 0 if the calculated rate is negative.
 
     """
     # Snaps per minute -> snaps per second
@@ -106,8 +112,10 @@ class PointSourceSnappingShrimpSignal(Signal):
     def _create_snap_template(self) -> np.ndarray:
         """Generate the prototypical waveform for a single shrimp snap.
 
-        Returns:
-            np.ndarray: The waveform of a single shrimp snap.
+        Returns
+        -------
+            np.ndarray
+                The waveform of a single shrimp snap.
 
         """
         delay_samps = int(self.delay_duration * self.sampling_rate_hz)
@@ -137,12 +145,17 @@ class PointSourceSnappingShrimpSignal(Signal):
     def _rate_function(self, t: np.ndarray, base_rate: float) -> np.ndarray:
         """Calculate the time-varying snap rate.
 
-        Args:
-            t (np.ndarray): Time vector in seconds.
-            base_rate (float): Base snap rate in snaps per second.
+        Parameters
+        ----------
+        t : np.ndarray
+            Time vector in seconds.
+        base_rate : float
+            Base snap rate in snaps per second.
 
-        Returns:
-            np.ndarray: Time-varying snap rate.
+        Returns
+        -------
+        np.ndarray
+            Time-varying snap rate.
 
         """
         diurnal_mod = self.diurnal_amplitude * np.sin(
@@ -160,11 +173,15 @@ class PointSourceSnappingShrimpSignal(Signal):
         colony. Event amplitudes are sampled from a Symmetric Alpha-Stable
         distribution and snaps that would fall outside the buffer are ignored.
 
-        Args:
-            source: Source state object providing metadata (e.g. amplitude_upa).
+        Parameters
+        ----------
+        source : State
+            Source state object providing metadata (e.g. amplitude_upa).
 
-        Returns:
-            np.ndarray: 1-D time-domain signal (float64) for the duration.
+        Returns
+        -------
+        np.ndarray
+            1-D time-domain signal (float64) for the duration.
 
         """
         base_lambda_rate = _get_snap_rate_from_temp(
@@ -249,14 +266,21 @@ class PointSourceSnappingShrimpSignal(Signal):
         propagation (handled by the base `Signal.generate` implementation),
         and then applies any post-processing effects.
 
-        Args:
-            source: The source state object used to read metadata.
-            sensor_delays_s: 1-D array of per-sensor delays in seconds.
-            tloss_db: Transmission loss to the array origin (dB).
-            propagation_time_s: Propagation time from source to origin (s).
+        Parameters
+        ----------
+        source
+            The source state object used to read metadata.
+        sensor_delays_s : np.ndarray
+            1-D array of per-sensor delays in seconds.
+        tloss_db : float
+            Transmission loss to the array origin (dB).
+        propagation_time_s : float
+            Propagation time from source to origin (s).
 
-        Returns:
-            np.ndarray: Complex signal for each sensor with shape
+        Returns
+        -------
+            np.ndarray
+                Complex signal for each sensor with shape
                 `(num_sensors, num_samples)` and dtype `np.complex128`.
 
         """
@@ -675,12 +699,17 @@ class WhaleCallSignal(Signal):
     ) -> np.ndarray:
         """Generate the prototypical waveform for a single whale call.
 
-        Args:
-            duration (float): Duration of the call in seconds.
-            contour_freqs (list[float]): Frequency contour of the call.
+        Parameters
+        ----------
+        duration  : float
+            Duration of the call in seconds.
+        contour_freqs  : list[float]
+            Frequency contour of the call.
 
-        Returns:
-            np.ndarray: The waveform of a single whale call.
+        Returns
+        -------
+        np.ndarray
+            The waveform of a single whale call.
 
         """
         # --- 1. Create time vector and frequency contour ---
@@ -824,8 +853,10 @@ class WhaleCallSignal(Signal):
     def _generate_random_call_sequence(self, source) -> list[dict]:
         """Generate a sequence of random, unstructured whale calls.
 
-        Returns:
-            list[dict]: A list of call events, each containing start time,
+        Returns
+        -------
+            list[dict]
+                A list of call events, each containing start time,
             duration, contour frequencies, and amplitude.
 
         """
@@ -873,8 +904,10 @@ class WhaleCallSignal(Signal):
     def _generate_structured_song_sequence(self, source) -> list[dict]:
         """Generate a structured song based on themes and phrases.
 
-        Returns:
-            list[dict]: A list of call events, each containing start time,
+        Returns
+        -------
+            list[dict]
+                A list of call events, each containing start time,
             duration, contour frequencies, and amplitude.
 
         """
@@ -935,8 +968,10 @@ class WhaleCallSignal(Signal):
 
         Prevents overlapping calls.
 
-        Returns:
-            list[dict]: A list of call events, each containing start time,
+        Returns
+        -------
+            list[dict]
+                A list of call events, each containing start time,
             duration, contour frequencies, and amplitude.
 
         """

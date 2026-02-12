@@ -15,6 +15,16 @@ class AmbientNoise(Base):
 
     These models generate non-propagating background noise that is present
     across the entire sensor array.
+
+    Parameters
+    ----------
+    amplitude_upa : float
+        The noise amplitude (e.g., in µPa).
+    duration_s : float
+        Duration of the signal in seconds.
+    sampling_rate_hz : int
+        Sampling rate in Hertz.
+
     """
 
     amplitude_upa: float = Property(doc="The noise amplitude (e.g., in µPa)")
@@ -25,7 +35,9 @@ class AmbientNoise(Base):
     def num_samples(self) -> int:
         """Calculate the number of samples based on duration and sampling rate.
 
-        Returns:
+        Returns
+        -------
+        int
             The number of samples in the signal snapshot.
 
         """
@@ -34,12 +46,16 @@ class AmbientNoise(Base):
     def _generate_unit_white_noise(self, num_sensors: int) -> np.ndarray:
         """Generate standard complex white noise with unit power.
 
-        Args:
-            num_sensors: The number of sensors in the array.
-            num_samples: The number of samples in the signal snapshot.
+        Parameters
+        ----------
+        num_sensors : int
+            The number of sensors in the array.
 
-        Returns:
-            A complex array of shape (num_sensors, num_samples) with unit power.
+        Returns
+        -------
+        numpy.ndarray
+            A complex array of shape (num_sensors, num_samples) with unit
+            power.
 
         """
         # Generate real and imaginary parts from a standard normal distribution
@@ -53,26 +69,45 @@ class AmbientNoise(Base):
     def generate(self, num_sensors: int = 1) -> np.ndarray:
         """Generate a noise array. This must be implemented by subclasses.
 
-        Args:
-            num_sensors: The number of sensors in the array.
+        Parameters
+        ----------
+        num_sensors : int, optional
+            The number of sensors in the array. Defaults to 1.
 
-        Returns:
+        Returns
+        -------
+        numpy.ndarray
             A noise array of shape (num_sensors, num_samples).
 
         """
 
 
 class WhiteNoise(AmbientNoise):
-    """Generates complex white Gaussian noise with a flat power spectrum."""
+    """Generates complex white Gaussian noise with a flat power spectrum.
+
+    Parameters
+    ----------
+    amplitude_upa : float
+        The noise amplitude (e.g., in µPa).
+    duration_s : float
+        Duration of the signal in seconds.
+    sampling_rate_hz : int
+        Sampling rate in Hertz.
+
+    """
 
     def generate(self, num_sensors: int = 1) -> np.ndarray:
         """Generate a complex white Gaussian noise array.
 
-        Args:
-            num_sensors: The number of sensors in the array.
+        Parameters
+        ----------
+        num_sensors : int, optional
+            The number of sensors in the array. Defaults to 1.
 
-        Returns:
-            A complex array of white noise.
+        Returns
+        -------
+        numpy.ndarray
+            A complex array of white noise of shape (num_sensors, num_samples).
 
         """
         # Generate the base noise with unit power
@@ -83,7 +118,24 @@ class WhiteNoise(AmbientNoise):
 
 
 class ColouredNoise(AmbientNoise):
-    """Generates complex coloured noise using FFT filtering."""
+    """Generates complex coloured noise using FFT filtering.
+
+    This class generates noise with a power spectral density proportional to
+    1/f^alpha.
+
+    Parameters
+    ----------
+    spectral_exponent : float
+        The power-law exponent for the noise spectrum (e.g., -1 for pink noise,
+        -2 for red/brownian noise).
+    amplitude_upa : float
+        The noise amplitude (e.g., in µPa).
+    duration_s : float
+        Duration of the signal in seconds.
+    sampling_rate_hz : int
+        Sampling rate in Hertz.
+
+    """
 
     spectral_exponent: float = Property(
         doc="The power-law exponent for the noise spectrum "
@@ -93,11 +145,16 @@ class ColouredNoise(AmbientNoise):
     def generate(self, num_sensors: int = 1) -> np.ndarray:
         """Generate a complex coloured noise array.
 
-        Args:
-            num_sensors: The number of sensors in the array.
+        Parameters
+        ----------
+        num_sensors : int, optional
+            The number of sensors in the array. Defaults to 1.
 
-        Returns:
-            A complex array of coloured noise.
+        Returns
+        -------
+        numpy.ndarray
+            A complex array of coloured noise of shape (num_sensors,
+            num_samples), normalised to the specified amplitude.
 
         """
         # 1. Generate the base white noise with a flat spectrum

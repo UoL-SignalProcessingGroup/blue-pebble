@@ -21,7 +21,6 @@ class TonalSignal(Signal):
         """Satisfy the abstract base class.
 
         This method is never called for TonalSignal as it overrides `generate`.
-
         """
         # This implementation is not used but is required by the base class.
         # It will never be called because the `generate` method is overridden.
@@ -32,17 +31,31 @@ class TonalSignal(Signal):
     ) -> np.ndarray:
         """Generate the signal received across all sensors from a single source.
 
-        Args:
-            source: The source state. Must contain `amplitudes_upa`,
-                `frequencies_hz`, and `phases_rad` in its metadata dictionary.
-            sensor_delays_s: The relative time delay for each sensor in the array.
-            tloss_db: The transmission loss in decibels.
-            propagation_time_s: The time in seconds for the signal to propagate
-                from the source to the array's origin.
+        Parameters
+        ----------
+        source : State
+            The source state. Must contain ``amplitudes_upa``,
+            ``frequencies_hz``, and ``phases_rad`` in its metadata dictionary.
+        sensor_delays_s : numpy.ndarray
+            The relative time delay for each sensor in the array.
+        tloss_db : float or numpy.ndarray
+            The transmission loss in decibels. Can be a scalar or an array
+            matching the number of frequencies.
+        propagation_time_s : float
+            The time in seconds for the signal to propagate from the source to
+            the array's origin.
 
-        Returns:
-            An array of complex signals received by the sensors,
-            with shape (num_sensors, num_samples).
+        Returns
+        -------
+        numpy.ndarray
+            An array of complex signals received by the sensors, with shape
+            (num_sensors, num_samples).
+
+        Raises
+        ------
+        ValueError
+            If ``tloss_db`` is an array and its length does not match the
+            number of frequencies in the source metadata.
 
         """
         # Create a 1D array representing the time vector for the signal snapshot
@@ -101,9 +114,11 @@ class BlendedTonalSignal(Signal):
     amplitude continuity. It tracks the accumulated phase offset and previous
     signal state to ensure smooth transitions between timesteps.
 
-    Attributes:
-        blend_fraction: Fraction of signal duration to use for blending.
-            Default is 0.1 (10% of signal duration).
+    Parameters
+    ----------
+    blend_fraction : float, optional
+        Fraction of signal duration to use for blending. Default is 0.1 (10% of
+        signal duration).
 
     """
 
@@ -115,30 +130,35 @@ class BlendedTonalSignal(Signal):
         """Initialize the blended signal generator with state tracking."""
         super().__init__(*args, **kwargs)
         # Dictionary to store state for each source
-        # Key: source_key, Value: dict with 'previous_signal', 'last_time', 'phase_offset'
+        # Key: source_key, Value: dict with 'previous_signal', 'last_time',
+        # 'phase_offset'
         self._source_states = {}
 
     def _get_source_key(self, source, num_sensors: int) -> tuple:
         """Generate a unique key for this source and sensor configuration.
 
-        Args:
-            source: The source state object.
-            num_sensors: Number of sensors in the array.
+        Parameters
+        ----------
+        source : State
+            The source state object.
+        num_sensors : int
+            Number of sensors in the array.
 
-        Returns:
+        Returns
+        -------
+        tuple
             A tuple that uniquely identifies this source-sensor combination.
 
         """
         # Create a hashable key from source metadata
         # Use frequency tuple as identifier (assumes frequencies don't change)
-        freq_tuple = tuple(source.metadata['frequencies_hz'])
+        freq_tuple = tuple(source.metadata["frequencies_hz"])
         return (freq_tuple, num_sensors)
 
     def _generate_base_signal(self, source) -> np.ndarray:
         """Satisfy the abstract base class.
 
         This method is never called for BlendedTonalSignal as it overrides `generate`.
-
         """
         pass
 
@@ -147,17 +167,29 @@ class BlendedTonalSignal(Signal):
     ) -> np.ndarray:
         """Generate blended signal with blend for phase and amplitude continuity.
 
-        Args:
-            source: The source state. Must contain `amplitudes_upa`,
-                `frequencies_hz`, and `phases_rad` in its metadata dictionary.
-            sensor_delays_s: The relative time delay for each sensor in the array.
-            tloss_db: The transmission loss in decibels.
-            propagation_time_s: The time in seconds for the signal to propagate
-                from the source to the array's origin.
+        Parameters
+        ----------
+        source : State
+            The source state. Must contain ``amplitudes_upa``,
+            ``frequencies_hz``, and ``phases_rad`` in its metadata dictionary.
+        sensor_delays_s : numpy.ndarray
+            The relative time delay for each sensor in the array.
+        tloss_db : float or numpy.ndarray
+            The transmission loss in decibels.
+        propagation_time_s : float
+            The time in seconds for the signal to propagate from the source to
+            the array's origin.
 
-        Returns:
-            An array of complex signals received by the sensors,
-            with shape (num_sensors, num_samples).
+        Returns
+        -------
+        numpy.ndarray
+            An array of complex signals received by the sensors, with shape
+            (num_sensors, num_samples).
+
+        Raises
+        ------
+        ValueError
+            If ``tloss_db`` length does not match the number of frequencies.
 
         """
         num_sensors = len(sensor_delays_s)
@@ -166,26 +198,26 @@ class BlendedTonalSignal(Signal):
         # Retrieve or initialize source state
         if source_key not in self._source_states:
             self._source_states[source_key] = {
-                'previous_signal': None,
-                'last_time': None,
-                'last_phase': None,
-                'cumulative_time': 0.0
+                "previous_signal": None,
+                "last_time": None,
+                "last_phase": None,
+                "cumulative_time": 0.0,
             }
 
         state = self._source_states[source_key]
 
         # Calculate time offset for phase continuity
-        if state['last_time'] is not None:
+        if state["last_time"] is not None:
             # Calculate elapsed time since last generation
-            time_delta = (source.timestamp - state['last_time']).total_seconds()
-            state['cumulative_time'] += time_delta
+            time_delta = (source.timestamp - state["last_time"]).total_seconds()
+            state["cumulative_time"] += time_delta
         else:
-            state['cumulative_time'] = 0.0
+            state["cumulative_time"] = 0.0
 
         # Create time array relative to cumulative time
         time_array_s = (
-            np.arange(self.num_samples) / self.sampling_rate_hz 
-            + state['cumulative_time']
+            np.arange(self.num_samples) / self.sampling_rate_hz
+            + state["cumulative_time"]
         )
 
         amplitudes_upa = source.metadata["amplitudes_upa"]
@@ -229,7 +261,7 @@ class BlendedTonalSignal(Signal):
         sensor_signals = np.sum(all_tonal_components, axis=1)
 
         # Apply blending if we have previous signal
-        if state['previous_signal'] is not None:
+        if state["previous_signal"] is not None:
             blend_samples = int(self.num_samples * self.blend_fraction)
 
             if blend_samples > 0:
@@ -238,22 +270,22 @@ class BlendedTonalSignal(Signal):
                 fade_in = np.sin(np.linspace(0, np.pi / 2, blend_samples)) ** 2
 
                 # Get the tail of the previous signal
-                prev_signal = state['previous_signal']
+                prev_signal = state["previous_signal"]
                 prev_tail = prev_signal[:, -blend_samples:]
 
                 # Blend the beginning of current signal with end of previous
                 current_head = sensor_signals[:, :blend_samples].copy()
                 blended_section = (
-                    prev_tail * fade_out[np.newaxis, :] +
-                    current_head * fade_in[np.newaxis, :]
+                    prev_tail * fade_out[np.newaxis, :]
+                    + current_head * fade_in[np.newaxis, :]
                 )
 
                 # Replace the beginning of current signal with blended section
                 sensor_signals[:, :blend_samples] = blended_section
 
         # Store current state for next timestep
-        state['previous_signal'] = sensor_signals.copy()
-        state['last_time'] = source.timestamp
+        state["previous_signal"] = sensor_signals.copy()
+        state["last_time"] = source.timestamp
 
         return sensor_signals
 
@@ -262,7 +294,6 @@ class BlendedTonalSignal(Signal):
 
         This should be called when starting a new simulation or when
         continuity should be reset.
-
         """
         self._source_states.clear()
 
@@ -277,9 +308,6 @@ class OverlapAddTonalSignal(Signal):
     The method generates signals that are twice the requested duration, applies
     windowing, and buffers the second half for overlap-adding with the next
     timestep.
-
-    Attributes:
-        (No additional attributes beyond base Signal class)
     """
 
     def __init__(self, *args, **kwargs):
@@ -294,15 +322,20 @@ class OverlapAddTonalSignal(Signal):
     def _get_source_key(self, source, num_sensors: int) -> tuple:
         """Generate a unique key for this source and sensor configuration.
 
-        Args:
-            source: The source state object.
-            num_sensors: Number of sensors in the array.
+        Parameters
+        ----------
+        source : State
+            The source state object.
+        num_sensors : int
+            Number of sensors in the array.
 
-        Returns:
+        Returns
+        -------
+        tuple
             A tuple that uniquely identifies this source-sensor combination.
 
         """
-        freq_tuple = tuple(source.metadata['frequencies_hz'])
+        freq_tuple = tuple(source.metadata["frequencies_hz"])
         return (freq_tuple, num_sensors)
 
     def _get_synthesis_window(self) -> np.ndarray:
@@ -312,7 +345,9 @@ class OverlapAddTonalSignal(Signal):
         The window satisfies the Constant Overlap-Add (COLA) constraint:
         w[n] + w[n + hop_size] = 1 for all n
 
-        Returns:
+        Returns
+        -------
+        numpy.ndarray
             The synthesis window array.
 
         """
@@ -326,8 +361,8 @@ class OverlapAddTonalSignal(Signal):
     def _generate_base_signal(self, source) -> np.ndarray:
         """Satisfy the abstract base class.
 
-        This method is never called for OverlapAddTonalSignal as it overrides `generate`.
-
+        This method is never called for OverlapAddTonalSignal as it overrides
+        `generate`.
         """
         pass
 
@@ -336,17 +371,29 @@ class OverlapAddTonalSignal(Signal):
     ) -> np.ndarray:
         """Generate signal using overlap-add method with perfect reconstruction.
 
-        Args:
-            source: The source state. Must contain `amplitudes_upa`,
-                `frequencies_hz`, and `phases_rad` in its metadata dictionary.
-            sensor_delays_s: The relative time delay for each sensor in the array.
-            tloss_db: The transmission loss in decibels.
-            propagation_time_s: The time in seconds for the signal to propagate
-                from the source to the array's origin.
+        Parameters
+        ----------
+        source : State
+            The source state. Must contain ``amplitudes_upa``,
+            ``frequencies_hz``, and ``phases_rad`` in its metadata dictionary.
+        sensor_delays_s : numpy.ndarray
+            The relative time delay for each sensor in the array.
+        tloss_db : float or numpy.ndarray
+            The transmission loss in decibels.
+        propagation_time_s : float
+            The time in seconds for the signal to propagate from the source to
+            the array's origin.
 
-        Returns:
-            An array of complex signals received by the sensors,
-            with shape (num_sensors, num_samples).
+        Returns
+        -------
+        numpy.ndarray
+            An array of complex signals received by the sensors, with shape
+            (num_sensors, num_samples).
+
+        Raises
+        ------
+        ValueError
+            If ``tloss_db`` length does not match the number of frequencies.
 
         """
         num_sensors = len(sensor_delays_s)
@@ -355,19 +402,19 @@ class OverlapAddTonalSignal(Signal):
         # Retrieve or initialize source state
         if source_key not in self._source_states:
             self._source_states[source_key] = {
-                'overlap_buffer': None,
-                'last_time': None,
-                'cumulative_time': 0.0
+                "overlap_buffer": None,
+                "last_time": None,
+                "cumulative_time": 0.0,
             }
 
         state = self._source_states[source_key]
 
         # Update cumulative time for phase continuity
-        if state['last_time'] is not None:
-            time_delta = (source.timestamp - state['last_time']).total_seconds()
-            state['cumulative_time'] += time_delta
+        if state["last_time"] is not None:
+            time_delta = (source.timestamp - state["last_time"]).total_seconds()
+            state["cumulative_time"] += time_delta
         else:
-            state['cumulative_time'] = 0.0
+            state["cumulative_time"] = 0.0
 
         # Extract source parameters
         amplitudes_upa = source.metadata["amplitudes_upa"]
@@ -390,7 +437,7 @@ class OverlapAddTonalSignal(Signal):
         extended_samples = 2 * self.num_samples
         time_array_s = (
             np.arange(extended_samples) / self.sampling_rate_hz
-            + state['cumulative_time']
+            + state["cumulative_time"]
         )
 
         # --- Use NumPy broadcasting to perform calculations efficiently ---
@@ -422,21 +469,21 @@ class OverlapAddTonalSignal(Signal):
         windowed_signal = extended_signal * synthesis_window[np.newaxis, :]
 
         # Split into two halves
-        first_half = windowed_signal[:, :self.num_samples]
-        second_half = windowed_signal[:, self.num_samples:]
+        first_half = windowed_signal[:, : self.num_samples]
+        second_half = windowed_signal[:, self.num_samples :]
 
         # Overlap-add with buffered segment from previous timestep
-        if state['overlap_buffer'] is not None:
+        if state["overlap_buffer"] is not None:
             # Add the buffered overlap to the first half
-            output_signal = first_half + state['overlap_buffer']
+            output_signal = first_half + state["overlap_buffer"]
         else:
             # First timestep: no buffer exists, use first half as-is
             # This will have windowing artifacts only at the very start
             output_signal = first_half
 
         # Store second half for next timestep's overlap-add
-        state['overlap_buffer'] = second_half.copy()
-        state['last_time'] = source.timestamp
+        state["overlap_buffer"] = second_half.copy()
+        state["last_time"] = source.timestamp
 
         return output_signal
 
@@ -445,7 +492,6 @@ class OverlapAddTonalSignal(Signal):
 
         This should be called when starting a new simulation or when
         continuity should be reset.
-
         """
         self._source_states.clear()
         self._synthesis_window = None
@@ -464,14 +510,23 @@ class BroadbandTonalSignal(Signal):
     that propagation models can process in the frequency domain with time-varying
     transfer functions.
 
-    Attributes:
-        frame_len: STFT frame length in samples (power of 2 recommended).
-        hop_factor: Hop size = frame_len // hop_factor (4 gives 75% overlap).
-        window_type: Window type for STFT ('hann', 'hamming', 'blackman').
+    Parameters
+    ----------
+    frame_len : int, optional
+        STFT frame length in samples (power of 2 recommended). Default is 1024.
+    hop_factor : int, optional
+        Hop factor, where hop size = frame_len // hop_factor. Default is 4
+        (75% overlap).
+    window_type : str, optional
+        Window type for STFT (e.g., 'hann', 'hamming', 'blackman'). Default
+        is 'hann'.
+
     """
 
     frame_len = Property(int, default=1024, doc="STFT frame length in samples")
-    hop_factor = Property(int, default=4, doc="Hop factor (hop = frame_len // hop_factor)")
+    hop_factor = Property(
+        int, default=4, doc="Hop factor (hop = frame_len // hop_factor)"
+    )
     window_type = Property(str, default="hann", doc="Window type for STFT")
 
     def __init__(self, *args, **kwargs):
@@ -489,10 +544,14 @@ class BroadbandTonalSignal(Signal):
         This method creates the full-duration time-domain signal that will
         be transformed to frequency domain for propagation.
 
-        Args:
-            source: The source state with tonal parameters in metadata.
+        Parameters
+        ----------
+        source : State
+            The source state with tonal parameters in metadata.
 
-        Returns:
+        Returns
+        -------
+        numpy.ndarray
             Complex time-domain signal of shape (num_samples,).
 
         """
@@ -508,7 +567,9 @@ class BroadbandTonalSignal(Signal):
         amp_reshaped = amplitudes_upa[:, np.newaxis]
 
         # Calculate phase for each tonal
-        total_phase = 2 * np.pi * freq_reshaped * time_array_s[np.newaxis, :] + phase_reshaped
+        total_phase = (
+            2 * np.pi * freq_reshaped * time_array_s[np.newaxis, :] + phase_reshaped
+        )
 
         # Generate complex signal components
         tonal_components = amp_reshaped * np.exp(1j * total_phase)
@@ -524,15 +585,20 @@ class BroadbandTonalSignal(Signal):
         This method should be called once per source before simulation begins.
         Results are cached for subsequent access.
 
-        Args:
-            source: The source state with tonal parameters in metadata.
+        Parameters
+        ----------
+        source : State
+            The source state with tonal parameters in metadata.
 
-        Returns:
-            tuple containing:
-                - stft: STFT matrix of shape (num_frames, num_freq_bins)
-                - frequencies: Frequency array in Hz
-                - hop: Hop size in samples
-                - window: Window array used
+        Returns
+        -------
+        tuple
+            A tuple containing:
+                - stft (numpy.ndarray): STFT matrix of shape
+                  (num_frames, num_freq_bins).
+                - frequencies (numpy.ndarray): Frequency array in Hz.
+                - hop (int): Hop size in samples.
+                - window (numpy.ndarray): Window array used.
 
         """
         # Check cache
@@ -564,11 +630,15 @@ class BroadbandTonalSignal(Signal):
     def get_stft(self) -> tuple[np.ndarray, np.ndarray, int, np.ndarray]:
         """Get the cached STFT data.
 
-        Returns:
-            tuple containing (stft, frequencies, hop, window).
+        Returns
+        -------
+        tuple
+            A tuple containing (stft, frequencies, hop, window).
 
-        Raises:
-            RuntimeError: If STFT has not been computed yet.
+        Raises
+        ------
+        RuntimeError
+            If STFT has not been computed yet.
 
         """
         if self._stft_cache is None:
@@ -580,11 +650,15 @@ class BroadbandTonalSignal(Signal):
     def get_source_signal(self) -> np.ndarray:
         """Get the cached source time-domain signal.
 
-        Returns:
+        Returns
+        -------
+        numpy.ndarray
             Time-domain source signal.
 
-        Raises:
-            RuntimeError: If signal has not been generated yet.
+        Raises
+        ------
+        RuntimeError
+            If signal has not been generated yet.
 
         """
         if self._source_signal is None:
@@ -602,8 +676,10 @@ class BroadbandTonalSignal(Signal):
         in broadband STFT-based processing. The simulator should use
         compute_stft() and process in frequency domain.
 
-        Raises:
-            NotImplementedError: Always raises - not applicable for broadband processing.
+        Raises
+        ------
+        NotImplementedError
+            Always raises - not applicable for broadband processing.
 
         """
         msg = (
@@ -617,7 +693,6 @@ class BroadbandTonalSignal(Signal):
         """Clear cached STFT and source signal data.
 
         Call this when starting a new simulation with different source parameters.
-
         """
         self._stft_cache = None
         self._frequencies = None
@@ -634,46 +709,62 @@ class BroadbandShipSignal(Signal):
     2. Wideband colored noise
     3. STFT-based frequency-domain processing for efficient propagation
 
-    Attributes:
-        frame_len: STFT frame length in samples (power of 2 recommended).
-        hop_factor: Hop size = frame_len // hop_factor (4 gives 75% overlap).
-        window_type: Window type for STFT ('hann', 'hamming', 'blackman').
-        tonal_bandwidth_hz: Bandwidth of each tonal component (default: 2.0 Hz).
-            Creates realistic spectral spreading around nominal frequencies.
-        tonal_noise_is_constant: If True, reuse the same band-limited tonal
-            noise across calls; phase and amplitude are still applied per call.
-        noise_amplitude_upa: RMS amplitude of background noise in µPa.
-            Set to 0.0 to disable noise (default: 0.0).
-        noise_spectral_exponent: Spectral shape exponent for colored noise.
-            -2.0 = pink noise (1/f), -1.0 = flicker, 0.0 = white (default: -2.0).
-        noise_freq_range_hz: Tuple of (min_freq, max_freq) for noise generation.
-            Default: (20.0, 200.0) covers typical machinery noise range.
-        noise_variance: Variance multiplier applied to all generated white noise
-            before any bandlimiting or normalization (default: 1.0). This
-            controls the base random field variance for both tonal bandwidth
-            and broadband noise generation.
-        use_powerlaw_noise: If True, synthesize broadband noise deterministically
-            from the target power-law spectrum (no random white-noise draw).
-        noise_is_constant: If True (default), use same noise realization for all
-            signal generations (constant scalar over time). If False, generate
-            new random noise each time (time-varying).
+    Parameters
+    ----------
+    frame_len : int, optional
+        STFT frame length in samples (power of 2 recommended). Default is 1024.
+    hop_factor : int, optional
+        Hop factor, where hop size = frame_len // hop_factor. Default is 4.
+    window_type : str, optional
+        Window type for STFT (e.g., 'hann'). Default is 'hann'.
+    tonal_bandwidth_hz : float, optional
+        Bandwidth of each tonal component in Hz. Creates realistic spectral
+        spreading around nominal frequencies. Default is 2.0.
+    noise_amplitude_upa : float, optional
+        RMS amplitude of background noise in µPa. Set to 0.0 to disable noise.
+        Default is 0.0.
+    noise_spectral_exponent : float, optional
+        Spectral shape exponent for colored noise. -2.0 is pink noise (1/f),
+        -1.0 is flicker, 0.0 is white. Default is -2.0.
+    noise_freq_range_hz : tuple, optional
+        Tuple of (min_freq, max_freq) for noise generation. Default is
+        (20.0, 200.0), covering typical machinery noise ranges.
+    noise_variance : float, optional
+        Variance multiplier applied to all generated white noise before any
+        bandlimiting or normalization (default 1.0). This controls the base
+        random field variance.
+    tonal_noise_is_constant : bool, optional
+        If True, reuse the same band-limited tonal noise across calls; phase
+        and amplitude are still applied per call. Default is False.
+    use_powerlaw_noise : bool, optional
+        If True, build broadband noise deterministically from the power-law
+        spectrum (no random white-noise seed). Default is False.
+    noise_is_constant : bool, optional
+        If True, use same noise realization for all signal generations
+        (constant scalar over time). If False, generate new random noise each
+        time. Default is True.
 
-    Example:
-        >>> # Merchant vessel with propeller tonals and machinery noise
-        >>> signal_model = BroadbandShipSignal(
-        ...     duration_s=60.0,
-        ...     sampling_rate_hz=500.0,
-        ...     frame_len=500,
-        ...     hop_factor=4,
-        ...     tonal_bandwidth_hz=3.0,  # Broader tonals
-        ...     noise_amplitude_upa=10**(50/20),  # 50 dB re 1 µPa background
-        ...     noise_spectral_exponent=-2.0,  # Pink noise
-        ...     noise_freq_range_hz=(30.0, 150.0)
-        ... )
+    Examples
+    --------
+    Merchant vessel with propeller tonals and machinery noise:
+
+    >>> signal_model = BroadbandShipSignal(
+    ...     duration_s=60.0,
+    ...     sampling_rate_hz=500.0,
+    ...     frame_len=500,
+    ...     hop_factor=4,
+    ...     tonal_bandwidth_hz=3.0,  # Broader tonals
+    ...     noise_amplitude_upa=10**(50/20),  # 50 dB re 1 µPa background
+    ...     noise_spectral_exponent=-2.0,  # Pink noise
+    ...     noise_freq_range_hz=(30.0, 150.0)
+    ... )
+
     """
 
     frame_len = Property(int, default=1024, doc="STFT frame length in samples")
-    hop_factor = Property(int, default=4, doc="Hop factor (hop = frame_len // hop_factor)")
+    hop_factor = Property(
+        int, default=4, doc="Hop factor (hop = frame_len // hop_factor)"
+    )
     window_type = Property(str, default="hann", doc="Window type for STFT")
     tonal_bandwidth_hz = Property(
         float, default=2.0, doc="Bandwidth of each tonal component (Hz)"
@@ -712,8 +803,10 @@ class BroadbandShipSignal(Signal):
         ),
     )
     noise_is_constant = Property(
-        bool, default=True, doc="If True, use same noise realization across calls; "
-        "if False, generate new noise each time"
+        bool,
+        default=True,
+        doc="If True, use same noise realization across calls; "
+        "if False, generate new noise each time",
     )
 
     def __init__(self, *args, **kwargs):
@@ -731,18 +824,21 @@ class BroadbandShipSignal(Signal):
         """Generate the complete source signal with broadband tonals and noise.
 
         This method creates:
-        1. Broadband tonals using band-limited white noise modulated by tonal frequencies
+        1. Broadband tonals using band-limited white noise modulated by tonal
+        frequencies
         2. Wideband colored noise for background machinery/cavitation sounds
 
-        Args:
-            source: The source state with tonal parameters in metadata.
+        Parameters
+        ----------
+        source : State
+            The source state with tonal parameters in metadata.
 
-        Returns:
+        Returns
+        -------
+        numpy.ndarray
             Complex time-domain signal of shape (num_samples,).
 
         """
-        time_array_s = np.arange(self.num_samples) / self.sampling_rate_hz
-
         amplitudes_upa = source.metadata["amplitudes_upa"]
         frequencies_hz = source.metadata["frequencies_hz"]
         phases_rad = source.metadata["phases_rad"]
@@ -759,7 +855,7 @@ class BroadbandShipSignal(Signal):
 
         # Generate broadband tonals (each tonal has finite bandwidth)
         for idx, (freq, amp, phase) in enumerate(
-            zip(frequencies_hz, amplitudes_upa, phases_rad)
+            zip(frequencies_hz, amplitudes_upa, phases_rad, strict=False)
         ):
             # Create narrow-band noise centered at tonal frequency
             # Bandwidth determined by tonal_bandwidth_hz
@@ -771,16 +867,13 @@ class BroadbandShipSignal(Signal):
                 noise = noise_real + 1j * noise_imag
 
                 # Bandpass filter: Create filter in frequency domain
-                freq_bins = np.fft.fftfreq(
-                    self.num_samples, 1 / self.sampling_rate_hz
-                )
+                freq_bins = np.fft.fftfreq(self.num_samples, 1 / self.sampling_rate_hz)
 
                 # Gaussian bandpass centered at tonal frequency
-                # Bandwidth controls the spectral width (sigma = bandwidth / 2sqrt2ln2 ~= bandwidth / 2.355)
+                # Bandwidth controls the spectral width
+                # (sigma = bandwidth / 2sqrt2ln2 ~= bandwidth / 2.355)
                 sigma_hz = self.tonal_bandwidth_hz / 2.355
-                bandpass_filter = np.exp(
-                    -((freq_bins - freq) ** 2) / (2 * sigma_hz**2)
-                )
+                bandpass_filter = np.exp(-((freq_bins - freq) ** 2) / (2 * sigma_hz**2))
                 bandpass_filter += np.exp(
                     -((freq_bins + freq) ** 2) / (2 * sigma_hz**2)
                 )  # Negative freq
@@ -858,15 +951,20 @@ class BroadbandShipSignal(Signal):
         This method should be called once per source before simulation begins.
         Results are cached for subsequent access.
 
-        Args:
-            source: The source state with tonal parameters in metadata.
+        Parameters
+        ----------
+        source : State
+            The source state with tonal parameters in metadata.
 
-        Returns:
-            tuple containing:
-                - stft: STFT matrix of shape (num_frames, num_freq_bins)
-                - frequencies: Frequency array in Hz
-                - hop: Hop size in samples
-                - window: Window array used
+        Returns
+        -------
+        tuple
+            A tuple containing:
+                - stft (numpy.ndarray): STFT matrix of shape
+                  (num_frames, num_freq_bins).
+                - frequencies (numpy.ndarray): Frequency array in Hz.
+                - hop (int): Hop size in samples.
+                - window (numpy.ndarray): Window array used.
 
         """
         # Check cache
@@ -898,11 +996,15 @@ class BroadbandShipSignal(Signal):
     def get_stft(self) -> tuple[np.ndarray, np.ndarray, int, np.ndarray]:
         """Get the cached STFT data.
 
-        Returns:
-            tuple containing (stft, frequencies, hop, window).
+        Returns
+        -------
+        tuple
+            A tuple containing (stft, frequencies, hop, window).
 
-        Raises:
-            RuntimeError: If STFT has not been computed yet.
+        Raises
+        ------
+        RuntimeError
+            If STFT has not been computed yet.
 
         """
         if self._stft_cache is None:
@@ -914,11 +1016,15 @@ class BroadbandShipSignal(Signal):
     def get_source_signal(self) -> np.ndarray:
         """Get the cached source time-domain signal.
 
-        Returns:
+        Returns
+        -------
+        numpy.ndarray
             Time-domain source signal.
 
-        Raises:
-            RuntimeError: If signal has not been generated yet.
+        Raises
+        ------
+        RuntimeError
+            If signal has not been generated yet.
 
         """
         if self._source_signal is None:
@@ -936,8 +1042,10 @@ class BroadbandShipSignal(Signal):
         in broadband STFT-based processing. The simulator should use
         compute_stft() and process in frequency domain.
 
-        Raises:
-            NotImplementedError: Always raises - not applicable for broadband processing.
+        Raises
+        ------
+        NotImplementedError
+            Always raises - not applicable for broadband processing.
 
         """
         msg = (
@@ -951,7 +1059,6 @@ class BroadbandShipSignal(Signal):
         """Clear cached STFT and source signal data.
 
         Call this when starting a new simulation with different source parameters.
-
         """
         self._stft_cache = None
         self._frequencies = None
@@ -960,5 +1067,3 @@ class BroadbandShipSignal(Signal):
         self._source_signal = None
         self._noise_realization = None
         self._tonal_realizations = None
-
-

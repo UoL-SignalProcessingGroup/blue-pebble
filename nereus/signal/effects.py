@@ -31,11 +31,16 @@ class Reverb(Effect):
     def apply(self, signals: np.ndarray, sampling_rate_hz: int) -> np.ndarray:
         """Apply a simple convolutional reverb effect to the signal.
 
-        Args:
-            signals: An array of complex signals with shape (num_sensors, num_samples).
-            sampling_rate_hz: The sampling rate in Hertz.
+        Parameters
+        ----------
+        signals : np.ndarray
+            An array of complex signals with shape (num_sensors, num_samples).
+        sampling_rate_hz : int
+            The sampling rate in Hertz.
 
-        Returns:
+        Returns
+        -------
+        np.ndarray
             An array of complex signals with the reverb effect applied,
             with shape (num_sensors, num_samples).
 

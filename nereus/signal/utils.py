@@ -18,18 +18,29 @@ def compute_stft(
 
     Uses overlap-add method matching BroadbandArrayProcessor implementation.
 
-    Args:
-        signal: Input time-domain signal (complex or real).
-        frame_len: STFT frame length in samples (power of 2 recommended).
-        hop_factor: Hop size = frame_len // hop_factor (4 gives 75% overlap).
-        window: Window type ('hann', 'hamming', 'blackman').
+    Parameters
+    ----------
+    signal : np.ndarray
+        Input time-domain signal (complex or real).
+    frame_len : int
+        STFT frame length in samples (power of 2 recommended).
+    hop_factor : int, optional
+        Hop size = frame_len // hop_factor (4 gives 75% overlap).
+    window : str, optional
+        Window type ('hann', 'hamming', 'blackman').
 
-    Returns:
-        tuple containing:
-            - stft: STFT matrix of shape (num_frames, num_freq_bins)
-            - frequencies: Frequency array for the bins
-            - hop: Hop size in samples
-            - window_array: The window array used
+    Returns
+    -------
+    tuple[np.ndarray, np.ndarray, int, np.ndarray]
+        Tuple containing:
+        stft : np.ndarray
+            STFT matrix of shape (num_frames, num_freq_bins).
+        frequencies : np.ndarray
+            Frequency array for the bins.
+        hop : int
+            Hop size in samples.
+        window_array : np.ndarray
+            The window array used.
 
     """
     signal = np.asarray(signal, dtype=np.complex64)
@@ -84,13 +95,20 @@ def inverse_stft(
 
     Matches BroadbandArrayProcessor._inverse_stft() implementation.
 
-    Args:
-        stft: STFT matrix of shape (num_frames, num_freq_bins).
-        frame_len: STFT frame length in samples.
-        hop: Hop size in samples.
-        window: Window array used in forward STFT.
+    Parameters
+    ----------
+    stft : np.ndarray
+        STFT matrix of shape (num_frames, num_freq_bins).
+    frame_len : int
+        STFT frame length in samples.
+    hop : int
+        Hop size in samples.
+    window : np.ndarray
+        Window array used in forward STFT.
 
-    Returns:
+    Returns
+    -------
+    np.ndarray
         Reconstructed time-domain signal.
 
     """
@@ -115,16 +133,16 @@ def inverse_stft(
     eps = 1e-10
     valid_mask = window_sum > eps
     reconstructed[valid_mask] /= window_sum[valid_mask]
-    
+
     # Trim edge artifacts: Remove regions where window normalization is incomplete
     # This happens at the start (first hop_len samples) and end (last hop_len samples)
     # where there isn't full overlap-add coverage
     trim_start = hop  # Remove first hop samples (incomplete overlap)
-    trim_end = hop    # Remove last hop samples (incomplete overlap)
-    
+    trim_end = hop  # Remove last hop samples (incomplete overlap)
+
     if len(reconstructed) > trim_start + trim_end:
         reconstructed = reconstructed[trim_start:-trim_end]
-    
+
     return reconstructed
 
 
@@ -134,12 +152,18 @@ def apply_fade_in(signal: np.ndarray, fade_samples: int) -> np.ndarray:
     Uses a raised cosine (Tukey) window for smooth signal arrival,
     matching the BroadbandArrayProcessor implementation.
 
-    Args:
-        signal: Input signal.
-        fade_samples: Number of samples for fade-in duration.
+    Parameters
+    ----------
+    signal : np.ndarray
+        Input signal.
+    fade_samples : int
+        Number of samples for fade-in duration.
 
-    Returns:
+    Returns
+    -------
+    np.ndarray
         Signal with fade-in applied.
+
     """
     if fade_samples <= 0 or fade_samples >= len(signal):
         return signal

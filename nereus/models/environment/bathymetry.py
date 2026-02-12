@@ -22,15 +22,21 @@ class Bathymetry(ABC, Base):
     def get_depth(self, x: float, y: float) -> float:
         """Get the seafloor depth at a given (x, y) position.
 
-        Args:
-            x: X coordinate in meters.
-            y: Y coordinate in meters.
+        Parameters
+        ----------
+        x : float
+            X coordinate in meters.
+        y : float
+            Y coordinate in meters.
 
-        Returns:
+        Returns
+        -------
+        float
             Depth in meters (positive value below surface).
 
-        Note:
-            This method must be implemented by subclasses.
+        Notes
+        -----
+        Implementations must override this abstract method.
 
         """
         pass
@@ -39,19 +45,26 @@ class Bathymetry(ABC, Base):
     def get_grid(self, x_range: tuple, y_range: tuple):
         """Get a gridded representation of the bathymetry.
 
-        Args:
-            x_range: Tuple of (x_min, x_max) in meters.
-            y_range: Tuple of (y_min, y_max) in meters.
-            resolution: Grid resolution in meters. Defaults to 1000.0.
+        Parameters
+        ----------
+        x_range : tuple
+            Tuple of (x_min, x_max) in meters.
+        y_range : tuple
+            Tuple of (y_min, y_max) in meters.
+        resolution : float, optional
+            Grid resolution in meters (defaults to :pyattr:`resolution`).
 
-        Returns:
-            Tuple of (x_grid, y_grid, z_grid) where:
-                - x_grid: 1D array of x coordinates
-                - y_grid: 1D array of y coordinates
-                - z_grid: 2D array of depths (positive, below surface)
+        Returns
+        -------
+        tuple
+            ``(x_grid, y_grid, z_grid)`` where
+            - ``x_grid`` : 1D array of x coordinates
+            - ``y_grid`` : 1D array of y coordinates
+            - ``z_grid`` : 2D array of depths (positive, below surface)
 
-        Note:
-            This method must be implemented by subclasses.
+        Notes
+        -----
+        Implementations must override this abstract method.
 
         """
         pass
@@ -60,9 +73,11 @@ class Bathymetry(ABC, Base):
 class FlatBathymetry(Bathymetry):
     """A flat seafloor bathymetry model.
 
-    Attributes:
-        depth (float): The constant depth of the seafloor in meters.
-            Must be positive (below surface). Defaults to 5000.0 m.
+    Attributes
+    ----------
+    depth : float
+        The constant depth of the seafloor in meters. Must be positive
+        (below surface). Defaults to 5000.0 m.
 
     """
 
@@ -78,11 +93,16 @@ class FlatBathymetry(Bathymetry):
     def get_depth(self, x: float, y: float) -> float:
         """Get the seafloor depth (constant everywhere).
 
-        Args:
-            x: X coordinate in meters (ignored).
-            y: Y coordinate in meters (ignored).
+        Parameters
+        ----------
+        x : float
+            X coordinate in meters (ignored).
+        y : float
+            Y coordinate in meters (ignored).
 
-        Returns:
+        Returns
+        -------
+        float
             Constant depth in meters.
 
         """
@@ -91,13 +111,19 @@ class FlatBathymetry(Bathymetry):
     def get_grid(self, x_range: tuple, y_range: tuple):
         """Get a gridded representation of the flat bathymetry.
 
-        Args:
-            x_range: Tuple of (x_min, x_max) in meters.
-            y_range: Tuple of (y_min, y_max) in meters.
-            resolution: Grid resolution in meters. Defaults to 1000.0.
+        Parameters
+        ----------
+        x_range : tuple
+            Tuple of (x_min, x_max) in meters.
+        y_range : tuple
+            Tuple of (y_min, y_max) in meters.
+        resolution : float, optional
+            Grid resolution in meters (defaults to :pyattr:`resolution`).
 
-        Returns:
-            Tuple of (x_grid, y_grid, z_grid) where z_grid is constant.
+        Returns
+        -------
+        tuple
+            ``(x_grid, y_grid, z_grid)`` where ``z_grid`` is constant.
 
         """
         x_min, x_max = x_range
@@ -105,7 +131,7 @@ class FlatBathymetry(Bathymetry):
 
         # Create grid points
         x_points = int((x_max - x_min) / self.resolution) + 1
-        y_points = int((y_max - y_min) /self.resolution) + 1
+        y_points = int((y_max - y_min) / self.resolution) + 1
 
         x_grid = np.linspace(x_min, x_max, max(2, x_points))
         y_grid = np.linspace(y_min, y_max, max(2, y_points))
@@ -119,13 +145,16 @@ class FlatBathymetry(Bathymetry):
 class WedgeBathymetry(Bathymetry):
     """A linearly sloping seafloor bathymetry model.
 
-    Attributes:
-        depth_at_origin (float): Depth at the origin (0, 0) in meters.
-            Defaults to 1000.0 m.
-        x_gradient (float): Depth gradient in the x direction (m/m).
-            Defaults to 0.0 (no slope in x).
-        y_gradient (float): Depth gradient in the y direction (m/m).
-            Defaults to 0.001 (1 m increase per 1000 m in y).
+    Attributes
+    ----------
+    depth_at_origin : float
+        Depth at the origin (0, 0) in meters. Defaults to 1000.0 m.
+    x_gradient : float
+        Depth gradient in the x direction (m/m). Defaults to 0.0 (no slope
+        in x).
+    y_gradient : float
+        Depth gradient in the y direction (m/m). Defaults to 0.001 (1 m
+        increase per 1000 m in y).
 
     """
 
@@ -142,11 +171,16 @@ class WedgeBathymetry(Bathymetry):
     def get_depth(self, x: float, y: float) -> float:
         """Get the seafloor depth at a given position.
 
-        Args:
-            x: X coordinate in meters.
-            y: Y coordinate in meters.
+        Parameters
+        ----------
+        x : float
+            X coordinate in meters.
+        y : float
+            Y coordinate in meters.
 
-        Returns:
+        Returns
+        -------
+        float
             Depth in meters at (x, y).
 
         """
@@ -156,13 +190,19 @@ class WedgeBathymetry(Bathymetry):
     def get_grid(self, x_range: tuple, y_range: tuple):
         """Get a gridded representation of the sloping bathymetry.
 
-        Args:
-            x_range: Tuple of (x_min, x_max) in meters.
-            y_range: Tuple of (y_min, y_max) in meters.
-            resolution: Grid resolution in meters. Defaults to 1000.0.
+        Parameters
+        ----------
+        x_range : tuple
+            Tuple of (x_min, x_max) in meters.
+        y_range : tuple
+            Tuple of (y_min, y_max) in meters.
+        resolution : float, optional
+            Grid resolution in meters (defaults to :pyattr:`resolution`).
 
-        Returns:
-            Tuple of (x_grid, y_grid, z_grid) with linearly varying depths.
+        Returns
+        -------
+        tuple
+            ``(x_grid, y_grid, z_grid)`` with linearly varying depths.
 
         """
         x_min, x_max = x_range
@@ -177,9 +217,7 @@ class WedgeBathymetry(Bathymetry):
 
         # Create meshgrid and calculate depths
         X, Y = np.meshgrid(x_grid, y_grid, indexing="ij")
-        z_grid = (
-            self.depth_at_origin + self.x_gradient * X + self.y_gradient * Y
-        )
+        z_grid = self.depth_at_origin + self.x_gradient * X + self.y_gradient * Y
         z_grid = np.maximum(z_grid, 0.0)  # Ensure non-negative
 
         return x_grid, y_grid, z_grid
@@ -188,12 +226,15 @@ class WedgeBathymetry(Bathymetry):
 class SeamountBathymetry(Bathymetry):
     """A bathymetry model with an idealized seamount feature.
 
-    Attributes:
-        summit_position (tuple): (x, y, z) coordinates of the summit in meters.
-            Defaults to (25000.0, 25000.0, 1000.0).
-        radius (float): Radius of the seamount in meters. Defaults to 15000.0 m.
-        plateau_depth (float): Depth at the surrounding plateau in meters.
-            Defaults to 5000.0 m.
+    Attributes
+    ----------
+    summit_position : tuple
+        ``(x, y, z)`` coordinates of the summit in meters. Defaults to
+        ``(25000.0, 25000.0, 1000.0)``.
+    radius : float
+        Radius of the seamount in meters. Defaults to 15000.0 m.
+    plateau_depth : float
+        Depth at the surrounding plateau in meters. Defaults to 5000.0 m.
 
     """
 
@@ -220,11 +261,16 @@ class SeamountBathymetry(Bathymetry):
     def get_depth(self, x: float, y: float) -> float:
         """Get the seafloor depth at a given position.
 
-        Args:
-            x: X coordinate in meters.
-            y: Y coordinate in meters.
+        Parameters
+        ----------
+        x : float
+            X coordinate in meters.
+        y : float
+            Y coordinate in meters.
 
-        Returns:
+        Returns
+        -------
+        float
             Depth in meters at (x, y).
 
         """
@@ -241,13 +287,19 @@ class SeamountBathymetry(Bathymetry):
     def get_grid(self, x_range: tuple, y_range: tuple):
         """Get a gridded representation of the seamount bathymetry.
 
-        Args:
-            x_range: Tuple of (x_min, x_max) in meters.
-            y_range: Tuple of (y_min, y_max) in meters.
-            resolution: Grid resolution in meters. Defaults to 1000.0.
+        Parameters
+        ----------
+        x_range : tuple
+            Tuple of (x_min, x_max) in meters.
+        y_range : tuple
+            Tuple of (y_min, y_max) in meters.
+        resolution : float, optional
+            Grid resolution in meters (defaults to :pyattr:`resolution`).
 
-        Returns:
-            Tuple of (x_grid, y_grid, z_grid) with seamount topography.
+        Returns
+        -------
+        tuple
+            ``(x_grid, y_grid, z_grid)`` with seamount topography.
 
         """
         x_min, x_max = x_range

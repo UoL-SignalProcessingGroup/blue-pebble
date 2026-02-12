@@ -1,4 +1,6 @@
-from .algorithms import (  # noqa: D104
+"""Detector package public API."""
+
+from .algorithms import (
     CFARDetector,
     DetectionAlgorithm,
     PeakDetector,
@@ -7,9 +9,9 @@ from .algorithms import (  # noqa: D104
 from .passive import PassiveSonarDetector
 
 __all__ = [
-    "PassiveSonarDetector",
-    "DetectionAlgorithm",
-    "ThresholdDetector",
-    "PeakDetector",
     "CFARDetector",
+    "DetectionAlgorithm",
+    "PeakDetector",
+    "PassiveSonarDetector",
+    "ThresholdDetector",
 ]
