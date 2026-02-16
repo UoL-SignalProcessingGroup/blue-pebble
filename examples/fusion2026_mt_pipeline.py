@@ -400,7 +400,7 @@ def build_simulator(
     return BroadbandPassiveSonarArraySimulator(
         platform=platform,
         propagation_model=prop_model,
-        signal_model=signal_model,
+        signal_models=[signal_model],
         noise_model=ambient_noise_model,
         beamformer=beamformer,
         steering_calculator=steering_calculator,

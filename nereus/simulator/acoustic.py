@@ -200,8 +200,10 @@ class BroadbandPassiveSonarArraySimulator(SensorSimulator):
         The towed array platform providing geometry.
     propagation_model : AcousticPropagationModel
         Model for acoustic propagation (must support ``propagate_spectrum``).
-    signal_model : Signal
-        Broadband signal model for STFT-based generation.
+    signal_models : list of Signal
+        List of broadband signal models for STFT-based generation. 
+        Use a single-element list to share one signal model across all targets,
+        or provide one Signal per target for unique source characteristics.
     noise_model : AmbientNoise, optional
         Model for generating ambient noise.
     beamformer : Beamformer, optional
@@ -220,7 +222,10 @@ class BroadbandPassiveSonarArraySimulator(SensorSimulator):
         AcousticPropagationModel,
         doc="Acoustic propagation model (must support propagate_spectrum)",
     )
-    signal_model = Property(Signal, doc="Broadband signal model (BroadbandTonalSignal)")
+    signal_models = Property(
+        list,
+        doc="List of broadband signal models (one per target, or single-element list for all)",
+    )
     noise_model = Property(AmbientNoise, default=None, doc="Noise model (optional)")
     beamformer = Property(
         Beamformer, default=None, doc="Beamforming algorithm (optional)"
@@ -271,23 +276,37 @@ class BroadbandPassiveSonarArraySimulator(SensorSimulator):
             msg = "BroadbandPassiveSonarArraySimulator requires at least one target"
             raise ValueError(msg)
 
+        # Normalize signal_models to list (support single or per-target)
+        if len(self.signal_models) == 1:
+            # Single signal model: replicate for all targets
+            signal_models_list = self.signal_models * len(ground_truth_paths)
+        else:
+            # List of signal models: one per target
+            signal_models_list = self.signal_models
+            if len(signal_models_list) != len(ground_truth_paths):
+                msg = (
+                    f"Number of signal models ({len(signal_models_list)}) must match "
+                    f"number of targets ({len(ground_truth_paths)})"
+                )
+                raise ValueError(msg)
+
         # Get first target state from first path to initialize STFT parameters
         first_target_path = ground_truth_paths[0]
         first_state = next(iter(first_target_path))
 
-        # Compute STFT of source signal (only done once)
-        # All targets share the same STFT parameters
-        source_stft, frequencies, hop, window = self.signal_model.compute_stft(
+        # Compute STFT of first source signal to get parameters
+        # (all signal models should have same STFT parameters)
+        source_stft, frequencies, hop, window = signal_models_list[0].compute_stft(
             first_state
         )
         num_frames = source_stft.shape[0]
         num_freq_bins = source_stft.shape[1]
 
         # Get source time-domain signal for reference
-        source_signal = self.signal_model.get_source_signal()
+        source_signal = signal_models_list[0].get_source_signal()
 
         # Calculate timestep parameters
-        total_duration_s = len(source_signal) / self.signal_model.sampling_rate_hz
+        total_duration_s = len(source_signal) / signal_models_list[0].sampling_rate_hz
         n_steps = len(all_timestamps)
         step_duration_s = total_duration_s / n_steps
 
@@ -301,12 +320,15 @@ class BroadbandPassiveSonarArraySimulator(SensorSimulator):
         targets_data = []
 
         # Process each target
-        for target_path in ground_truth_paths:
+        for target_idx, target_path in enumerate(ground_truth_paths):
             # Get first state to generate STFT for this target
             target_first_state = next(iter(target_path))
 
-            # Compute STFT for this target's source signal
-            target_source_stft, _, _, _ = self.signal_model.compute_stft(
+            # Get signal model for this specific target
+            target_signal_model = signal_models_list[target_idx]
+
+            # Compute STFT for this target's unique source signal
+            target_source_stft, _, _, _ = target_signal_model.compute_stft(
                 target_first_state
             )
 
@@ -375,7 +397,7 @@ class BroadbandPassiveSonarArraySimulator(SensorSimulator):
                     # Calculate time for this frame (center of frame)
                     frame_time_s = (
                         frame_idx * hop + hop // 2
-                    ) / self.signal_model.sampling_rate_hz
+                    ) / signal_models_list[0].sampling_rate_hz
 
                     # Find which timestep this frame belongs to
                     step_idx_float = frame_time_s / step_duration_s
@@ -403,14 +425,14 @@ class BroadbandPassiveSonarArraySimulator(SensorSimulator):
 
             # Reconstruct time-domain signal using inverse STFT (sum of all targets)
             signal_reconstructed = inverse_stft(
-                STFT_out_total, self.signal_model.frame_len, hop, window
+                STFT_out_total, signal_models_list[0].frame_len, hop, window
             )
 
             # The delay has been handled in the frequency domain via phase shift.
             # We only need to apply a fade-in if specified (to smooth the arrival).
             if self.fade_in_ms > 0:
                 fade_samples = int(
-                    self.fade_in_ms * self.signal_model.sampling_rate_hz / 1000.0
+                    self.fade_in_ms * signal_models_list[0].sampling_rate_hz / 1000.0
                 )
                 signal_with_arrival = apply_fade_in(signal_reconstructed, fade_samples)
             else:
@@ -456,7 +478,7 @@ class BroadbandPassiveSonarArraySimulator(SensorSimulator):
                 # Generate noise with the correct length
                 # Temporarily adjust noise model duration to match actual slice length
                 original_duration = self.noise_model.duration_s
-                actual_duration_s = actual_samples / self.signal_model.sampling_rate_hz
+                actual_duration_s = actual_samples / signal_models_list[0].sampling_rate_hz
                 self.noise_model.duration_s = actual_duration_s
 
                 noise = self.noise_model.generate(num_sensors)
