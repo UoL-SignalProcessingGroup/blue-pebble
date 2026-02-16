@@ -62,6 +62,24 @@ If you prefer not to use Docker, you can set up the project manually:
     ```bash
     pip install -e .
     ```
+### rtrs Acoustic Model Dependency
+
+This project uses the **rtrs** acoustic model for ray tracing. This dependency currently requires manual installation. It can be found on the [rtrs GitHub Repository](https://github.com/fincb/rtrs). This model also requires rust to be installed. After nereus has been installed following the above instructions, **rtrs** can be installed as follows:
+
+1.  **Clone the Repository**:
+    ```bash
+    git clone https://github.com/fincb/rtrs.git
+    cd rtrs
+    ```
+2.  **Activate nereus Virtual Environment**:
+    ```bash
+    conda activate nereus-env
+    ```
+3.  **Install rtrs with python bindings**:
+    ```bash
+    maturin develop --release --features python
+    ```
+
 
 ### Bellhop Acoustic Model Dependency
 
