@@ -22,8 +22,10 @@ Nereus is a high-fidelity simulation framework for underwater acoustic scenarios
 - Using real environmental data (e.g., bathymetry, sound speed profiles)
 - Using real source signature data
 - Systematic sound speed and sensor position errors
+- Alternative acoustic sensors (hull mounted arrays, sonobuoys...)
 - Coherent environmental ambient noise modeling (wind, rain, waves...)
 - Better acoustic volume and boundary losses
+- Active sonar... 
 
 ## Getting Started (Recommended Method: Dev Container)
 
