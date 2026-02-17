@@ -13,6 +13,8 @@ from typing import Any
 import matplotlib.dates as mdates
 import matplotlib.pyplot as plt
 import numpy as np
+import plotly.express as px
+import plotly.graph_objects as go
 import seaborn as sns
 from matplotlib.animation import FuncAnimation
 from matplotlib.axes import Axes
@@ -1410,3 +1412,291 @@ class CartesianPlotter(BasePlotter):
                 plots["uncertainty"][track_id] = self.ax.add_patch(ellipse)
 
         return plots
+
+
+def _distance_axis_scale(min_val: float, max_val: float) -> tuple[float, str]:
+    """Return distance scale factor and unit label from axis limits.
+
+    Notes
+    -----
+    Input coordinates are assumed to be metres.
+
+    """
+    max_abs = max(abs(min_val), abs(max_val))
+    if max_abs >= 1e3:
+        return 1e-3, "km"
+    return 1.0, "m"
+
+
+def _range_padding_for_scale(scale: float) -> float:
+    """Return axis padding in native units from display scale.
+
+    Pads by 0.5 in the display unit (0.5 m, 0.5 km, 0.5 Mm).
+    """
+    return 0.5 / scale
+
+
+def plot_world(truths: list[GroundTruthPath], platform: Platform) -> go.Figure:
+    """Plot the world picture of the platform and target trajectories.
+
+    Parameters
+    ----------
+    truths : list[GroundTruthPath]
+        A list of GroundTruthPath objects representing the trajectories of the targets.
+    platform : Platform
+        The platform whose trajectory is to be plotted.
+
+    Returns
+    -------
+    go.Figure
+        A Plotly figure object containing the world picture plot.
+
+    """
+    num_truths = len(truths)
+
+    fig = go.Figure()
+
+    plat_x = [
+        float(entry.host.state.state_vector[0]) for entry in platform.platform_history
+    ]
+    plat_y = [
+        float(entry.host.state.state_vector[2]) for entry in platform.platform_history
+    ]
+
+    gt_x = [[] for _ in range(num_truths)]
+    gt_y = [[] for _ in range(num_truths)]
+    for idx, truth in enumerate(truths):
+        gt_x[idx] = [float(state.state_vector[0]) for state in truth]
+        gt_y[idx] = [float(state.state_vector[2]) for state in truth]
+
+    all_x = plat_x + [x for sublist in gt_x for x in sublist]
+    all_y = plat_y + [y for sublist in gt_y for y in sublist]
+
+    raw_min_x, raw_max_x = min(all_x), max(all_x)
+    raw_min_y, raw_max_y = min(all_y), max(all_y)
+    scale, unit = _distance_axis_scale(
+        min(raw_min_x, raw_min_y), max(raw_max_x, raw_max_y)
+    )
+    pad = _range_padding_for_scale(scale)
+
+    min_x, max_x = raw_min_x - pad, raw_max_x + pad
+    min_y, max_y = raw_min_y - pad, raw_max_y + pad
+
+    mid_x = (max_x + min_x) / 2
+    mid_y = (max_y + min_y) / 2
+    max_span = max(max_x - min_x, max_y - min_y)
+
+    x_range = [mid_x - max_span / 2, mid_x + max_span / 2]
+    y_range = [mid_y - max_span / 2, mid_y + max_span / 2]
+
+    plat_x = [x * scale for x in plat_x]
+    plat_y = [y * scale for y in plat_y]
+    gt_x = [[x * scale for x in x_coords] for x_coords in gt_x]
+    gt_y = [[y * scale for y in y_coords] for y_coords in gt_y]
+    x_range = [value * scale for value in x_range]
+    y_range = [value * scale for value in y_range]
+
+    fig.add_trace(
+        go.Scatter(
+            x=plat_x,
+            y=plat_y,
+            mode="lines",
+            line=dict(color="black", width=3),
+            name="Platform",
+        )
+    )
+
+    colors = px.colors.qualitative.Plotly
+    names = [
+        f"Target {i + 1}" if num_truths > 1 else "Target" for i in range(num_truths)
+    ]
+    for i in range(num_truths):
+        fig.add_trace(
+            go.Scatter(
+                x=gt_x[i],
+                y=gt_y[i],
+                mode="lines",
+                line=dict(color=colors[i + 1], width=3, dash="5px,2px"),
+                name=names[i],
+            )
+        )
+
+    fig.update_layout(
+        width=600,
+        height=600,
+        font=dict(size=16, color="black"),
+        showlegend=True,
+        legend=dict(x=0.5, y=1.1, xanchor="center", orientation="h"),
+        plot_bgcolor="white",
+        xaxis=dict(
+            title=f"X Position ({unit})",
+            range=x_range,
+            showgrid=True,
+            gridcolor="rgba(200,200,200,0.5)",
+            linecolor="black",
+            zeroline=True,
+            zerolinecolor="rgba(200, 200, 200, 0.5)",
+            zerolinewidth=0.5,
+        ),
+        yaxis=dict(
+            title=f"Y Position ({unit})",
+            range=y_range,
+            showgrid=True,
+            gridcolor="rgba(200,200,200,0.5)",
+            linecolor="black",
+            zeroline=True,
+            zerolinecolor="rgba(200, 200, 200, 0.5)",
+            zerolinewidth=0.5,
+        ),
+    )
+
+    return fig
+
+
+def plot_btr(
+    timesteps: np.ndarray,
+    steering_azimuths: np.ndarray,
+    data: np.ndarray | None = None,
+    truths: list[GroundTruthPath] | None = None,
+    detections: list[Detection] | None = None,
+    tracks: list[Track] | None = None,
+    data_type: str = "SNR (dB)",
+) -> go.Figure:
+    """Plot the bearing-time record (BTR) of the beamformed data.
+
+    Optionally overlays truth trajectories and detections on the BTR plot.
+
+    Parameters
+    ----------
+    data : np.ndarray | None
+        The beamformed data to be plotted (in dB) as a heatmap. If None, no data is
+        plotted.
+    timesteps : np.ndarray
+        The timesteps corresponding to the beamformed data.
+    steering_azimuths : np.ndarray
+        The steering azimuth angles corresponding to the beamformed data.
+    truths : list[GroundTruthPath] | None
+        A list of GroundTruthPath objects representing the trajectories of the targets.
+        Default is None, in which case no truth trajectories will be plotted.
+    detections : list[Detection] | None
+        A list of Detection objects representing the detections to be plotted.
+        Default is None, in which case no detections will be plotted.
+    tracks : list[Track] | None
+        A list of Track objects representing the tracks to be plotted. Default is None,
+        in which case no tracks will be plotted.
+    data_type : str
+        A string label for the type of data being plotted (e.g., "SNR (dB)").
+        This is used for the colorbar title. Default is "SNR (dB)".
+
+    Returns
+    -------
+    go.Figure
+        A Plotly figure object containing the BTR plot.
+
+    """
+    fig = go.Figure()
+
+    if data is not None:
+        fig.add_trace(
+            go.Heatmap(
+                z=data,
+                y=timesteps,
+                x=steering_azimuths,
+                colorscale="Viridis",
+                colorbar=dict(
+                    title=dict(text=data_type, side="right", font=dict(size=16)),
+                    thickness=24,
+                    len=1.0,
+                    tickfont=dict(size=14),
+                ),
+            )
+        )
+
+    track_colours = px.colors.qualitative.Plotly[::2]
+    truth_colours = px.colors.qualitative.Plotly[1::2]
+
+    if detections is not None:
+        det_x = [np.rad2deg(det.state_vector[0]) for det in detections]
+        det_y = [det.timestamp for det in detections]
+        fig.add_trace(
+            go.Scatter(
+                x=det_x,
+                y=det_y,
+                mode="markers",
+                marker=dict(size=5, line=dict(width=1), color="white", opacity=0.8),
+                name="Detection",
+            )
+        )
+
+    if tracks is not None:
+        for idx, track in enumerate(tracks):
+            track_x = [np.rad2deg(state.state_vector[0]) for state in track]
+            track_y = [state.timestamp for state in track]
+            fig.add_trace(
+                go.Scatter(
+                    x=track_x,
+                    y=track_y,
+                    mode="lines",
+                    line=dict(color=track_colours[idx], width=4),
+                    name=f"Track {idx + 1}" if len(tracks) > 1 else "Track",
+                )
+            )
+
+    if truths is not None:
+        gt_x = [
+            [np.rad2deg(state.state_vector[0]) for state in truth] for truth in truths
+        ]
+        gt_y = [[state.timestamp for state in truth] for truth in truths]
+        for idx in range(len(truths)):
+            fig.add_trace(
+                go.Scatter(
+                    x=gt_x[idx],
+                    y=gt_y[idx],
+                    mode="lines",
+                    line=dict(color=truth_colours[idx], width=3, dash="dash"),
+                    name=f"Target {idx + 1}" if len(truths) > 1 else "Target",
+                )
+            )
+
+    fig.update_xaxes(
+        range=[steering_azimuths[0], steering_azimuths[-1]],
+        tickmode="linear",
+        tick0=steering_azimuths[0],
+        dtick=steering_azimuths[-1] // 3,
+        tickangle=-45,
+        tickfont=dict(size=14),
+        showgrid=True,
+        gridcolor="rgba(200, 200, 200, 0.5)",
+        title="Bearing (°)",
+        ticks="outside",
+        tickcolor="rgba(160, 160, 160, 1.0)",
+        showline=True,
+        linewidth=1,
+        linecolor="rgba(160, 160, 160, 1.0)",
+    )
+
+    fig.update_yaxes(
+        range=[timesteps[-1], timesteps[0]],
+        showgrid=True,
+        gridcolor="rgba(200, 200, 200, 0.5)",
+        tickformat="%H:%M",
+        tickfont=dict(size=14),
+        autorange=False,
+        title="Time (HH:MM)",
+        tickcolor="rgba(160, 160, 160, 1.0)",
+        showline=True,
+        linewidth=1,
+        linecolor="rgba(160, 160, 160, 1.0)",
+    )
+
+    fig.update_layout(
+        width=600,
+        height=600,
+        font=dict(size=16, color="black"),
+        showlegend=True,
+        legend=dict(x=0.5, y=1.1, xanchor="center", orientation="h"),
+        plot_bgcolor="white",
+        paper_bgcolor="white",
+    )
+
+    return fig
