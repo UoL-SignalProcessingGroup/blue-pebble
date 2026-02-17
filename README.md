@@ -16,6 +16,17 @@ Nereus is a high-fidelity simulation framework for underwater acoustic scenarios
 - Plotting utilities for bearings and Cartesian tracks
 - Example Jupyter notebooks for scenario setup, simulation, and tracking
 
+## Future Plans
+
+- Ownship noise modeling
+- Using real environmental data (e.g., bathymetry, sound speed profiles)
+- Using real source signature data
+- Systematic sound speed and sensor position errors
+- Alternative acoustic sensors (hull mounted arrays, sonobuoys...)
+- Coherent environmental ambient noise modeling (wind, rain, waves...)
+- Better acoustic volume and boundary losses
+- Active sonar... 
+
 ## Getting Started (Recommended Method: Dev Container)
 
 The easiest way to get started is by using the included Dev Container, which sets up a complete, pre-configured development environment with all dependencies, including the Bellhop acoustic model.
