@@ -94,13 +94,13 @@ def _get_time_axis_formatter(time_span_seconds: float) -> tuple:
 
     Parameters
     ----------
-        time_span_seconds  : float
-            The total duration of the time span in seconds.
+    time_span_seconds  : float
+        The total duration of the time span in seconds.
 
     Returns
     -------
-        tuple
-            A tuple containing:
+    tuple
+        A tuple containing:
         - locator (matplotlib.dates.DateLocator)
             The locator for the x-axis.
         - formatter (matplotlib.dates.DateFormatter)
