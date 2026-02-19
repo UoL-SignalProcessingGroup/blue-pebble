@@ -1,8 +1,4 @@
-"""Defines a towed array platform.
-
-© Copyright 2025 Joshua J. Wakefield.
-Licensed under the MIT License.
-"""
+"""Defines a towed array platform."""
 
 from collections.abc import Sequence
 from dataclasses import dataclass
@@ -20,8 +16,8 @@ from stonesoup.types.state import State
 class _FollowerModel(Base):
     """A transition model that causes a movable to follow another movable.
 
-    A generic model that causes a movable to follow a leader in 3D space and
-    maintain a fixed 3D distance from the leader.
+    A generic model that causes a movable to follow a leader in 3D space and maintain a fixed 3D
+    distance from the leader.
 
     Attributes
     ----------
@@ -32,12 +28,8 @@ class _FollowerModel(Base):
 
     """
 
-    leader = Property(
-        MovingMovable, doc="The leader movable that the next movable will follow."
-    )
-    offset = Property(
-        float, doc="The distance the follower should maintain from the leader."
-    )
+    leader = Property(MovingMovable, doc="The leader movable that the next movable will follow.")
+    offset = Property(float, doc="The distance the follower should maintain from the leader.")
 
     def function(self, state: State, **kwargs) -> StateVector:
         """Calculate the new 3D position of the follower.
@@ -45,17 +37,15 @@ class _FollowerModel(Base):
         Parameters
         ----------
         state : State
-            The current state of the follower, containing its position in the
-            ``state_vector``.
+            The current state of the follower, containing its position in the ``state_vector``.
         **kwargs
-            Additional keyword arguments (present for TransitionModel
-            compatibility; ignored by this implementation).
+            Additional keyword arguments (present for TransitionModel compatibility; ignored by
+            this implementation).
 
         Returns
         -------
         StateVector
-            The new position of the follower, maintaining the specified offset
-            from the leader.
+            The new position of the follower, maintaining the specified offset from the leader.
 
         """
         follower_pos_old = state.state_vector
@@ -73,10 +63,9 @@ class _FollowerModel(Base):
 class _TowedArrayFollowerModel(_FollowerModel):
     """A specialised follower model for a towed array segment.
 
-    This model enforces that the follower maintains a fixed depth. The
-    ``offset`` property is interpreted as the slant distance between the
-    leader and follower; horizontal separation is computed from the slant
-    distance and vertical separation.
+    This model enforces that the follower maintains a fixed depth. The ``offset`` property is
+    interpreted as the slant distance between the leader and follower; horizontal separation is
+    computed from the slant distance and vertical separation.
 
     Attributes
     ----------
@@ -97,18 +86,15 @@ class _TowedArrayFollowerModel(_FollowerModel):
     def function(self, state: State, **kwargs) -> StateVector:
         """Calculate the new position in 2D while keeping the depth fixed.
 
-        The horizontal offset from the leader is computed using the
-        Pythagorean theorem from the slant ``offset`` and the vertical
-        separation to the desired ``array_depth_m``.
+        The horizontal offset from the leader is computed using the Pythagorean theorem from the
+        slant ``offset`` and the vertical separation to the desired ``array_depth_m``.
 
         Parameters
         ----------
         state : State
-            The current state of the follower, containing its position in the
-            ``state_vector``.
+            The current state of the follower, containing its position in the ``state_vector``.
         **kwargs
-            Additional keyword arguments (present for TransitionModel
-            compatibility; ignored).
+            Additional keyword arguments (present for TransitionModel compatibility; ignored).
 
         Returns
         -------
@@ -213,9 +199,8 @@ class PlatformState:
 class TowedArrayPlatform(MultiTransitionMovingPlatform):
     """A Stone Soup compliant platform that can tow an array of sensors.
 
-    This platform models a host vehicle towing a linear array of sensors. The
-    sensors follow the host (or the sensor ahead of them) based on a defined
-    cable length and sensor spacing.
+    This platform models a host vehicle towing a linear array of sensors. The sensors follow the
+    host (or the sensor ahead of them) based on a defined cable length and sensor spacing.
 
     Parameters
     ----------
@@ -228,8 +213,8 @@ class TowedArrayPlatform(MultiTransitionMovingPlatform):
     array_depth_m : float
         Depth at which the array is towed in meters.
     velocity_mapping : Sequence[int], optional
-        Indices for velocity in the state vector. If not set, defaults to
-        ``position_mapping`` indices + 1.
+        Indices for velocity in the state vector. If not set, defaults to ``position_mapping``
+        indices + 1.
     reference_sensor_idx : int, optional
         Index of the reference sensor. Defaults to 0.
 
@@ -280,8 +265,8 @@ class TowedArrayPlatform(MultiTransitionMovingPlatform):
     def _initialise_sensor_array(self):
         """Initialise the towed sensor array's geometry and follower models.
 
-        This sets up the initial positions of all sensors relative to the host
-        based on the host's initial velocity vector.
+        This sets up the initial positions of all sensors relative to the host based on the host's
+        initial velocity vector.
 
         Raises
         ------
@@ -462,9 +447,7 @@ class TowedArrayPlatform(MultiTransitionMovingPlatform):
                 return state
         return None
 
-    def get_sensor_states_at(
-        self, timestamp: datetime
-    ) -> list[GroundTruthState] | None:
+    def get_sensor_states_at(self, timestamp: datetime) -> list[GroundTruthState] | None:
         """Get the states of all towed sensors at a specific timestamp.
 
         Parameters
@@ -498,18 +481,14 @@ class TowedArrayPlatform(MultiTransitionMovingPlatform):
         Returns
         -------
         numpy.ndarray or None
-            An array of shape (N, D) containing the position history of the
-            host, where N is the number of time steps and D is dimensions.
-            Returns None if no states exist.
+            An array of shape (N, D) containing the position history of the host, where N is the
+            number of time steps and D is dimensions. Returns None if no states exist.
 
         """
         if not self.states:
             return None
         return np.array(
-            [
-                state.state_vector[self.position_mapping].flatten()
-                for state in self.states
-            ]
+            [state.state_vector[self.position_mapping].flatten() for state in self.states]
         )
 
     @property
@@ -519,8 +498,7 @@ class TowedArrayPlatform(MultiTransitionMovingPlatform):
         Returns
         -------
         list[numpy.ndarray]
-            A list of arrays, where each array represents the position history
-            of a single sensor.
+            A list of arrays, where each array represents the position history of a single sensor.
 
         """
         if not self.towed_sensors:
@@ -528,9 +506,7 @@ class TowedArrayPlatform(MultiTransitionMovingPlatform):
         paths = []
         for sensor in self.towed_sensors:
             if sensor.states:
-                sensor_path = np.array(
-                    [state.state_vector.flatten() for state in sensor.states]
-                )
+                sensor_path = np.array([state.state_vector.flatten() for state in sensor.states])
                 paths.append(sensor_path)
             else:
                 paths.append(np.array([]).reshape(0, len(self.position_mapping)))

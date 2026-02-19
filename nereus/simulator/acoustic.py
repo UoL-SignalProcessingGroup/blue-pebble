@@ -18,10 +18,9 @@ from nereus.sigproc.beamformer import Beamformer, SteeringCalculator
 class PassiveSonarSensorData(SensorData):
     """Custom sensor data for passive sonar arrays.
 
-    This class extends Stone Soup's ``SensorData`` to include data specific
-    to passive sonar simulation. It holds the raw time-series signals from
-    each sensor, the final beamformed power map, and the timestamp of the
-    data snapshot.
+    This class extends Stone Soup's ``SensorData`` to include data specific to passive sonar
+    simulation. It holds the raw time-series signals from each sensor, the final beamformed power
+    map, and the timestamp of the data snapshot.
     """
 
     raw_signals = Property(np.ndarray, doc="Raw acoustic signals from sensor array")
@@ -32,10 +31,9 @@ class PassiveSonarSensorData(SensorData):
 class PassiveSonarArraySimulator(SensorSimulator):
     """Stone Soup sensor simulator for passive sonar arrays.
 
-    Simulates acoustic sensor data by generating signals from targets,
-    applying propagation effects, adding noise, and performing beamforming.
-    This simulator orchestrates various models (propagation, signal, noise)
-    and a beamformer to produce realistic ``PassiveSonarSensorData``.
+    Simulates acoustic sensor data by generating signals from targets, applying propagation
+    effects, adding noise, and performing beamforming. This simulator orchestrates various models
+    (propagation, signal, noise) and a beamformer to produce realistic ``PassiveSonarSensorData``.
 
     Attributes
     ----------
@@ -57,38 +55,28 @@ class PassiveSonarArraySimulator(SensorSimulator):
     """
 
     platform = Property(TowedArrayPlatform, doc="Towed array platform")
-    propagation_model = Property(
-        AcousticPropagationModel, doc="Acoustic propagation model"
-    )
+    propagation_model = Property(AcousticPropagationModel, doc="Acoustic propagation model")
     signal_model = Property(Signal, doc="Acoustic signal model")
     noise_model = Property(AmbientNoise, doc="Noise model")
     beamformer = Property(Beamformer, doc="Beamforming algorithm")
     steering_calculator = Property(SteeringCalculator, doc="Steering calculator")
-    ground_truth_paths = Property(
-        list, default=[], doc="List of GroundTruthPath objects"
-    )
+    ground_truth_paths = Property(list, default=[], doc="List of GroundTruthPath objects")
 
     def sensor_data_gen(self) -> Iterator[tuple[datetime, set[SensorData]]]:
         """Generate sensor data for each timestamp in the platform's trajectory.
 
-        This generator iterates through all unique timestamps defined in the
-        platform's movement controller, yielding a set of sensor data for each
-        point in time.
+        This generator iterates through all unique timestamps defined in the platform's movement
+        controller, yielding a set of sensor data for each point in time.
 
         Yields
         ------
         tuple
-            A tuple containing the timestamp and a set of ``PassiveSonarSensorData``
-            objects for that timestamp.
+            A tuple containing the timestamp and a set of ``PassiveSonarSensorData`` objects for
+            that timestamp.
 
         """
         all_timestamps = sorted(
-            list(
-                set(
-                    state.timestamp
-                    for state in self.platform.movement_controller.states
-                )
-            )
+            list(set(state.timestamp for state in self.platform.movement_controller.states))
         )
 
         # Generate sensor data for each timestamp
@@ -100,9 +88,9 @@ class PassiveSonarArraySimulator(SensorSimulator):
     def _generate_sensor_data_at(self, timestamp) -> PassiveSonarSensorData | None:
         """Generate a single snapshot of sensor data at a specific timestamp.
 
-        This method performs the core simulation steps for a single moment in
-        time. It generates signals for all active targets, sums them, adds
-        ambient noise, and then processes the result through a beamformer.
+        This method performs the core simulation steps for a single moment in time. It generates
+        signals for all active targets, sums them, adds ambient noise, and then processes the
+        result through a beamformer.
 
         Parameters
         ----------
@@ -112,8 +100,8 @@ class PassiveSonarArraySimulator(SensorSimulator):
         Returns
         -------
         PassiveSonarSensorData | None
-            A data object containing the raw signals and beamformed output, or ``None``
-            if no platform state exists at the specified timestamp.
+            A data object containing the raw signals and beamformed output, or ``None`` if no
+            platform state exists at the specified timestamp.
 
         """
         platform = self.platform.get_platform_state_at(timestamp)
@@ -139,21 +127,15 @@ class PassiveSonarArraySimulator(SensorSimulator):
                 continue
 
             # Calculate propagation effects
-            tloss_db, prop_time_s = self.propagation_model.propagate(
-                platform, target_state
-            )
+            tloss_db, prop_time_s = self.propagation_model.propagate(platform, target_state)
 
             # Calculate sensor delays
-            sensor_delays_s = self.propagation_model.compute_sensor_delays(
-                platform, target_state
-            )
+            sensor_delays_s = self.propagation_model.compute_sensor_delays(platform, target_state)
 
             # Generate target signal with acoustic properties from metadata
             target_signal = self.signal_model.generate(
                 target_state, sensor_delays_s, tloss_db, prop_time_s
             )
-
-            # print(np.max(np.abs(target_signal)))
 
             sensor_signals += target_signal
 
@@ -181,9 +163,9 @@ class PassiveSonarArraySimulator(SensorSimulator):
 class BroadbandPassiveSonarArraySimulator(SensorSimulator):
     """Stone Soup sensor simulator for broadband passive sonar arrays.
 
-    This simulator uses STFT-based frequency-domain propagation for continuous
-    broadband signal processing. Unlike the standard PassiveSonarArraySimulator
-    which generates signals per-timestep, this simulator:
+    This simulator uses STFT-based frequency-domain propagation for continuous broadband signal
+    processing. Unlike the standard PassiveSonarArraySimulator which generates signals
+    per-timestep, this simulator:
 
     1. Generates a long-duration source signal once using BroadbandTonalSignal
     2. Computes STFT of the source signal
@@ -191,8 +173,8 @@ class BroadbandPassiveSonarArraySimulator(SensorSimulator):
     4. Applies transfer functions to STFT frames
     5. Reconstructs time-domain signals per sensor using overlap-add
 
-    This approach enables time-varying propagation (moving platforms) with
-    continuous phase-coherent signals across the full simulation duration.
+    This approach enables time-varying propagation (moving platforms) with continuous
+    phase-coherent signals across the full simulation duration.
 
     Attributes
     ----------
@@ -201,9 +183,9 @@ class BroadbandPassiveSonarArraySimulator(SensorSimulator):
     propagation_model : AcousticPropagationModel
         Model for acoustic propagation (must support ``propagate_spectrum``).
     signal_models : list of Signal
-        List of broadband signal models for STFT-based generation. 
-        Use a single-element list to share one signal model across all targets,
-        or provide one Signal per target for unique source characteristics.
+        List of broadband signal models for STFT-based generation. Use a single-element list to
+        share one signal model across all targets, or provide one Signal per target for unique
+        source characteristics.
     noise_model : AmbientNoise, optional
         Model for generating ambient noise.
     beamformer : Beamformer, optional
@@ -227,15 +209,11 @@ class BroadbandPassiveSonarArraySimulator(SensorSimulator):
         doc="List of broadband signal models (one per target, or single-element list for all)",
     )
     noise_model = Property(AmbientNoise, default=None, doc="Noise model (optional)")
-    beamformer = Property(
-        Beamformer, default=None, doc="Beamforming algorithm (optional)"
-    )
+    beamformer = Property(Beamformer, default=None, doc="Beamforming algorithm (optional)")
     steering_calculator = Property(
         SteeringCalculator, default=None, doc="Steering calculator (optional)"
     )
-    ground_truth_paths = Property(
-        list, default=[], doc="List of GroundTruthPath objects"
-    )
+    ground_truth_paths = Property(list, default=[], doc="List of GroundTruthPath objects")
     fade_in_ms = Property(float, default=1000.0, doc="Fade-in duration at arrival (ms)")
 
     def sensor_data_gen(self) -> Iterator[tuple[datetime, set[SensorData]]]:
@@ -258,12 +236,7 @@ class BroadbandPassiveSonarArraySimulator(SensorSimulator):
 
         # Get all timestamps
         all_timestamps = sorted(
-            list(
-                set(
-                    state.timestamp
-                    for state in self.platform.movement_controller.states
-                )
-            )
+            list(set(state.timestamp for state in self.platform.movement_controller.states))
         )
 
         if len(all_timestamps) < 2:
@@ -296,9 +269,7 @@ class BroadbandPassiveSonarArraySimulator(SensorSimulator):
 
         # Compute STFT of first source signal to get parameters
         # (all signal models should have same STFT parameters)
-        source_stft, frequencies, hop, window = signal_models_list[0].compute_stft(
-            first_state
-        )
+        source_stft, frequencies, hop, window = signal_models_list[0].compute_stft(first_state)
         num_frames = source_stft.shape[0]
         num_freq_bins = source_stft.shape[1]
 
@@ -328,9 +299,7 @@ class BroadbandPassiveSonarArraySimulator(SensorSimulator):
             target_signal_model = signal_models_list[target_idx]
 
             # Compute STFT for this target's unique source signal
-            target_source_stft, _, _, _ = target_signal_model.compute_stft(
-                target_first_state
-            )
+            target_source_stft, _, _, _ = target_signal_model.compute_stft(target_first_state)
 
             H_list_all = []  # List of (num_sensors, num_frequencies) per timestep
             tdelay_list = []  # List of propagation delays per timestep
@@ -389,15 +358,13 @@ class BroadbandPassiveSonarArraySimulator(SensorSimulator):
                 H_sensor_history = [H_list[sensor_idx, :] for H_list in H_list_all]
 
                 # Interpolate H(f) across time for each STFT frame
-                STFT_out_target = np.zeros(
-                    (num_frames, num_freq_bins), dtype=np.complex64
-                )
+                STFT_out_target = np.zeros((num_frames, num_freq_bins), dtype=np.complex64)
 
                 for frame_idx in range(num_frames):
                     # Calculate time for this frame (center of frame)
-                    frame_time_s = (
-                        frame_idx * hop + hop // 2
-                    ) / signal_models_list[0].sampling_rate_hz
+                    frame_time_s = (frame_idx * hop + hop // 2) / signal_models_list[
+                        0
+                    ].sampling_rate_hz
 
                     # Find which timestep this frame belongs to
                     step_idx_float = frame_time_s / step_duration_s
@@ -416,9 +383,7 @@ class BroadbandPassiveSonarArraySimulator(SensorSimulator):
                     H_interp = H_current * (1 - alpha) + H_next * alpha
 
                     # Apply transfer function to this target's source STFT
-                    STFT_out_target[frame_idx, :] = (
-                        target_source_stft[frame_idx, :] * H_interp
-                    )
+                    STFT_out_target[frame_idx, :] = target_source_stft[frame_idx, :] * H_interp
 
                 # Add this target's contribution to total
                 STFT_out_total += STFT_out_target
@@ -449,9 +414,7 @@ class BroadbandPassiveSonarArraySimulator(SensorSimulator):
                     [receiver_signals[i], np.zeros(pad_len, dtype=np.complex64)]
                 )
 
-        receiver_signals_array = np.array(
-            receiver_signals
-        )  # Shape: (num_sensors, total_samples)
+        receiver_signals_array = np.array(receiver_signals)  # Shape: (num_sensors, total_samples)
 
         # Now yield sensor data for each timestep by slicing the continuous signals
         # Account for trimmed signal length from inverse_stft
@@ -512,9 +475,7 @@ class BroadbandPassiveSonarArraySimulator(SensorSimulator):
                 # Convert complex signals to real for beamforming
                 # Broadband signals are in baseband (complex) representation
                 sensor_signals_real = np.real(sensor_signals).astype(np.complex128)
-                beamformed_data = self.beamformer.beamform(
-                    sensor_signals_real, steering_delays_s
-                )
+                beamformed_data = self.beamformer.beamform(sensor_signals_real, steering_delays_s)
 
             # Create sensor data object
             sensor_data = PassiveSonarSensorData(

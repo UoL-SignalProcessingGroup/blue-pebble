@@ -1,9 +1,4 @@
-"""Defines acoustic propagation models for simulating sound propagation.
-
-© Copyright 2025 Joshua J. Wakefield.
-© Copyright 2025 Finley Boulton.
-Licensed under the MIT License.
-"""
+"""Defines acoustic propagation models for simulating sound propagation."""
 
 import subprocess
 import tempfile
@@ -40,9 +35,8 @@ class AcousticPropagationModel(ABC, Base):
     def compute_sensor_delays(self, platform, source) -> np.ndarray:
         """Compute time delays for each sensor in an array.
 
-        The method calculates time-differences-of-arrival (TDOA) relative to
-        the array reference sensor and accounts for sound speed at each
-        sensor's depth.
+        The method calculates time-differences-of-arrival (TDOA) relative to the array reference
+        sensor and accounts for sound speed at each sensor's depth.
 
         Parameters
         ----------
@@ -81,8 +75,8 @@ class AcousticPropagationModel(ABC, Base):
 class CylindricalAcousticPropagationModel(AcousticPropagationModel):
     """A simple acoustic model based on cylindrical spreading and absorption loss.
 
-    This model provides a basic estimate of transmission loss without the
-    computational overhead of more complex models like Bellhop.
+    This model provides a basic estimate of transmission loss without the computational overhead of
+    more complex models like Bellhop.
 
     Attributes
     ----------
@@ -93,20 +87,18 @@ class CylindricalAcousticPropagationModel(AcousticPropagationModel):
 
     """
 
-    attenuation_factor = Property(
-        float, default=0.5, doc="The absorption loss factor in dB/km"
-    )
+    attenuation_factor = Property(float, default=0.5, doc="The absorption loss factor in dB/km")
 
     def __post_init__(self):
-        """Validate the attenuation factor after initialization."""
+        """Validate the attenuation factor after initialisation."""
         if self.attenuation_factor < 0:
             raise ValueError("Attenuation factor must be non-negative.")
 
     def propagate(self, platform, source):
         """Propagate a signal using a cylindrical spreading loss model.
 
-        The model combines cylindrical spreading (10*log10(r)) with a
-        frequency-independent absorption term.
+        The model combines cylindrical spreading (10*log10(r)) with a frequency-independent
+        absorption term.
 
         Parameters
         ----------
@@ -136,9 +128,8 @@ class CylindricalAcousticPropagationModel(AcousticPropagationModel):
     ) -> tuple[np.ndarray, float]:
         """Propagate spectrum using cylindrical spreading.
 
-        Calculates complex transfer functions H(f) for each sensor and
-        frequency, accounting for cylindrical spreading and frequency-dependent
-        absorption.
+        Calculates complex transfer functions H(f) for each sensor and frequency, accounting for
+        cylindrical spreading and frequency-dependent absorption.
 
         Parameters
         ----------
@@ -155,19 +146,15 @@ class CylindricalAcousticPropagationModel(AcousticPropagationModel):
             (H_sensors, propagation_time_s) where:
             - ``H_sensors`` : Complex transfer function array of shape
               (num_sensors, num_frequencies)
-            - ``propagation_time_s`` : Propagation time from source to reference
-              sensor (seconds)
+            - ``propagation_time_s`` : Propagation time from source to reference sensor (seconds)
 
         """
         source_position = source.state_vector[source.metadata["position_mapping"]]
         array_position = platform.array.state_vector
         array_ref_position = platform.array.ref_state_vector
 
-        # Calculate distances for each sensor
-        distances = np.linalg.norm(
-            source_position - array_position,
-            axis=0,
-        )  # Shape: (num_sensors,)
+        # Calculate distances for each sensor. Shape: (num_sensors,)
+        distances = np.linalg.norm(source_position - array_position, axis=0)
 
         # Calculate reference distance and propagation time
         reference_distance = np.linalg.norm(source_position - array_ref_position)
@@ -185,9 +172,7 @@ class CylindricalAcousticPropagationModel(AcousticPropagationModel):
 
         # Calculate phase shift for each sensor and frequency
         # Phase = 2pi * f * (d / c)
-        speeds_per_sensor = self.ssp.calculate(
-            array_position[2, :]
-        )  # Shape: (num_sensors,)
+        speeds_per_sensor = self.ssp.calculate(array_position[2, :])  # Shape: (num_sensors,)
         time_delays = distances / speeds_per_sensor  # Shape: (num_sensors,)
 
         # Broadcast to (num_sensors, num_frequencies)
@@ -205,8 +190,8 @@ class CylindricalAcousticPropagationModel(AcousticPropagationModel):
 class SphericalAcousticPropagationModel(AcousticPropagationModel):
     """A simple acoustic model based on spherical spreading and absorption loss.
 
-    This model provides a basic estimate of transmission loss without the
-    computational overhead of more complex models like Bellhop.
+    This model provides a basic estimate of transmission loss without the computational overhead of
+    more complex models like Bellhop.
 
     Attributes
     ----------
@@ -217,9 +202,7 @@ class SphericalAcousticPropagationModel(AcousticPropagationModel):
 
     """
 
-    attenuation_factor = Property(
-        float, default=0.001, doc="The absorption loss factor in dB/km"
-    )
+    attenuation_factor = Property(float, default=0.001, doc="The absorption loss factor in dB/km")
 
     def __post_init__(self):
         """Validate the attenuation factor after initialization."""
@@ -229,8 +212,8 @@ class SphericalAcousticPropagationModel(AcousticPropagationModel):
     def propagate(self, platform, source):
         """Propagate a signal using a spherical spreading loss model.
 
-        The model combines spherical spreading (20*log10(r)) with a
-        frequency-independent absorption term.
+        The model combines spherical spreading (20*log10(r)) with a frequency-independent
+        absorption term.
 
         Parameters
         ----------
@@ -260,8 +243,8 @@ class SphericalAcousticPropagationModel(AcousticPropagationModel):
     ) -> tuple[np.ndarray, float]:
         """Propagate spectrum using spherical spreading.
 
-        This method calculates transfer functions H(f) for each sensor and frequency,
-        accounting for spherical spreading and frequency-dependent absorption.
+        This method calculates transfer functions H(f) for each sensor and frequency, accounting
+        for spherical spreading and frequency-dependent absorption.
 
         Parameters
         ----------
@@ -306,9 +289,7 @@ class SphericalAcousticPropagationModel(AcousticPropagationModel):
 
         # Calculate phase shift for each sensor and frequency
         # Phase = 2pi * f * (d / c)
-        speeds_per_sensor = self.ssp.calculate(
-            array_position[2, :]
-        )  # Shape: (num_sensors,)
+        speeds_per_sensor = self.ssp.calculate(array_position[2, :])  # Shape: (num_sensors,)
         time_delays = distances / speeds_per_sensor  # Shape: (num_sensors,)
 
         # Broadcast to (num_sensors, num_frequencies)
@@ -326,9 +307,8 @@ class SphericalAcousticPropagationModel(AcousticPropagationModel):
 class BellhopAcousticPropagationModel(AcousticPropagationModel):
     """Representation of a Bellhop acoustic propagation model.
 
-    This model calls an external Bellhop executable to perform propagation
-    simulations. The Bellhop binary must be installed and available on the
-    system or provided via ``exe_path``.
+    This model calls an external Bellhop executable to perform propagation simulations. The Bellhop
+    binary must be installed and available on the system or provided via ``exe_path``.
 
     Attributes
     ----------
@@ -353,18 +333,16 @@ class BellhopAcousticPropagationModel(AcousticPropagationModel):
         bellhop_path = which(self.exe_path)
         if bellhop_path is None:
             raise FileNotFoundError(
-                f"Bellhop executable '{self.exe_path}' not found. "
-                "Ensure it is installed and in your system's PATH, "
-                "or provide the full path via the 'exe_path' property."
+                f"Bellhop executable '{self.exe_path}' not found. Ensure it is installed and in "
+                "your system's PATH, or provide the full path via the 'exe_path' property."
             )
         self.exe_path = bellhop_path
 
     def propagate(self, platform, source):
         """Run a Bellhop simulation for a single source and receiver.
 
-        The method writes a Bellhop environment file, executes the Bellhop
-        binary, reads the resulting shade file and computes transmission loss
-        and travel time.
+        The method writes a Bellhop environment file, executes the Bellhop binary, reads the
+        resulting shade file and computes transmission loss and travel time.
 
         Parameters
         ----------
@@ -418,9 +396,7 @@ class BellhopAcousticPropagationModel(AcousticPropagationModel):
         tloss = np.abs(pressure)
         tloss = -20 * np.log10(tloss + 1e-12)  # Avoid log(0) by adding a small constant
 
-        distance = np.linalg.norm(
-            source.state_vector[[0, 2, 4]] - platform.array.ref_state_vector
-        )
+        distance = np.linalg.norm(source.state_vector[[0, 2, 4]] - platform.array.ref_state_vector)
         speed = self.ssp.calculate(platform.array.ref_state_vector[2])
         time = distance / speed
 
@@ -443,8 +419,8 @@ class BellhopAcousticPropagationModel(AcousticPropagationModel):
     ):
         """Create the Bellhop environment file (.env) from a template.
 
-        The method collects simulation parameters, formats them according to
-        Bellhop's input specification and writes the environment file.
+        The method collects simulation parameters, formats them according to Bellhop's input
+        specification and writes the environment file.
 
         Parameters
         ----------
@@ -481,9 +457,7 @@ class BellhopAcousticPropagationModel(AcousticPropagationModel):
         source_position = source.state_vector[source.metadata["position_mapping"]]
         array_ref_position = platform.array.ref_state_vector
 
-        frequency = source.metadata["frequencies_hz"][
-            np.argmax(source.metadata["amplitudes_upa"])
-        ]
+        frequency = source.metadata["frequencies_hz"][np.argmax(source.metadata["amplitudes_upa"])]
         max_range_m = np.linalg.norm(source_position - array_ref_position)
 
         # Source and receiver depths
@@ -543,8 +517,7 @@ class BellhopAcousticPropagationModel(AcousticPropagationModel):
 class rtrsAcousticPropagationModel(AcousticPropagationModel):
     """Representation of an rtrs acoustic propagation model.
 
-    Uses the rtrs Python bindings for 3D ray-tracing with support for 3D SSP
-    and 2D bathymetry.
+    Uses the rtrs Python bindings for 3D ray-tracing with support for 3D SSP and 2D bathymetry.
 
     Attributes
     ----------
@@ -656,8 +629,8 @@ class rtrsAcousticPropagationModel(AcousticPropagationModel):
     def propagate(self, platform, source):
         """Run an rtrs simulation for a single source and receiver.
 
-        The method prepares the rtrs environment, runs the ray-tracing
-        simulation and returns transmission loss and travel time.
+        The method prepares the rtrs environment, runs the ray-tracing simulation and returns
+        transmission loss and travel time.
 
         Parameters
         ----------
@@ -698,10 +671,7 @@ class rtrsAcousticPropagationModel(AcousticPropagationModel):
 
         # Calculate launch elevations
         num_elev = (
-            int(
-                (self.elevation_range[1] - self.elevation_range[0])
-                / self.elevation_resolution
-            )
+            int((self.elevation_range[1] - self.elevation_range[0]) / self.elevation_resolution)
             + 1
         )
         launch_elevations = np.linspace(
@@ -854,9 +824,8 @@ class rtrsAcousticPropagationModel(AcousticPropagationModel):
     ) -> tuple[np.ndarray, float]:
         """Run rtrs simulation for broadband spectrum propagation.
 
-        Computes complex transfer functions H(f) for each frequency bin and
-        sensor. Suitable for STFT-based broadband processing where H(f) is
-        applied to each STFT frame.
+        Computes complex transfer functions H(f) for each frequency bin and sensor. Suitable for
+        STFT-based broadband processing where H(f) is applied to each STFT frame.
 
         Parameters
         ----------
@@ -870,8 +839,8 @@ class rtrsAcousticPropagationModel(AcousticPropagationModel):
         Returns
         -------
         tuple
-            - ``transfer_functions`` : Complex array of shape
-              (num_sensors, num_frequencies) containing H(f).
+            - ``transfer_functions`` : Complex array of shape (num_sensors, num_frequencies)
+                containing H(f).
             - ``propagation_time_s`` : Mean travel time in seconds.
 
         """
@@ -899,10 +868,7 @@ class rtrsAcousticPropagationModel(AcousticPropagationModel):
         launch_azimuths = self._calculate_launch_azimuths(source_pos, array_ref_pos)
 
         num_elev = (
-            int(
-                (self.elevation_range[1] - self.elevation_range[0])
-                / self.elevation_resolution
-            )
+            int((self.elevation_range[1] - self.elevation_range[0]) / self.elevation_resolution)
             + 1
         )
         launch_elevations = np.linspace(
@@ -970,9 +936,7 @@ class rtrsAcousticPropagationModel(AcousticPropagationModel):
                 "config_type": "array",
                 "x_rcvr_m": array_position[0, :].tolist(),
                 "y_rcvr_m": array_position[1, :].tolist(),
-                "z_rcvr_m": (
-                    -array_position[2, :]
-                ).tolist(),  # Negate for rtrs convention
+                "z_rcvr_m": (-array_position[2, :]).tolist(),  # Negate for rtrs convention
             },
             "beam": {
                 "step_m": float(self.step_m),

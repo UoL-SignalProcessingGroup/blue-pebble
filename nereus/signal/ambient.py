@@ -1,8 +1,4 @@
-"""Statistical ambient noise models for sensor arrays.
-
-© Copyright 2025 Joshua J. Wakefield.
-Licensed under the MIT License.
-"""
+"""Statistical ambient noise models for sensor arrays."""
 
 from abc import abstractmethod
 
@@ -13,8 +9,8 @@ from stonesoup.base import Base, Property
 class AmbientNoise(Base):
     """Abstract base class for ambient noise models.
 
-    These models generate non-propagating background noise that is present
-    across the entire sensor array.
+    These models generate non-propagating background noise that is present across the entire sensor
+    array.
 
     Parameters
     ----------
@@ -120,14 +116,13 @@ class WhiteNoise(AmbientNoise):
 class ColouredNoise(AmbientNoise):
     """Generates complex coloured noise using FFT filtering.
 
-    This class generates noise with a power spectral density proportional to
-    1/f^alpha.
+    This class generates noise with a power spectral density proportional to 1/f^alpha.
 
     Parameters
     ----------
     spectral_exponent : float
-        The power-law exponent for the noise spectrum (e.g., -1 for pink noise,
-        -2 for red/brownian noise).
+        The power-law exponent for the noise spectrum (e.g., -1 for pink noise, -2 for red/brownian
+        noise).
     amplitude_upa : float
         The noise amplitude (e.g., in µPa).
     duration_s : float
@@ -138,8 +133,8 @@ class ColouredNoise(AmbientNoise):
     """
 
     spectral_exponent: float = Property(
-        doc="The power-law exponent for the noise spectrum "
-        "(e.g., -1 for pink noise, -2 for red/brownian noise)."
+        doc="The power-law exponent for the noise spectrum (e.g., -1 for pink noise, -2 for "
+        "red/brownian noise)."
     )
 
     def generate(self, num_sensors: int = 1) -> np.ndarray:
@@ -153,8 +148,8 @@ class ColouredNoise(AmbientNoise):
         Returns
         -------
         numpy.ndarray
-            A complex array of coloured noise of shape (num_sensors,
-            num_samples), normalised to the specified amplitude.
+            A complex array of coloured noise of shape (num_sensors, num_samples), normalised to
+            the specified amplitude.
 
         """
         # 1. Generate the base white noise with a flat spectrum
@@ -165,8 +160,8 @@ class ColouredNoise(AmbientNoise):
 
         # 3. Create a frequency-domain filter based on the spectral exponent
         with np.errstate(divide="ignore"):
-            # The filter exponent is half the power exponent because we are
-            # filtering amplitude, not power (Power ∝ Amplitude^2).
+            # The filter exponent is half the power exponent because we are filtering amplitude,
+            # not power (Power ∝ Amplitude^2).
             filter_gain = np.abs(freqs) ** (self.spectral_exponent / 2.0)
 
         # Avoid division by zero at the DC component (frequency = 0)

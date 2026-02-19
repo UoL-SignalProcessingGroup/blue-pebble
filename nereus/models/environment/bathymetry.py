@@ -1,9 +1,4 @@
-"""Defines bathymetry models for representing seafloor topography.
-
-© Copyright 2025 Joshua J. Wakefield.
-© Copyright 2025 Finley Boulton.
-Licensed under the MIT License.
-"""
+"""Defines bathymetry models for representing seafloor topography."""
 
 from abc import ABC, abstractmethod
 
@@ -81,9 +76,7 @@ class FlatBathymetry(Bathymetry):
 
     """
 
-    depth: float = Property(
-        default=5000.0, doc="Constant depth of the seafloor in meters"
-    )
+    depth: float = Property(default=5000.0, doc="Constant depth of the seafloor in meters")
 
     def __post_init__(self):
         """Validate the depth after initialization."""
@@ -150,23 +143,15 @@ class WedgeBathymetry(Bathymetry):
     depth_at_origin : float
         Depth at the origin (0, 0) in meters. Defaults to 1000.0 m.
     x_gradient : float
-        Depth gradient in the x direction (m/m). Defaults to 0.0 (no slope
-        in x).
+        Depth gradient in the x direction (m/m). Defaults to 0.0 (no slope in x).
     y_gradient : float
-        Depth gradient in the y direction (m/m). Defaults to 0.001 (1 m
-        increase per 1000 m in y).
+        Depth gradient in the y direction (m/m). Defaults to 0.001 (1 m increase per 1000 m in y).
 
     """
 
-    depth_at_origin: float = Property(
-        default=1000.0, doc="Depth at the origin (0, 0) in meters"
-    )
-    x_gradient: float = Property(
-        default=0.0, doc="Depth gradient in the x direction (m/m)"
-    )
-    y_gradient: float = Property(
-        default=0.001, doc="Depth gradient in the y direction (m/m)"
-    )
+    depth_at_origin: float = Property(default=1000.0, doc="Depth at the origin (0, 0) in meters")
+    x_gradient: float = Property(default=0.0, doc="Depth gradient in the x direction (m/m)")
+    y_gradient: float = Property(default=0.001, doc="Depth gradient in the y direction (m/m)")
 
     def get_depth(self, x: float, y: float) -> float:
         """Get the seafloor depth at a given position.
@@ -254,9 +239,7 @@ class SeamountBathymetry(Bathymetry):
         if self.plateau_depth <= 0:
             raise ValueError("Plateau depth must be positive.")
         if self.summit_position[2] < 0 or self.summit_position[2] >= self.plateau_depth:
-            raise ValueError(
-                "Summit depth must be non-negative and less than plateau depth."
-            )
+            raise ValueError("Summit depth must be non-negative and less than plateau depth.")
 
     def get_depth(self, x: float, y: float) -> float:
         """Get the seafloor depth at a given position.

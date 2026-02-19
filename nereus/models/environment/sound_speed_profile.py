@@ -1,8 +1,4 @@
-"""Defines a collection of sound speed profile (SSP) models.
-
-© Copyright 2025 Joshua J. Wakefield.
-Licensed under the MIT License.
-"""
+"""Defines a collection of sound speed profile (SSP) models."""
 
 from abc import ABC, abstractmethod
 
@@ -20,9 +16,9 @@ class SoundSpeedProfile(ABC, Base):
         Parameters
         ----------
         depth : float
-            Depth in meters. Can be positive (oceanographic convention,
-            measured downward from surface) or negative (3D coordinate system
-            where surface == 0 and underwater is negative z).
+            Depth in meters. Can be positive (oceanographic convention, measured downward from
+            surface) or negative (3D coordinate system where surface == 0 and underwater is
+            negative z).
 
         Returns
         -------
@@ -171,9 +167,7 @@ class Linear(SoundSpeedProfile):
 
     """
 
-    surface_speed: float = Property(
-        default=1500.0, doc="Sound speed at the surface in m/s"
-    )
+    surface_speed: float = Property(default=1500.0, doc="Sound speed at the surface in m/s")
     gradient: float = Property(
         default=0.017, doc="Sound speed gradient in s^-1 (change per meter)"
     )
@@ -184,8 +178,8 @@ class Linear(SoundSpeedProfile):
         Parameters
         ----------
         depth : float
-            Depth in meters. If negative (z-coordinate), converts to positive
-            depth below surface for calculation.
+            Depth in meters. If negative (z-coordinate), converts to positive depth below surface
+            for calculation.
 
         Returns
         -------
@@ -210,17 +204,14 @@ class Arctan(SoundSpeedProfile):
     surface_speed : float
         The speed of sound at the surface in m/s. Defaults to 1500.0 m/s.
     mid_depth : float
-        The depth at which the sound speed transition occurs in meters.
-        Defaults to 1000.0 m.
+        The depth at which the sound speed transition occurs in meters. Defaults to 1000.0 m.
     steepness : float
-        The steepness of the transition. Higher values result in a sharper
-        transition. Defaults to 0.005.
+        The steepness of the transition. Higher values result in a sharper transition.
+        Defaults to 0.005.
 
     """
 
-    surface_speed: float = Property(
-        default=1500.0, doc="Speed of sound at the surface in m/s"
-    )
+    surface_speed: float = Property(default=1500.0, doc="Speed of sound at the surface in m/s")
     mid_depth: float = Property(
         default=1000.0, doc="Depth at which sound speed transition occurs in meters"
     )
@@ -232,8 +223,8 @@ class Arctan(SoundSpeedProfile):
         Parameters
         ----------
         depth : float
-            Depth in meters. If negative (z-coordinate), converts to positive
-            depth below surface for calculation.
+            Depth in meters. If negative (z-coordinate), converts to positive depth below surface
+            for calculation.
 
         Returns
         -------
@@ -252,9 +243,8 @@ class Arctan(SoundSpeedProfile):
 class Munk(SoundSpeedProfile):
     """Munk sound speed profile model.
 
-    This model describes the sound speed profile using an analytical equation
-    proposed by Walter Munk. It is characterized by a deep sound channel axis
-    and is widely used in ocean acoustics.
+    This model describes the sound speed profile using an analytical equation proposed by Walter
+    Munk. It is characterised by a deep sound channel axis and is widely used in ocean acoustics.
 
     Attributes
     ----------
@@ -263,9 +253,7 @@ class Munk(SoundSpeedProfile):
 
     """
 
-    surface_speed: float = Property(
-        default=1500.0, doc="Speed of sound at the surface in m/s"
-    )
+    surface_speed: float = Property(default=1500.0, doc="Speed of sound at the surface in m/s")
 
     def calculate(self, depth: float) -> float:
         """Calculate sound speed using the Munk equation.
@@ -273,8 +261,8 @@ class Munk(SoundSpeedProfile):
         Parameters
         ----------
         depth : float
-            Depth in meters. If negative (z-coordinate), converts to positive
-            depth below surface for calculation.
+            Depth in meters. If negative (z-coordinate), converts to positive depth below surface
+            for calculation.
 
         Returns
         -------
@@ -293,10 +281,9 @@ class Munk(SoundSpeedProfile):
 class Mackenzie(SoundSpeedProfile):
     """Mackenzie sound speed profile model.
 
-    This model calculates the sound speed using the nine-term Mackenzie
-    equation, which is an empirical formula based on temperature, salinity,
-    and depth. This implementation uses internal models for temperature and
-    salinity as a function of depth.
+    This model calculates the sound speed using the nine-term Mackenzie equation, which is an
+    empirical formula based on temperature, salinity, and depth. This implementation uses internal
+    models for temperature and salinity as a function of depth.
     """
 
     def calculate(self, depth: float) -> float:
@@ -305,8 +292,8 @@ class Mackenzie(SoundSpeedProfile):
         Parameters
         ----------
         depth : float
-            Depth in meters. If negative (z-coordinate), converts to positive
-            depth below surface for calculation.
+            Depth in meters. If negative (z-coordinate), converts to positive depth below surface
+            for calculation.
 
         Returns
         -------

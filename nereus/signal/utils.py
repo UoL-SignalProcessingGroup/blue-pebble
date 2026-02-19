@@ -1,9 +1,4 @@
-"""Signal processing utilities for STFT-based broadband processing.
-
-© Copyright 2025 Joshua J. Wakefield.
-© Copyright 2025 Finley Boulton.
-Licensed under the MIT License.
-"""
+"""Signal processing utilities for STFT-based broadband processing."""
 
 import numpy as np
 
@@ -33,14 +28,14 @@ def compute_stft(
     -------
     tuple[np.ndarray, np.ndarray, int, np.ndarray]
         Tuple containing:
-        stft : np.ndarray
-            STFT matrix of shape (num_frames, num_freq_bins).
-        frequencies : np.ndarray
-            Frequency array for the bins.
-        hop : int
-            Hop size in samples.
-        window_array : np.ndarray
-            The window array used.
+            stft : np.ndarray
+                STFT matrix of shape (num_frames, num_freq_bins).
+            frequencies : np.ndarray
+                Frequency array for the bins.
+            hop : int
+                Hop size in samples.
+            window_array : np.ndarray
+                The window array used.
 
     """
     signal = np.asarray(signal, dtype=np.complex64)
@@ -149,8 +144,8 @@ def inverse_stft(
 def apply_fade_in(signal: np.ndarray, fade_samples: int) -> np.ndarray:
     """Apply smooth cosine-taper fade-in to signal arrival.
 
-    Uses a raised cosine (Tukey) window for smooth signal arrival,
-    matching the BroadbandArrayProcessor implementation.
+    Uses a raised cosine (Tukey) window for smooth signal arrival, matching the
+    BroadbandArrayProcessor implementation.
 
     Parameters
     ----------

@@ -1,8 +1,4 @@
-"""Base signal properties and methods for signal models.
-
-© Copyright 2025 Joshua J. Wakefield.
-Licensed under the MIT License.
-"""
+"""Base signal properties and methods for signal models."""
 
 from abc import abstractmethod
 
@@ -13,10 +9,9 @@ from stonesoup.base import Base, Property
 class Signal(Base):
     """Signal base class.
 
-    This class provides a common interface for all signal types. It includes a
-    `generate` method that handles signal attenuation and phase-shifting for
-    array propagation, which calls the abstract `_generate_base_signal`
-    method that subclasses must implement.
+    This class provides a common interface for all signal types. It includes a `generate` method
+    that handles signal attenuation and phase-shifting for array propagation, which calls the
+    abstract `_generate_base_signal` method that subclasses must implement.
 
     Parameters
     ----------
@@ -59,9 +54,7 @@ class Signal(Base):
         """
         pass
 
-    def generate(
-        self, source, sensor_delays_s, tloss_db, propagation_time_s
-    ) -> np.ndarray:
+    def generate(self, source, sensor_delays_s, tloss_db, propagation_time_s) -> np.ndarray:
         """Generate the signal, apply attenuation, and propagate it to a sensor array.
 
         This method performs the following steps:
@@ -102,11 +95,7 @@ class Signal(Base):
         # 4. Calculate and apply phase shifts for propagation
         total_delays_s = propagation_time_s + sensor_delays_s
         phase_shifts = np.exp(
-            -1j
-            * 2
-            * np.pi
-            * total_delays_s[:, np.newaxis]
-            * fft_freqs_hz[np.newaxis, :]
+            -1j * 2 * np.pi * total_delays_s[:, np.newaxis] * fft_freqs_hz[np.newaxis, :]
         )
         signals_fft = base_signal_fft[np.newaxis, :] * phase_shifts
 

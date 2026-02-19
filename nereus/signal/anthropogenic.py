@@ -1,8 +1,4 @@
-"""Anthropogenic signal models for sensor arrays.
-
-© Copyright 2025 Joshua J. Wakefield.
-Licensed under the MIT License.
-"""
+"""Anthropogenic signal models for sensor arrays."""
 
 import numpy as np
 from stonesoup.base import Property
@@ -13,8 +9,8 @@ from .base import Signal
 class TonalSignal(Signal):
     """Generates a signal from a source defined by a sum of pure tones.
 
-    This model is ideal for sources that can be represented as a combination
-    of sinusoids, each with a specific frequency, amplitude, and phase.
+    This model is ideal for sources that can be represented as a combination of sinusoids, each
+    with a specific frequency, amplitude, and phase.
     """
 
     def _generate_base_signal(self, source) -> np.ndarray:
@@ -26,36 +22,33 @@ class TonalSignal(Signal):
         # It will never be called because the `generate` method is overridden.
         pass
 
-    def generate(
-        self, source, sensor_delays_s, tloss_db, propagation_time_s
-    ) -> np.ndarray:
+    def generate(self, source, sensor_delays_s, tloss_db, propagation_time_s) -> np.ndarray:
         """Generate the signal received across all sensors from a single source.
 
         Parameters
         ----------
         source : State
-            The source state. Must contain ``amplitudes_upa``,
-            ``frequencies_hz``, and ``phases_rad`` in its metadata dictionary.
+            The source state. Must contain ``amplitudes_upa``, ``frequencies_hz``, and
+            ``phases_rad`` in its metadata dictionary.
         sensor_delays_s : numpy.ndarray
             The relative time delay for each sensor in the array.
         tloss_db : float or numpy.ndarray
-            The transmission loss in decibels. Can be a scalar or an array
-            matching the number of frequencies.
+            The transmission loss in decibels. Can be a scalar or an array matching the number of
+            frequencies.
         propagation_time_s : float
-            The time in seconds for the signal to propagate from the source to
-            the array's origin.
+            The time in seconds for the signal to propagate from the source to the array's origin.
 
         Returns
         -------
         numpy.ndarray
-            An array of complex signals received by the sensors, with shape
-            (num_sensors, num_samples).
+            An array of complex signals received by the sensors, with shape (num_sensors,
+            num_samples).
 
         Raises
         ------
         ValueError
-            If ``tloss_db`` is an array and its length does not match the
-            number of frequencies in the source metadata.
+            If ``tloss_db`` is an array and its length does not match the number of frequencies in
+            the source metadata.
 
         """
         # Create a 1D array representing the time vector for the signal snapshot
@@ -89,10 +82,7 @@ class TonalSignal(Signal):
         # Calculate the instantaneous phase
         # Shape = (num_sensors, num_tonals, num_samples)
         total_phase = (
-            2
-            * np.pi
-            * freq_reshaped
-            * (time_reshaped - propagation_time_s - delays_reshaped)
+            2 * np.pi * freq_reshaped * (time_reshaped - propagation_time_s - delays_reshaped)
             + phase_reshaped
         )
 
@@ -110,21 +100,18 @@ class TonalSignal(Signal):
 class BlendedTonalSignal(Signal):
     """Generates blended tonal signals for phase/amplitude continuity.
 
-    This signal model maintains state across timesteps to ensure both phase and
-    amplitude continuity. It tracks the accumulated phase offset and previous
-    signal state to ensure smooth transitions between timesteps.
+    This signal model maintains state across timesteps to ensure both phase and amplitude
+    continuity. It tracks the accumulated phase offset and previous signal state to ensure smooth
+    transitions between timesteps.
 
     Parameters
     ----------
     blend_fraction : float, optional
-        Fraction of signal duration to use for blending. Default is 0.1 (10% of
-        signal duration).
+        Fraction of signal duration to use for blending. Default is 0.1 (10% of signal duration).
 
     """
 
-    blend_fraction = Property(
-        float, default=0.1, doc="Fraction of signal to blend for continuity"
-    )
+    blend_fraction = Property(float, default=0.1, doc="Fraction of signal to blend for continuity")
 
     def __init__(self, *args, **kwargs):
         """Initialize the blended signal generator with state tracking."""
@@ -162,29 +149,26 @@ class BlendedTonalSignal(Signal):
         """
         pass
 
-    def generate(
-        self, source, sensor_delays_s, tloss_db, propagation_time_s
-    ) -> np.ndarray:
+    def generate(self, source, sensor_delays_s, tloss_db, propagation_time_s) -> np.ndarray:
         """Generate blended signal with blend for phase and amplitude continuity.
 
         Parameters
         ----------
         source : State
-            The source state. Must contain ``amplitudes_upa``,
-            ``frequencies_hz``, and ``phases_rad`` in its metadata dictionary.
+            The source state. Must contain ``amplitudes_upa``, ``frequencies_hz``, and
+            ``phases_rad`` in its metadata dictionary.
         sensor_delays_s : numpy.ndarray
             The relative time delay for each sensor in the array.
         tloss_db : float or numpy.ndarray
             The transmission loss in decibels.
         propagation_time_s : float
-            The time in seconds for the signal to propagate from the source to
-            the array's origin.
+            The time in seconds for the signal to propagate from the source to the array's origin.
 
         Returns
         -------
         numpy.ndarray
-            An array of complex signals received by the sensors, with shape
-            (num_sensors, num_samples).
+            An array of complex signals received by the sensors, with shape (num_sensors,
+            num_samples).
 
         Raises
         ------
@@ -216,8 +200,7 @@ class BlendedTonalSignal(Signal):
 
         # Create time array relative to cumulative time
         time_array_s = (
-            np.arange(self.num_samples) / self.sampling_rate_hz
-            + state["cumulative_time"]
+            np.arange(self.num_samples) / self.sampling_rate_hz + state["cumulative_time"]
         )
 
         amplitudes_upa = source.metadata["amplitudes_upa"]
@@ -245,10 +228,7 @@ class BlendedTonalSignal(Signal):
         # Calculate the instantaneous phase using cumulative time
         # Shape = (num_sensors, num_tonals, num_samples)
         total_phase = (
-            2
-            * np.pi
-            * freq_reshaped
-            * (time_reshaped - propagation_time_s - delays_reshaped)
+            2 * np.pi * freq_reshaped * (time_reshaped - propagation_time_s - delays_reshaped)
             + phase_reshaped
         )
 
@@ -276,8 +256,7 @@ class BlendedTonalSignal(Signal):
                 # Blend the beginning of current signal with end of previous
                 current_head = sensor_signals[:, :blend_samples].copy()
                 blended_section = (
-                    prev_tail * fade_out[np.newaxis, :]
-                    + current_head * fade_in[np.newaxis, :]
+                    prev_tail * fade_out[np.newaxis, :] + current_head * fade_in[np.newaxis, :]
                 )
 
                 # Replace the beginning of current signal with blended section
@@ -292,8 +271,7 @@ class BlendedTonalSignal(Signal):
     def reset(self):
         """Clear all stored previous signals.
 
-        This should be called when starting a new simulation or when
-        continuity should be reset.
+        This should be called when starting a new simulation or when continuity should be reset.
         """
         self._source_states.clear()
 
@@ -301,13 +279,12 @@ class BlendedTonalSignal(Signal):
 class OverlapAddTonalSignal(Signal):
     """Generates tonal signals using overlap-add with perfect reconstruction.
 
-    This signal model uses the overlap-add method with synthesis windows to
-    achieve perfect phase and amplitude continuity across timesteps without
-    transient artifacts. It employs a fixed 50% overlap with Hann windows.
+    This signal model uses the overlap-add method with synthesis windows to achieve perfect phase
+    and amplitude continuity across timesteps without transient artifacts. It employs a fixed 50%
+    overlap with Hann windows.
 
-    The method generates signals that are twice the requested duration, applies
-    windowing, and buffers the second half for overlap-adding with the next
-    timestep.
+    The method generates signals that are twice the requested duration, applies windowing, and
+    buffers the second half for overlap-adding with the next timestep.
     """
 
     def __init__(self, *args, **kwargs):
@@ -341,9 +318,8 @@ class OverlapAddTonalSignal(Signal):
     def _get_synthesis_window(self) -> np.ndarray:
         """Generate or retrieve the cached synthesis window.
 
-        Uses Hann window for perfect reconstruction with 50% overlap.
-        The window satisfies the Constant Overlap-Add (COLA) constraint:
-        w[n] + w[n + hop_size] = 1 for all n
+        Uses Hann window for perfect reconstruction with 50% overlap. The window satisfies the
+        Constant Overlap-Add (COLA) constraint: w[n] + w[n + hop_size] = 1 for all n
 
         Returns
         -------
@@ -366,9 +342,7 @@ class OverlapAddTonalSignal(Signal):
         """
         pass
 
-    def generate(
-        self, source, sensor_delays_s, tloss_db, propagation_time_s
-    ) -> np.ndarray:
+    def generate(self, source, sensor_delays_s, tloss_db, propagation_time_s) -> np.ndarray:
         """Generate signal using overlap-add method with perfect reconstruction.
 
         Parameters
@@ -381,14 +355,13 @@ class OverlapAddTonalSignal(Signal):
         tloss_db : float or numpy.ndarray
             The transmission loss in decibels.
         propagation_time_s : float
-            The time in seconds for the signal to propagate from the source to
-            the array's origin.
+            The time in seconds for the signal to propagate from the source to the array's origin.
 
         Returns
         -------
         numpy.ndarray
-            An array of complex signals received by the sensors, with shape
-            (num_sensors, num_samples).
+            An array of complex signals received by the sensors, with shape (num_sensors,
+            num_samples).
 
         Raises
         ------
@@ -436,8 +409,7 @@ class OverlapAddTonalSignal(Signal):
         # Generate extended signal (2x duration for 50% overlap)
         extended_samples = 2 * self.num_samples
         time_array_s = (
-            np.arange(extended_samples) / self.sampling_rate_hz
-            + state["cumulative_time"]
+            np.arange(extended_samples) / self.sampling_rate_hz + state["cumulative_time"]
         )
 
         # --- Use NumPy broadcasting to perform calculations efficiently ---
@@ -450,10 +422,7 @@ class OverlapAddTonalSignal(Signal):
         # Calculate the instantaneous phase
         # Shape = (num_sensors, num_tonals, extended_samples)
         total_phase = (
-            2
-            * np.pi
-            * freq_reshaped
-            * (time_reshaped - propagation_time_s - delays_reshaped)
+            2 * np.pi * freq_reshaped * (time_reshaped - propagation_time_s - delays_reshaped)
             + phase_reshaped
         )
 
@@ -490,8 +459,7 @@ class OverlapAddTonalSignal(Signal):
     def reset(self):
         """Clear all stored overlap buffers and state.
 
-        This should be called when starting a new simulation or when
-        continuity should be reset.
+        This should be called when starting a new simulation or when continuity should be reset.
         """
         self._source_states.clear()
         self._synthesis_window = None
@@ -500,33 +468,28 @@ class OverlapAddTonalSignal(Signal):
 class BroadbandTonalSignal(Signal):
     """Generates broadband tonal signals using STFT-based frequency-domain processing.
 
-    This signal model is designed for continuous broadband acoustic simulation
-    using the Short-Time Fourier Transform (STFT) method. It generates a long-
-    duration source signal once, computes its STFT representation, and provides
-    frequency-domain data for propagation models to apply transfer functions.
-
-    Unlike time-domain signal models, this class does NOT generate signals at
-    each timestep. Instead, it provides the STFT of a continuous source signal
-    that propagation models can process in the frequency domain with time-varying
+    This signal model is designed for continuous broadband acoustic simulation using the Short-Time
+    Fourier Transform (STFT) method. It generates a long- duration source signal once, computes its
+    STFT representation, and provides frequency-domain data for propagation models to apply
     transfer functions.
+
+    Unlike time-domain signal models, this class does NOT generate signals at each timestep.
+    Instead, it provides the STFT of a continuous source signal that propagation models can process
+    in the frequency domain with time-varying transfer functions.
 
     Parameters
     ----------
     frame_len : int, optional
         STFT frame length in samples (power of 2 recommended). Default is 1024.
     hop_factor : int, optional
-        Hop factor, where hop size = frame_len // hop_factor. Default is 4
-        (75% overlap).
+        Hop factor, where hop size = frame_len // hop_factor. Default is 4 (75% overlap).
     window_type : str, optional
-        Window type for STFT (e.g., 'hann', 'hamming', 'blackman'). Default
-        is 'hann'.
+        Window type for STFT (e.g., 'hann', 'hamming', 'blackman'). Default is 'hann'.
 
     """
 
     frame_len = Property(int, default=1024, doc="STFT frame length in samples")
-    hop_factor = Property(
-        int, default=4, doc="Hop factor (hop = frame_len // hop_factor)"
-    )
+    hop_factor = Property(int, default=4, doc="Hop factor (hop = frame_len // hop_factor)")
     window_type = Property(str, default="hann", doc="Window type for STFT")
 
     def __init__(self, *args, **kwargs):
@@ -541,8 +504,8 @@ class BroadbandTonalSignal(Signal):
     def _generate_base_signal(self, source) -> np.ndarray:
         """Generate the complete source signal for STFT processing.
 
-        This method creates the full-duration time-domain signal that will
-        be transformed to frequency domain for propagation.
+        This method creates the full-duration time-domain signal that will be transformed to
+        frequency domain for propagation.
 
         Parameters
         ----------
@@ -567,9 +530,7 @@ class BroadbandTonalSignal(Signal):
         amp_reshaped = amplitudes_upa[:, np.newaxis]
 
         # Calculate phase for each tonal
-        total_phase = (
-            2 * np.pi * freq_reshaped * time_array_s[np.newaxis, :] + phase_reshaped
-        )
+        total_phase = 2 * np.pi * freq_reshaped * time_array_s[np.newaxis, :] + phase_reshaped
 
         # Generate complex signal components
         tonal_components = amp_reshaped * np.exp(1j * total_phase)
@@ -582,8 +543,8 @@ class BroadbandTonalSignal(Signal):
     def compute_stft(self, source) -> tuple[np.ndarray, np.ndarray, int, np.ndarray]:
         """Compute and cache the STFT of the source signal.
 
-        This method should be called once per source before simulation begins.
-        Results are cached for subsequent access.
+        This method should be called once per source before simulation begins. Results are cached
+        for subsequent access.
 
         Parameters
         ----------
@@ -667,14 +628,11 @@ class BroadbandTonalSignal(Signal):
 
         return self._source_signal
 
-    def generate(
-        self, source, sensor_delays_s, tloss_db, propagation_time_s
-    ) -> np.ndarray:
+    def generate(self, source, sensor_delays_s, tloss_db, propagation_time_s) -> np.ndarray:
         """Not used for broadband processing - use compute_stft() instead.
 
-        This method is required by the base Signal class but is not used
-        in broadband STFT-based processing. The simulator should use
-        compute_stft() and process in frequency domain.
+        This method is required by the base Signal class but is not used in broadband STFT-based
+        processing. The simulator should use compute_stft() and process in frequency domain.
 
         Raises
         ------
@@ -718,31 +676,28 @@ class BroadbandShipSignal(Signal):
     window_type : str, optional
         Window type for STFT (e.g., 'hann'). Default is 'hann'.
     tonal_bandwidth_hz : float, optional
-        Bandwidth of each tonal component in Hz. Creates realistic spectral
-        spreading around nominal frequencies. Default is 2.0.
+        Bandwidth of each tonal component in Hz. Creates realistic spectral spreading around
+        nominal frequencies. Default is 2.0.
     noise_amplitude_upa : float, optional
-        RMS amplitude of background noise in µPa. Set to 0.0 to disable noise.
-        Default is 0.0.
+        RMS amplitude of background noise in µPa. Set to 0.0 to disable noise. Default is 0.0.
     noise_spectral_exponent : float, optional
-        Spectral shape exponent for colored noise. -2.0 is pink noise (1/f),
-        -1.0 is flicker, 0.0 is white. Default is -2.0.
+        Spectral shape exponent for colored noise. -2.0 is pink noise (1/f), -1.0 is flicker, 0.0
+        is white. Default is -2.0.
     noise_freq_range_hz : tuple, optional
-        Tuple of (min_freq, max_freq) for noise generation. Default is
-        (20.0, 200.0), covering typical machinery noise ranges.
+        Tuple of (min_freq, max_freq) for noise generation. Default is (20.0, 200.0), covering
+        typical machinery noise ranges.
     noise_variance : float, optional
-        Variance multiplier applied to all generated white noise before any
-        bandlimiting or normalization (default 1.0). This controls the base
-        random field variance.
+        Variance multiplier applied to all generated white noise before any bandlimiting or
+        normalisation (default 1.0). This controls the base random field variance.
     tonal_noise_is_constant : bool, optional
-        If True, reuse the same band-limited tonal noise across calls; phase
-        and amplitude are still applied per call. Default is False.
+        If True, reuse the same band-limited tonal noise across calls; phase and amplitude are
+        still applied per call. Default is False.
     use_powerlaw_noise : bool, optional
-        If True, build broadband noise deterministically from the power-law
-        spectrum (no random white-noise seed). Default is False.
+        If True, build broadband noise deterministically from the power-law spectrum (no random
+        white-noise seed). Default is False.
     noise_is_constant : bool, optional
-        If True, use same noise realization for all signal generations
-        (constant scalar over time). If False, generate new random noise each
-        time. Default is True.
+        If True, use same noise realization for all signal generations (constant scalar over time).
+        If False, generate new random noise each time. Default is True.
 
     Examples
     --------
@@ -762,13 +717,9 @@ class BroadbandShipSignal(Signal):
     """
 
     frame_len = Property(int, default=1024, doc="STFT frame length in samples")
-    hop_factor = Property(
-        int, default=4, doc="Hop factor (hop = frame_len // hop_factor)"
-    )
+    hop_factor = Property(int, default=4, doc="Hop factor (hop = frame_len // hop_factor)")
     window_type = Property(str, default="hann", doc="Window type for STFT")
-    tonal_bandwidth_hz = Property(
-        float, default=2.0, doc="Bandwidth of each tonal component (Hz)"
-    )
+    tonal_bandwidth_hz = Property(float, default=2.0, doc="Bandwidth of each tonal component (Hz)")
     noise_amplitude_upa = Property(
         float, default=0.0, doc="RMS amplitude of background noise (µPa)"
     )
@@ -782,8 +733,7 @@ class BroadbandShipSignal(Signal):
         float,
         default=1.0,
         doc=(
-            "Variance multiplier for generated white noise before shaping; "
-            "std = sqrt(variance)."
+            "Variance multiplier for generated white noise before shaping; std = sqrt(variance)."
         ),
     )
     tonal_noise_is_constant = Property(
@@ -798,8 +748,8 @@ class BroadbandShipSignal(Signal):
         bool,
         default=False,
         doc=(
-            "If True, build broadband noise deterministically from the "
-            "power-law spectrum (no random white-noise seed)."
+            "If True, build broadband noise deterministically from the power-law spectrum (no "
+            "random white-noise seed)."
         ),
     )
     noise_is_constant = Property(
@@ -824,8 +774,7 @@ class BroadbandShipSignal(Signal):
         """Generate the complete source signal with broadband tonals and noise.
 
         This method creates:
-        1. Broadband tonals using band-limited white noise modulated by tonal
-        frequencies
+        1. Broadband tonals using band-limited white noise modulated by tonal frequencies
         2. Wideband colored noise for background machinery/cavitation sounds
 
         Parameters
@@ -948,8 +897,8 @@ class BroadbandShipSignal(Signal):
     def compute_stft(self, source) -> tuple[np.ndarray, np.ndarray, int, np.ndarray]:
         """Compute and cache the STFT of the source signal.
 
-        This method should be called once per source before simulation begins.
-        Results are cached for subsequent access.
+        This method should be called once per source before simulation begins. Results are cached
+        for subsequent access.
 
         Parameters
         ----------
@@ -1033,14 +982,11 @@ class BroadbandShipSignal(Signal):
 
         return self._source_signal
 
-    def generate(
-        self, source, sensor_delays_s, tloss_db, propagation_time_s
-    ) -> np.ndarray:
+    def generate(self, source, sensor_delays_s, tloss_db, propagation_time_s) -> np.ndarray:
         """Not used for broadband processing - use compute_stft() instead.
 
-        This method is required by the base Signal class but is not used
-        in broadband STFT-based processing. The simulator should use
-        compute_stft() and process in frequency domain.
+        This method is required by the base Signal class but is not used in broadband STFT-based
+        processing. The simulator should use compute_stft() and process in frequency domain.
 
         Raises
         ------

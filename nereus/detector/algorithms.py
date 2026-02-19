@@ -1,13 +1,4 @@
-"""Defines signal detectors for processing time series data.
-
-This module provides classes for detecting signals in one-dimensional data arrays,
-such as time series or beamformed output. It includes a simple threshold-based
-detector, a peak detector that uses Scipy's `find_peaks`, and a constant false alarm
-rate (CFAR) detector.
-
-© Copyright 2025 Joshua J. Wakefield.
-Licensed under the MIT License.
-"""
+"""Signal detection algorithms for 1D time-series and beamformed data."""
 
 from abc import ABC, abstractmethod
 from typing import Self
@@ -32,9 +23,9 @@ class DetectionAlgorithm(Base, ABC):
         Returns
         -------
         np.ndarray
-            A 2D NumPy array where each row contains two elements: the index of a
-            detection and its corresponding value. Returns an empty array with
-            shape (0, 2) if no detections are found.
+            A 2D NumPy array where each row contains two elements: the index of a detection and its
+            corresponding value. Returns an empty array with shape (0, 2) if no detections are
+            found.
 
         """
         pass
@@ -43,8 +34,8 @@ class DetectionAlgorithm(Base, ABC):
 class ThresholdDetector(DetectionAlgorithm):
     """Detects data points that exceed a predefined scalar threshold.
 
-    This detector performs a simple comparison, identifying all indices in an
-    array where the value is greater than the specified threshold.
+    This detector performs a simple comparison, identifying all indices in an array where the value
+    is greater than the specified threshold.
 
     Attributes
     ----------
@@ -68,22 +59,21 @@ class ThresholdDetector(DetectionAlgorithm):
 class PeakDetector(DetectionAlgorithm):
     """Finds local maxima (peaks) in a 1D data array.
 
-    This class is a wrapper around the `scipy.signal.find_peaks` function,
-    providing a simple interface for peak detection. It identifies peaks that
-    are separated by a specified minimum distance.
+    This class is a wrapper around the `scipy.signal.find_peaks` function, providing a simple
+    interface for peak detection. It identifies peaks that are separated by a specified minimum
+    distance.
 
     Attributes
     ----------
     distance : int
-        The minimum required horizontal distance (in number of samples)
-        between neighbouring peaks.
+        The minimum required horizontal distance (in number of samples) between neighbouring peaks.
 
     """
 
     distance: int = Property(
         default=1,
-        doc="The minimum required horizontal distance (in number of samples) between "
-        "neighbouring peaks",
+        doc="The minimum required horizontal distance (in number of samples) between neighbouring "
+        "peaks",
     )
 
     def detect(self: Self, data: np.ndarray) -> np.ndarray:
@@ -97,46 +87,41 @@ class PeakDetector(DetectionAlgorithm):
 class CFARDetector(DetectionAlgorithm):
     """Detects signals using a Constant False Alarm Rate (CFAR) algorithm.
 
-    This detector adapts its threshold by estimating the noise level from
-    surrounding data cells. For each Cell Under Test (CUT), it calculates the
-    mean of the training cells and multiplies it by a threshold factor to set
-    the detection threshold.
+    This detector adapts its threshold by estimating the noise level from surrounding data cells.
+    For each Cell Under Test (CUT), it calculates the mean of the training cells and multiplies it
+    by a threshold factor to set the detection threshold.
 
     This implementation is a Cell-Averaging CFAR (CA-CFAR).
 
     Attributes
     ----------
     num_guard_cells : int
-        The number of cells to ignore on each side of the Cell Under Test (CUT).
-        These cells are ignored to prevent signal leakage from the CUT into the
-        noise estimate.
+        The number of cells to ignore on each side of the Cell Under Test (CUT). These cells are
+        ignored to prevent signal leakage from the CUT into the noise estimate.
     num_training_cells : int
-        The number of cells to use for noise estimation on each side of the
-        guard cells.
+        The number of cells to use for noise estimation on each side of the guard cells.
     threshold_factor : float
-        A scaling factor (alpha) used to set the detection threshold above the
-        estimated noise floor.
+        A scaling factor (alpha) used to set the detection threshold above the estimated noise
+        floor.
     mode : str
-        The convolution mode for boundary handling. Can be 'valid', 'same', or
-        'wrap'. Defaults to 'valid'.
+        The convolution mode for boundary handling. Can be 'valid', 'same', or 'wrap'. Defaults to
+        'valid'.
 
     """
 
     num_guard_cells = Property(
         int,
         doc="The number of cells to ignore on each side of the Cell Under Test (CUT). "
-        "These cells are ignored to prevent signal leakage from the CUT into the noise "
-        "estimate",
+        "These cells are ignored to prevent signal leakage from the CUT into the noise estimate",
     )
     num_training_cells = Property(
         int,
-        doc="The number of cells to use for noise estimation on each side of the guard "
-        "cells",
+        doc="The number of cells to use for noise estimation on each side of the guard cells",
     )
     threshold_factor = Property(
         float,
-        doc="A scaling factor (alpha) used to set the detection threshold above the "
-        "estimated noise floor",
+        doc="A scaling factor (alpha) used to set the detection threshold above the estimated"
+        "noise floor",
     )
     mode = Property(
         str,
@@ -147,9 +132,9 @@ class CFARDetector(DetectionAlgorithm):
     def detect(self: Self, data: np.ndarray) -> np.ndarray:
         """Detect signals in the data array using the CFAR algorithm.
 
-        This method applies the Cell-Averaging CFAR (CA-CFAR) algorithm. It
-        assumes the input data is in decibels (dB) and converts it to linear
-        power for processing, as the averaging is performed on power values.
+        This method applies the Cell-Averaging CFAR (CA-CFAR) algorithm. It assumes the input data
+        is in decibels (dB) and converts it to linear power for processing, as the averaging is
+        performed on power values.
 
         Parameters
         ----------
@@ -159,9 +144,9 @@ class CFARDetector(DetectionAlgorithm):
         Returns
         -------
         np.ndarray
-            A 2D NumPy array where each row contains two elements: the index of
-            a detection and its corresponding value in dB. Returns an empty
-            array with shape (0, 2) if no detections are found.
+            A 2D NumPy array where each row contains two elements: the index of a detection and its
+            corresponding value in dB. Returns an empty array with shape (0, 2) if no detections
+            are found.
 
         """
         # Convert dB to linear power, as CFAR averaging is done on power.

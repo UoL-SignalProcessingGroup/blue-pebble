@@ -1,8 +1,4 @@
-"""Defines plotting utilities.
-
-© Copyright 2025 Joshua J. Wakefield.
-Licensed under the MIT License.
-"""
+"""Defines plotting utilities."""
 
 import copy
 from abc import ABC, abstractmethod
@@ -152,9 +148,7 @@ class BasePlotter(ABC):
     and axis configuration) to subclasses.
     """
 
-    def __init__(
-        self, defaults: dict | None = None, style_guide: dict | None = None
-    ) -> None:
+    def __init__(self, defaults: dict | None = None, style_guide: dict | None = None) -> None:
         """Initialise the plotter using a comprehensive style guide.
 
         Parameters
@@ -352,9 +346,7 @@ class BasePlotter(ABC):
 
         """
         if not self.fig and not self.anim:
-            raise ValueError(
-                "No plot or animation to show. Call plot() or animate() first."
-            )
+            raise ValueError("No plot or animation to show. Call plot() or animate() first.")
         if tight_layout and self.fig:
             self.fig.tight_layout()
         plt.show()
@@ -392,9 +384,7 @@ class BasePlotter(ABC):
             self.fig.savefig(filename, bbox_inches="tight", **kwargs)
             self.fig = None
         else:
-            raise ValueError(
-                "No plot or animation to save. Call plot() or animate() first."
-            )
+            raise ValueError("No plot or animation to save. Call plot() or animate() first.")
 
     def close(self):
         """Close the current plot figure."""
@@ -469,10 +459,7 @@ class BasePlotter(ABC):
         if title_cfg.get("text"):
             self.ax.set_title(
                 title_cfg["text"],
-                fontsize=(
-                    self.style_guide["figure"]["font_size"]
-                    + title_cfg["fontsize_offset"]
-                ),
+                fontsize=(self.style_guide["figure"]["font_size"] + title_cfg["fontsize_offset"]),
                 pad=title_cfg["pad"],
             )
 
@@ -524,26 +511,20 @@ class BasePlotter(ABC):
 
         if data["history"]["platforms"]:
             style = {
-                k: v
-                for k, v in element_styles["platform"].items()
-                if k not in ["alpha", "zorder"]
+                k: v for k, v in element_styles["platform"].items() if k not in ["alpha", "zorder"]
             }
             handles.append(plt.Line2D([0], [0], color="k", label="Platform", **style))
 
         if data["history"]["truths"]:
             # Create a representative line for the legend from the style guide
             style = {
-                k: v
-                for k, v in element_styles["truth"].items()
-                if k not in ["alpha", "zorder"]
+                k: v for k, v in element_styles["truth"].items() if k not in ["alpha", "zorder"]
             }
             handles.append(plt.Line2D([0], [0], color="k", label="Truth", **style))
 
         if data["history"]["tracks"]:
             style = {
-                k: v
-                for k, v in element_styles["track"].items()
-                if k not in ["alpha", "zorder"]
+                k: v for k, v in element_styles["track"].items() if k not in ["alpha", "zorder"]
             }
             handles.append(plt.Line2D([0], [0], color="k", label="Track", **style))
             if kwargs.get("plot_uncertainty", False):
@@ -554,9 +535,7 @@ class BasePlotter(ABC):
                     for k, v in element_styles["particle"].items()
                     if k not in ["alpha", "zorder"]
                 }
-                handles.append(
-                    plt.Line2D([0], [0], color="k", label="Particle", **style)
-                )
+                handles.append(plt.Line2D([0], [0], color="k", label="Particle", **style))
 
         distinguish = kwargs.get("distinguish_detections", False)
         has_detections = kwargs.get("has_true_detections", False)
@@ -572,9 +551,7 @@ class BasePlotter(ABC):
 
         if has_clutter and distinguish:
             style = {
-                k: v
-                for k, v in element_styles["clutter"].items()
-                if k not in ["alpha", "zorder"]
+                k: v for k, v in element_styles["clutter"].items() if k not in ["alpha", "zorder"]
             }
             handles.append(plt.Line2D([0], [0], label="Clutter", **style))
 
@@ -677,9 +654,7 @@ class BasePlotter(ABC):
 
         """
         # Check for different detection types
-        has_true_detections = any(
-            isinstance(d, TrueDetection) for s in all_detections for d in s
-        )
+        has_true_detections = any(isinstance(d, TrueDetection) for s in all_detections for d in s)
         has_clutter = any(isinstance(d, Clutter) for s in all_detections for d in s)
         plot_kwargs = {
             "plot_particles": kwargs.get("plot_particles", False),
@@ -727,10 +702,7 @@ class BasePlotter(ABC):
                     continue
                 category = (
                     "clutter"
-                    if (
-                        isinstance(det, Clutter)
-                        and plot_kwargs["distinguish_detections"]
-                    )
+                    if (isinstance(det, Clutter) and plot_kwargs["distinguish_detections"])
                     else "measurements"
                 )
                 data[det.timestamp][category].append(det)
@@ -743,8 +715,7 @@ class BasePlotter(ABC):
             "measurements": {coord1: [], coord2: []},
             "clutter": {coord1: [], coord2: []},
             "platforms": {
-                f"platform_{i}": {coord1: [], coord2: []}
-                for i in range(len(platforms or []))
+                f"platform_{i}": {coord1: [], coord2: []} for i in range(len(platforms or []))
             },
         }
 
@@ -780,15 +751,11 @@ class BasePlotter(ABC):
         # Truths
         for truth_id in data["history"]["truths"]:
             style = element_styles["truth"].copy()
-            (plots["truths"][truth_id],) = self.ax.plot(
-                [], [], color=self.get_color(), **style
-            )
+            (plots["truths"][truth_id],) = self.ax.plot([], [], color=self.get_color(), **style)
         # Tracks
         for track_id in data["history"]["tracks"]:
             style = element_styles["track"].copy()
-            (plots["tracks"][track_id],) = self.ax.plot(
-                [], [], color=self.get_color(), **style
-            )
+            (plots["tracks"][track_id],) = self.ax.plot([], [], color=self.get_color(), **style)
 
         # Detections and Clutter
         (plots["meas"],) = self.ax.plot([], [], **element_styles["detection"])
@@ -923,9 +890,7 @@ class BearingsPlotter(BasePlotter):
             for truth in truths:
                 times = [mdates.date2num(state.timestamp) for state in truth]
                 bearings = [np.rad2deg(state.state_vector[0]) for state in truth]
-                (line,) = self.ax.plot(
-                    bearings, times, label="Ground Truth", **truth_style
-                )
+                (line,) = self.ax.plot(bearings, times, label="Ground Truth", **truth_style)
             legend_handles.append(line)
             legend_labels.append("Ground Truth")
 
@@ -950,9 +915,7 @@ class BearingsPlotter(BasePlotter):
         self.ax.set_xlim(self.bearing_range_deg)
         self.ax.set_ylim([timesteps[0], timesteps[-1] + timedelta(seconds=10)])
         self.ax.invert_yaxis()
-        self.ax.set_xticks(
-            np.arange(self.bearing_range_deg[0], self.bearing_range_deg[1] + 1, 60)
-        )
+        self.ax.set_xticks(np.arange(self.bearing_range_deg[0], self.bearing_range_deg[1] + 1, 60))
         self.ax.set_xlabel("Bearing (°)")
 
         time_span = (timesteps[-1] - timesteps[0]).total_seconds()
@@ -1012,9 +975,7 @@ class BearingsPlotter(BasePlotter):
         self.ax.set_xlim(self.bearing_range_deg)
         self.ax.set_ylim([timesteps[0], timesteps[-1] + timedelta(seconds=10)])
         self.ax.invert_yaxis()
-        self.ax.set_xticks(
-            np.arange(self.bearing_range_deg[0], self.bearing_range_deg[1] + 1, 60)
-        )
+        self.ax.set_xticks(np.arange(self.bearing_range_deg[0], self.bearing_range_deg[1] + 1, 60))
         self.ax.set_xlabel(self.style_guide["axes"]["x_label"])
 
         # Call the new utility function for time axis formatting
@@ -1105,9 +1066,7 @@ class BearingsPlotter(BasePlotter):
             history["tracks"][track_id]["time"].append(state.timestamp)
             std_dev = 0
             if track_id in current_data["uncertainty"]:
-                std_dev = np.rad2deg(
-                    np.sqrt(current_data["uncertainty"][track_id].covar[0, 0])
-                )
+                std_dev = np.rad2deg(np.sqrt(current_data["uncertainty"][track_id].covar[0, 0]))
             history["tracks"][track_id]["std_dev"].append(std_dev)
             plot_objects["tracks"][track_id].set_data(
                 history["tracks"][track_id]["bearing"],
@@ -1141,8 +1100,7 @@ class BearingsPlotter(BasePlotter):
                 part_state = current_data["particles"][track_id]
                 bearings, times = (
                     np.rad2deg(part_state.state_vector[mapping[0], :]),
-                    [part_state.timestamp]
-                    * len(part_state.state_vector[mapping[0], :]),
+                    [part_state.timestamp] * len(part_state.state_vector[mapping[0], :]),
                 )
                 plot_objects["particles"][track_id].set_data(bearings, times)
 
@@ -1322,12 +1280,8 @@ class CartesianPlotter(BasePlotter):
         history = data["history"]
 
         for platform_id, state in current_data["platforms"].items():
-            history["platforms"][platform_id]["x"].append(
-                state.state_vector[mapping[0], 0]
-            )
-            history["platforms"][platform_id]["y"].append(
-                state.state_vector[mapping[1], 0]
-            )
+            history["platforms"][platform_id]["x"].append(state.state_vector[mapping[0], 0])
+            history["platforms"][platform_id]["y"].append(state.state_vector[mapping[1], 0])
             plot_objects["platforms"][platform_id].set_data(
                 history["platforms"][platform_id]["x"],
                 history["platforms"][platform_id]["y"],
@@ -1348,10 +1302,7 @@ class CartesianPlotter(BasePlotter):
             )
 
             # Check if an uncertainty artist exists for this track
-            if (
-                "uncertainty" in plot_objects
-                and track_id in plot_objects["uncertainty"]
-            ):
+            if "uncertainty" in plot_objects and track_id in plot_objects["uncertainty"]:
                 ellipse = plot_objects["uncertainty"][track_id]
 
                 xy_indices = [mapping[0], mapping[1]]
@@ -1376,16 +1327,12 @@ class CartesianPlotter(BasePlotter):
         meas_xy = [self._convert_measurement(d) for d in current_data["measurements"]]
         history["measurements"]["x"].extend([p[mapping[0]] for p in meas_xy])
         history["measurements"]["y"].extend([p[mapping[1]] for p in meas_xy])
-        plot_objects["meas"].set_data(
-            history["measurements"]["x"], history["measurements"]["y"]
-        )
+        plot_objects["meas"].set_data(history["measurements"]["x"], history["measurements"]["y"])
 
         clutter_xy = [self._convert_measurement(d) for d in current_data["clutter"]]
         history["clutter"]["x"].extend([p[mapping[0]] for p in clutter_xy])
         history["clutter"]["y"].extend([p[mapping[1]] for p in clutter_xy])
-        plot_objects["clutter"].set_data(
-            history["clutter"]["x"], history["clutter"]["y"]
-        )
+        plot_objects["clutter"].set_data(history["clutter"]["x"], history["clutter"]["y"])
 
         return [
             artist
@@ -1456,12 +1403,8 @@ def plot_world(truths: list[GroundTruthPath], platform: Platform) -> go.Figure:
 
     fig = go.Figure()
 
-    plat_x = [
-        float(entry.host.state.state_vector[0]) for entry in platform.platform_history
-    ]
-    plat_y = [
-        float(entry.host.state.state_vector[2]) for entry in platform.platform_history
-    ]
+    plat_x = [float(entry.host.state.state_vector[0]) for entry in platform.platform_history]
+    plat_y = [float(entry.host.state.state_vector[2]) for entry in platform.platform_history]
 
     gt_x = [[] for _ in range(num_truths)]
     gt_y = [[] for _ in range(num_truths)]
@@ -1474,9 +1417,7 @@ def plot_world(truths: list[GroundTruthPath], platform: Platform) -> go.Figure:
 
     raw_min_x, raw_max_x = min(all_x), max(all_x)
     raw_min_y, raw_max_y = min(all_y), max(all_y)
-    scale, unit = _distance_axis_scale(
-        min(raw_min_x, raw_min_y), max(raw_max_x, raw_max_y)
-    )
+    scale, unit = _distance_axis_scale(min(raw_min_x, raw_min_y), max(raw_max_x, raw_max_y))
     pad = _range_padding_for_scale(scale)
 
     min_x, max_x = raw_min_x - pad, raw_max_x + pad
@@ -1507,9 +1448,7 @@ def plot_world(truths: list[GroundTruthPath], platform: Platform) -> go.Figure:
     )
 
     colors = px.colors.qualitative.Plotly
-    names = [
-        f"Target {i + 1}" if num_truths > 1 else "Target" for i in range(num_truths)
-    ]
+    names = [f"Target {i + 1}" if num_truths > 1 else "Target" for i in range(num_truths)]
     for i in range(num_truths):
         fig.add_trace(
             go.Scatter(
@@ -1643,9 +1582,7 @@ def plot_btr(
             )
 
     if truths is not None:
-        gt_x = [
-            [np.rad2deg(state.state_vector[0]) for state in truth] for truth in truths
-        ]
+        gt_x = [[np.rad2deg(state.state_vector[0]) for state in truth] for truth in truths]
         gt_y = [[state.timestamp for state in truth] for truth in truths]
         for idx in range(len(truths)):
             fig.add_trace(
