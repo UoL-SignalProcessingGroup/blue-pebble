@@ -1,69 +1,28 @@
-# ==================================
-# Operating System & IDE
-# ==================================
-.DS_Store
-.vscode/
-
-# ==================================
-# Python & Virtual Environments
-# ==================================
-__pycache__/
-*.py[cod]
-*$py.class
-
-# Environments
-.env
-.venv
-env/
-venv/
-ENV/
-env.bak/
-venv.bak/
-
-# ==================================
-# Project-Specific
-# ==================================
-# Ignore the Bellhop executable
-
-examples/dev/*
-examples/wavs/*
-examples/save_data/*
-examples/figs/*
-nereus/models/propagation/bellhopcxx.exe
-nereus/models/propagation/bellhopcxx
-
-# ==================================
-# Distribution / Packaging
-# ==================================
-.Python
+# General Python
 build/
-develop-eggs/
 dist/
-downloads/
-eggs/
-.eggs/
-lib/
-lib64/
-parts/
-sdist/
-var/
-wheels/
-share/python-wheels/
-*.egg-info/
-.installed.cfg
-*.egg
+*.egg-info
+__pycache__/
 
-# ==================================
-# Documentation & Testing
-# ==================================
 # Sphinx documentation
-docs/_build/
+/docs/build/
+/docs/_build/
+/docs/source/auto*
+/docs/source/sg_execution_times.rst
 
-# Jupyter Notebook
-.ipynb_checkpoints
+# coverage
+.coverage
+htmlcov/
 
-# Pytest
+# pytest
 .pytest_cache/
 
-# Ruff Linter
+# Ruff
 .ruff_cache/
+
+# Jupyter
+.ipynb_checkpoints/
+
+# Operating system / editor
+.DS_Store
+.vscode/
