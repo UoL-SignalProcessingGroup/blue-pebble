@@ -20,6 +20,12 @@ RUN make
 # This is the final, clean image for the application
 FROM python:3.12-slim
 
+# Install runtime tools required for devcontainer workflows
+RUN apt-get update && apt-get install -y --no-install-recommends \
+    git \
+    make \
+    && rm -rf /var/lib/apt/lists/*
+
 # Set the working directory
 WORKDIR /app
 
