@@ -1539,6 +1539,31 @@ def plot_btr(
         A Plotly figure object containing the BTR plot.
 
     """
+    def _wrap_bearing_deg(angle_deg: float) -> float:
+        """Wrap degrees to the interval [-180, 180)."""
+        return (angle_deg + 180.0) % 360.0 - 180.0
+
+    def _split_wrapped_line(
+        bearings_deg: list[float], times: list[datetime], jump_threshold_deg: float = 180.0
+    ) -> tuple[list[float | None], list[datetime | None]]:
+        """Insert gaps when bearings jump across wrap boundaries."""
+        if not bearings_deg or not times:
+            return [], []
+
+        split_bearings: list[float | None] = [bearings_deg[0]]
+        split_times: list[datetime | None] = [times[0]]
+        prev_bearing = bearings_deg[0]
+
+        for bearing, timestamp in zip(bearings_deg[1:], times[1:]):
+            if abs(bearing - prev_bearing) > jump_threshold_deg:
+                split_bearings.append(None)
+                split_times.append(None)
+            split_bearings.append(bearing)
+            split_times.append(timestamp)
+            prev_bearing = bearing
+
+        return split_bearings, split_times
+
     fig = go.Figure()
     fig.update_layout(colorway=px.colors.qualitative.Plotly)
     colorway = list(fig.layout.colorway or px.colors.qualitative.Plotly)
@@ -1556,12 +1581,14 @@ def plot_btr(
                     thickness=24,
                     len=1.0,
                     tickfont=dict(size=14),
+                    x=0.92,
+                    xpad=0,
                 ),
             )
         )
 
     if detections is not None:
-        det_x = [np.rad2deg(det.state_vector[0]) for det in detections]
+        det_x = [_wrap_bearing_deg(float(np.rad2deg(det.state_vector[0]))) for det in detections]
         det_y = [det.timestamp for det in detections]
         fig.add_trace(
             go.Scatter(
@@ -1582,13 +1609,17 @@ def plot_btr(
                     len(track_color_map) % len(track_colorway)
                 ]
             track_color = track_color_map[track_key]
-            track_x = [np.rad2deg(state.state_vector[0]) for state in track]
+            track_x = [
+                _wrap_bearing_deg(float(np.rad2deg(state.state_vector[0]))) for state in track
+            ]
             track_y = [state.timestamp for state in track]
+            track_x, track_y = _split_wrapped_line(track_x, track_y)
             fig.add_trace(
                 go.Scatter(
                     x=track_x,
                     y=track_y,
                     mode="lines",
+                    connectgaps=False,
                     line=dict(color=track_color, width=4),
                     name=f"Track {idx + 1}" if len(tracks) > 1 else "Track",
                 )
@@ -1596,18 +1627,23 @@ def plot_btr(
 
     if truths is not None:
         truth_color_map: dict[int, str] = {}
-        gt_x = [[np.rad2deg(state.state_vector[0]) for state in truth] for truth in truths]
+        gt_x = [
+            [_wrap_bearing_deg(float(np.rad2deg(state.state_vector[0]))) for state in truth]
+            for truth in truths
+        ]
         gt_y = [[state.timestamp for state in truth] for truth in truths]
         for idx, truth in enumerate(truths):
             truth_key = id(truth)
             if truth_key not in truth_color_map:
                 truth_color_map[truth_key] = colorway[len(truth_color_map) % len(colorway)]
             truth_color = truth_color_map[truth_key]
+            truth_x, truth_y = _split_wrapped_line(gt_x[idx], gt_y[idx])
             fig.add_trace(
                 go.Scatter(
-                    x=gt_x[idx],
-                    y=gt_y[idx],
+                    x=truth_x,
+                    y=truth_y,
                     mode="lines",
+                    connectgaps=False,
                     line=dict(color=truth_color, width=3, dash="dash"),
                     name=f"Target {idx + 1}" if len(truths) > 1 else "Target",
                 )
@@ -1615,6 +1651,7 @@ def plot_btr(
 
     fig.update_xaxes(
         range=[steering_azimuths[0], steering_azimuths[-1]],
+        domain=[0.0, 0.9],
         tickmode="linear",
         tick0=steering_azimuths[0],
         dtick=steering_azimuths[-1] // 3,
@@ -1645,11 +1682,10 @@ def plot_btr(
     )
 
     fig.update_layout(
-        width=600,
+        width=800,
         height=600,
         font=dict(size=16, color="black"),
         showlegend=True,
-        legend=dict(x=0.5, y=1.2, xanchor="center", orientation="h"),
         plot_bgcolor="white",
         paper_bgcolor="white",
     )
