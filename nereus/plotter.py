@@ -1375,12 +1375,14 @@ def _distance_axis_scale(min_val: float, max_val: float) -> tuple[float, str]:
     return 1.0, "m"
 
 
-def _range_padding_for_scale(scale: float) -> float:
-    """Return axis padding in native units from display scale.
+def _range_padding_for_scale(scale: float, span: float) -> float:
+    """Return axis padding in native units from display scale and scene span.
 
-    Pads by 0.5 in the display unit (0.5 m, 0.5 km, 0.5 Mm).
+    Padding is 5% of span in display units with a floor of 0.5 display units.
     """
-    return 0.5 / scale
+    span_display_units = span * scale
+    pad_display_units = max(0.5, 0.05 * span_display_units)
+    return pad_display_units / scale
 
 
 def plot_world(truths: list[GroundTruthPath], platform: Platform) -> go.Figure:
@@ -1402,6 +1404,8 @@ def plot_world(truths: list[GroundTruthPath], platform: Platform) -> go.Figure:
     num_truths = len(truths)
 
     fig = go.Figure()
+    fig.update_layout(colorway=px.colors.qualitative.Plotly)
+    colorway = list(fig.layout.colorway or px.colors.qualitative.Plotly)
 
     plat_x = [float(entry.host.state.state_vector[0]) for entry in platform.platform_history]
     plat_y = [float(entry.host.state.state_vector[2]) for entry in platform.platform_history]
@@ -1418,7 +1422,8 @@ def plot_world(truths: list[GroundTruthPath], platform: Platform) -> go.Figure:
     raw_min_x, raw_max_x = min(all_x), max(all_x)
     raw_min_y, raw_max_y = min(all_y), max(all_y)
     scale, unit = _distance_axis_scale(min(raw_min_x, raw_min_y), max(raw_max_x, raw_max_y))
-    pad = _range_padding_for_scale(scale)
+    raw_span = max(raw_max_x - raw_min_x, raw_max_y - raw_min_y)
+    pad = _range_padding_for_scale(scale, raw_span)
 
     min_x, max_x = raw_min_x - pad, raw_max_x + pad
     min_y, max_y = raw_min_y - pad, raw_max_y + pad
@@ -1447,7 +1452,6 @@ def plot_world(truths: list[GroundTruthPath], platform: Platform) -> go.Figure:
         )
     )
 
-    colors = px.colors.qualitative.Plotly
     names = [f"Target {i + 1}" if num_truths > 1 else "Target" for i in range(num_truths)]
     for i in range(num_truths):
         fig.add_trace(
@@ -1455,21 +1459,20 @@ def plot_world(truths: list[GroundTruthPath], platform: Platform) -> go.Figure:
                 x=gt_x[i],
                 y=gt_y[i],
                 mode="lines",
-                line=dict(color=colors[i + 1], width=3, dash="5px,2px"),
+                line=dict(color=colorway[i % len(colorway)], width=3, dash="5px,2px"),
                 name=names[i],
             )
         )
 
     fig.update_layout(
-        width=600,
-        height=600,
         font=dict(size=16, color="black"),
         showlegend=True,
-        legend=dict(x=0.5, y=1.1, xanchor="center", orientation="h"),
+        legend=dict(x=0.5, y=1.2, xanchor="center", orientation="h"),
         plot_bgcolor="white",
         xaxis=dict(
             title=f"X Position ({unit})",
             range=x_range,
+            constrain="range",
             showgrid=True,
             gridcolor="rgba(200,200,200,0.5)",
             linecolor="black",
@@ -1480,6 +1483,9 @@ def plot_world(truths: list[GroundTruthPath], platform: Platform) -> go.Figure:
         yaxis=dict(
             title=f"Y Position ({unit})",
             range=y_range,
+            constrain="range",
+            scaleanchor="x",
+            scaleratio=1,
             showgrid=True,
             gridcolor="rgba(200,200,200,0.5)",
             linecolor="black",
@@ -1534,6 +1540,9 @@ def plot_btr(
 
     """
     fig = go.Figure()
+    fig.update_layout(colorway=px.colors.qualitative.Plotly)
+    colorway = list(fig.layout.colorway or px.colors.qualitative.Plotly)
+    track_colorway = list(reversed(colorway))
 
     if data is not None:
         fig.add_trace(
@@ -1551,9 +1560,6 @@ def plot_btr(
             )
         )
 
-    track_colours = px.colors.qualitative.Plotly[::2]
-    truth_colours = px.colors.qualitative.Plotly[1::2]
-
     if detections is not None:
         det_x = [np.rad2deg(det.state_vector[0]) for det in detections]
         det_y = [det.timestamp for det in detections]
@@ -1568,7 +1574,14 @@ def plot_btr(
         )
 
     if tracks is not None:
+        track_color_map: dict[int, str] = {}
         for idx, track in enumerate(tracks):
+            track_key = id(track)
+            if track_key not in track_color_map:
+                track_color_map[track_key] = track_colorway[
+                    len(track_color_map) % len(track_colorway)
+                ]
+            track_color = track_color_map[track_key]
             track_x = [np.rad2deg(state.state_vector[0]) for state in track]
             track_y = [state.timestamp for state in track]
             fig.add_trace(
@@ -1576,21 +1589,26 @@ def plot_btr(
                     x=track_x,
                     y=track_y,
                     mode="lines",
-                    line=dict(color=track_colours[idx], width=4),
+                    line=dict(color=track_color, width=4),
                     name=f"Track {idx + 1}" if len(tracks) > 1 else "Track",
                 )
             )
 
     if truths is not None:
+        truth_color_map: dict[int, str] = {}
         gt_x = [[np.rad2deg(state.state_vector[0]) for state in truth] for truth in truths]
         gt_y = [[state.timestamp for state in truth] for truth in truths]
-        for idx in range(len(truths)):
+        for idx, truth in enumerate(truths):
+            truth_key = id(truth)
+            if truth_key not in truth_color_map:
+                truth_color_map[truth_key] = colorway[len(truth_color_map) % len(colorway)]
+            truth_color = truth_color_map[truth_key]
             fig.add_trace(
                 go.Scatter(
                     x=gt_x[idx],
                     y=gt_y[idx],
                     mode="lines",
-                    line=dict(color=truth_colours[idx], width=3, dash="dash"),
+                    line=dict(color=truth_color, width=3, dash="dash"),
                     name=f"Target {idx + 1}" if len(truths) > 1 else "Target",
                 )
             )
@@ -1631,7 +1649,7 @@ def plot_btr(
         height=600,
         font=dict(size=16, color="black"),
         showlegend=True,
-        legend=dict(x=0.5, y=1.1, xanchor="center", orientation="h"),
+        legend=dict(x=0.5, y=1.2, xanchor="center", orientation="h"),
         plot_bgcolor="white",
         paper_bgcolor="white",
     )
