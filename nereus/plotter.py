@@ -1465,6 +1465,9 @@ def plot_world(truths: list[GroundTruthPath], platform: Platform) -> go.Figure:
         )
 
     fig.update_layout(
+        autosize=False,
+        width=600,
+        height=600,
         font=dict(size=16, color="black"),
         showlegend=True,
         legend=dict(x=0.5, y=1.2, xanchor="center", orientation="h"),
@@ -1472,7 +1475,6 @@ def plot_world(truths: list[GroundTruthPath], platform: Platform) -> go.Figure:
         xaxis=dict(
             title=f"X Position ({unit})",
             range=x_range,
-            constrain="range",
             showgrid=True,
             gridcolor="rgba(200,200,200,0.5)",
             linecolor="black",
@@ -1483,7 +1485,6 @@ def plot_world(truths: list[GroundTruthPath], platform: Platform) -> go.Figure:
         yaxis=dict(
             title=f"Y Position ({unit})",
             range=y_range,
-            constrain="range",
             scaleanchor="x",
             scaleratio=1,
             showgrid=True,
