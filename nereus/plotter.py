@@ -15,6 +15,7 @@ import seaborn as sns
 from matplotlib.animation import FuncAnimation
 from matplotlib.axes import Axes
 from matplotlib.patches import Ellipse, Patch
+from scipy import signal as scipy_signal
 from stonesoup.platform.base import Platform
 from stonesoup.types.detection import Clutter, Detection, MissedDetection, TrueDetection
 from stonesoup.types.groundtruth import GroundTruthPath
@@ -1541,6 +1542,7 @@ def plot_btr(
         A Plotly figure object containing the BTR plot.
 
     """
+
     def _wrap_bearing_deg(angle_deg: float) -> float:
         """Wrap degrees to the interval [-180, 180)."""
         return (angle_deg + 180.0) % 360.0 - 180.0
@@ -1556,7 +1558,7 @@ def plot_btr(
         split_times: list[datetime | None] = [times[0]]
         prev_bearing = bearings_deg[0]
 
-        for bearing, timestamp in zip(bearings_deg[1:], times[1:]):
+        for bearing, timestamp in zip(bearings_deg[1:], times[1:], strict=False):
             if abs(bearing - prev_bearing) > jump_threshold_deg:
                 split_bearings.append(None)
                 split_times.append(None)
@@ -1690,6 +1692,114 @@ def plot_btr(
         showlegend=True,
         plot_bgcolor="white",
         paper_bgcolor="white",
+    )
+
+    return fig
+
+
+def plot_spectrogram(
+    signal: np.ndarray,
+    sr: int,
+    n_fft: int = 4096,
+    hop_length: int = 1024,
+    y_lim: tuple[float, float] | None = None,
+    yaxis_format: str = "kHz",
+    fig_size: tuple[int, int] = (12, 6),
+    font_size_label: int = 16,
+    font_size_tick: int = 14,
+) -> None:
+    """Generate and display a formatted spectrogram with Plotly.
+
+    Parameters
+    ----------
+    signal : np.ndarray
+        1D array-like audio signal.
+    sr : int
+        Sampling rate in Hz.
+    n_fft : int
+        FFT window size.
+    hop_length : int
+        STFT hop length.
+    y_lim : tuple[float, float] | None
+        Optional y-axis limits in Hz as ``(min, max)``.
+    yaxis_format : str
+        ``"kHz"`` to label y-axis in kHz or ``"hz"`` for Hz.
+    fig_size : tuple[int, int]
+        Figure size as ``(width, height)`` in notebook-style inches.
+    font_size_label : int
+        Axis label font size.
+    font_size_tick : int
+        Axis tick font size.
+
+    """
+    signal = np.asarray(signal)
+    if signal.size == 0:
+        raise ValueError("signal is empty")
+    if signal.ndim > 1:
+        signal = signal.flatten()
+    if sr <= 0:
+        raise ValueError("sr must be positive")
+
+    freqs_hz, times, zxx = scipy_signal.stft(
+        signal,
+        fs=sr,
+        window="hann",
+        nperseg=n_fft,
+        noverlap=n_fft - hop_length,
+        nfft=n_fft,
+        boundary=None,
+        padded=False,
+        return_onesided=True,
+    )
+
+    magnitude = np.abs(zxx)
+    ref = np.max(magnitude)
+    if ref <= 0:
+        ref = 1.0
+    amin = 1e-10
+    s_db = 20.0 * np.log10(np.maximum(amin, magnitude)) - 20.0 * np.log10(ref)
+
+    vmax = float(np.max(s_db))
+    vmin = vmax - 60.0
+
+    if yaxis_format == "kHz":
+        y_values = freqs_hz / 1000.0
+        y_title = "Frequency (kHz)"
+        y_range = [y_lim[0] / 1000.0, y_lim[1] / 1000.0] if y_lim else None
+    else:
+        y_values = freqs_hz
+        y_title = "Frequency (Hz)"
+        y_range = list(y_lim) if y_lim else None
+
+    fig = go.Figure(
+        data=go.Heatmap(
+            z=s_db,
+            x=times,
+            y=y_values,
+            colorscale="Viridis",
+            zmin=vmin,
+            zmax=vmax,
+            colorbar=dict(title="Intensity (dB)", ticksuffix=" dB"),
+        )
+    )
+
+    fig.update_layout(
+        width=int(fig_size[0] * 100),
+        height=int(fig_size[1] * 100),
+        margin=dict(l=80, r=80, t=30, b=60),
+    )
+
+    fig.update_xaxes(
+        title_text="Time (s)",
+        title_font=dict(size=font_size_label),
+        tickfont=dict(size=font_size_tick),
+        range=[0, len(signal) / float(sr)],
+    )
+    fig.update_yaxes(
+        title_text=y_title,
+        title_font=dict(size=font_size_label),
+        tickfont=dict(size=font_size_tick),
+        range=y_range,
     )
 
     return fig
