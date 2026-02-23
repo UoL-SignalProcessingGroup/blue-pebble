@@ -7,6 +7,7 @@ Nereus is a high-fidelity simulation framework for underwater acoustic scenarios
 - Multi-body kinematic model for flexible towed arrays ("follow-the-leader" dynamics)
 - Acoustic propagation models (Bellhop, cylindrical, spherical, broadband ray tracing)
 - Source signature generation (multi-tone, configurable)
+- Ownship noise modelling
 - Biological source simulation (e.g., whale calls, snapping shrimp)
 - Ambient noise field simulation (white/pink noise)
 - Beamforming (delay-and-sum, frequency domain, MVDR)
@@ -18,7 +19,6 @@ Nereus is a high-fidelity simulation framework for underwater acoustic scenarios
 
 ## Possible Future Enhancements
 
-- Ownship noise modelling
 - Using real environmental data (e.g., bathymetry, sound speed profiles)
 - Using real source signature data
 - Different output options from SNR (e.g., unormalised beampower, SNR from mean/median, SNR per angle from CA/OS-CFAR)
