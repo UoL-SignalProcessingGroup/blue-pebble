@@ -55,8 +55,8 @@ class DelayAndSumBeamformer(Beamformer):
         default="time",
         doc="The domain for beamforming, either 'time' or 'frequency'",
     )
-    nfft = Property(int, default=256, doc="STFT window size (samples)")
-    overlap = Property(int, default=0, doc="STFT overlap (samples)")
+    nfft = Property(int, default=500, doc="STFT window size (samples)")
+    overlap = Property(int, default=250, doc="STFT overlap (samples)")
     f0 = Property(float, default=0.0, doc="Carrier frequency for baseband data (Hz)")
     fmin = Property(float, default=None, doc="Minimum frequency to integrate (Hz)")
     fmax = Property(float, default=None, doc="Maximum frequency to integrate (Hz)")
@@ -454,8 +454,8 @@ class MinimumVarianceDistortionlessResponseBeamformer(Beamformer):
     """
 
     sampling_rate_hz = Property(float, doc="The sampling frequency of the sensor signals, in Hz")
-    nfft = Property(int, default=256, doc="STFT window size (samples)")
-    overlap = Property(int, default=0, doc="STFT overlap (samples)")
+    nfft = Property(int, default=500, doc="STFT window size (samples)")
+    overlap = Property(int, default=250, doc="STFT overlap (samples)")
     f0 = Property(float, default=0.0, doc="Carrier frequency for baseband data (Hz)")
     fmin = Property(float, default=None, doc="Minimum frequency to integrate (Hz)")
     fmax = Property(float, default=None, doc="Maximum frequency to integrate (Hz)")
