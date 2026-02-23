@@ -4,6 +4,7 @@ from abc import ABC, abstractmethod
 from typing import Self
 
 import numpy as np
+from numpy.lib.stride_tricks import sliding_window_view
 from scipy.signal import find_peaks
 from stonesoup.base import Base, Property
 
@@ -188,3 +189,125 @@ class CFARDetector(DetectionAlgorithm):
             return np.empty((0, 2))
 
         return np.column_stack((indices, data[indices]))
+    
+
+class OSCFARDetector(DetectionAlgorithm):
+    """Detects signals using an Ordered-Statistic (OS) CFAR algorithm.
+
+    This detector is more robust to multi-target situations than CA-CFAR.
+    It estimates the noise level by sorting the values in the training
+    cells and selecting the k-th smallest value (the 'rank'). This
+    value is then scaled by the threshold factor to set the detection
+    threshold.
+
+    This implementation uses a 'wrap' mode for boundary handling, consistent
+    with the 'wrap' mode in the CA-CFAR detector.
+
+    Attributes:
+        num_guard_cells (int): The number of cells to ignore on each side of
+            the Cell Under Test (CUT).
+        num_training_cells (int): The number of cells to use for noise
+            estimation on each side of the guard cells.
+        rank (int): The k-th smallest value (1-indexed) to select from the
+            sorted training cells. Must be between 1 and
+            (2 * num_training_cells).
+        threshold_factor (float): A scaling factor (alpha) used to set the
+            detection threshold above the estimated noise floor.
+
+    """
+
+    num_guard_cells = Property(
+        int,
+        doc="The number of cells to ignore on each side of the Cell Under Test (CUT).",
+    )
+    num_training_cells = Property(
+        int,
+        doc="The number of cells to use for noise estimation on each side of the "
+        "guard cells.",
+    )
+    rank = Property(
+        int,
+        doc="The k-th smallest value (1-indexed) to select from the sorted "
+        "training cells. Must be between 1 and (2 * num_training_cells).",
+    )
+    threshold_factor = Property(
+        float,
+        default=1.0,
+        doc="A scaling factor (alpha) to apply to the k-th rank value.",
+    )
+
+    def __init__(self, *args, **kwargs):
+        """Initialise the OS-CFAR detector and validate parameters."""
+        super().__init__(*args, **kwargs)
+
+        # Validate the rank parameter
+        self.num_training_total = 2 * self.num_training_cells
+        if not 1 <= self.rank <= self.num_training_total:
+            raise ValueError(
+                f"Rank ({self.rank}) must be between 1 and "
+                f"2 * num_training_cells ({self.num_training_total})"
+            )
+
+    def detect(self: Self, data: np.ndarray) -> np.ndarray:
+        """Detect signals in the data array using the OS-CFAR algorithm.
+
+        This method applies the OS-CFAR algorithm. It assumes the
+        input data is in decibels (dB) and converts it to linear
+        power for processing, as the sorting is performed on power values.
+
+        Args:
+            data (np.ndarray): A 1D NumPy array of signal data (e.g., SNR) in
+                decibels.
+
+        Returns:
+            np.ndarray: A 2D NumPy array where each row contains two elements:
+            the index of a detection and its corresponding value in dB.
+            Returns an empty array with shape (0, 2) if no detections are found.
+
+        """
+        # Convert dB to linear power, as CFAR processing is done on power.
+        power = 10 ** (data / 10)
+
+        # Total number of cells on one side of the CUT
+        one_sided_window = self.num_guard_cells + self.num_training_cells
+        window_size = 2 * one_sided_window + 1
+
+        # Pad the power array by wrapping the ends for circular processing
+        # This creates a 'wrap' mode, consistent with the CA-CFAR
+        padded_power = np.pad(power, pad_width=one_sided_window, mode="wrap")
+
+        # Create a sliding window view over the padded data.
+        # This creates a 2D array where each row is a window.
+        # Shape will be (len(data), window_size)
+        windows = sliding_window_view(padded_power, window_size)
+
+        # Extract the leading and lagging training cells from all windows
+        # at once (vectorized).
+        leading_cells = windows[:, : self.num_training_cells]
+        lagging_cells = windows[:, -self.num_training_cells :]
+
+        # Concatenate into a single array of training cells for each CUT
+        # Shape: (len(data), 2 * num_training_cells)
+        training_cells = np.concatenate((leading_cells, lagging_cells), axis=1)
+
+        # Sort the training cells for each row
+        training_cells.sort(axis=1)
+
+        # Select the k-th rank value as the noise estimate.
+        # We use `self.rank - 1` for 0-based indexing.
+        noise_estimate = training_cells[:, self.rank - 1]
+
+        # The adaptive threshold is the noise estimate scaled by the factor.
+        threshold = self.threshold_factor * noise_estimate
+
+        # Find indices where the original signal power exceeds the threshold
+        indices = np.where(power > threshold)[0]
+
+        if indices.size == 0:
+            return np.empty((0, 2))
+
+        # Return the indices and the original dB values
+        return np.column_stack((indices, data[indices]))
+    
+
+
