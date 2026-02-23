@@ -1485,7 +1485,6 @@ def plot_world(truths: list[GroundTruthPath], platform: Platform) -> go.Figure:
         height=600,
         font=dict(size=16, color="black"),
         showlegend=True,
-        legend=dict(x=0.5, y=1.2, xanchor="center", orientation="h"),
         plot_bgcolor="white",
         xaxis=dict(
             title=f"X Position ({unit})",
@@ -1807,7 +1806,7 @@ def plot_spectrogram(
     fig.update_layout(
         width=int(fig_size[0] * 100),
         height=int(fig_size[1] * 100),
-        margin=dict(l=80, r=80, t=30, b=60),
+        # margin=dict(l=80, r=80, t=30, b=60),
         plot_bgcolor="white",
         paper_bgcolor="white",
     )
