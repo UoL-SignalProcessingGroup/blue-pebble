@@ -1779,7 +1779,12 @@ def plot_spectrogram(
             colorscale="Viridis",
             zmin=vmin,
             zmax=vmax,
-            colorbar=dict(title="Intensity (dB)", ticksuffix=" dB"),
+            colorbar=dict(
+                title=dict(text="Intensity (dB)", side="right", font=dict(size=16)),
+                thickness=24,
+                len=1.0,
+                tickfont=dict(size=14),
+            ),
         )
     )
 
@@ -1787,6 +1792,8 @@ def plot_spectrogram(
         width=int(fig_size[0] * 100),
         height=int(fig_size[1] * 100),
         margin=dict(l=80, r=80, t=30, b=60),
+        plot_bgcolor="white",
+        paper_bgcolor="white",
     )
 
     fig.update_xaxes(
@@ -1794,12 +1801,14 @@ def plot_spectrogram(
         title_font=dict(size=font_size_label),
         tickfont=dict(size=font_size_tick),
         range=[0, len(signal) / float(sr)],
+        showgrid=False,
     )
     fig.update_yaxes(
         title_text=y_title,
         title_font=dict(size=font_size_label),
         tickfont=dict(size=font_size_tick),
         range=y_range,
+        showgrid=False,
     )
 
     return fig
