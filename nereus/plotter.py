@@ -1443,15 +1443,29 @@ def plot_world(truths: list[GroundTruthPath], platform: Platform) -> go.Figure:
     x_range = [value * scale for value in x_range]
     y_range = [value * scale for value in y_range]
 
-    fig.add_trace(
-        go.Scatter(
-            x=plat_x,
-            y=plat_y,
-            mode="lines",
-            line=dict(color="black", width=3),
-            name="Platform",
-        )
+    platform_is_stationary = len(plat_x) <= 1 or (
+        np.allclose(plat_x, plat_x[0]) and np.allclose(plat_y, plat_y[0])
     )
+    if platform_is_stationary:
+        fig.add_trace(
+            go.Scatter(
+                x=[plat_x[0]],
+                y=[plat_y[0]],
+                mode="markers",
+                marker=dict(color="black", size=10),
+                name="Platform",
+            )
+        )
+    else:
+        fig.add_trace(
+            go.Scatter(
+                x=plat_x,
+                y=plat_y,
+                mode="lines",
+                line=dict(color="black", width=3),
+                name="Platform",
+            )
+        )
 
     names = [f"Target {i + 1}" if num_truths > 1 else "Target" for i in range(num_truths)]
     for i in range(num_truths):
@@ -1535,6 +1549,8 @@ def plot_btr(
     data_type : str
         A string label for the type of data being plotted (e.g., "SNR (dB)").
         This is used for the colorbar title. Default is "SNR (dB)".
+    width_height_px : tuple[int, int]
+        The width and height of the plot in pixels. Default is (800, 600).
 
     Returns
     -------
