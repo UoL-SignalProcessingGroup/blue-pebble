@@ -1506,6 +1506,7 @@ def plot_btr(
     detections: list[Detection] | None = None,
     tracks: list[Track] | None = None,
     data_type: str = "SNR (dB)",
+    width_height_px: tuple[int, int] = (800, 600),
 ) -> go.Figure:
     """Plot the bearing-time record (BTR) of the beamformed data.
 
@@ -1682,8 +1683,8 @@ def plot_btr(
     )
 
     fig.update_layout(
-        width=800,
-        height=600,
+        width=width_height_px[0],
+        height=width_height_px[1],
         font=dict(size=16, color="black"),
         showlegend=True,
         plot_bgcolor="white",
