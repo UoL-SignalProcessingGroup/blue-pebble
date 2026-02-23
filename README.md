@@ -9,7 +9,7 @@ Nereus is a high-fidelity simulation framework for underwater acoustic scenarios
 - Source signature generation (multi-tone, configurable)
 - Biological source simulation (e.g., whale calls, snapping shrimp)
 - Ambient noise field simulation (white/pink noise)
-- Beamforming (delay-and-sum, frequency domain)
+- Beamforming (delay-and-sum, frequency domain, MVDR)
 - Detection algorithms (CFAR, peak, threshold)
 - Passive sonar simulation and detection chain
 - Integration with Stone Soup for tracking and data association
