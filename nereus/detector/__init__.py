@@ -1,16 +1,18 @@
 """Detector package public API."""
 
 from .algorithms import (
-    CFARDetector,
+    CACFARDetector,
     DetectionAlgorithm,
+    OSCFARDetector,
     PeakDetector,
     ThresholdDetector,
 )
 from .passive import PassiveSonarDetector
 
 __all__ = [
-    "CFARDetector",
+    "CACFARDetector",
     "DetectionAlgorithm",
+    "OSCFARDetector",
     "PeakDetector",
     "PassiveSonarDetector",
     "ThresholdDetector",

@@ -85,7 +85,7 @@ class PeakDetector(DetectionAlgorithm):
         return np.column_stack((indices, data[indices]))
 
 
-class CFARDetector(DetectionAlgorithm):
+class CACFARDetector(DetectionAlgorithm):
     """Detects signals using a Constant False Alarm Rate (CFAR) algorithm.
 
     This detector adapts its threshold by estimating the noise level from surrounding data cells.
@@ -189,7 +189,7 @@ class CFARDetector(DetectionAlgorithm):
             return np.empty((0, 2))
 
         return np.column_stack((indices, data[indices]))
-    
+
 
 class OSCFARDetector(DetectionAlgorithm):
     """Detects signals using an Ordered-Statistic (OS) CFAR algorithm.
@@ -222,8 +222,7 @@ class OSCFARDetector(DetectionAlgorithm):
     )
     num_training_cells = Property(
         int,
-        doc="The number of cells to use for noise estimation on each side of the "
-        "guard cells.",
+        doc="The number of cells to use for noise estimation on each side of the guard cells.",
     )
     rank = Property(
         int,
@@ -308,6 +307,3 @@ class OSCFARDetector(DetectionAlgorithm):
 
         # Return the indices and the original dB values
         return np.column_stack((indices, data[indices]))
-    
-
-
