@@ -78,6 +78,8 @@ class PassiveSonarDetector(DetectionReader):
         ----------
         progress_bar : bool, optional
             If True, wrap the input generator with a progress bar (default is False).
+        total_timesteps : int, optional
+            Total number of timesteps for the progress bar. Required if `progress_bar` is True.
 
         Yields
         ------
@@ -87,7 +89,9 @@ class PassiveSonarDetector(DetectionReader):
         """
         sensor_data_iterator = self.sensor_data_gen
         if progress_bar:
-            sensor_data_iterator = tqdm(sensor_data_iterator, desc="Generating Detections", total=total_timesteps)
+            sensor_data_iterator = tqdm(
+                sensor_data_iterator, desc="Generating Detections", total=total_timesteps
+            )
 
         for timestamp, sensor_data_set in sensor_data_iterator:
             detections = set()

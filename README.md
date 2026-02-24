@@ -210,3 +210,27 @@ See `LICENSE` and `NOTICE.md` for details.
 Optional backends (e.g., bellhopcuda) are licensed separately.
 
 Blue Pebble does not distribute these components in its PyPI package. Users are responsible for complying with the licenses of any external tools they install.
+
+
+## Future Enhancements
+
+Planned and potential extensions include:
+
+### Environmental Modelling
+- Integration of real environmental datasets (bathymetry, range-dependent sound speed profiles)
+- Coherent ambient noise modelling (wind, rain, wave-induced noise)
+- Improved acoustic volume attenuation and boundary loss modelling
+- Systematic environmental uncertainty modelling (sound speed and sensor position errors)
+
+### Signal and Source Modelling
+- Incorporation of measured source signatures
+- Expanded source directivity modelling
+- Additional sensing geometries (hull-mounted arrays, sonobuoys, distributed arrays)
+
+### Detection and Performance Analysis
+- Expanded detector metrics (ROC, PR curves)
+- Alternative SNR and beam power outputs (e.g., unnormalised beam power, robust SNR statistics, angle-dependent CFAR variants)
+
+### Extended Sensing Modalities
+- Active sonar modelling
+- Multistatic and bistatic configurations

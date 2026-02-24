@@ -6,7 +6,7 @@ from . import detector, models, platform, signal, sigproc, simulator, utils
 
 try:
     __version__ = version("nereus")
-except PackageNotFoundError:  # pragma: no cover
+except PackageNotFoundError:
     __version__ = "0+unknown"
 
 __all__ = [

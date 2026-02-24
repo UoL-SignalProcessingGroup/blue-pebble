@@ -317,11 +317,12 @@ class BroadbandPassiveSonarArraySimulator(SensorSimulator):
                         break
 
                 if target_state is None:
-                    # NOTE: Not sure what to do if this behavior occurs. I think targets should be present at all timesteps. Otherwise, error or warning. This would give no indication.
-                    # Target absent at this timestep: zero contribution keeps H_list_all
-                    # length equal to n_steps so frame-to-step interpolation stays valid.
-                    # H_list_all.append(np.zeros((num_sensors, len(frequencies)), dtype=np.complex64))
-                    # tdelay_list.append(0.0)
+                    # NOTE: Not sure what to do if this behavior occurs. I think targets should be
+                    # present at all timesteps. Otherwise, error or warning. This would give no
+                    # indication. Target absent at this timestep: zero contribution keeps
+                    # H_list_all length equal to n_steps so frame-to-step interpolation stays
+                    # valid. H_list_all.append(np.zeros((num_sensors, len(frequencies)),
+                    # dtype=np.complex64)) tdelay_list.append(0.0)
                     continue
 
                 # Run spectrum propagation to get H(f) for all sensors
