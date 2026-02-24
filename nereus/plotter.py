@@ -1481,32 +1481,17 @@ def plot_world(truths: list[GroundTruthPath], platform: Platform) -> go.Figure:
 
     fig.update_layout(
         autosize=False,
-        width=600,
-        height=600,
-        font=dict(size=16, color="black"),
         showlegend=True,
-        plot_bgcolor="white",
+        template="plotly_white",
         xaxis=dict(
             title=f"X Position ({unit})",
             range=x_range,
-            showgrid=True,
-            gridcolor="rgba(200,200,200,0.5)",
-            linecolor="black",
-            zeroline=True,
-            zerolinecolor="rgba(200, 200, 200, 0.5)",
-            zerolinewidth=0.5,
         ),
         yaxis=dict(
             title=f"Y Position ({unit})",
             range=y_range,
             scaleanchor="x",
             scaleratio=1,
-            showgrid=True,
-            gridcolor="rgba(200,200,200,0.5)",
-            linecolor="black",
-            zeroline=True,
-            zerolinecolor="rgba(200, 200, 200, 0.5)",
-            zerolinewidth=0.5,
         ),
     )
 
@@ -1596,10 +1581,9 @@ def plot_btr(
                 x=steering_azimuths,
                 colorscale="Viridis",
                 colorbar=dict(
-                    title=dict(text=data_type, side="right", font=dict(size=16)),
+                    title=dict(text=data_type, side="right"),
                     thickness=24,
                     len=1.0,
-                    tickfont=dict(size=14),
                     x=0.92,
                     xpad=0,
                 ),
@@ -1675,7 +1659,6 @@ def plot_btr(
         tick0=steering_azimuths[0],
         dtick=steering_azimuths[-1] // 3,
         tickangle=-45,
-        tickfont=dict(size=14),
         showgrid=True,
         gridcolor="rgba(200, 200, 200, 0.5)",
         title="Bearing (°)",
@@ -1691,7 +1674,6 @@ def plot_btr(
         showgrid=True,
         gridcolor="rgba(200, 200, 200, 0.5)",
         tickformat="%H:%M",
-        tickfont=dict(size=14),
         autorange=False,
         title="Time (HH:MM)",
         tickcolor="rgba(160, 160, 160, 1.0)",
@@ -1703,7 +1685,6 @@ def plot_btr(
     fig.update_layout(
         width=width_height_px[0],
         height=width_height_px[1],
-        font=dict(size=16, color="black"),
         showlegend=True,
         plot_bgcolor="white",
         paper_bgcolor="white",
@@ -1720,8 +1701,6 @@ def plot_spectrogram(
     y_lim: tuple[float, float] | None = None,
     yaxis_format: str = "kHz",
     fig_size: tuple[int, int] = (12, 6),
-    font_size_label: int = 16,
-    font_size_tick: int = 14,
 ) -> None:
     """Generate and display a formatted spectrogram with Plotly.
 
@@ -1741,10 +1720,6 @@ def plot_spectrogram(
         ``"kHz"`` to label y-axis in kHz or ``"hz"`` for Hz.
     fig_size : tuple[int, int]
         Figure size as ``(width, height)`` in notebook-style inches.
-    font_size_label : int
-        Axis label font size.
-    font_size_tick : int
-        Axis tick font size.
 
     """
     signal = np.asarray(signal)
@@ -1795,10 +1770,9 @@ def plot_spectrogram(
             zmin=vmin,
             zmax=vmax,
             colorbar=dict(
-                title=dict(text="Intensity (dB)", side="right", font=dict(size=16)),
+                title=dict(text="Intensity (dB)", side="right"),
                 thickness=24,
                 len=1.0,
-                tickfont=dict(size=14),
             ),
         )
     )
@@ -1806,22 +1780,17 @@ def plot_spectrogram(
     fig.update_layout(
         width=int(fig_size[0] * 100),
         height=int(fig_size[1] * 100),
-        # margin=dict(l=80, r=80, t=30, b=60),
         plot_bgcolor="white",
         paper_bgcolor="white",
     )
 
     fig.update_xaxes(
         title_text="Time (s)",
-        title_font=dict(size=font_size_label),
-        tickfont=dict(size=font_size_tick),
         range=[0, len(signal) / float(sr)],
         showgrid=False,
     )
     fig.update_yaxes(
         title_text=y_title,
-        title_font=dict(size=font_size_label),
-        tickfont=dict(size=font_size_tick),
         range=y_range,
         showgrid=False,
     )
