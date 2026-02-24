@@ -226,6 +226,7 @@ class OSCFARDetector(DetectionAlgorithm):
     )
     rank = Property(
         int,
+        default=1,
         doc="The k-th smallest value (1-indexed) to select from the sorted "
         "training cells. Must be between 1 and (2 * num_training_cells).",
     )
