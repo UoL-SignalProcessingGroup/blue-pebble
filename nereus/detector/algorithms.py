@@ -295,7 +295,8 @@ class OSCFARDetector(DetectionAlgorithm):
 
         # Select the k-th rank value as the noise estimate.
         # We use `self.rank - 1` for 0-based indexing.
-        noise_estimate = training_cells[:, self.rank - 1]
+        # Cast to int to guard against float injection from parameter sweeps.
+        noise_estimate = training_cells[:, int(self.rank) - 1]
 
         # The adaptive threshold is the noise estimate scaled by the factor.
         threshold = self.threshold_factor * noise_estimate
