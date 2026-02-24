@@ -5,7 +5,7 @@ build-backend = "setuptools.build_meta"
 [project]
 name = "nereus"
 dynamic = ["version"]
-description = "A Stone Soup plugin for underwater acoustic tracking."
+description = "A Stone Soup plugin for underwater acoustic sensing."
 readme = "README.md"
 requires-python = ">=3.10"
 authors = [
@@ -13,24 +13,34 @@ authors = [
     { name = "Fin Boulton", email = "F.Boulton@liverpool.ac.uk" },
 ]
 license = { text = "MIT" }
-keywords = ["nereus", "state estimation", "tracking", "sonar", "underwater-acoustics"]
+keywords = [
+    "nereus",
+    "underwater acoustics",
+    "passive sonar",
+    "beamforming",
+    "detection",
+    "tracking",
+    "stone soup",
+]
 classifiers = [
-    "Development Status :: 5 - Production/Stable",
+    "Development Status :: 4 - Beta",
     "Intended Audience :: Science/Research",
+    "License :: OSI Approved :: MIT License",
     "Operating System :: OS Independent",
     "Programming Language :: Python :: 3 :: Only",
+    "Programming Language :: Python :: 3.10",
+    "Programming Language :: Python :: 3.11",
+    "Programming Language :: Python :: 3.12",
     "Topic :: Scientific/Engineering",
 ]
 dependencies = [
     "numpy",
     "scipy",
-    "matplotlib",
-    "seaborn",
     "stonesoup>=1.8",
     "numba",
     "rocket-fft",
     "tqdm",
-    "plotly"
+    "plotly",
 ]
 
 [project.urls]
@@ -40,12 +50,13 @@ Repository = "https://github.com/jjwakefield/nereus"
 dev = [
     "ruff",
     "pytest",
+    "build",
 ]
 docs = [
     "sphinx",
     "sphinx-rtd-theme",
     "myst-parser",
-    "myst-nb"
+    "myst-nb",
 ]
 examples = [
     "ipykernel",
