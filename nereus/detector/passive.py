@@ -67,7 +67,7 @@ class PassiveSonarDetector(DetectionReader):
         return np.array(self._snr_history)
 
     @BufferedGenerator.generator_method
-    def detections_gen(self, progress_bar: bool = False, total_timesteps: int | None = None):
+    def detections_gen(self, progress_bar: bool = False, total_timesteps: int | None = None, beamformer_output_type: str = "snr_percentile", snr_percentile_val: int = 10):
         """Generate detections from sensor data.
 
         The generator iterates through ``sensor_data_gen``, computes an SNR map for each beamformed
@@ -80,6 +80,10 @@ class PassiveSonarDetector(DetectionReader):
             If True, wrap the input generator with a progress bar (default is False).
         total_timesteps : int, optional
             Total number of timesteps for the progress bar. Required if `progress_bar` is True.
+        beamformer_output_type : str, optional
+            Type of beamformer output to use for detection. Options are "snr_percentile" (default), "log_power", "power", or "median_power".
+        snr_percentile_val : int, optional
+            Percentile to use for noise power estimation when calculating SNR (default is 10).
 
         Yields
         ------
@@ -98,24 +102,40 @@ class PassiveSonarDetector(DetectionReader):
 
             # Process each sensor data object in the set
             for sensor_data in sensor_data_set:
+
                 # Extract the beamformed data from the sensor data
                 beamformed_data = sensor_data.beamformed_data
 
                 if beamformed_data.size == 0:
                     continue
 
-                # Calculate directional power for each beam
-                directional_power = np.mean(np.abs(beamformed_data) ** 2, axis=1)
+                if beamformer_output_type == "snr_percentile":
 
-                # Estimate noise power as the 10th percentile of directional power
-                # More stable than minimum, avoids outliers and division by zero
-                noise_power_estimate = np.percentile(directional_power, 10)
+                    # Calculate directional power for each beam
+                    directional_power = np.mean(np.abs(beamformed_data) ** 2, axis=1)
 
-                # Calculate SNR
-                epsilon = np.finfo(float).eps
-                snr = 10 * np.log10(
-                    (directional_power + epsilon) / (noise_power_estimate + epsilon)
-                )
+                    # Estimate noise power as the 10th percentile of directional power
+                    # More stable than minimum, avoids outliers and division by zero
+                    noise_power_estimate = np.percentile(directional_power, snr_percentile_val)
+
+                    # Calculate SNR
+                    epsilon = np.finfo(float).eps
+                    snr = 10 * np.log10(
+                        (directional_power + epsilon) / (noise_power_estimate + epsilon)
+                    )
+                elif beamformer_output_type == "median_power":
+                    directional_power = np.mean(np.abs(beamformed_data) ** 2, axis=1)
+                    noise_power_estimate = np.median(directional_power)
+                    epsilon = np.finfo(float).eps
+                    snr = 10 * np.log10(
+                        (directional_power + epsilon) / (noise_power_estimate + epsilon)
+                    )
+                elif beamformer_output_type == "log_power":
+                    snr = 10 * np.log10(np.mean(np.abs(beamformed_data) ** 2, axis=1))
+                elif beamformer_output_type == "power":
+                    snr = np.mean(np.abs(beamformed_data) ** 2, axis=1)
+                else:
+                    raise ValueError(f"Unsupported beamformer_output_type: {beamformer_output_type}")
 
                 # Run the detection chain on the SNR map
                 raw_detections = self._run_detection_chain(snr)
