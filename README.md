@@ -228,8 +228,7 @@ Planned and potential extensions include:
 - Additional sensing geometries (hull-mounted arrays, sonobuoys, distributed arrays)
 
 #### Detection and Performance Analysis
-- Expanded detector metrics (ROC, PR curves)
-- Alternative SNR and beam power outputs (e.g., unnormalised beam power, robust SNR statistics, angle-dependent CFAR variants)
+- Alternative SNR and beam power outputs (e.g., angle-dependent CFAR variants)
 
 #### Extended Sensing Modalities
 - Active sonar modelling
