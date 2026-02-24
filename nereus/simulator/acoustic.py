@@ -317,6 +317,10 @@ class BroadbandPassiveSonarArraySimulator(SensorSimulator):
                         break
 
                 if target_state is None:
+                    # Target absent at this timestep: zero contribution keeps H_list_all
+                    # length equal to n_steps so frame-to-step interpolation stays valid.
+                    H_list_all.append(np.zeros((num_sensors, len(frequencies)), dtype=np.complex64))
+                    tdelay_list.append(0.0)
                     continue
 
                 # Run spectrum propagation to get H(f) for all sensors

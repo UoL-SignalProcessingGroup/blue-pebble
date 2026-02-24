@@ -12,6 +12,7 @@ import numpy as np
 import plotly.express as px
 import plotly.graph_objects as go
 import seaborn as sns
+from plotly.subplots import make_subplots
 from matplotlib.animation import FuncAnimation
 from matplotlib.axes import Axes
 from matplotlib.patches import Ellipse, Patch
@@ -21,6 +22,8 @@ from stonesoup.types.detection import Clutter, Detection, MissedDetection, TrueD
 from stonesoup.types.groundtruth import GroundTruthPath
 from stonesoup.types.track import Track
 from tqdm.auto import tqdm
+
+from nereus.detector.metrics import SweepResult, SweepSpec  # noqa: F401
 
 # A default style guide for all plot appearances
 DEFAULT_STYLE_GUIDE = {
@@ -1793,6 +1796,259 @@ def plot_spectrogram(
         title_text=y_title,
         range=y_range,
         showgrid=False,
+    )
+
+    return fig
+
+
+def plot_roc(
+    results: list[SweepResult],
+    show_diagonal: bool = True,
+    width_height_px: tuple[int, int] = (600, 500),
+) -> go.Figure:
+    """Plot Receiver Operating Characteristic (ROC) curves for one or more sweep results.
+
+    Parameters
+    ----------
+    results : list[SweepResult]
+        Sweep results produced by :func:`~nereus.detector.metrics.sweep_detection_parameter`.
+        Each result is drawn as a separate trace using its ``label`` attribute.
+    show_diagonal : bool
+        If ``True`` (default), overlay the random-classifier diagonal.
+    width_height_px : tuple[int, int]
+        Figure dimensions in pixels.  Default is ``(600, 500)``.
+
+    Returns
+    -------
+    go.Figure
+        Plotly figure containing the ROC curves.
+
+    """
+    colorway = px.colors.qualitative.Plotly
+    grid_color = "rgba(200, 200, 200, 0.5)"
+    axis_line = "rgba(160, 160, 160, 1.0)"
+
+    fig = go.Figure()
+
+    for i, result in enumerate(results):
+        order = np.argsort(result.fpr)
+        name = f"{result.label} (AUC={result.auc_roc:.3f})"
+        fig.add_trace(
+            go.Scatter(
+                x=result.fpr[order],
+                y=result.tpr[order],
+                mode="lines",
+                line=dict(width=2, color=colorway[i % len(colorway)]),
+                name=name,
+            )
+        )
+
+    if show_diagonal:
+        fig.add_trace(
+            go.Scatter(
+                x=[0.0, 1.0],
+                y=[0.0, 1.0],
+                mode="lines",
+                line=dict(width=1, color="grey", dash="dash"),
+                name="Random",
+                showlegend=True,
+            )
+        )
+
+    fig.update_layout(
+        template="plotly_white",
+        width=width_height_px[0],
+        height=width_height_px[1],
+        showlegend=True,
+        plot_bgcolor="white",
+        paper_bgcolor="white",
+    )
+    fig.update_xaxes(
+        title_text="False Positive Rate",
+        range=[0.0, 1.0],
+        showgrid=True,
+        gridcolor=grid_color,
+        showline=True,
+        linewidth=1,
+        linecolor=axis_line,
+    )
+    fig.update_yaxes(
+        title_text="True Positive Rate",
+        range=[0.0, 1.05],
+        showgrid=True,
+        gridcolor=grid_color,
+        showline=True,
+        linewidth=1,
+        linecolor=axis_line,
+    )
+
+    return fig
+
+
+def plot_pr(
+    results: list[SweepResult],
+    width_height_px: tuple[int, int] = (600, 500),
+) -> go.Figure:
+    """Plot Precision-Recall (PR) curves for one or more sweep results.
+
+    Parameters
+    ----------
+    results : list[SweepResult]
+        Sweep results produced by :func:`~nereus.detector.metrics.sweep_detection_parameter`.
+        Each result is drawn as a separate trace using its ``label`` attribute.
+    width_height_px : tuple[int, int]
+        Figure dimensions in pixels.  Default is ``(600, 500)``.
+
+    Returns
+    -------
+    go.Figure
+        Plotly figure containing the PR curves.
+
+    """
+    colorway = px.colors.qualitative.Plotly
+    grid_color = "rgba(200, 200, 200, 0.5)"
+    axis_line = "rgba(160, 160, 160, 1.0)"
+
+    fig = go.Figure()
+
+    for i, result in enumerate(results):
+        order = np.argsort(result.recall)
+        name = f"{result.label} (AUC={result.auc_pr:.3f})"
+        fig.add_trace(
+            go.Scatter(
+                x=result.recall[order],
+                y=result.precision[order],
+                mode="lines",
+                line=dict(width=2, color=colorway[i % len(colorway)]),
+                name=name,
+            )
+        )
+
+    fig.update_layout(
+        template="plotly_white",
+        width=width_height_px[0],
+        height=width_height_px[1],
+        showlegend=True,
+        plot_bgcolor="white",
+        paper_bgcolor="white",
+    )
+    fig.update_xaxes(
+        title_text="Recall",
+        range=[0.0, 1.0],
+        showgrid=True,
+        gridcolor=grid_color,
+        showline=True,
+        linewidth=1,
+        linecolor=axis_line,
+    )
+    fig.update_yaxes(
+        title_text="Precision",
+        range=[0.0, 1.05],
+        showgrid=True,
+        gridcolor=grid_color,
+        showline=True,
+        linewidth=1,
+        linecolor=axis_line,
+    )
+
+    return fig
+
+
+def plot_roc_pr(
+    results: list[SweepResult],
+    show_diagonal: bool = True,
+    width_height_px: tuple[int, int] = (1100, 500),
+) -> go.Figure:
+    """Plot ROC and Precision-Recall curves side-by-side for one or more sweep results.
+
+    Parameters
+    ----------
+    results : list[SweepResult]
+        Sweep results produced by :func:`~nereus.detector.metrics.sweep_detection_parameter`.
+        Each result is drawn as a separate trace pair (same colour in both subplots)
+        using its ``label`` attribute.
+    show_diagonal : bool
+        If ``True`` (default), overlay the random-classifier diagonal on the ROC subplot.
+    width_height_px : tuple[int, int]
+        Figure dimensions in pixels.  Default is ``(1100, 500)``.
+
+    Returns
+    -------
+    go.Figure
+        Plotly figure with ROC (left) and PR (right) subplots.
+
+    """
+    colorway = px.colors.qualitative.Plotly
+    grid_color = "rgba(200, 200, 200, 0.5)"
+    line_color = "rgba(160, 160, 160, 1.0)"
+
+    fig = make_subplots(rows=1, cols=2, subplot_titles=("ROC Curve", "Precision-Recall Curve"))
+
+    for i, result in enumerate(results):
+        color = colorway[i % len(colorway)]
+        roc_order = np.argsort(result.fpr)
+        pr_order = np.argsort(result.recall)
+
+        fig.add_trace(
+            go.Scatter(
+                x=result.fpr[roc_order],
+                y=result.tpr[roc_order],
+                mode="lines",
+                line=dict(width=2, color=color),
+                name=f"{result.label} (AUC={result.auc_roc:.3f})",
+                legendgroup=result.label,
+            ),
+            row=1,
+            col=1,
+        )
+        fig.add_trace(
+            go.Scatter(
+                x=result.recall[pr_order],
+                y=result.precision[pr_order],
+                mode="lines",
+                line=dict(width=2, color=color),
+                name=f"{result.label} (AUC={result.auc_pr:.3f})",
+                legendgroup=result.label,
+                showlegend=False,  # suppress duplicate; ROC trace represents this group
+            ),
+            row=1,
+            col=2,
+        )
+
+    if show_diagonal:
+        fig.add_trace(
+            go.Scatter(
+                x=[0.0, 1.0],
+                y=[0.0, 1.0],
+                mode="lines",
+                line=dict(width=1, color="grey", dash="dash"),
+                name="Random",
+                showlegend=True,
+            ),
+            row=1,
+            col=1,
+        )
+
+    axis_style = dict(
+        showgrid=True,
+        gridcolor=grid_color,
+        showline=True,
+        linewidth=1,
+        linecolor=line_color,
+    )
+
+    fig.update_xaxes(title_text="False Positive Rate", range=[0.0, 1.0], **axis_style, col=1)
+    fig.update_yaxes(title_text="True Positive Rate", range=[0.0, 1.05], **axis_style, col=1)
+    fig.update_xaxes(title_text="Recall", range=[0.0, 1.0], **axis_style, col=2)
+    fig.update_yaxes(title_text="Precision", range=[0.0, 1.05], **axis_style, col=2)
+
+    fig.update_layout(
+        template="plotly_white",
+        width=width_height_px[0],
+        height=width_height_px[1],
+        showlegend=True,
+        plot_bgcolor="white",
+        paper_bgcolor="white",
     )
 
     return fig
