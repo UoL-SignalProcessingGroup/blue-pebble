@@ -63,6 +63,7 @@ This separation enables systematic experimentation across modelling assumptions 
   - CFAR
   - Peak detection
   - Threshold detection
+- Detector metrics (e.g., ROC, PR curves)
 - Passive sonar simulation and detection chain
 - Integration with Stone Soup for tracking and data association
 - Plotting utilities for bearings and Cartesian tracks

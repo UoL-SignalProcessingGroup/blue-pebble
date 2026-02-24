@@ -67,7 +67,7 @@ class PassiveSonarDetector(DetectionReader):
         return np.array(self._snr_history)
 
     @BufferedGenerator.generator_method
-    def detections_gen(self, progress_bar: bool = False):
+    def detections_gen(self, progress_bar: bool = False, total_timesteps: int | None = None):
         """Generate detections from sensor data.
 
         The generator iterates through ``sensor_data_gen``, computes an SNR map for each beamformed
@@ -87,7 +87,7 @@ class PassiveSonarDetector(DetectionReader):
         """
         sensor_data_iterator = self.sensor_data_gen
         if progress_bar:
-            sensor_data_iterator = tqdm(sensor_data_iterator, desc="Generating Detections")
+            sensor_data_iterator = tqdm(sensor_data_iterator, desc="Generating Detections", total=total_timesteps)
 
         for timestamp, sensor_data_set in sensor_data_iterator:
             detections = set()

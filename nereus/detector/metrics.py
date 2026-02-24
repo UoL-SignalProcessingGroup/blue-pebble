@@ -88,7 +88,7 @@ class SweepSpec:
     detection_chain: list[DetectionAlgorithm]
     algorithm_index: int
     param_name: str
-    param_values: np.ndarray | list[float]
+    param_values: np.ndarray | list[float] | list[int]
     label: str | None = None
 
 
