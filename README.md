@@ -12,6 +12,7 @@ Nereus is a high-fidelity simulation framework for underwater acoustic scenarios
 - Ambient noise field simulation (white/pink noise)
 - Beamforming (delay-and-sum, frequency domain, MVDR)
 - Detection algorithms (CFAR, peak, threshold)
+- Detector metrics (e.g., ROC, PR curves)
 - Passive sonar simulation and detection chain
 - Integration with Stone Soup for tracking and data association
 - Plotting utilities for bearings and Cartesian tracks
@@ -22,7 +23,6 @@ Nereus is a high-fidelity simulation framework for underwater acoustic scenarios
 - Using real environmental data (e.g., bathymetry, sound speed profiles)
 - Using real source signature data
 - Different output options from SNR (e.g., unormalised beampower, SNR from mean/median, SNR per angle from CA/OS-CFAR)
-- Detector metrics (e.g., ROC, PR curves)
 - Systematic sound speed and sensor position errors
 - Alternative acoustic sensors (hull mounted arrays, sonobuoys...)
 - Coherent environmental ambient noise modelling (wind, rain, waves...)
