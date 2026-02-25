@@ -8,7 +8,7 @@ from scipy.linalg import cho_factor, cho_solve
 from stonesoup.base import Base, Property
 from stonesoup.platform.base import Platform
 
-from nereus.models.environment import SoundSpeedProfile
+from ..models.environment import SoundSpeedProfile
 
 
 class Beamformer(Base, ABC):

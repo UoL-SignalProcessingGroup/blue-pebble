@@ -9,8 +9,8 @@ from shutil import which
 import numpy as np
 from stonesoup.base import Base, Property
 
-from nereus.models.environment import Bathymetry, SoundSpeedProfile
-from nereus.utils import read_shade_file
+from ...utils import read_shade_file
+from ..environment import Bathymetry, SoundSpeedProfile
 
 
 class AcousticPropagationModel(ABC, Base):

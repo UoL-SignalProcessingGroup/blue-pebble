@@ -12,7 +12,7 @@ from stonesoup.types.detection import Detection
 from stonesoup.types.groundtruth import GroundTruthPath
 from stonesoup.types.track import Track
 
-from nereus.detector.metrics import SweepResult
+from .detector.metrics import SweepResult
 
 
 def _distance_axis_scale(min_val: float, max_val: float) -> tuple[float, str]:

@@ -9,7 +9,7 @@ from stonesoup.reader.base import DetectionReader
 from stonesoup.types.detection import Detection
 from tqdm import tqdm
 
-from nereus.detector import DetectionAlgorithm
+from .algorithms import DetectionAlgorithm
 
 
 class PassiveSonarDetector(DetectionReader):
@@ -67,7 +67,13 @@ class PassiveSonarDetector(DetectionReader):
         return np.array(self._snr_history)
 
     @BufferedGenerator.generator_method
-    def detections_gen(self, progress_bar: bool = False, total_timesteps: int | None = None, beamformer_output_type: str = "snr_percentile", snr_percentile_val: int = 10):
+    def detections_gen(
+        self,
+        progress_bar: bool = False,
+        total_timesteps: int | None = None,
+        beamformer_output_type: str = "snr_percentile",
+        snr_percentile_val: int = 10,
+    ):
         """Generate detections from sensor data.
 
         The generator iterates through ``sensor_data_gen``, computes an SNR map for each beamformed
@@ -81,7 +87,8 @@ class PassiveSonarDetector(DetectionReader):
         total_timesteps : int, optional
             Total number of timesteps for the progress bar. Required if `progress_bar` is True.
         beamformer_output_type : str, optional
-            Type of beamformer output to use for detection. Options are "snr_percentile" (default), "log_power", "power", or "median_power".
+            Type of beamformer output to use for detection. Options are "snr_percentile" (default),
+            "log_power", "power", or "median_power".
         snr_percentile_val : int, optional
             Percentile to use for noise power estimation when calculating SNR (default is 10).
 
@@ -102,7 +109,6 @@ class PassiveSonarDetector(DetectionReader):
 
             # Process each sensor data object in the set
             for sensor_data in sensor_data_set:
-
                 # Extract the beamformed data from the sensor data
                 beamformed_data = sensor_data.beamformed_data
 
@@ -110,7 +116,6 @@ class PassiveSonarDetector(DetectionReader):
                     continue
 
                 if beamformer_output_type == "snr_percentile":
-
                     # Calculate directional power for each beam
                     directional_power = np.mean(np.abs(beamformed_data) ** 2, axis=1)
 
@@ -135,7 +140,9 @@ class PassiveSonarDetector(DetectionReader):
                 elif beamformer_output_type == "power":
                     snr = np.mean(np.abs(beamformed_data) ** 2, axis=1)
                 else:
-                    raise ValueError(f"Unsupported beamformer_output_type: {beamformer_output_type}")
+                    raise ValueError(
+                        f"Unsupported beamformer_output_type: {beamformer_output_type}"
+                    )
 
                 # Run the detection chain on the SNR map
                 raw_detections = self._run_detection_chain(snr)

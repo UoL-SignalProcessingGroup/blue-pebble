@@ -8,11 +8,11 @@ from stonesoup.base import Property
 from stonesoup.simulator.base import SensorSimulator
 from stonesoup.types.sensordata import SensorData
 
-from nereus.models.propagation import AcousticPropagationModel
-from nereus.platform import TowedArrayPlatform
-from nereus.signal.ambient import AmbientNoise
-from nereus.signal.base import Signal
-from nereus.sigproc.beamformer import Beamformer, SteeringCalculator
+from ..models.propagation import AcousticPropagationModel
+from ..platform import TowedArrayPlatform
+from ..signal.ambient import AmbientNoise
+from ..signal.base import Signal
+from ..sigproc.beamformer import Beamformer, SteeringCalculator
 
 
 class PassiveSonarSensorData(SensorData):

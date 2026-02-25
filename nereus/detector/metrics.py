@@ -59,7 +59,7 @@ from dataclasses import dataclass
 
 import numpy as np
 
-from nereus.detector.algorithms import DetectionAlgorithm
+from .algorithms import DetectionAlgorithm
 
 
 @dataclass
