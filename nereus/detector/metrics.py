@@ -211,6 +211,14 @@ def _compute_timestep_metrics(
 
     return _TimestepMetrics(tp=tp, fp=fp, fn=fn, tn=tn)
 
+
+def _safe_ratio(numerator: np.ndarray, denominator: np.ndarray, default: float) -> np.ndarray:
+    """Return ``numerator / denominator`` with a default where denominator is zero."""
+    result = np.full(np.shape(denominator), default, dtype=float)
+    np.divide(numerator, denominator, out=result, where=denominator > 0)
+    return result
+
+
 @dataclass
 class SweepResult:
     """Aggregated detection metrics from a parameter sweep.
@@ -247,7 +255,7 @@ class SweepResult:
         Defaults to 1 where TP + FP = 0 (no detections issued).
         """
         denom = self.tp + self.fp
-        return np.where(denom > 0, self.tp / denom, 1.0)
+        return _safe_ratio(self.tp, denom, default=1.0)
 
     @property
     def recall(self) -> np.ndarray:
@@ -256,7 +264,7 @@ class SweepResult:
         Defaults to 0 where TP + FN = 0 (no positives present).
         """
         denom = self.tp + self.fn
-        return np.where(denom > 0, self.tp / denom, 0.0)
+        return _safe_ratio(self.tp, denom, default=0.0)
 
     @property
     def tpr(self) -> np.ndarray:
@@ -270,14 +278,14 @@ class SweepResult:
         Defaults to 0 where FP + TN = 0.
         """
         denom = self.fp + self.tn
-        return np.where(denom > 0, self.fp / denom, 0.0)
+        return _safe_ratio(self.fp, denom, default=0.0)
 
     @property
     def f1(self) -> np.ndarray:
         """Harmonic mean of precision and recall."""
         p, r = self.precision, self.recall
         denom = p + r
-        return np.where(denom > 0, 2.0 * p * r / denom, 0.0)
+        return _safe_ratio(2.0 * p * r, denom, default=0.0)
 
     @property
     def auc_roc(self) -> float:

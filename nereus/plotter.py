@@ -465,14 +465,8 @@ def plot_btr(
         tick0=bearing_start,
         dtick=bearing_span / 6.0 if bearing_span > 0 else 1.0,
         tickangle=-45,
-        showgrid=True,
-        gridcolor="rgba(200, 200, 200, 0.5)",
         title="Bearing (°)",
-        ticks="outside",
-        tickcolor="rgba(160, 160, 160, 1.0)",
         showline=True,
-        linewidth=1,
-        linecolor="rgba(160, 160, 160, 1.0)",
     )
     if not using_subplot_target:
         xaxis_config["domain"] = [0.0, 0.9]
@@ -485,15 +479,10 @@ def plot_btr(
     yaxis_config = dict(
         # Set explicit descending bounds to keep a consistent BTR orientation.
         range=[np.max(timesteps_array), np.min(timesteps_array)],
-        showgrid=True,
-        gridcolor="rgba(200, 200, 200, 0.5)",
         tickformat="%H:%M",
         autorange=False,
         title="Time (HH:MM)",
-        tickcolor="rgba(160, 160, 160, 1.0)",
         showline=True,
-        linewidth=1,
-        linecolor="rgba(160, 160, 160, 1.0)",
     )
     if using_subplot_target:
         target_fig.update_yaxes(**yaxis_config, row=row, col=col)
@@ -502,6 +491,7 @@ def plot_btr(
 
     if not using_subplot_target:
         target_fig.update_layout(
+            template="plotly_white",
             width=figsize[0],
             height=figsize[1],
             showlegend=True,
@@ -612,8 +602,7 @@ def plot_spectrogram(
     fig.update_layout(
         width=int(figsize[0]),
         height=int(figsize[1]),
-        plot_bgcolor="white",
-        paper_bgcolor="white",
+        template="plotly_white",
     )
 
     fig.update_xaxes(
@@ -810,8 +799,6 @@ def plot_roc_pr(
 
     """
     colorway = px.colors.qualitative.Plotly
-    grid_color = "rgba(200, 200, 200, 0.5)"
-    line_color = "rgba(160, 160, 160, 1.0)"
 
     fig = make_subplots(rows=1, cols=2, subplot_titles=("ROC Curve", "Precision-Recall Curve"))
 
@@ -861,26 +848,17 @@ def plot_roc_pr(
             col=1,
         )
 
-    axis_style = dict(
-        showgrid=True,
-        gridcolor=grid_color,
-        showline=True,
-        linewidth=1,
-        linecolor=line_color,
-    )
+    fig.update_xaxes(title_text="False Positive Rate", range=[0.0, 1.0], col=1)
+    fig.update_yaxes(title_text="True Positive Rate", range=[0.0, 1.05], col=1)
 
-    fig.update_xaxes(title_text="False Positive Rate", range=[0.0, 1.0], **axis_style, col=1)
-    fig.update_yaxes(title_text="True Positive Rate", range=[0.0, 1.05], **axis_style, col=1)
-    fig.update_xaxes(title_text="Recall", range=[0.0, 1.0], **axis_style, col=2)
-    fig.update_yaxes(title_text="Precision", range=[0.0, 1.05], **axis_style, col=2)
+    fig.update_xaxes(title_text="Recall", range=[0.0, 1.0], col=2)
+    fig.update_yaxes(title_text="Precision", range=[0.0, 1.05], col=2)
 
     fig.update_layout(
         template="plotly_white",
         width=figsize[0],
         height=figsize[1],
         showlegend=True,
-        plot_bgcolor="white",
-        paper_bgcolor="white",
     )
 
     return fig
