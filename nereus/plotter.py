@@ -160,6 +160,16 @@ def plot_world(truths: list[GroundTruthPath], platform: Platform) -> go.Figure:
     fig = go.Figure()
     fig.update_layout(colorway=px.colors.qualitative.Plotly)
     colorway = list(fig.layout.colorway or px.colors.qualitative.Plotly)
+    group_counts = {"platform": 1, "truths": num_truths}
+    added_group_titles: set[str] = set()
+
+    def _legend_group_kwargs(group_name: str, group_title: str) -> dict[str, str]:
+        """Return legend-group kwargs and show group title only when group has multiple entries."""
+        kwargs = {"legendgroup": group_name}
+        if group_counts.get(group_name, 0) > 1 and group_name not in added_group_titles:
+            kwargs["legendgrouptitle_text"] = group_title
+            added_group_titles.add(group_name)
+        return kwargs
 
     if len(platform.platform_history) == 0:
         raise ValueError("platform.platform_history is empty")
@@ -215,6 +225,7 @@ def plot_world(truths: list[GroundTruthPath], platform: Platform) -> go.Figure:
                 mode="markers",
                 marker=dict(color="black", size=10),
                 name="Platform",
+                **_legend_group_kwargs("platform", "Platform"),
             )
         )
     else:
@@ -225,10 +236,11 @@ def plot_world(truths: list[GroundTruthPath], platform: Platform) -> go.Figure:
                 mode="lines",
                 line=dict(color="black", width=3),
                 name="Platform",
+                **_legend_group_kwargs("platform", "Platform"),
             )
         )
 
-    names = [f"Target {i + 1}" if num_truths > 1 else "Target" for i in range(num_truths)]
+    names = [f"Truth {i + 1}" if num_truths > 1 else "Truth" for i in range(num_truths)]
     for i in range(num_truths):
         fig.add_trace(
             go.Scatter(
@@ -237,6 +249,7 @@ def plot_world(truths: list[GroundTruthPath], platform: Platform) -> go.Figure:
                 mode="lines",
                 line=dict(color=colorway[i % len(colorway)], width=3, dash="5px,2px"),
                 name=names[i],
+                **_legend_group_kwargs("truths", "Ground Truths"),
             )
         )
 
@@ -361,6 +374,41 @@ def plot_btr(
 
     target_fig = go.Figure() if fig is None else fig
     using_subplot_target = fig is not None
+    existing_group_counts: dict[str, int] = {}
+    groups_with_titles: set[str] = set()
+    for trace in target_fig.data:
+        group = getattr(trace, "legendgroup", None)
+        if not group:
+            continue
+        group_name = str(group)
+        existing_group_counts[group_name] = existing_group_counts.get(group_name, 0) + 1
+        group_title = getattr(getattr(trace, "legendgrouptitle", None), "text", None)
+        if group_title:
+            groups_with_titles.add(group_name)
+
+    planned_group_counts = {
+        "detections": 1 if detections is not None else 0,
+        "tracks": len(tracks) if tracks is not None else 0,
+        "truths": len(truths) if truths is not None else 0,
+    }
+    total_group_counts = existing_group_counts.copy()
+    for group_name, count in planned_group_counts.items():
+        total_group_counts[group_name] = total_group_counts.get(group_name, 0) + count
+
+    added_legend_groups: set[str] = set()
+
+    def _legend_group_kwargs(group_name: str, group_title: str) -> dict[str, str]:
+        """Return legend-group kwargs and add a title once per group per figure."""
+        kwargs = {"legendgroup": group_name}
+        should_show_title = total_group_counts.get(group_name, 0) > 1
+        if (
+            should_show_title
+            and group_name not in groups_with_titles
+            and group_name not in added_legend_groups
+        ):
+            kwargs["legendgrouptitle_text"] = group_title
+            added_legend_groups.add(group_name)
+        return kwargs
 
     colorway = list(target_fig.layout.colorway or px.colors.qualitative.Plotly)
     track_colorway = list(reversed(colorway))
@@ -392,6 +440,7 @@ def plot_btr(
             mode="markers",
             marker=dict(size=5, line=dict(width=1), color="white", opacity=0.8),
             name="Detection",
+            **_legend_group_kwargs("detections", "Detections"),
         )
         if using_subplot_target:
             target_fig.add_trace(detection_trace, row=row, col=col)
@@ -420,6 +469,7 @@ def plot_btr(
                 connectgaps=False,
                 line=dict(color=track_color, width=4),
                 name=f"Track {idx + 1}" if len(tracks) > 1 else "Track",
+                **_legend_group_kwargs("tracks", "Tracks"),
             )
             if using_subplot_target:
                 target_fig.add_trace(track_trace, row=row, col=col)
@@ -446,7 +496,8 @@ def plot_btr(
                 mode="lines",
                 connectgaps=False,
                 line=dict(color=truth_color, width=3, dash="dash"),
-                name=f"Target {idx + 1}" if len(truths) > 1 else "Target",
+                name=f"Truth {idx + 1}" if len(truths) > 1 else "Truth",
+                **_legend_group_kwargs("truths", "Ground Truths"),
             )
             if using_subplot_target:
                 target_fig.add_trace(truth_trace, row=row, col=col)
