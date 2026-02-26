@@ -34,7 +34,7 @@ classifiers = [
     "Topic :: Scientific/Engineering",
 ]
 dependencies = [
-    "numpy",
+    "numpy>=1.17",
     "scipy",
     "stonesoup>=1.8",
     "numba",
