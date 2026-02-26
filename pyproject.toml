@@ -7,7 +7,7 @@ name = "nereus"
 dynamic = ["version"]
 description = "A Stone Soup plugin for underwater acoustic sensing."
 readme = "README.md"
-requires-python = ">=3.10"
+requires-python = ">=3.12,<3.15"
 authors = [
     { name = "Joshua J Wakefield", email = "J.J.Wakefield@liverpool.ac.uk" },
     { name = "Fin Boulton", email = "F.Boulton@liverpool.ac.uk" },
@@ -28,9 +28,9 @@ classifiers = [
     "License :: OSI Approved :: MIT License",
     "Operating System :: OS Independent",
     "Programming Language :: Python :: 3 :: Only",
-    "Programming Language :: Python :: 3.10",
-    "Programming Language :: Python :: 3.11",
     "Programming Language :: Python :: 3.12",
+    "Programming Language :: Python :: 3.13",
+    "Programming Language :: Python :: 3.14",
     "Topic :: Scientific/Engineering",
 ]
 dependencies = [
@@ -65,6 +65,7 @@ examples = [
 ]
 
 [tool.setuptools_scm]
+tag_regex = "^v?(?P<version>\\d+\\.\\d+\\.\\d+)(?:[-+].*)?$"
 
 [tool.ruff]
 line-length = 99
