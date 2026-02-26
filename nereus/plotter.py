@@ -139,6 +139,30 @@ def _validate_spectrogram_params(
     return canonical_format, normalized_y_lim
 
 
+def _normalize_plotly_figsize(figsize: tuple[float, float]) -> tuple[int, int]:
+    """Normalize a requested figure size to Plotly pixel dimensions.
+
+    For historical compatibility, small values are interpreted as inches and converted
+    using 100 px/in. Larger values are assumed to already be pixels.
+    """
+    if len(figsize) != 2:
+        raise ValueError("figsize must be a (width, height) pair")
+
+    width_raw = float(figsize[0])
+    height_raw = float(figsize[1])
+    if width_raw <= 0 or height_raw <= 0:
+        raise ValueError("figsize values must be positive")
+
+    # Matplotlib-style defaults like (12, 6) should map to sensible Plotly pixels.
+    if max(width_raw, height_raw) <= 40:
+        width_raw *= 100.0
+        height_raw *= 100.0
+
+    width_px = max(10, int(round(width_raw)))
+    height_px = max(10, int(round(height_raw)))
+    return width_px, height_px
+
+
 def plot_world(truths: list[GroundTruthPath], platform: Platform) -> go.Figure:
     """Plot the world picture of the platform and target trajectories.
 
@@ -579,7 +603,8 @@ def plot_spectrogram(
     yaxis_format : str
         ``"kHz"`` to label y-axis in kHz or ``"Hz"`` for Hz.
     figsize : tuple[int, int]
-        Figure size as ``(width, height)`` in pixels.
+        Figure size. Values that look like inches (for example ``(12, 6)``) are
+        converted to pixels using 100 px/in; larger values are treated as pixels.
 
     Returns
     -------
@@ -650,11 +675,8 @@ def plot_spectrogram(
         )
     )
 
-    fig.update_layout(
-        width=int(figsize[0]),
-        height=int(figsize[1]),
-        template="plotly_white",
-    )
+    width_px, height_px = _normalize_plotly_figsize(figsize)
+    fig.update_layout(width=width_px, height=height_px, template="plotly_white")
 
     fig.update_xaxes(
         title_text="Time (s)",
