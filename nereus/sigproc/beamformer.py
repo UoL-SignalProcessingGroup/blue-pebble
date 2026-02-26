@@ -150,6 +150,178 @@ class DelayAndSumBeamformer(Beamformer):
             )
 
 
+class DelayAndSumBeamformerFast(DelayAndSumBeamformer):
+    """Vectorized broadband DAS with optional per-frequency output.
+
+    This class preserves the default broadband interface of
+    :class:`DelayAndSumBeamformer` for ``domain="broadband_power"``:
+    by default it returns shape ``(num_directions, num_frames)``.
+
+    Set ``output_mode="btf"`` to return per-frequency power with shape
+    ``(num_directions, num_frames, num_active_freq_bins)``.
+    """
+
+    output_mode = Property(
+        str,
+        default="bt",
+        doc=(
+            "Broadband output mode: 'bt' -> [direction, frame] (default), "
+            "'btf' -> [direction, frame, frequency]."
+        ),
+    )
+
+    @staticmethod
+    def _active_freq_bins(
+        *,
+        fs: float,
+        nfft_actual: int,
+        f0: float,
+        fmin: float | None,
+        fmax: float | None,
+    ) -> tuple[np.ndarray, np.ndarray]:
+        """Return active FFT-bin indices and frequencies for broadband integration."""
+        k = np.arange(nfft_actual)
+        k_centered = np.where(k <= nfft_actual // 2, k, k - nfft_actual)
+        f_bins = f0 + (fs / nfft_actual) * k_centered
+
+        fmin_use = f_bins.min() if fmin is None else float(fmin)
+        fmax_use = f_bins.max() if fmax is None else float(fmax)
+        active = (f_bins >= fmin_use) & (f_bins <= fmax_use)
+        active_idx = np.nonzero(active)[0]
+        return active_idx, f_bins[active_idx]
+
+    def das_broadband_power_btf(
+        self,
+        x: np.ndarray,  # (M, T)
+        fs: float,
+        nfft: int,
+        sd: np.ndarray,  # (Ndir, M) steering delays [s]
+        shading_weights: np.ndarray,  # (M,)
+        f0: float = 0.0,
+        fmin: float | None = None,
+        fmax: float | None = None,
+        overlap: int = 0,
+    ) -> np.ndarray:
+        """Return DAS power cube with shape ``(dir, frame, freq_active)``."""
+        _, _ = x.shape
+        x_stft = self._stft(x, nfft, overlap)  # (M, n_frames, nfft)
+        m, n_frames, nfft_actual = x_stft.shape
+
+        active_idx, active_freqs = self._active_freq_bins(
+            fs=fs,
+            nfft_actual=nfft_actual,
+            f0=f0,
+            fmin=fmin,
+            fmax=fmax,
+        )
+        n_dir = sd.shape[0]
+        power_btf = np.zeros((n_dir, n_frames, active_idx.size), dtype=np.float64)
+        if active_idx.size == 0:
+            return power_btf
+
+        # Process active bins in blocks to reduce Python loop overhead.
+        w = np.asarray(shading_weights, dtype=np.float64).reshape(1, m, 1)
+        phase_scale = (1j * 2.0 * np.pi) * np.asarray(sd, dtype=np.float64)[:, :, None]
+        freq_block = 16
+
+        for block_start in range(0, active_idx.size, freq_block):
+            block_idx_local = slice(block_start, block_start + freq_block)
+            block_bins = active_idx[block_idx_local]
+            f_block = active_freqs[block_idx_local]
+            s_block = x_stft[:, :, block_bins]  # (M, n_frames, Fblk)
+            a_block = np.exp(phase_scale * f_block[None, None, :])  # (Ndir, M, Fblk)
+            y_block = np.einsum(
+                "dmf,mtf,dmf->dtf",
+                a_block,
+                s_block,
+                w,
+                optimize="greedy",
+            )
+            power_btf[:, :, block_start : block_start + y_block.shape[2]] = (
+                np.abs(y_block) ** 2
+            )
+
+        return power_btf
+
+    def das_broadband_power(
+        self,
+        x: np.ndarray,
+        fs: float,
+        nfft: int,
+        sd: np.ndarray,
+        shading_weights: np.ndarray,
+        f0: float = 0.0,
+        fmin: float | None = None,
+        fmax: float | None = None,
+        overlap: int = 0,
+    ) -> np.ndarray:
+        """Perform broadband DAS and return shape ``(direction, frame)``."""
+        power_btf = self.das_broadband_power_btf(
+            x=x,
+            fs=fs,
+            nfft=nfft,
+            sd=sd,
+            shading_weights=shading_weights,
+            f0=f0,
+            fmin=fmin,
+            fmax=fmax,
+            overlap=overlap,
+        )
+        return np.sum(power_btf, axis=2, dtype=np.float64)
+
+    def beamform(
+        self, sensor_signals: np.ndarray, steering_delays_s: np.ndarray
+    ) -> np.ndarray:
+        """Process sensor signals; default broadband output matches base class."""
+        if self.domain != "broadband_power":
+            return super().beamform(sensor_signals, steering_delays_s)
+
+        num_sensors, _ = sensor_signals.shape
+        if num_sensors != steering_delays_s.shape[1]:
+            raise ValueError(
+                "Number of sensors must match the number of steering delays"
+            )
+
+        if self.shading is None:
+            shading_weights = np.ones(num_sensors) / num_sensors
+        else:
+            if len(self.shading) != num_sensors:
+                raise ValueError(
+                    f"Shading length ({len(self.shading)}) must match "
+                    f"number of sensors ({num_sensors})"
+                )
+            shading_weights = self.shading
+
+        mode = str(self.output_mode).strip().lower()
+        if mode in {"bt", "broadband", "power"}:
+            return self.das_broadband_power(
+                sensor_signals,
+                self.sampling_rate_hz,
+                self.nfft,
+                steering_delays_s,
+                shading_weights,
+                f0=self.f0,
+                fmin=self.fmin,
+                fmax=self.fmax,
+                overlap=self.overlap,
+            )
+        if mode in {"btf", "cube", "bands"}:
+            return self.das_broadband_power_btf(
+                sensor_signals,
+                self.sampling_rate_hz,
+                self.nfft,
+                steering_delays_s,
+                shading_weights,
+                f0=self.f0,
+                fmin=self.fmin,
+                fmax=self.fmax,
+                overlap=self.overlap,
+            )
+        raise ValueError(
+            f"Unsupported output_mode={self.output_mode!r}. Use 'bt' or 'btf'."
+        )
+
+
 @njit(
     (
         types.Array(types.complex128, 2, "C"),
