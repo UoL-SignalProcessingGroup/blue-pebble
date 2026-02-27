@@ -53,7 +53,29 @@ class DelayAndSumBeamformer(Beamformer):
     domain = Property(
         str,
         default="time",
-        doc="The domain for beamforming, either 'time' or 'frequency'",
+        doc="The domain for beamforming: 'time', 'frequency', or 'broadband_power_vectorised'",
+    )
+    nfft = Property(int, default=256, doc="STFT window size in samples (broadband_power_vectorised only)")
+    overlap = Property(int, default=0, doc="STFT overlap in samples (broadband_power_vectorised only)")
+    f0 = Property(float, default=0.0, doc="Carrier frequency for baseband data in Hz (broadband_power_vectorised only)")
+    fmin = Property(
+        float,
+        default=None,
+        doc="Minimum frequency to integrate in Hz (broadband_power_vectorised only)",
+    )
+    fmax = Property(
+        float,
+        default=None,
+        doc="Maximum frequency to integrate in Hz (broadband_power_vectorised only)",
+    )
+    output_mode = Property(
+        str,
+        default="bearing_time",
+        doc=(
+            "Broadband output mode for 'broadband_power_vectorised': "
+            "'bearing_time' -> (direction, frame), "
+            "'bearing_time_freq' -> (direction, frame, frequency)."
+        ),
     )
     nfft = Property(int, default=500, doc="STFT window size (samples)")
     overlap = Property(int, default=250, doc="STFT overlap (samples)")
@@ -95,8 +117,11 @@ class DelayAndSumBeamformer(Beamformer):
         # Store number of sensors for consistent shading
         self._num_sensors = None
 
-        if self.domain not in ["time", "frequency", "broadband_power"]:
-            raise ValueError("Invalid beamforming domain. Must be 'time' or 'frequency'")
+        if self.domain not in ["time", "frequency", "broadband_power_vectorised"]:
+            raise ValueError(
+                "Invalid beamforming domain. "
+                "Must be 'time', 'frequency', or 'broadband_power_vectorised'"
+            )
 
     def beamform(self, sensor_signals: np.ndarray, steering_delays_s: np.ndarray) -> np.ndarray:
         """Process sensor signals to form beams in specified directions.
@@ -152,52 +177,63 @@ class DelayAndSumBeamformer(Beamformer):
                 shading_weights,
                 self.sampling_rate_hz,
             )
-        elif self.domain == "broadband_power":
-            return self.das_broadband_power(
-                sensor_signals,
-                self.sampling_rate_hz,
-                self.nfft,
-                steering_delays_s,
-                shading_weights,
-                f0=self.f0,
-                fmin=self.fmin,
-                fmax=self.fmax,
-                overlap=self.overlap,
+        else:  # broadband_power_vectorised
+            mode = str(self.output_mode).strip().lower()
+            if mode in {"bearing_time", "broadband", "power"}:
+                return self.das_broadband_power(
+                    sensor_signals,
+                    self.sampling_rate_hz,
+                    self.nfft,
+                    steering_delays_s,
+                    shading_weights,
+                    f0=self.f0,
+                    fmin=self.fmin,
+                    fmax=self.fmax,
+                    overlap=self.overlap,
+                )
+            if mode in {"bearing_time_freq", "cube", "bands"}:
+                return self.das_broadband_power_btf(
+                    sensor_signals,
+                    self.sampling_rate_hz,
+                    self.nfft,
+                    steering_delays_s,
+                    shading_weights,
+                    f0=self.f0,
+                    fmin=self.fmin,
+                    fmax=self.fmax,
+                    overlap=self.overlap,
+                )
+            raise ValueError(
+                f"Unsupported output_mode={self.output_mode!r}. "
+                "Use 'bearing_time' or 'bearing_time_freq'."
             )
+
 
     @staticmethod
     def _stft(x: np.ndarray, nfft: int, overlap: int) -> np.ndarray:
         """Compute the Short-Time Fourier Transform (STFT) of the input signal.
 
-        Parameters
-        ----------
-        x : np.ndarray
-            Input signal array of shape (M, T) where M is the number of sensors and T is the number
-            of time samples.
-        nfft : int
-            The number of FFT points (window size).
-        overlap : int
-            The number of overlapping samples between windows.
+        Args:
+            x (np.ndarray): Input signal array of shape (M, T) where M is the
+                number of sensors and T is the number of time samples.
+            nfft (int): The number of FFT points (window size).
+            overlap (int): The number of overlapping samples between windows.
 
-        Returns
-        -------
-        np.ndarray
-            STFT of the input signal with shape (M, n_frames, nfft).
+        Returns:
+            np.ndarray: STFT of the input signal with shape (M, n_frames, nfft).
 
         """
-        # x: (M, T) complex
         M, T = x.shape
         if T < nfft:
-            raise ValueError(f"Input signal length T={T} is less than window size nfft={nfft}.")
+            raise ValueError(
+                f"Input signal length T={T} is less than window size nfft={nfft}."
+            )
         hop = max(1, nfft - overlap)
-        # pad to fit last frame exactly
         n_frames = 1 + (max(0, T - nfft) // hop)
         pad = (n_frames - 1) * hop + nfft - T
         if pad > 0:
             x = np.pad(x, ((0, 0), (0, pad)), mode="constant")
-
         window = np.hanning(nfft).astype(x.real.dtype)
-        # Make a 3D view: (M, n_frames, nfft)
         stride_t = x.strides[1]
         frames = np.lib.stride_tricks.as_strided(
             x,
@@ -205,97 +241,158 @@ class DelayAndSumBeamformer(Beamformer):
             strides=(x.strides[0], hop * stride_t, stride_t),
             writeable=False,
         )
-        frames = frames * window  # broadcasts over last axis
+        frames = frames * window
         return np.fft.fft(frames, axis=2)
 
-    def das_broadband_power(
+    @staticmethod
+    def _active_freq_bins(
+        *,
+        fs: float,
+        nfft_actual: int,
+        f0: float,
+        fmin: float | None,
+        fmax: float | None,
+    ) -> tuple[np.ndarray, np.ndarray]:
+        """Return active FFT-bin indices and their analog frequencies.
+
+        Args:
+            fs (float): Sampling frequency in Hz.
+            nfft_actual (int): Number of FFT bins.
+            f0 (float): Carrier frequency for baseband data in Hz.
+            fmin (float | None): Minimum frequency limit in Hz.
+            fmax (float | None): Maximum frequency limit in Hz.
+
+        Returns:
+            tuple[np.ndarray, np.ndarray]: Indices of active bins and their
+                corresponding frequencies in Hz.
+
+        """
+        k = np.arange(nfft_actual)
+        k_centered = np.where(k <= nfft_actual // 2, k, k - nfft_actual)
+        f_bins = f0 + (fs / nfft_actual) * k_centered
+        fmin_use = f_bins.min() if fmin is None else float(fmin)
+        fmax_use = f_bins.max() if fmax is None else float(fmax)
+        active = (f_bins >= fmin_use) & (f_bins <= fmax_use)
+        active_idx = np.nonzero(active)[0]
+        return active_idx, f_bins[active_idx]
+
+    def das_broadband_power_btf(
         self,
-        x: np.ndarray,  # (M, T)
+        x: np.ndarray,
         fs: float,
         nfft: int,
-        sd: np.ndarray,  # (Ndir, M) steering delays [s]
-        shading_weights: np.ndarray,  # (M,)
+        sd: np.ndarray,
+        shading_weights: np.ndarray,
         f0: float = 0.0,
         fmin: float | None = None,
         fmax: float | None = None,
         overlap: int = 0,
     ) -> np.ndarray:
-        """Perform broadband delay-and-sum beamforming in the frequency domain.
+        """Vectorised broadband DAS returning power cube ``(dir, frame, freq_active)``.
 
-        The input sensor array data are transformed using STFT, steered at each frequency bin using
-        phase shifts derived from ``sd``, and then integrated incoherently (power sum across
-        selected frequencies) to produce a direction-time power map.
+        Args:
+            x (np.ndarray): Sensor signals of shape (M, T).
+            fs (float): Sampling frequency in Hz.
+            nfft (int): STFT window size in samples.
+            sd (np.ndarray): Steering delays of shape (Ndir, M) in seconds.
+            shading_weights (np.ndarray): Per-sensor shading of shape (M,).
+            f0 (float, optional): Carrier frequency for baseband data in Hz.
+                Defaults to 0.0.
+            fmin (float | None, optional): Lower frequency limit in Hz.
+                Defaults to None.
+            fmax (float | None, optional): Upper frequency limit in Hz.
+                Defaults to None.
+            overlap (int, optional): STFT overlap in samples. Defaults to 0.
 
-        Parameters
-        ----------
-        x : np.ndarray
-            Complex or real sensor data with shape ``(num_sensors, num_samples)``.
-        fs : float
-            Sampling frequency in Hz.
-        nfft : int
-            STFT window length (number of FFT points).
-        sd : np.ndarray
-            Steering delays in seconds with shape ``(num_directions, num_sensors)``.
-        shading_weights : np.ndarray
-            Per-sensor beamforming weights with shape ``(num_sensors,)``.
-        f0 : float, optional
-            Carrier frequency offset in Hz for baseband data. Defaults to ``0.0``.
-        fmin : float | None, optional
-            Minimum frequency (Hz) included in the power integration. If ``None``, the minimum
-            available STFT bin frequency is used.
-        fmax : float | None, optional
-            Maximum frequency (Hz) included in the power integration. If ``None``, the maximum
-            available STFT bin frequency is used.
-        overlap : int, optional
-            Number of overlapping samples between adjacent STFT frames. Defaults to ``0``.
-
-        Returns
-        -------
-        np.ndarray
-            Broadband beam power map with shape ``(num_directions, num_frames)``. Each entry
-            contains integrated beam power over the active frequency bins for one steering
-            direction and one STFT frame.
+        Returns:
+            np.ndarray: Power cube of shape ``(Ndir, n_frames, n_active_freq_bins)``.
 
         """
-        M, _ = x.shape
-        X = self._stft(x, nfft, overlap)  # (M, n_frames, nfft)
-        M, n_frames, nfft_actual = X.shape
+        x_stft = self._stft(x, nfft, overlap)  # (M, n_frames, nfft)
+        m, n_frames, nfft_actual = x_stft.shape
 
-        k = np.arange(nfft_actual)
-        k_centered = np.where(k <= nfft_actual // 2, k, k - nfft_actual)
-        f_bins = f0 + (fs / nfft_actual) * k_centered
+        active_idx, active_freqs = self._active_freq_bins(
+            fs=fs, nfft_actual=nfft_actual, f0=f0, fmin=fmin, fmax=fmax
+        )
+        n_dir = sd.shape[0]
+        power_btf = np.zeros((n_dir, n_frames, active_idx.size), dtype=np.float64)
+        if active_idx.size == 0:
+            return power_btf
 
-        if fmin is None:
-            fmin = f_bins.min()
-        if fmax is None:
-            fmax = f_bins.max()
-        active = (f_bins >= fmin) & (f_bins <= fmax)
-        active_idx = np.nonzero(active)[0]
+        # Process active bins in blocks to reduce Python loop overhead.
+        w = np.asarray(shading_weights, dtype=np.float64).reshape(1, m, 1)
+        # phase_scale[d, m] = i*2*pi*tau_{d,m}; multiply by f to get phase shift
+        phase_scale = (1j * 2.0 * np.pi) * np.asarray(sd, dtype=np.float64)[:, :, None]
+        freq_block = 16
 
-        Ndir = sd.shape[0]
-        P = np.zeros((Ndir, n_frames), dtype=np.float64)
+        for block_start in range(0, active_idx.size, freq_block):
+            block_idx_local = slice(block_start, block_start + freq_block)
+            block_bins = active_idx[block_idx_local]
+            f_block = active_freqs[block_idx_local]
+            s_block = x_stft[:, :, block_bins]  # (M, n_frames, Fblk)
+            # Steering vectors: (Ndir, M, Fblk)
+            a_block = np.exp(phase_scale * f_block[None, None, :])
+            # Weighted beamsum: sum over sensors -> (Ndir, n_frames, Fblk)
+            y_block = np.einsum(
+                "dmf,mtf,dmf->dtf",
+                a_block,
+                s_block,
+                w,
+                optimize="greedy",
+            )
+            power_btf[:, :, block_start : block_start + y_block.shape[2]] = (
+                np.abs(y_block) ** 2
+            )
 
-        # Normalize weights
-        w = shading_weights.reshape(1, M, 1)  # (1, M, 1) for broadcasting
+        return power_btf
 
-        for i in active_idx:
-            f = f_bins[i]
+    def das_broadband_power(
+        self,
+        x: np.ndarray,
+        fs: float,
+        nfft: int,
+        sd: np.ndarray,
+        shading_weights: np.ndarray,
+        f0: float = 0.0,
+        fmin: float | None = None,
+        fmax: float | None = None,
+        overlap: int = 0,
+    ) -> np.ndarray:
+        """Vectorised broadband DAS returning power array ``(direction, frame)``.
 
-            # Snapshots at this bin: (M, n_frames)
-            S = X[:, :, i]
+        Args:
+            x (np.ndarray): Sensor signals of shape (M, T).
+            fs (float): Sampling frequency in Hz.
+            nfft (int): STFT window size in samples.
+            sd (np.ndarray): Steering delays of shape (Ndir, M) in seconds.
+            shading_weights (np.ndarray): Per-sensor shading of shape (M,).
+            f0 (float, optional): Carrier frequency for baseband data in Hz.
+                Defaults to 0.0.
+            fmin (float | None, optional): Lower frequency limit in Hz.
+                Defaults to None.
+            fmax (float | None, optional): Upper frequency limit in Hz.
+                Defaults to None.
+            overlap (int, optional): STFT overlap in samples. Defaults to 0.
 
-            # Steering phase for all dirs/sensors: (Ndir, M)
-            A = np.exp(1j * 2 * np.pi * f * sd)
+        Returns:
+            np.ndarray: Power array of shape ``(Ndir, n_frames)``.
 
-            # Beamform: Y = sum_m w_m * A(dir,m) * S(m,frame)
-            # Result: (Ndir, n_frames)
-            Y = np.sum((A[:, :, None] * S[None, :, :]) * w, axis=1)
-
-            # Accumulate power over frequency bins
-            P += np.abs(Y) ** 2
-
-        return P
-
+        """
+        return np.sum(
+            self.das_broadband_power_btf(
+                x=x,
+                fs=fs,
+                nfft=nfft,
+                sd=sd,
+                shading_weights=shading_weights,
+                f0=f0,
+                fmin=fmin,
+                fmax=fmax,
+                overlap=overlap,
+            ),
+            axis=2,
+            dtype=np.float64,
+        )
 
 @njit(
     (
