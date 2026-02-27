@@ -328,15 +328,22 @@ class BellhopAcousticPropagationModel(AcousticPropagationModel):
         doc="The path to Bellhop executable, defaults to 'bellhopcxx'",
     )
 
-    def __post_init__(self):
-        """Initialise the Bellhop acoustic propagation model."""
-        bellhop_path = which(self.exe_path)
+    def __init__(self, *args, **kwargs):
+        """Initialise and validate Bellhop executable availability."""
+        super().__init__(*args, **kwargs)
+        self.exe_path = self._resolve_bellhop_executable(self.exe_path)
+
+    @staticmethod
+    def _resolve_bellhop_executable(exe_path) -> str:
+        """Resolve Bellhop executable path and raise if unavailable."""
+        exe_name = str(exe_path)
+        bellhop_path = which(exe_name)
         if bellhop_path is None:
             raise FileNotFoundError(
-                f"Bellhop executable '{self.exe_path}' not found. Ensure it is installed and in "
+                f"Bellhop executable '{exe_name}' not found. Ensure it is installed and in "
                 "your system's PATH, or provide the full path via the 'exe_path' property."
             )
-        self.exe_path = bellhop_path
+        return bellhop_path
 
     def propagate(self, platform, source):
         """Run a Bellhop simulation for a single source and receiver.
