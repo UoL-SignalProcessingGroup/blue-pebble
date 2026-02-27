@@ -1,7 +1,6 @@
 from .beamformer import (  # noqa: D104
     Beamformer,
     DelayAndSumBeamformer,
-    DelayAndSumBeamformerFast,
     MinimumVarianceDistortionlessResponseBeamformer,
     SteeringCalculator,
 )
@@ -9,7 +8,6 @@ from .beamformer import (  # noqa: D104
 __all__ = [
     "Beamformer",
     "DelayAndSumBeamformer",
-    "DelayAndSumBeamformerFast",
     "MinimumVarianceDistortionlessResponseBeamformer",
     "SteeringCalculator",
 ]
