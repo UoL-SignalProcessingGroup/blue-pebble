@@ -5,7 +5,7 @@ Nereus follows Stone Soup-style contribution practices, adapted for this plugin 
 ## Development Setup
 
 1. Clone the repository and enter it.
-2. Create and activate a Python 3.10+ virtual environment.
+2. Create and activate a Python 3.11+ virtual environment.
 3. Install development dependencies:
 
 ```bash

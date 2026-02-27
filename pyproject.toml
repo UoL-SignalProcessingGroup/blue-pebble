@@ -7,7 +7,7 @@ name = "nereus"
 dynamic = ["version"]
 description = "A Stone Soup plugin for underwater acoustic sensing."
 readme = "README.md"
-requires-python = ">=3.12,<3.15"
+requires-python = ">=3.11"
 authors = [
     { name = "Joshua J Wakefield", email = "J.J.Wakefield@liverpool.ac.uk" },
     { name = "Fin Boulton", email = "F.Boulton@liverpool.ac.uk" },
@@ -28,19 +28,20 @@ classifiers = [
     "License :: OSI Approved :: MIT License",
     "Operating System :: OS Independent",
     "Programming Language :: Python :: 3 :: Only",
+    "Programming Language :: Python :: 3.11",
     "Programming Language :: Python :: 3.12",
     "Programming Language :: Python :: 3.13",
     "Programming Language :: Python :: 3.14",
     "Topic :: Scientific/Engineering",
 ]
 dependencies = [
-    "numpy>=1.17",
-    "scipy",
+    "numpy>=1.23",
+    "scipy>=1.9",
     "stonesoup>=1.8",
-    "numba",
-    "rocket-fft",
-    "tqdm",
-    "plotly",
+    "numba>=0.56",
+    "rocket-fft>=0.3.1",
+    "tqdm>=4.64",
+    "plotly>=5",
 ]
 
 [project.urls]
@@ -62,6 +63,18 @@ examples = [
     "ipykernel",
     "ipywidgets",
     "jupyterlab",
+]
+all = [
+  "ruff",
+  "pytest",
+  "build",
+  "sphinx",
+  "sphinx-rtd-theme",
+  "myst-parser",
+  "myst-nb",
+  "ipykernel",
+  "ipywidgets",
+  "jupyterlab",
 ]
 
 [tool.setuptools_scm]
