@@ -1,13 +1,17 @@
-from .acoustic import (  # noqa: D104
+"""Propagation models public API."""
+
+from .acoustic import (
     AcousticPropagationModel,
     BellhopAcousticPropagationModel,
     CylindricalAcousticPropagationModel,
     SphericalAcousticPropagationModel,
+    rtrsAcousticPropagationModel,
 )
 
 __all__ = [
     "AcousticPropagationModel",
-    "CylindricalAcousticPropagationModel",
-    "SphericalAcousticPropagationModel",
     "BellhopAcousticPropagationModel",
+    "CylindricalAcousticPropagationModel",
+    "rtrsAcousticPropagationModel",
+    "SphericalAcousticPropagationModel",
 ]

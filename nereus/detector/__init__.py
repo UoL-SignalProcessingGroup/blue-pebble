@@ -1,15 +1,22 @@
-from .algorithms import (  # noqa: D104
-    CFARDetector,
+"""Detector package public API."""
+
+from .algorithms import (
+    CACFARDetector,
     DetectionAlgorithm,
+    OSCFARDetector,
     PeakDetector,
     ThresholdDetector,
 )
+from .metrics import SweepResult, SweepSpec
 from .passive import PassiveSonarDetector
 
 __all__ = [
-    "PassiveSonarDetector",
+    "CACFARDetector",
     "DetectionAlgorithm",
-    "ThresholdDetector",
+    "OSCFARDetector",
     "PeakDetector",
-    "CFARDetector",
+    "PassiveSonarDetector",
+    "SweepResult",
+    "SweepSpec",
+    "ThresholdDetector",
 ]

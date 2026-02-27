@@ -1,3 +1,29 @@
-from .sound_speed_profile import Mackenzie, Munk, SoundSpeedProfile  # noqa: D104
+"""Environment models public API."""
 
-__all__ = ["SoundSpeedProfile", "Munk", "Mackenzie"]
+from .bathymetry import (
+    Bathymetry,
+    FlatBathymetry,
+    SeamountBathymetry,
+    WedgeBathymetry,
+)
+from .sound_speed_profile import (
+    Arctan,
+    Constant,
+    Linear,
+    Mackenzie,
+    Munk,
+    SoundSpeedProfile,
+)
+
+__all__ = [
+    "Arctan",
+    "Bathymetry",
+    "Constant",
+    "FlatBathymetry",
+    "Linear",
+    "Mackenzie",
+    "Munk",
+    "SeamountBathymetry",
+    "SoundSpeedProfile",
+    "WedgeBathymetry",
+]

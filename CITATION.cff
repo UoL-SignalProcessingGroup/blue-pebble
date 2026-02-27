@@ -1,0 +1,56 @@
+cff-version: 1.2.0
+message: >
+  If you use this software, please cite both the article and the software itself.
+title: "Blue Pebble: A Passive Sonar Simulation Framework for Tracking Research"
+type: software
+authors:
+  - family-names: Wakefield
+    given-names: Joshua J.
+    orcid: "https://orcid.org/0009-0008-7574-5484"
+  - family-names: Boulton
+    given-names: Finley
+  - family-names: Colquitt
+    given-names: Daniel J.
+  - family-names: Ralph
+    given-names: Jason F.
+  - family-names: Williams
+    given-names: Duncan P.
+
+repository-code: "https://github.com/jjwakefield/blue-pebble"
+url: "https://github.com/jjwakefield/blue-pebble"
+
+license: "MIT"
+
+version: "1.0.0"
+date-released: 2026-01-01
+
+keywords:
+  - passive sonar
+  - underwater acoustics
+  - beamforming
+  - acoustic propagation
+  - ray tracing
+  - towed arrays
+  - multi-target tracking
+  - detection theory
+  - simulation framework
+
+preferred-citation:
+  type: paper-conference
+  title: "A Sonar Signal Processing Plugin for Stone Soup"
+  authors:
+    - family-names: Wakefield
+      given-names: Joshua J.
+    - family-names: Boulton
+      given-names: Finley
+    - family-names: Colquitt
+      given-names: Daniel J.
+    - family-names: Ralph
+      given-names: Jason F.
+    - family-names: Williams
+      given-names: Duncan P.
+  year: 2026
+  conference:
+    name: "29th International Conference on Information Fusion (FUSION)"
+  publisher: IEEE
+  status: forthcoming

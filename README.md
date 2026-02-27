@@ -1,113 +1,235 @@
-# Nereus
+# Blue Pebble
 
-Nereus is a high-fidelity simulation framework for underwater acoustic scenarios, built as a plugin for the [Stone Soup](https://stonesoup.rtfd.io/) tracking library. It provides tools for generating realistic sensor data, simulating flexible towed hydrophone arrays, and evaluating state estimation algorithms.
+[![PyPI version](https://img.shields.io/pypi/v/blue-pebble.svg)](https://pypi.org/project/blue-pebble/)
+[![Python versions](https://img.shields.io/pypi/pyversions/blue-pebble.svg)](https://pypi.org/project/blue-pebble/)
+[![Ruff](https://img.shields.io/badge/lint-ruff-46a2f1)](https://github.com/astral-sh/ruff)(https://github.com/jjwakefield/nereus/actions)
+[![CI](https://github.com/jjwakefield/nereus/actions/workflows/ci.yml/badge.svg)](https://github.com/jjwakefield/nereus/actions)
+[![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](LICENSE)
+[![DOI](https://zenodo.org/badge/DOI/10.5281/zenodo.XXXXXXX.svg)](https://doi.org/10.5281/zenodo.XXXXXXX)
+
+**Blue Pebble** is a research-oriented simulation framework for underwater acoustic sensing, currently focused on passive sonar signal processing, acoustic propagation modelling, beamforming, detection, and multi-target tracking.
+
+Designed as a plugin for [Stone Soup](https://stonesoup.rtfd.io/), Blue Pebble enables reproducible research in:
+
+- Underwater acoustics
+- Passive sonar signal processing
+- Towed array modelling
+- Acoustic propagation modelling
+- Beamforming and detection theory
+- Target tracking and data association
+
+Blue Pebble provides modular acoustic propagation backends, ranging from analytical spreading laws to external ray-tracing solvers (e.g., Bellhop), enabling trade-offs between physical fidelity and computational efficiency.
+
+## Research Scope
+
+Blue Pebble is designed for:
+
+- Simulation-based evaluation of tracking algorithms
+- End-to-end passive sonar performance analysis
+- Synthetic dataset generation for algorithm validation
+- Controlled studies of propagation effects on detection and estimation
+- Reproducible academic experimentation
+
+While current functionality centres on passive sonar, the architecture is designed to support extension to additional sonar modalities, including active and multistatic configurations.
+
+The architecture separates:
+
+- Platform dynamics
+- Acoustic propagation
+- Signal generation
+- Beamforming
+- Detection
+- Tracking
+
+This separation enables systematic experimentation across modelling assumptions and algorithmic choices.
 
 ## Features
 
 - Multi-body kinematic model for flexible towed arrays ("follow-the-leader" dynamics)
-- Acoustic propagation models (Bellhop, cylindrical, spherical)
+- Multiple acoustic propagation models:
+  - Cylindrical spreading
+  - Spherical spreading
+  - Broadband ray tracing
+  - Bellhop (external executable)
 - Source signature generation (multi-tone, configurable)
+- Ownship noise modelling
 - Biological source simulation (e.g., whale calls, snapping shrimp)
 - Ambient noise field simulation (white/pink noise)
-- Beamforming (delay-and-sum, frequency domain)
-- Detection algorithms (CFAR, peak, threshold)
+- Beamforming:
+  - Delay-and-sum
+  - Frequency domain
+  - MVDR
+- Detection algorithms:
+  - CFAR
+  - Peak detection
+  - Threshold detection
+- Detector metrics (e.g., ROC, PR curves)
 - Passive sonar simulation and detection chain
 - Integration with Stone Soup for tracking and data association
 - Plotting utilities for bearings and Cartesian tracks
-- Example Jupyter notebooks for scenario setup, simulation, and tracking
+- Example Jupyter notebooks for scenario setup, simulation, detection, and tracking
 
-## Getting Started (Recommended Method: Dev Container)
+## Installation
 
-The easiest way to get started is by using the included Dev Container, which sets up a complete, pre-configured development environment with all dependencies, including the Bellhop acoustic model.
+### Basic Installation (Core Models Only)
 
-### Prerequisites
+```bash
+pip install blue-pebble
+```
 
-1.  **Docker Desktop**: [Download here](https://www.docker.com/products/docker-desktop)
-2.  **Visual Studio Code**: [Download here](https://code.visualstudio.com/)
-3.  **VS Code Dev Containers Extension**: [Install from Marketplace](https://marketplace.visualstudio.com/items?itemName=ms-vscode-remote.remote-containers)
+This installs the core framework with built-in propagation models.
 
-### Launching the Environment
+### Optional: Ray Tracing with Bellhop
 
-1.  **Clone the Repository**:
-    ```bash
-    git clone https://github.com/jjwakefield/nereus.git
-    cd nereus
-    ```
-2.  **Open in VS Code**:
-    ```bash
-    code .
-    ```
-3.  **Reopen in Container**:
-    When prompted, click "Reopen in Container" in the bottom-right corner.
-
-VS Code will build the container and connect to it. Your environment is now ready with all dependencies, including the compiled Bellhop executable.
-
----
-
-## Manual Installation (Alternative Method)
-
-If you prefer not to use Docker, you can set up the project manually:
-
-1.  **Clone the Repository**:
-    ```bash
-    git clone https://github.com/jjwakefield/nereus.git
-    cd nereus
-    ```
-2.  **Create and Activate a Virtual Environment** (Recommended):
-    ```bash
-    conda create --name nereus-env python=3.12
-    conda activate nereus-env
-    ```
-3.  **Install Nereus**:
-    ```bash
-    pip install -e .
-    ```
-
-### Bellhop Acoustic Model Dependency
-
-This project uses the **Bellhop** acoustic ray tracing model. If installing manually, you must install a compatible Bellhop executable yourself.
+Blue Pebble supports Bellhop via an external executable.
 
 We recommend [bellhopcuda](https://github.com/A-New-BellHope/bellhopcuda), a modern C++/CUDA port.
 
-#### Installation Steps
+> **Important**: Blue Pebble does **not** distribute Bellhop or bellhopcuda. These must be installed separately.
 
-**Windows Users:**  
-Download pre-compiled binaries from the [bellhopcuda Releases Page](https://github.com/A-New-BellHope/bellhopcuda/releases).
+#### Installing bellhopcuda
 
-**Linux/macOS/Windows (Build from Source):**
+**Windows (Precompiled)**
+Download precompiled binaries from the [bellhopcuda Releases page](https://github.com/A-New-BellHope/bellhopcuda/releases)
+
+Place `bellhopcxx.exe` somewhere on your system `PATH`, or provide its path explicitly in Blue Pebble.
+
+**Linux/macOS (Build from Source)**
+
 ```bash
 git clone https://github.com/A-New-BellHope/bellhopcuda.git
 cd bellhopcuda
-# Follow build instructions in their README.md
+# Follow build instructions in their README
 ```
 
-#### Make the Executable Accessible
+Ensure the resulting `bellhopcxx` executable is available on your `PATH`.
 
-Once you have the Bellhop executable (`bellhopcxx.exe` or `bellhopcxx`):
+#### Using Bellhop in Blue Pebble
 
-- **Option A:** Add its directory to your system PATH.
-- **Option B:** Copy it into `nereus/models/propagation/` (not tracked by Git).
+Blue Pebble automatically detects the executable:
 
-## Usage
+```python
+from bluepebble.models.propagation import BellhopAcousticPropagationModel
 
-- See the `examples/` directory for Jupyter notebooks demonstrating scenario setup, simulation, detection, and tracking.
-- The main modules are:
-    - [`nereus.platform.TowedArrayPlatform`](nereus/platform/towedarray.py)
-    - [`nereus.simulator.PassiveSonarArraySimulator`](nereus/simulator/acoustic.py)
-    - [`nereus.detector.PassiveSonarDetector`](nereus/detector/passive.py)
-    - [`nereus.plotter.BearingsPlotter`](nereus/plotter.py), [`nereus.plotter.CartesianPlotter`](nereus/plotter.py)
+model = BellhopAcousticPropagationModel(
+    env_depth=3000,
+    ssp=my_ssp
+)
+```
 
-## Documentation
+If needed, provide the full path:
 
-- Build API docs with Sphinx:  
-    ```sh
-    cd docs
-    make html
-    ```
-- See [docs/source/index.rst](docs/source/index.rst) for structure.
+```python
+from bluepebble.models.propagation import BellhopAcousticPropagationModel
+
+model = BellhopAcousticPropagationModel(
+    env_depth=3000,
+    ssp=my_ssp,
+    exe_path="/full/path/to/bellhopcxx"
+)
+```
+
+## Development
+
+### Recommended: Dev Container (Easiest Setup)
+
+For a fully configured development environment (including bellhopcuda and other build dependencies), use the included Dev Container.
+
+#### Requirements
+
+- Docker Engine (Docker Desktop on Windows/macOS, or Docker on Linux)
+
+Optional:
+- Visual Studio Code
+- VS Code Dev Containers extension
+
+Clone the repository:
+```bash
+git clone https://github.com/jjwakefield/blue-pebble.git
+```
+
+#### Using the Dev Container (VS Code Workflow)
+
+If using Visual Studio Code with the Dev Containers extension:
+```bash
+cd blue-pebble
+code .
+```
+
+When prompted, select **"Reopen in Container."**
+
+VS Code will:
+- Build the Docker image
+- Start the container
+- Mount the repository
+- Configure the Python interpreter automatically
+
+This provides a fully configured development environment including:
+- Python
+- Required build dependencies
+- Optional propagation model backends (e.g., bellhopcuda)
+
+#### Using the Container Without VS Code (CLI Workflow)
+
+You can build and run the container manually:
+```bash
+docker build -t blue-pebble-dev .
+docker run -it --rm -v $(pwd):/workspace blue-pebble-dev
+```
+
+On Windows PowerShell:
+```bash
+docker run -it --rm -v ${PWD}:/workspace blue-pebble-dev
+```
+
+This starts an interactive shell inside the container.
+
+## Citation
+
+If you use Blue Pebble in academic work, please cite the associated conference paper and the software release (via DOI when available).
+
+```bibtex
+@inproceedings{wakefield2026sonar,
+  title={A Sonar Signal Processing Plugin for Stone Soup},
+  author={Wakefield, Joshua J and Boulton, Finley and Colquitt, Daniel J. and Ralph, Jason F. and Williams, Duncan P.},
+  booktitle={2026 29th International Conference on Information Fusion (FUSION)},
+  pages={1--8},
+  year={2026},
+  organization={IEEE}
+}
+```
 
 ## License
 
-MIT License. See [LICENSE](LICENSE) and [NOTICE.MD](NOTICE.MD) for details and attributions.
+Blue Pebble is licensed under the MIT license.
 
----
+See `LICENSE` and `NOTICE.md` for details.
+
+## Third-Party Software
+
+Optional backends (e.g., bellhopcuda) are licensed separately.
+
+Blue Pebble does not distribute these components in its PyPI package. Users are responsible for complying with the licenses of any external tools they install.
+
+
+## Future Enhancements
+
+Planned and potential extensions include:
+
+#### Environmental Modelling
+- Integration of real environmental datasets (bathymetry, range-dependent sound speed profiles)
+- Coherent ambient noise modelling (wind, rain, wave-induced noise)
+- Improved acoustic volume attenuation and boundary loss modelling
+- Systematic environmental uncertainty modelling (sound speed and sensor position errors)
+
+#### Signal and Source Modelling
+- Incorporation of measured source signatures
+- Expanded source directivity modelling
+- Additional sensing geometries (hull-mounted arrays, sonobuoys, distributed arrays)
+
+#### Detection and Performance Analysis
+- Alternative SNR and beam power outputs (e.g., angle-dependent CFAR variants)
+
+#### Extended Sensing Modalities
+- Active sonar modelling
+- Multistatic and bistatic configurations

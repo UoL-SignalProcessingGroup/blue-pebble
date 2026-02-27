@@ -1,8 +1,4 @@
-"""Base signal properties and methods for signal models.
-
-© Copyright 2025 Joshua J. Wakefield.
-Licensed under the MIT License.
-"""
+"""Base signal properties and methods for signal models."""
 
 from abc import abstractmethod
 
@@ -13,10 +9,17 @@ from stonesoup.base import Base, Property
 class Signal(Base):
     """Signal base class.
 
-    This class provides a common interface for all signal types. It includes a
-    `generate` method that handles signal attenuation and phase-shifting for
-    array propagation, which calls the abstract `_generate_base_signal`
-    method that subclasses must implement.
+    This class provides a common interface for all signal types. It includes a `generate` method
+    that handles signal attenuation and phase-shifting for array propagation, which calls the
+    abstract `_generate_base_signal` method that subclasses must implement.
+
+    Parameters
+    ----------
+    duration_s : float
+        Duration of the signal in seconds.
+    sampling_rate_hz : int
+        Sampling rate in Hertz.
+
     """
 
     duration_s = Property(float, doc="Duration of the signal in seconds")
@@ -26,7 +29,9 @@ class Signal(Base):
     def num_samples(self) -> int:
         """Calculate the number of samples based on duration and sampling rate.
 
-        Returns:
+        Returns
+        -------
+        int
             The number of samples in the signal snapshot.
 
         """
@@ -36,18 +41,20 @@ class Signal(Base):
     def _generate_base_signal(self, source) -> np.ndarray:
         """Generate the base 1D time-domain signal. Must be implemented by subclasses.
 
-        Args:
-            source: The source state, which may be used by some models.
+        Parameters
+        ----------
+        source : State
+            The source state, which may be used by some models.
 
-        Returns:
+        Returns
+        -------
+        numpy.ndarray
             A 1D NumPy array representing the base signal.
 
         """
         pass
 
-    def generate(
-        self, source, sensor_delays_s, tloss_db, propagation_time_s
-    ) -> np.ndarray:
+    def generate(self, source, sensor_delays_s, tloss_db, propagation_time_s) -> np.ndarray:
         """Generate the signal, apply attenuation, and propagate it to a sensor array.
 
         This method performs the following steps:
@@ -57,13 +64,20 @@ class Signal(Base):
         4. Applies phase shifts to simulate propagation to each sensor.
         5. Converts the signals back to the time domain using an IFFT.
 
-        Args:
-            source: The source state.
-            sensor_delays_s: Relative time delay for each sensor in seconds.
-            tloss_db: Transmission loss in dB to the array origin.
-            propagation_time_s: Propagation time from source to origin in seconds.
+        Parameters
+        ----------
+        source : State
+            The source state.
+        sensor_delays_s : numpy.ndarray
+            Relative time delay for each sensor in seconds.
+        tloss_db : float
+            Transmission loss in dB to the array origin.
+        propagation_time_s : float
+            Propagation time from source to origin in seconds.
 
-        Returns:
+        Returns
+        -------
+        numpy.ndarray
             An array of complex signals with shape (num_sensors, num_samples).
 
         """
@@ -81,11 +95,7 @@ class Signal(Base):
         # 4. Calculate and apply phase shifts for propagation
         total_delays_s = propagation_time_s + sensor_delays_s
         phase_shifts = np.exp(
-            -1j
-            * 2
-            * np.pi
-            * total_delays_s[:, np.newaxis]
-            * fft_freqs_hz[np.newaxis, :]
+            -1j * 2 * np.pi * total_delays_s[:, np.newaxis] * fft_freqs_hz[np.newaxis, :]
         )
         signals_fft = base_signal_fft[np.newaxis, :] * phase_shifts
 

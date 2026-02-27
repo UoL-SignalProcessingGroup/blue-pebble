@@ -1,8 +1,4 @@
-"""Defines Bellhop-specific utility functions.
-
-© Copyright 2025 Joshua J. Wakefield.
-Licensed under the MIT License.
-"""
+"""Defines Bellhop-specific utility functions."""
 
 from pathlib import Path
 
@@ -14,30 +10,29 @@ def read_shade_file(
 ) -> tuple[np.ndarray, dict[str, np.ndarray]]:
     """Read a Bellhop shade file (.shd).
 
-    This function parses the binary format of a Bellhop shade file, which
-    contains acoustic transmission loss or pressure fields. It can read the
-    entire multi-dimensional field or extract a specific slice corresponding
-    to a source position.
+    This function parses the binary format of a Bellhop shade file, which contains acoustic
+    transmission loss or pressure fields. It can read the entire multi-dimensional field or extract
+    a specific slice corresponding to a source position.
 
-    Args:
-        filename (str | Path): The path to the shade file (.shd).
-        xs (float | None): Specific source x-position in kilometers to extract.
-            If None, the entire field is read.
-        ys (float | None): Specific source y-position in kilometers to extract.
-            If None, the entire field is read.
+    Parameters
+    ----------
+    filename  : str | Path
+        The path to the shade file (.shd).
+    xs  : float | None
+        Specific source x-position in kilometers to extract. If None, the entire field is read.
+    ys  : float | None
+        Specific source y-position in kilometers to extract. If None, the entire field is read.
 
-    Returns:
-        tuple[np.ndarray, dict[str, np.ndarray]] | tuple[None, None]:
-            A tuple containing:
-
-            - ``pressure``:
-                A complex NumPy array with the pressure field, with
-                shape `(n_theta, n_sd, n_rd, n_rr)`.
-            - ``geometry``:
-                A dictionary with dimension information (frequencies,
-                depths, ranges, etc.).
-
-            Returns `(None, None)` if the file cannot be read.
+    Returns
+    -------
+    tuple[np.ndarray, dict[str, np.ndarray]] | tuple[None, None]
+        A tuple containing:
+            pressure : np.ndarray
+                A complex NumPy array with the pressure field, with shape
+                `(n_theta, n_sd, n_rd, n_rr)`.
+            geometry : dict[str, np.ndarray]
+                A dictionary with dimension information (frequencies, depths, ranges, etc.).
+        Returns ``(None, None)`` if the file cannot be read.
 
     """
     try:

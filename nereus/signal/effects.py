@@ -1,8 +1,4 @@
-"""Signal post-processing effects.
-
-© Copyright 2025 Joshua J. Wakefield.
-Licensed under the MIT License.
-"""
+"""Signal post-processing effects."""
 
 import numpy as np
 from stonesoup.base import Base, Property
@@ -19,9 +15,7 @@ class Effect(Base):
 class Reverb(Effect):
     """Applies a simple convolutional reverb effect to the signal."""
 
-    duration_s = Property(
-        float, default=1.0, doc="The decay time of the reverb tail in seconds."
-    )
+    duration_s = Property(float, default=1.0, doc="The decay time of the reverb tail in seconds.")
     wet_dry_mix = Property(
         float,
         default=0.3,
@@ -31,11 +25,16 @@ class Reverb(Effect):
     def apply(self, signals: np.ndarray, sampling_rate_hz: int) -> np.ndarray:
         """Apply a simple convolutional reverb effect to the signal.
 
-        Args:
-            signals: An array of complex signals with shape (num_sensors, num_samples).
-            sampling_rate_hz: The sampling rate in Hertz.
+        Parameters
+        ----------
+        signals : np.ndarray
+            An array of complex signals with shape (num_sensors, num_samples).
+        sampling_rate_hz : int
+            The sampling rate in Hertz.
 
-        Returns:
+        Returns
+        -------
+        np.ndarray
             An array of complex signals with the reverb effect applied,
             with shape (num_sensors, num_samples).
 

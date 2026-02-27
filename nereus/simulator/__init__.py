@@ -1,3 +1,13 @@
-from .acoustic import PassiveSonarArraySimulator, PassiveSonarSensorData  # noqa: D104
+"""Simulator package public API."""
 
-__all__ = ["PassiveSonarSensorData", "PassiveSonarArraySimulator"]
+from .acoustic import (
+    BroadbandPassiveSonarArraySimulator,
+    PassiveSonarArraySimulator,
+    PassiveSonarSensorData,
+)
+
+__all__ = [
+    "BroadbandPassiveSonarArraySimulator",
+    "PassiveSonarArraySimulator",
+    "PassiveSonarSensorData",
+]

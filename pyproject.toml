@@ -1,36 +1,47 @@
 [build-system]
-requires = ["setuptools>=61", "wheel"]
+requires = ["setuptools>=64", "setuptools_scm>=8", "wheel"]
 build-backend = "setuptools.build_meta"
 
 [project]
 name = "nereus"
-version = "2.3.0"
-description = "A Stone Soup plugin for underwater acoustic tracking."
+dynamic = ["version"]
+description = "A Stone Soup plugin for underwater acoustic sensing."
 readme = "README.md"
+requires-python = ">=3.11"
 authors = [
     { name = "Joshua J Wakefield", email = "J.J.Wakefield@liverpool.ac.uk" },
     { name = "Fin Boulton", email = "F.Boulton@liverpool.ac.uk" },
 ]
 license = { text = "MIT" }
-keywords = ["nereus", "state estimation", "tracking", "sonar", "underwater-acoustics"]
+keywords = [
+    "nereus",
+    "underwater acoustics",
+    "passive sonar",
+    "beamforming",
+    "detection",
+    "tracking",
+    "stone soup",
+]
 classifiers = [
-    "Development Status :: 5 - Production/Stable",
+    "Development Status :: 4 - Beta",
     "Intended Audience :: Science/Research",
-    "Programming Language :: Python :: 3",
-    "Programming Language :: Python :: 3.10",
+    "License :: OSI Approved :: MIT License",
+    "Operating System :: OS Independent",
+    "Programming Language :: Python :: 3 :: Only",
     "Programming Language :: Python :: 3.11",
     "Programming Language :: Python :: 3.12",
+    "Programming Language :: Python :: 3.13",
+    "Programming Language :: Python :: 3.14",
     "Topic :: Scientific/Engineering",
 ]
 dependencies = [
-    "numpy",
-    "scipy",
-    "matplotlib",
-    "seaborn",
-    "stonesoup",
-    "numba",
-    "rocket-fft",
-    "tqdm",
+    "numpy>=1.23",
+    "scipy>=1.9",
+    "stonesoup>=1.8",
+    "numba>=0.56",
+    "rocket-fft>=0.3.1",
+    "tqdm>=4.64",
+    "plotly>=5",
 ]
 
 [project.urls]
@@ -40,25 +51,44 @@ Repository = "https://github.com/jjwakefield/nereus"
 dev = [
     "ruff",
     "pytest",
+    "build",
 ]
 docs = [
     "sphinx",
     "sphinx-rtd-theme",
     "myst-parser",
-    "myst-nb"
+    "myst-nb",
 ]
 examples = [
     "ipykernel",
     "ipywidgets",
     "jupyterlab",
-    "librosa"
+]
+all = [
+  "ruff",
+  "pytest",
+  "build",
+  "sphinx",
+  "sphinx-rtd-theme",
+  "myst-parser",
+  "myst-nb",
+  "ipykernel",
+  "ipywidgets",
+  "jupyterlab",
 ]
 
+[tool.setuptools_scm]
+tag_regex = "^v?(?P<version>\\d+\\.\\d+\\.\\d+)(?:[-+].*)?$"
+
 [tool.ruff]
-line-length = 88
+line-length = 99
 
 [tool.ruff.lint]
 select = ["F", "E", "W", "I", "B", "D", "UP"]
+
+[tool.ruff.lint.per-file-ignores]
+"docs/tutorials/*" = ["E402"]
+"docs/examples/*" = ["E402"]
 
 [tool.setuptools.packages.find]
 where = ["."]
