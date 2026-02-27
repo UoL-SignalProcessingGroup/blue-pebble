@@ -3,6 +3,7 @@
 from .beamformer import (
     Beamformer,
     DelayAndSumBeamformer,
+    DelayAndSumBeamformerFast,
     MinimumVarianceDistortionlessResponseBeamformer,
     SteeringCalculator,
 )
@@ -10,6 +11,7 @@ from .beamformer import (
 __all__ = [
     "Beamformer",
     "DelayAndSumBeamformer",
+    "DelayAndSumBeamformerFast",
     "MinimumVarianceDistortionlessResponseBeamformer",
     "SteeringCalculator",
 ]
