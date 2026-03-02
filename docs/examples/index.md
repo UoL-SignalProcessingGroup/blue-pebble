@@ -4,6 +4,7 @@ The examples expand on specific modelling and analysis tasks, from signal genera
 
 - [Signals Example](signals_example.ipynb) introduces the available source and noise signal building blocks.
 - [Signal and Propagation Comparison Example](signal_and_propagation_comparison_example.ipynb) compares propagation assumptions against the same source material.
+- [Effects from Bathymetry Example](effects_from_bathymetry.ipynb) explores how bathymetry influences simulated propagation effects.
 - [Multi-Narrowband Beamformer Comparison Example](multi_narrowband_beamformers_example.ipynb) compares beamformer behaviour across multiple narrowband signals.
 - [Detector Metrics](detector_metrics_example.ipynb) demonstrates ROC- and PR-style detector evaluation workflows.
 - [Ownship Noise Example](ownship_noise_example.ipynb) explores the effect of self-noise on the simulated array.
@@ -18,6 +19,7 @@ The examples expand on specific modelling and analysis tasks, from signal genera
 
 signals_example
 signal_and_propagation_comparison_example
+effects_from_bathymetry
 multi_narrowband_beamformers_example
 detector_metrics_example
 ownship_noise_example
