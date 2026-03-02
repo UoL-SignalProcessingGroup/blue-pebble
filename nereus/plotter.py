@@ -59,6 +59,23 @@ def _range_padding_for_scale(scale: float, span: float) -> float:
     return pad_display_units / scale
 
 
+def _expand_heatmap_coords(coords: np.ndarray) -> np.ndarray:
+    """Expand outer heatmap coordinates by half a cell width.
+
+    Plotly heatmaps render against the supplied coordinate centres. Nudging the first and
+    last centres outward by half a cell helps the rendered bathymetry visually fill the
+    intended scene bounds.
+    """
+    array = np.asarray(coords, dtype=float)
+    if array.ndim != 1 or array.size < 2:
+        return array
+
+    expanded = array.copy()
+    expanded[0] -= (array[1] - array[0]) / 2.0
+    expanded[-1] += (array[-1] - array[-2]) / 2.0
+    return expanded
+
+
 def _validate_non_empty_1d(array_like: np.ndarray, name: str) -> np.ndarray:
     """Validate that input is a non-empty one-dimensional sequence."""
     array = np.asarray(array_like)
@@ -247,8 +264,8 @@ def plot_world(
             x_range=(x_range_native[0], x_range_native[1]),
             y_range=(y_range_native[0], y_range_native[1]),
         )
-        bty_x = np.asarray(bty_x, dtype=float) * scale
-        bty_y = np.asarray(bty_y, dtype=float) * scale
+        bty_x = _expand_heatmap_coords(np.asarray(bty_x, dtype=float) * scale)
+        bty_y = _expand_heatmap_coords(np.asarray(bty_y, dtype=float) * scale)
         bty_depth = np.asarray(bty_z, dtype=float)
 
         fig.add_trace(
@@ -729,7 +746,7 @@ def plot_spectrogram(
             zmin=vmin,
             zmax=vmax,
             colorbar=dict(
-                title=dict(text="Intensity (dB)", side="right"),
+                title=dict(text="Intensity (dB)"),
                 thickness=24,
                 len=1.0,
             ),
