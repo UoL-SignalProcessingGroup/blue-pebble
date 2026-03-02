@@ -71,17 +71,17 @@ class FlatBathymetry(Bathymetry):
     Attributes
     ----------
     depth : float
-        The constant depth of the seafloor in meters. Must be positive
-        (below surface). Defaults to 5000.0 m.
+        The constant depth of the seafloor in meters. Must be negative
+        (below surface, Nereus ``-z`` convention). Defaults to -5000.0 m.
 
     """
 
-    depth: float = Property(default=5000.0, doc="Constant depth of the seafloor in meters")
+    depth: float = Property(default=-5000.0, doc="Constant depth of the seafloor in meters")
 
     def __post_init__(self):
         """Validate the depth after initialization."""
-        if self.depth <= 0:
-            raise ValueError("Depth must be positive.")
+        if self.depth >= 0:
+            raise ValueError("Depth must be negative for Nereus -z convention.")
 
     def get_depth(self, x: float, y: float) -> float:
         """Get the seafloor depth (constant everywhere).
@@ -141,7 +141,7 @@ class WedgeBathymetry(Bathymetry):
     Attributes
     ----------
     depth_at_origin : float
-        Depth at the origin (0, 0) in meters. Defaults to 1000.0 m.
+        Depth at the origin (0, 0) in meters. Defaults to -1000.0 m.
     x_gradient : float
         Depth gradient in the x direction (m/m). Defaults to 0.0 (no slope in x).
     y_gradient : float
@@ -149,7 +149,7 @@ class WedgeBathymetry(Bathymetry):
 
     """
 
-    depth_at_origin: float = Property(default=1000.0, doc="Depth at the origin (0, 0) in meters")
+    depth_at_origin: float = Property(default=-1000.0, doc="Depth at the origin (0, 0) in meters")
     x_gradient: float = Property(default=0.0, doc="Depth gradient in the x direction (m/m)")
     y_gradient: float = Property(default=0.001, doc="Depth gradient in the y direction (m/m)")
 
@@ -170,7 +170,7 @@ class WedgeBathymetry(Bathymetry):
 
         """
         depth = self.depth_at_origin + self.x_gradient * x + self.y_gradient * y
-        return max(0.0, depth)  # Ensure depth is non-negative
+        return min(0.0, depth)  # Ensure depth is non-positive in Nereus -z convention
 
     def get_grid(self, x_range: tuple, y_range: tuple):
         """Get a gridded representation of the sloping bathymetry.
@@ -203,7 +203,7 @@ class WedgeBathymetry(Bathymetry):
         # Create meshgrid and calculate depths
         X, Y = np.meshgrid(x_grid, y_grid, indexing="ij")
         z_grid = self.depth_at_origin + self.x_gradient * X + self.y_gradient * Y
-        z_grid = np.maximum(z_grid, 0.0)  # Ensure non-negative
+        z_grid = np.minimum(z_grid, 0.0)  # Ensure non-positive in Nereus -z convention
 
         return x_grid, y_grid, z_grid
 
@@ -215,31 +215,34 @@ class SeamountBathymetry(Bathymetry):
     ----------
     summit_position : tuple
         ``(x, y, z)`` coordinates of the summit in meters. Defaults to
-        ``(25000.0, 25000.0, 1000.0)``.
+        ``(25000.0, 25000.0, -1000.0)``.
     radius : float
         Radius of the seamount in meters. Defaults to 15000.0 m.
     plateau_depth : float
-        Depth at the surrounding plateau in meters. Defaults to 5000.0 m.
+        Depth at the surrounding plateau in meters. Defaults to -5000.0 m.
 
     """
 
     summit_position: tuple = Property(
-        default=(25000.0, 25000.0, 1000.0),
+        default=(25000.0, 25000.0, -1000.0),
         doc="(x, y, z) coordinates of the summit in meters",
     )
     radius: float = Property(default=15000.0, doc="Radius of the seamount in meters")
     plateau_depth: float = Property(
-        default=5000.0, doc="Depth at the surrounding plateau in meters"
+        default=-5000.0, doc="Depth at the surrounding plateau in meters"
     )
 
     def __post_init__(self):
         """Validate parameters after initialization."""
         if self.radius <= 0:
             raise ValueError("Radius must be positive.")
-        if self.plateau_depth <= 0:
-            raise ValueError("Plateau depth must be positive.")
-        if self.summit_position[2] < 0 or self.summit_position[2] >= self.plateau_depth:
-            raise ValueError("Summit depth must be non-negative and less than plateau depth.")
+        if self.plateau_depth >= 0:
+            raise ValueError("Plateau depth must be negative for Nereus -z convention.")
+        summit_z = self.summit_position[2]
+        if summit_z > 0 or summit_z <= self.plateau_depth:
+            raise ValueError(
+                "Summit depth must be <= 0 and shallower (less negative) than plateau depth."
+            )
 
     def get_depth(self, x: float, y: float) -> float:
         """Get the seafloor depth at a given position.
@@ -265,7 +268,7 @@ class SeamountBathymetry(Bathymetry):
         else:
             depth = self.plateau_depth
 
-        return depth
+        return min(0.0, depth)
 
     def get_grid(self, x_range: tuple, y_range: tuple):
         """Get a gridded representation of the seamount bathymetry.
@@ -306,5 +309,7 @@ class SeamountBathymetry(Bathymetry):
             summit_z + (self.plateau_depth - summit_z) * (r / self.radius),
             self.plateau_depth,
         )
+
+        z_grid = np.minimum(z_grid, 0.0)
 
         return x_grid, y_grid, z_grid
