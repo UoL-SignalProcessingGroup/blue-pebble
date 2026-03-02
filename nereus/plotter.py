@@ -139,7 +139,7 @@ def _validate_spectrogram_params(
     return canonical_format, normalized_y_lim
 
 
-def _normalize_plotly_figsize(figsize: tuple[float, float]) -> tuple[int, int]:
+def _normalise_plotly_figsize(figsize: tuple[float, float]) -> tuple[int, int]:
     """Normalize a requested figure size to Plotly pixel dimensions.
 
     For historical compatibility, small values are interpreted as inches and converted
@@ -444,10 +444,12 @@ def plot_btr(
             x=steering_array,
             colorscale="Viridis",
             colorbar=dict(
-                title=dict(text=data_type, side="right"),
+                title=dict(text=data_type),
                 thickness=24,
                 len=1.0,
-                **({} if using_subplot_target else {"x": 0.92, "xpad": 0}),
+                x=1.02,
+                xanchor="left",
+                xpad=0,
             ),
         )
         if using_subplot_target:
@@ -675,7 +677,7 @@ def plot_spectrogram(
         )
     )
 
-    width_px, height_px = _normalize_plotly_figsize(figsize)
+    width_px, height_px = _normalise_plotly_figsize(figsize)
     fig.update_layout(width=width_px, height=height_px, template="plotly_white")
 
     fig.update_xaxes(
