@@ -163,7 +163,12 @@ def _normalise_plotly_figsize(figsize: tuple[float, float]) -> tuple[int, int]:
     return width_px, height_px
 
 
-def plot_world(truths: list[GroundTruthPath], platform: Platform) -> go.Figure:
+def plot_world(
+    truths: list[GroundTruthPath],
+    platform: Platform,
+    bathymetry: object | None = None,
+    figsize: tuple[int, int] = (600, 500),
+) -> go.Figure:
     """Plot the world picture of the platform and target trajectories.
 
     Parameters
@@ -172,6 +177,11 @@ def plot_world(truths: list[GroundTruthPath], platform: Platform) -> go.Figure:
         A list of GroundTruthPath objects representing the trajectories of the targets.
     platform : Platform
         The platform whose trajectory is to be plotted.
+    bathymetry : object | None
+        Optional bathymetry model implementing ``get_grid(x_range, y_range)``.
+        If provided, bathymetry is rendered as a background heatmap.
+    figsize : tuple[int, int]
+        Figure dimensions in pixels. Default is ``(800, 600)``.
 
     Returns
     -------
@@ -226,16 +236,49 @@ def plot_world(truths: list[GroundTruthPath], platform: Platform) -> go.Figure:
     # Keep a 1:1 spatial aspect by expanding the smaller axis to match the larger span.
     max_span = max(max_x - min_x, max_y - min_y)
 
-    x_range = [mid_x - max_span / 2, mid_x + max_span / 2]
-    y_range = [mid_y - max_span / 2, mid_y + max_span / 2]
+    x_range_native = [mid_x - max_span / 2, mid_x + max_span / 2]
+    y_range_native = [mid_y - max_span / 2, mid_y + max_span / 2]
+
+    if bathymetry is not None:
+        if not hasattr(bathymetry, "get_grid"):
+            raise ValueError("bathymetry must provide get_grid(x_range, y_range)")
+
+        bty_x, bty_y, bty_z = bathymetry.get_grid(
+            x_range=(x_range_native[0], x_range_native[1]),
+            y_range=(y_range_native[0], y_range_native[1]),
+        )
+        bty_x = np.asarray(bty_x, dtype=float) * scale
+        bty_y = np.asarray(bty_y, dtype=float) * scale
+        bty_depth = np.asarray(bty_z, dtype=float)
+
+        fig.add_trace(
+            go.Heatmap(
+                x=bty_x,
+                y=bty_y,
+                z=bty_depth.T,
+                colorscale="Viridis",
+                opacity=0.8,
+                colorbar=dict(
+                    title=dict(text="Seafloor Depth (m)"),
+                    thickness=24,
+                    len=0.85,
+                    y=0.5,
+                    yanchor="middle",
+                    x=1.1,
+                    xanchor="left",
+                    xpad=0,
+                ),
+                hovertemplate="X: %{x:.2f}<br>Y: %{y:.2f}<br>Depth: %{z:.2f} m<extra></extra>",
+            )
+        )
 
     # Convert coordinates and precomputed ranges from native units to display units.
     plat_x = [x * scale for x in plat_x]
     plat_y = [y * scale for y in plat_y]
     gt_x = [[x * scale for x in x_coords] for x_coords in gt_x]
     gt_y = [[y * scale for y in y_coords] for y_coords in gt_y]
-    x_range = [value * scale for value in x_range]
-    y_range = [value * scale for value in y_range]
+    x_range = [value * scale for value in x_range_native]
+    y_range = [value * scale for value in y_range_native]
 
     # Plot a single marker for stationary platforms to avoid a degenerate line trace.
     platform_is_stationary = len(plat_x) <= 1 or (
@@ -277,8 +320,12 @@ def plot_world(truths: list[GroundTruthPath], platform: Platform) -> go.Figure:
             )
         )
 
+    width_px, height_px = _normalise_plotly_figsize(figsize)
+
     fig.update_layout(
         autosize=False,
+        width=width_px,
+        height=height_px,
         showlegend=True,
         template="plotly_white",
         xaxis=dict(
@@ -292,6 +339,18 @@ def plot_world(truths: list[GroundTruthPath], platform: Platform) -> go.Figure:
             scaleratio=1,
         ),
     )
+
+    if bathymetry is not None:
+        fig.update_layout(
+            legend=dict(
+                orientation="h",
+                yanchor="top",
+                y=-0.16,
+                xanchor="left",
+                x=0.0,
+            ),
+            margin=dict(b=120),
+        )
 
     return fig
 
