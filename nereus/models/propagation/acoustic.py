@@ -548,6 +548,14 @@ class rtrsAcousticPropagationModel(AcousticPropagationModel):
     use_all_frequencies : bool
         If True, run rtrs for all tonal frequencies and return per-frequency
         TL values. If False, use only the loudest frequency.
+    water_density_g_cm3 : float | None
+        Optional water density value passed to rtrs bathymetry config.
+    bottom_model : dict
+        Bottom boundary model configuration for rtrs (e.g., rigid/acoustic/elastic).
+    store_ray_paths : bool
+        Whether rtrs should store full ray paths.
+    integration_method : str
+        Beam integration method for rtrs ("euler" or "rk2").
 
     """
 
@@ -573,8 +581,39 @@ class rtrsAcousticPropagationModel(AcousticPropagationModel):
     use_all_frequencies: bool = Property(
         default=False,
         doc="If True, run rtrs for all tonal frequencies. If False, use only the "
-        "loudest frequency.",
+        "loudest frequency. Not used for propagated spectrum method.",
     )
+    water_density_g_cm3: float | None = Property(
+        default=None,
+        doc="Optional water density passed to rtrs bathymetry config (g/cm^3)",
+    )
+    bottom_model: dict | None = Property(
+        default=None,
+        doc="Bottom boundary model dictionary for rtrs",
+    )
+    store_ray_paths: bool = Property(
+        default=False,
+        doc="If True, store full ray paths in rtrs output, not needed for nereus",
+    )
+    integration_method: str = Property(
+        default="euler",
+        doc='Beam integration method for rtrs ("euler" or "rk2")',
+    )
+
+    def __post_init__(self):
+        """Validate rtrs-specific configuration options."""
+        if self.integration_method not in {"euler", "rk2"}:
+            raise ValueError("integration_method must be 'euler' or 'rk2'.")
+        if self.bottom_model is not None and (
+            not isinstance(self.bottom_model, dict) or "model" not in self.bottom_model
+        ):
+            raise ValueError("bottom_model must be a dict containing at least a 'model' key.")
+
+    def _resolved_bottom_model(self) -> dict:
+        """Return bottom model config with a safe default."""
+        if self.bottom_model is None:
+            return {"model": "rigid"}
+        return dict(self.bottom_model)
 
     def _calculate_launch_azimuths(self, source_position, receiver_position):
         """Calculate launch azimuth angles to ensure rays cross the receiver.
@@ -760,6 +799,7 @@ class rtrsAcousticPropagationModel(AcousticPropagationModel):
                 "x_bty_m": x_bty.tolist(),
                 "y_bty_m": y_bty.tolist(),
                 "z_bty_m": z_bty_flat.tolist(),
+                "bottom_model": self._resolved_bottom_model(),
             },
             "source": {
                 "position": [
@@ -781,8 +821,13 @@ class rtrsAcousticPropagationModel(AcousticPropagationModel):
                 "step_m": float(self.step_m),
                 "max_steps": int(max_steps),
                 "max_range_m": float(max_range_m),
+                "store_ray_paths": bool(self.store_ray_paths),
+                "integration_method": self.integration_method,
             },
         }
+
+        if self.water_density_g_cm3 is not None:
+            env_config["bathymetry"]["water_density_g_cm3"] = float(self.water_density_g_cm3)
 
         # Run rtrs simulation
         result = rtrs.run_simulation(env_config)
@@ -928,6 +973,7 @@ class rtrsAcousticPropagationModel(AcousticPropagationModel):
                 "x_bty_m": x_bty.tolist(),
                 "y_bty_m": y_bty.tolist(),
                 "z_bty_m": z_bty_flat.tolist(),
+                "bottom_model": self._resolved_bottom_model(),
             },
             "source": {
                 "position": [
@@ -949,8 +995,13 @@ class rtrsAcousticPropagationModel(AcousticPropagationModel):
                 "step_m": float(self.step_m),
                 "max_steps": int(max_steps),
                 "max_range_m": float(max_range_m),
+                "store_ray_paths": bool(self.store_ray_paths),
+                "integration_method": self.integration_method,
             },
         }
+
+        if self.water_density_g_cm3 is not None:
+            env_config["bathymetry"]["water_density_g_cm3"] = float(self.water_density_g_cm3)
 
         # Run rtrs simulation
         result = rtrs.run_simulation(env_config)
