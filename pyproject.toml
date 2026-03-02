@@ -63,6 +63,7 @@ examples = [
     "ipykernel",
     "ipywidgets",
     "jupyterlab",
+    "kaleido",
 ]
 all = [
   "ruff",
@@ -75,6 +76,7 @@ all = [
   "ipykernel",
   "ipywidgets",
   "jupyterlab",
+  "kaleido",
 ]
 
 [tool.setuptools_scm]

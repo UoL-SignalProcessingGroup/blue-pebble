@@ -38,7 +38,7 @@ jobs:
         run: |
           python -m build --sdist --wheel
 
-  docs:
+  docs-build:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
@@ -56,3 +56,44 @@ jobs:
         run: |
           cd docs
           make html
+
+  notebooks:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Check notebook-related changes
+        id: changes
+        uses: dorny/paths-filter@v3
+        with:
+          filters: |
+            notebooks:
+              - 'docs/**/*.ipynb'
+              - 'pyproject.toml'
+
+      - uses: actions/setup-python@v5
+        if: steps.changes.outputs.notebooks == 'true'
+        with:
+          python-version: "3.12"
+
+      - name: Validate notebook JSON
+        if: steps.changes.outputs.notebooks == 'true'
+        run: |
+          python - <<'PY'
+          import json
+          from pathlib import Path
+
+          notebooks = sorted(Path("docs").rglob("*.ipynb"))
+          if not notebooks:
+              raise SystemExit("No notebooks found under docs/")
+
+          for path in notebooks:
+              with path.open("r", encoding="utf-8") as stream:
+                  json.load(stream)
+              print(f"Validated {path}")
+          PY
+
+      - name: Skip notebook validation
+        if: steps.changes.outputs.notebooks != 'true'
+        run: |
+          echo "No notebook-related changes detected."

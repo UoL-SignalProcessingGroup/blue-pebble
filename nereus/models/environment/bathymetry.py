@@ -47,7 +47,7 @@ class Bathymetry(ABC, Base):
         y_range : tuple
             Tuple of (y_min, y_max) in meters.
         resolution : float, optional
-            Grid resolution in meters (defaults to :pyattr:`resolution`).
+            Grid resolution in meters (defaults to ``resolution``).
 
         Returns
         -------
@@ -111,7 +111,7 @@ class FlatBathymetry(Bathymetry):
         y_range : tuple
             Tuple of (y_min, y_max) in meters.
         resolution : float, optional
-            Grid resolution in meters (defaults to :pyattr:`resolution`).
+            Grid resolution in meters (defaults to ``resolution``).
 
         Returns
         -------
@@ -182,7 +182,7 @@ class WedgeBathymetry(Bathymetry):
         y_range : tuple
             Tuple of (y_min, y_max) in meters.
         resolution : float, optional
-            Grid resolution in meters (defaults to :pyattr:`resolution`).
+            Grid resolution in meters (defaults to ``resolution``).
 
         Returns
         -------
@@ -280,7 +280,7 @@ class SeamountBathymetry(Bathymetry):
         y_range : tuple
             Tuple of (y_min, y_max) in meters.
         resolution : float, optional
-            Grid resolution in meters (defaults to :pyattr:`resolution`).
+            Grid resolution in meters (defaults to ``resolution``).
 
         Returns
         -------

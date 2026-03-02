@@ -143,10 +143,10 @@ class CylindricalAcousticPropagationModel(AcousticPropagationModel):
         Returns
         -------
         tuple
-            (H_sensors, propagation_time_s) where:
-            - ``H_sensors`` : Complex transfer function array of shape
-              (num_sensors, num_frequencies)
-            - ``propagation_time_s`` : Propagation time from source to reference sensor (seconds)
+            ``(H_sensors, propagation_time_s)``, where ``H_sensors`` is a complex
+            transfer-function array with shape ``(num_sensors, num_frequencies)``
+            and ``propagation_time_s`` is the propagation time from the source to
+            the reference sensor in seconds.
 
         """
         source_position = source.state_vector[source.metadata["position_mapping"]]

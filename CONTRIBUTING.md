@@ -38,6 +38,15 @@ ruff check .
 - Add or update docs for behavior/API changes.
 - For significant new capability, include a minimal reproducible example in `docs/examples/` or `docs/tutorials/`.
 - Where relevant, include references to equations, assumptions, or papers.
+- `.ipynb` files under `docs/tutorials/` and `docs/examples/` are the canonical published sources for notebook-based documentation.
+- Published notebooks are rendered from the committed outputs; the docs build does not execute notebooks.
+- When notebook content changes, refresh the outputs locally before committing so the hosted documentation remains coherent.
+
+Build the docs locally with:
+
+```bash
+make -C docs html
+```
 
 ## Tests
 
@@ -51,6 +60,7 @@ Run local checks before opening a PR:
 ```bash
 ruff check .
 pytest
+make -C docs html
 ```
 
 ## License

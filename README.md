@@ -2,14 +2,13 @@
 
 [![PyPI version](https://img.shields.io/pypi/v/blue-pebble.svg)](https://pypi.org/project/blue-pebble/)
 [![Python versions](https://img.shields.io/pypi/pyversions/blue-pebble.svg)](https://pypi.org/project/blue-pebble/)
-[![Ruff](https://img.shields.io/badge/lint-ruff-46a2f1)](https://github.com/astral-sh/ruff)(https://github.com/jjwakefield/nereus/actions)
-[![CI](https://github.com/jjwakefield/nereus/actions/workflows/ci.yml/badge.svg)](https://github.com/jjwakefield/nereus/actions)
-[![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](LICENSE)
+[![Ruff](https://img.shields.io/badge/lint-ruff-46a2f1)](https://github.com/astral-sh/ruff)
+[![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](https://github.com/jjwakefield/nereus/blob/main/LICENSE)
 [![DOI](https://zenodo.org/badge/DOI/10.5281/zenodo.XXXXXXX.svg)](https://doi.org/10.5281/zenodo.XXXXXXX)
 
 **Blue Pebble** is a research-oriented simulation framework for underwater acoustic sensing, currently focused on passive sonar signal processing, acoustic propagation modelling, beamforming, detection, and multi-target tracking.
 
-Designed as a plugin for [Stone Soup](https://stonesoup.rtfd.io/), Blue Pebble enables reproducible research in:
+Designed as a plugin for [Stone Soup](https://stonesoup.rtfd.io/), Blue Pebble supports research in:
 
 - Underwater acoustics
 - Passive sonar signal processing
@@ -20,54 +19,44 @@ Designed as a plugin for [Stone Soup](https://stonesoup.rtfd.io/), Blue Pebble e
 
 Blue Pebble provides modular acoustic propagation backends, ranging from analytical spreading laws to external ray-tracing solvers (e.g., Bellhop), enabling trade-offs between physical fidelity and computational efficiency.
 
-## Research Scope
+## Research Applications
 
-Blue Pebble is designed for:
+Blue Pebble is intended for controlled, simulation-based studies, including:
 
-- Simulation-based evaluation of tracking algorithms
-- End-to-end passive sonar performance analysis
-- Synthetic dataset generation for algorithm validation
-- Controlled studies of propagation effects on detection and estimation
-- Reproducible academic experimentation
+- Evaluation of tracking and data association algorithms  
+- End-to-end sonar performance analysis  
+- Synthetic dataset generation for validation  
+- Sensitivity analysis of propagation effects on detection and estimation  
 
-While current functionality centres on passive sonar, the architecture is designed to support extension to additional sonar modalities, including active and multistatic configurations.
+Although current functionality centres on passive sonar, the architecture supports extension to additional modalities (e.g., active or multistatic configurations).
 
-The architecture separates:
+## Architecture
 
-- Platform dynamics
-- Acoustic propagation
-- Signal generation
-- Beamforming
-- Detection
-- Tracking
+Blue Pebble follows a modular design that separates physical modelling from signal processing and tracking logic. Core components include:
 
-This separation enables systematic experimentation across modelling assumptions and algorithmic choices.
+- **Platform dynamics** - Kinematic modelling of ownship, targets, and arrays  
+- **Acoustic propagation** - Pluggable propagation backends (analytical or external solvers)  
+- **Signal generation** - Source modelling and noise synthesis  
+- **Beamforming** - Array processing algorithms  
+- **Detection** - Measurement formation and statistical thresholding  
+- **Tracking** - Integration with Stone Soup estimators and data association  
+
+This separation enables systematic experimentation across modelling assumptions and algorithmic choices without tightly coupling components.
 
 ## Features
 
-- Multi-body kinematic model for flexible towed arrays ("follow-the-leader" dynamics)
-- Multiple acoustic propagation models:
-  - Cylindrical spreading
-  - Spherical spreading
-  - Broadband ray tracing
-  - Bellhop (external executable)
-- Source signature generation (multi-tone, configurable)
-- Ownship noise modelling
-- Biological source simulation (e.g., whale calls, snapping shrimp)
-- Ambient noise field simulation (white/pink noise)
-- Beamforming:
-  - Delay-and-sum
-  - Frequency domain
-  - MVDR
-- Detection algorithms:
-  - CFAR
-  - Peak detection
-  - Threshold detection
-- Detector metrics (e.g., ROC, PR curves)
-- Passive sonar simulation and detection chain
-- Integration with Stone Soup for tracking and data association
-- Plotting utilities for bearings and Cartesian tracks
-- Example Jupyter notebooks for scenario setup, simulation, detection, and tracking
+Implemented capabilities include:
+
+- Multi-body kinematic modelling for flexible towed arrays  
+- Analytical spreading models and external ray-tracing integration (e.g., Bellhop)  
+- Configurable source signature synthesis  
+- Ambient, biological, and ownship noise modelling  
+- Multiple beamforming algorithms  
+- Detection algorithms with performance metrics  
+- Passive sonar simulation pipelines  
+- Native integration with Stone Soup tracking workflows  
+- Plotting utilities for bearings and Cartesian tracks  
+- Notebook-based tutorials and worked examples
 
 ## Installation
 
@@ -216,20 +205,20 @@ Blue Pebble does not distribute these components in its PyPI package. Users are 
 
 Planned and potential extensions include:
 
-#### Environmental Modelling
+### Environmental Modelling
 - Integration of real environmental datasets (bathymetry, range-dependent sound speed profiles)
 - Coherent ambient noise modelling (wind, rain, wave-induced noise)
 - Improved acoustic volume attenuation and boundary loss modelling
 - Systematic environmental uncertainty modelling (sound speed and sensor position errors)
 
-#### Signal and Source Modelling
+### Signal and Source Modelling
 - Incorporation of measured source signatures
 - Expanded source directivity modelling
 - Additional sensing geometries (hull-mounted arrays, sonobuoys, distributed arrays)
 
-#### Detection and Performance Analysis
+### Detection and Performance Analysis
 - Alternative SNR and beam power outputs (e.g., angle-dependent CFAR variants)
 
-#### Extended Sensing Modalities
+### Extended Sensing Modalities
 - Active sonar modelling
 - Multistatic and bistatic configurations

@@ -13,6 +13,7 @@ __all__ = [
     "detector",
     "models",
     "platform",
+    "plotter",
     "signal",
     "sigproc",
     "simulator",
@@ -22,7 +23,16 @@ __all__ = [
 
 def __getattr__(name: str):
     """Lazily import top-level subpackages on first access."""
-    if name in {"detector", "models", "platform", "signal", "sigproc", "simulator", "utils"}:
+    if name in {
+        "detector",
+        "models",
+        "platform",
+        "plotter",
+        "signal",
+        "sigproc",
+        "simulator",
+        "utils",
+    }:
         module = import_module(f"{__name__}.{name}")
         globals()[name] = module
         return module
