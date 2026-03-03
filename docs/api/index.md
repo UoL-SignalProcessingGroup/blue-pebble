@@ -1,11 +1,11 @@
 # API Reference
 
-This reference documents the public Nereus package surface. It is intended to complement the tutorials and examples rather than replace them.
+This reference documents the public Blue Pebble package surface. It is intended to complement the tutorials and examples rather than replace them.
 
 ```{toctree}
 :maxdepth: 1
 
-nereus
+bluepebble
 detector
 models
 platform

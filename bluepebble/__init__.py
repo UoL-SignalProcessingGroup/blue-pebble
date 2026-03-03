@@ -1,10 +1,10 @@
-"""Nereus package public API."""
+"""Blue Pebble package public API."""
 
 from importlib import import_module
 from importlib.metadata import PackageNotFoundError, version
 
 try:
-    __version__ = version("nereus")
+    __version__ = version("blue-pebble")
 except PackageNotFoundError:
     __version__ = "0+unknown"
 

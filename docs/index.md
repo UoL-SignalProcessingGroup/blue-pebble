@@ -1,8 +1,8 @@
-# Nereus
+# Blue Pebble
 
-**Nereus** is a research-oriented simulation framework for underwater acoustic sensing, currently focused on passive sonar signal processing, acoustic propagation modelling, beamforming, detection, and multi-target tracking.
+**Blue Pebble** is a research-oriented simulation framework for underwater acoustic sensing, currently focused on passive sonar signal processing, acoustic propagation modelling, beamforming, detection, and multi-target tracking.
 
-Designed as a plugin for [Stone Soup](https://stonesoup.rtfd.io/), Nereus supports research in:
+Designed as a plugin for [Stone Soup](https://stonesoup.rtfd.io/), Blue Pebble supports research in:
 
 - Underwater acoustics
 - Passive sonar signal processing
@@ -15,7 +15,7 @@ Designed as a plugin for [Stone Soup](https://stonesoup.rtfd.io/), Nereus suppor
 
 ## Research Applications
 
-Nereus is intended for controlled, simulation-based studies, including:
+Blue Pebble is intended for controlled, simulation-based studies, including:
 
 - Evaluation of tracking and data association algorithms  
 - End-to-end sonar performance analysis  
@@ -28,7 +28,7 @@ Although current functionality centres on passive sonar, the architecture suppor
 
 ## Architecture
 
-Nereus follows a modular design that separates physical modelling from signal processing and tracking logic. Core components include:
+Blue Pebble follows a modular design that separates physical modelling from signal processing and tracking logic. Core components include:
 
 - **Platform dynamics** - Kinematic modelling of ownship, targets, and arrays  
 - **Acoustic propagation** - Pluggable propagation backends (analytical or external solvers)  

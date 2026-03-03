@@ -1,6 +1,6 @@
 # Development
 
-Nereus is developed as a Stone Soup-compatible plugin, so documentation and examples should remain aligned with the public package surface and the surrounding scientific workflow.
+Blue Pebble is developed as a Stone Soup-compatible plugin, so documentation and examples should remain aligned with the public package surface and the surrounding scientific workflow.
 
 ## Common checks
 
@@ -36,8 +36,8 @@ Optional:
 Clone the repository and open it in Visual Studio Code:
 
 ```bash
-git clone https://github.com/jjwakefield/nereus.git
-cd nereus
+git clone https://github.com/jjwakefield/blue-pebble.git
+cd blue-pebble
 code .
 ```
 
@@ -50,14 +50,14 @@ This provides a configured environment including Python, the required build depe
 If you prefer a CLI workflow, build and run the container manually:
 
 ```bash
-docker build -t nereus-dev .
-docker run -it --rm -v $(pwd):/workspace nereus-dev
+docker build -t blue-pebble-dev .
+docker run -it --rm -v $(pwd):/workspace blue-pebble-dev
 ```
 
 On Windows PowerShell:
 
 ```bash
-docker run -it --rm -v ${PWD}:/workspace nereus-dev
+docker run -it --rm -v ${PWD}:/workspace blue-pebble-dev
 ```
 
 This starts an interactive shell inside the container.

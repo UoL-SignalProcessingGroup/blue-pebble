@@ -1,8 +1,8 @@
-# `nereus.platform`
+# `bluepebble.platform`
 
-Platform and array-geometry models used in Nereus simulations.
+Platform and array-geometry models used in Blue Pebble simulations.
 
 ```{eval-rst}
-.. automodule:: nereus.platform
+.. automodule:: bluepebble.platform
    :members:
 ```

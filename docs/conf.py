@@ -1,4 +1,4 @@
-"""Sphinx configuration for the Nereus documentation."""
+"""Sphinx configuration for the Blue Pebble documentation."""
 # ruff: noqa: I001
 
 from __future__ import annotations
@@ -21,9 +21,9 @@ try:
 except ImportError:  # pragma: no cover - older Sphinx versions
     RemovedInSphinx10Warning = Warning
 
-from nereus import __version__  # noqa: E402
+from bluepebble import __version__  # noqa: E402
 
-project = "Nereus"
+project = "Blue Pebble"
 author = "Joshua J Wakefield and Finley Boulton"
 copyright = "2026, Joshua J Wakefield and Finley Boulton"
 release = __version__

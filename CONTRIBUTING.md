@@ -1,6 +1,6 @@
-# Contributing to Nereus
+# Contributing to Blue Pebble
 
-Nereus follows Stone Soup-style contribution practices, adapted for this plugin and toolchain.
+Blue Pebble follows Stone Soup-style contribution practices, adapted for this plugin and toolchain.
 
 ## Development Setup
 

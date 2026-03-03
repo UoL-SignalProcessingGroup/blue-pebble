@@ -4,6 +4,9 @@ dist/
 *.egg-info
 __pycache__/
 
+# Virtual environment
+.venv/
+
 # Sphinx documentation
 /docs/build/
 /docs/_build/
