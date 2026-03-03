@@ -1,15 +1,12 @@
 version: 2
 
-sphinx:
-  configuration: docs/conf.py
-
 build:
   os: ubuntu-lts-latest
   tools:
     python: "3.12"
-  jobs:
-    post_install:
-      - python -m pip install --upgrade pip
+
+sphinx:
+  configuration: docs/conf.py
 
 python:
   install:
@@ -17,4 +14,3 @@ python:
       path: .
       extra_requirements:
         - docs
-        - examples
