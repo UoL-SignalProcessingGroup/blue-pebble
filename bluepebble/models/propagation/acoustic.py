@@ -593,7 +593,7 @@ class rtrsAcousticPropagationModel(AcousticPropagationModel):
     )
     store_ray_paths: bool = Property(
         default=False,
-        doc="If True, store full ray paths in rtrs output, not needed for nereus",
+        doc="If True, store full ray paths in rtrs output, not needed for Blue Pebble",
     )
     integration_method: str = Property(
         default="euler",

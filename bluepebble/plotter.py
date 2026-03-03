@@ -780,7 +780,7 @@ def plot_roc(
     Parameters
     ----------
     results : list[SweepResult]
-        Sweep results produced by :func:`~nereus.detector.metrics.sweep_detection_parameter`.
+        Sweep results produced by :func:`~bluepebble.detector.metrics.sweep_detection_parameter`.
         Each result is drawn as a separate trace using its ``label`` attribute.
     show_diagonal : bool
         If ``True`` (default), overlay the random-classifier diagonal.
@@ -864,7 +864,7 @@ def plot_pr(
     Parameters
     ----------
     results : list[SweepResult]
-        Sweep results produced by :func:`~nereus.detector.metrics.sweep_detection_parameter`.
+        Sweep results produced by :func:`~bluepebble.detector.metrics.sweep_detection_parameter`.
         Each result is drawn as a separate trace using its ``label`` attribute.
     figsize : tuple[int, int]
         Figure dimensions in pixels.  Default is ``(600, 500)``.
@@ -935,7 +935,7 @@ def plot_roc_pr(
     Parameters
     ----------
     results : list[SweepResult]
-        Sweep results produced by :func:`~nereus.detector.metrics.sweep_detection_parameter`.
+        Sweep results produced by :func:`~bluepebble.detector.metrics.sweep_detection_parameter`.
         Each result is drawn as a separate trace pair (same colour in both subplots)
         using its ``label`` attribute.
     show_diagonal : bool

@@ -72,7 +72,7 @@ class FlatBathymetry(Bathymetry):
     ----------
     depth : float
         The constant depth of the seafloor in meters. Must be negative
-        (below surface, Nereus ``-z`` convention). Defaults to -5000.0 m.
+        (below surface, Blue Pebble ``-z`` convention). Defaults to -5000.0 m.
 
     """
 
@@ -81,7 +81,7 @@ class FlatBathymetry(Bathymetry):
     def __post_init__(self):
         """Validate the depth after initialization."""
         if self.depth >= 0:
-            raise ValueError("Depth must be negative for Nereus -z convention.")
+            raise ValueError("Depth must be negative for Blue Pebble -z convention.")
 
     def get_depth(self, x: float, y: float) -> float:
         """Get the seafloor depth (constant everywhere).
@@ -170,7 +170,7 @@ class WedgeBathymetry(Bathymetry):
 
         """
         depth = self.depth_at_origin + self.x_gradient * x + self.y_gradient * y
-        return min(0.0, depth)  # Ensure depth is non-positive in Nereus -z convention
+        return min(0.0, depth)  # Ensure depth is non-positive in Blue Pebble -z convention
 
     def get_grid(self, x_range: tuple, y_range: tuple):
         """Get a gridded representation of the sloping bathymetry.
@@ -203,7 +203,7 @@ class WedgeBathymetry(Bathymetry):
         # Create meshgrid and calculate depths
         X, Y = np.meshgrid(x_grid, y_grid, indexing="ij")
         z_grid = self.depth_at_origin + self.x_gradient * X + self.y_gradient * Y
-        z_grid = np.minimum(z_grid, 0.0)  # Ensure non-positive in Nereus -z convention
+        z_grid = np.minimum(z_grid, 0.0)  # Ensure non-positive in Blue Pebble -z convention
 
         return x_grid, y_grid, z_grid
 
@@ -237,7 +237,7 @@ class SeamountBathymetry(Bathymetry):
         if self.radius <= 0:
             raise ValueError("Radius must be positive.")
         if self.plateau_depth >= 0:
-            raise ValueError("Plateau depth must be negative for Nereus -z convention.")
+            raise ValueError("Plateau depth must be negative for Blue Pebble -z convention.")
         summit_z = self.summit_position[2]
         if summit_z > 0 or summit_z <= self.plateau_depth:
             raise ValueError(

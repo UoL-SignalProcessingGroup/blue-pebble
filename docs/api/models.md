@@ -1,4 +1,4 @@
-# `nereus.models`
+# `bluepebble.models`
 
 Public model namespaces for environmental and acoustic propagation components.
 
@@ -10,6 +10,6 @@ models_propagation
 ```
 
 ```{eval-rst}
-.. automodule:: nereus.models
+.. automodule:: bluepebble.models
    :members:
 ```

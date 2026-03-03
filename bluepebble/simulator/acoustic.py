@@ -232,7 +232,7 @@ class BroadbandPassiveSonarArraySimulator(SensorSimulator):
 
         """
         # Import STFT utilities
-        from nereus.signal.utils import apply_fade_in, inverse_stft
+        from bluepebble.signal.utils import apply_fade_in, inverse_stft
 
         # Get all timestamps
         all_timestamps = sorted(

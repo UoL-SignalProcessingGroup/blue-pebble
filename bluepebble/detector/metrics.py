@@ -11,9 +11,9 @@ objects that can be plotted together for comparison.
 Typical usage::
 
     import numpy as np
-    from nereus.detector.algorithms import CACFARDetector, OSCFARDetector, PeakDetector
-    from nereus.detector.metrics import SweepSpec, sweep_detection_parameter
-    from nereus.plotter import plot_roc_pr
+    from bluepebble.detector.algorithms import CACFARDetector, OSCFARDetector, PeakDetector
+    from bluepebble.detector.metrics import SweepSpec, sweep_detection_parameter
+    from bluepebble.plotter import plot_roc_pr
 
     specs = [
         SweepSpec(
@@ -361,7 +361,7 @@ def sweep_detection_parameter(
 
     The returned :class:`SweepResult` objects expose precision, recall, TPR, FPR,
     F1 and AUC values as properties.  Pass the list directly to
-    :func:`~nereus.plotter.plot_roc_pr` to compare all chains in one figure.
+    :func:`~bluepebble.plotter.plot_roc_pr` to compare all chains in one figure.
 
     Parameters
     ----------
@@ -394,9 +394,9 @@ def sweep_detection_parameter(
     Examples
     --------
     >>> import numpy as np
-    >>> from nereus.detector.algorithms import CACFARDetector, OSCFARDetector, PeakDetector
-    >>> from nereus.detector.metrics import SweepSpec, sweep_detection_parameter
-    >>> from nereus.plotter import plot_roc_pr
+    >>> from bluepebble.detector.algorithms import CACFARDetector, OSCFARDetector, PeakDetector
+    >>> from bluepebble.detector.metrics import SweepSpec, sweep_detection_parameter
+    >>> from bluepebble.plotter import plot_roc_pr
     >>>
     >>> specs = [
     ...     SweepSpec(

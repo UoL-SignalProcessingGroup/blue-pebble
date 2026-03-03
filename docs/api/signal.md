@@ -1,8 +1,8 @@
-# `nereus.signal`
+# `bluepebble.signal`
 
 Signal-generation namespaces for source, ambient, and signal-effects modelling.
 
 ```{eval-rst}
-.. automodule:: nereus.signal
+.. automodule:: bluepebble.signal
    :members:
 ```

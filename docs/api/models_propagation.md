@@ -1,9 +1,9 @@
-# `nereus.models.propagation`
+# `bluepebble.models.propagation`
 
 Propagation models for analytical and optional Bellhop-backed acoustic simulation workflows.
 
 ```{eval-rst}
-.. automodule:: nereus.models.propagation
+.. automodule:: bluepebble.models.propagation
    :members:
    :no-index:
 ```
