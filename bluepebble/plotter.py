@@ -76,6 +76,47 @@ def _expand_heatmap_coords(coords: np.ndarray) -> np.ndarray:
     return expanded
 
 
+def _mpl_cmap_to_plotly(cmap, n: int = 256) -> list[list[float | str]]:
+    """Convert a Matplotlib colormap to Plotly colorscale format."""
+    vals = np.linspace(0.0, 1.0, n)
+    rgba = cmap(vals)
+    return [
+        [float(v), f"rgb({int(r * 255)},{int(g * 255)},{int(b * 255)})"]
+        for v, (r, g, b, _) in zip(vals, rgba, strict=False)
+    ]
+
+
+def _two_slope_colorscale(
+    cmap,
+    zmin: float,
+    zmax: float,
+    vcenter: float = 0.0,
+    n: int = 256,
+) -> list[list[float | str]]:
+    """Create a Plotly colorscale with a fixed midpoint in data space."""
+    if not np.isfinite(zmin) or not np.isfinite(zmax) or zmax <= zmin:
+        return _mpl_cmap_to_plotly(cmap, n=n)
+
+    t0 = float(np.clip((vcenter - zmin) / (zmax - zmin), 0.001, 0.999))
+    n_lo = max(2, int(n * t0))
+    n_hi = max(2, n - n_lo)
+    colorscale: list[list[float | str]] = []
+
+    for i, c in enumerate(np.linspace(0.0, 0.5, n_lo)):
+        pos = t0 * i / (n_lo - 1)
+        r, g, b, _ = cmap(c)
+        colorscale.append([round(float(pos), 6), f"rgb({int(r * 255)},{int(g * 255)},{int(b * 255)})"])
+
+    for i, c in enumerate(np.linspace(0.5, 1.0, n_hi)):
+        if i == 0:
+            continue
+        pos = t0 + (1.0 - t0) * i / (n_hi - 1)
+        r, g, b, _ = cmap(c)
+        colorscale.append([round(float(pos), 6), f"rgb({int(r * 255)},{int(g * 255)},{int(b * 255)})"])
+
+    return colorscale
+
+
 def _validate_non_empty_1d(array_like: np.ndarray, name: str) -> np.ndarray:
     """Validate that input is a non-empty one-dimensional sequence."""
     array = np.asarray(array_like)
@@ -260,6 +301,14 @@ def plot_world(
         if not hasattr(bathymetry, "get_grid"):
             raise ValueError("bathymetry must provide get_grid(x_range, y_range)")
 
+        try:
+            import cmocean
+        except ImportError as exc:
+            raise ImportError(
+                "cmocean is required for bathymetry plotting in plot_world. "
+                "Install with `pip install cmocean`."
+            ) from exc
+
         bty_x, bty_y, bty_z = bathymetry.get_grid(
             x_range=(x_range_native[0], x_range_native[1]),
             y_range=(y_range_native[0], y_range_native[1]),
@@ -268,15 +317,24 @@ def plot_world(
         bty_y = _expand_heatmap_coords(np.asarray(bty_y, dtype=float) * scale)
         bty_depth = np.asarray(bty_z, dtype=float)
 
+        zmin_raw = float(np.nanmin(bty_depth))
+        zmax_raw = float(np.nanmax(bty_depth))
+        eps = max(1e-9, 1e-6 * max(abs(zmin_raw), abs(zmax_raw), 1.0))
+        zmin = zmin_raw if zmin_raw < 0.0 else -eps
+        zmax = zmax_raw if zmax_raw > 0.0 else eps
+        colorscale = _two_slope_colorscale(cmocean.cm.topo, zmin, zmax, vcenter=0.0)
+
         fig.add_trace(
             go.Heatmap(
                 x=bty_x,
                 y=bty_y,
                 z=bty_depth.T,
-                colorscale="Viridis",
+                colorscale=colorscale,
+                zmin=zmin,
+                zmax=zmax,
                 opacity=0.8,
                 colorbar=dict(
-                    title=dict(text="Seafloor Depth (m)"),
+                    title=dict(text="Bathymetry z (m)"),
                     thickness=24,
                     len=0.85,
                     y=0.5,
@@ -285,7 +343,7 @@ def plot_world(
                     xanchor="left",
                     xpad=0,
                 ),
-                hovertemplate="X: %{x:.2f}<br>Y: %{y:.2f}<br>Depth: %{z:.2f} m<extra></extra>",
+                hovertemplate="X: %{x:.2f}<br>Y: %{y:.2f}<br>Bathymetry z: %{z:.2f} m<extra></extra>",
             )
         )
 
