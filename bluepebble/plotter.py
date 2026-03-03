@@ -6,6 +6,7 @@ import numpy as np
 import plotly.express as px
 import plotly.graph_objects as go
 from plotly.subplots import make_subplots
+import cmocean
 from scipy import signal as scipy_signal
 from stonesoup.platform.base import Platform
 from stonesoup.types.detection import Detection
@@ -300,14 +301,6 @@ def plot_world(
     if bathymetry is not None:
         if not hasattr(bathymetry, "get_grid"):
             raise ValueError("bathymetry must provide get_grid(x_range, y_range)")
-
-        try:
-            import cmocean
-        except ImportError as exc:
-            raise ImportError(
-                "cmocean is required for bathymetry plotting in plot_world. "
-                "Install with `pip install cmocean`."
-            ) from exc
 
         bty_x, bty_y, bty_z = bathymetry.get_grid(
             x_range=(x_range_native[0], x_range_native[1]),
