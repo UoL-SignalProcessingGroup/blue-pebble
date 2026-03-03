@@ -66,6 +66,7 @@ tutorials/index
 examples/index
 api/index
 development
+testing
 citation
 roadmap
 ```

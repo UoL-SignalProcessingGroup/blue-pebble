@@ -11,6 +11,9 @@ python -m build --sdist --wheel
 make -C docs html
 ```
 
+For a summary of the current automated test coverage and its known gaps, see
+the [Testing](testing.md) page.
+
 ## Documentation workflow
 
 - Public APIs should use NumPy-style docstrings.

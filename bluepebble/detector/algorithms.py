@@ -106,7 +106,7 @@ class CACFARDetector(DetectionAlgorithm):
         floor.
     mode : str
         The convolution mode for boundary handling. Can be 'valid', 'same', or 'wrap'. Defaults to
-        'valid'.
+        'wrap'.
 
     """
 
@@ -126,7 +126,7 @@ class CACFARDetector(DetectionAlgorithm):
     )
     mode = Property(
         str,
-        default="valid",
+        default="wrap",
         doc="The convolution mode for boundary handling ('valid', 'same', or 'wrap')",
     )
 
@@ -171,11 +171,16 @@ class CACFARDetector(DetectionAlgorithm):
             noise_sum = np.convolve(padded_power, kernel, mode="valid")
             num_training_cells_total = 2 * self.num_training_cells
             noise_estimate = noise_sum / num_training_cells_total
-        else:  # Default 'valid' mode
-            noise_sum = np.convolve(power, kernel, mode="same")
+        else:  # Non-circular modes use zero-padded edge handling
+            padded_power = np.pad(power, pad_width=one_sided_window, mode="constant")
+            noise_sum = np.convolve(padded_power, kernel, mode="valid")
             # For edge cases, the number of training cells is smaller
-            edge_kernel = np.ones_like(power)
-            effective_num_training = np.convolve(edge_kernel, kernel, mode="same")
+            edge_kernel = np.pad(
+                np.ones_like(power),
+                pad_width=one_sided_window,
+                mode="constant",
+            )
+            effective_num_training = np.convolve(edge_kernel, kernel, mode="valid")
             with np.errstate(divide="ignore", invalid="ignore"):
                 noise_estimate = noise_sum / effective_num_training
 
