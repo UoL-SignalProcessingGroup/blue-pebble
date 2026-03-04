@@ -222,6 +222,358 @@ def _normalise_plotly_figsize(figsize: tuple[float, float]) -> tuple[int, int]:
     return width_px, height_px
 
 
+def launch_bathymetry_and_sound_speed_viewer(
+    bathymetry,
+    ssp,
+    x_range: tuple[float, float] | None = None,
+    y_range: tuple[float, float] | None = None,
+    z_res_m: float = 10.0,
+    host: str = "127.0.0.1",
+    port: int = 8050,
+    debug: bool = False,
+    jupyter_mode: str | None = None,
+) -> None:
+    """Launch an interactive bathymetry/profile dashboard for measured environments.
+
+    The dashboard provides:
+    - A bathymetry map (Blue Pebble ``-z`` convention) used as a profile selector.
+    - A selected-point sound-speed profile plot (depth shown as ``+z`` downward).
+
+    This viewer is designed for measured-data models where bathymetry and SSP vary in
+    both horizontal and vertical dimensions. It expects model objects compatible with
+    ``GEBCOBathymetry`` and ``LeroyCopernicusSoundSpeedProfile``.
+
+    Parameters
+    ----------
+    bathymetry : object
+        Bathymetry model instance supporting ``get_grid(x_range, y_range)`` and exposing
+        local x/y coverage arrays.
+    ssp : object
+        Sound-speed model instance supporting Leroy/Copernicus cached fields and
+        interpolation helpers.
+    x_range : tuple[float, float] | None
+        Optional x-range in meters for the viewer. If ``None``, the overlap between
+        bathymetry and SSP coverage is used.
+    y_range : tuple[float, float] | None
+        Optional y-range in meters for the viewer. If ``None``, the overlap between
+        bathymetry and SSP coverage is used.
+    z_res_m : float
+        Vertical resolution in meters used to resample SSP profiles.
+    host : str
+        Dash server host.
+    port : int
+        Dash server port.
+    debug : bool
+        Dash debug flag.
+    jupyter_mode : str | None
+        Optional Dash notebook display mode. Supported values are
+        ``{"inline", "tab", "external", "jupyterlab"}``.
+        If ``None`` (default), the app runs as a standard local web server.
+
+    """
+    if z_res_m <= 0.0:
+        raise ValueError("z_res_m must be positive")
+
+    if jupyter_mode is not None:
+        if not isinstance(jupyter_mode, str):
+            raise ValueError(
+                "jupyter_mode must be one of {'inline', 'tab', 'external', 'jupyterlab'} "
+                "or None"
+            )
+        jupyter_mode = jupyter_mode.strip().lower()
+        allowed_jupyter_modes = {"inline", "tab", "external", "jupyterlab"}
+        if jupyter_mode not in allowed_jupyter_modes:
+            raise ValueError(
+                "jupyter_mode must be one of {'inline', 'tab', 'external', 'jupyterlab'} "
+                "or None"
+            )
+
+    try:
+        import importlib
+
+        dash_module = importlib.import_module("dash")
+        Dash = dash_module.Dash
+        dcc = dash_module.dcc
+        html = dash_module.html
+        Input = dash_module.Input
+        Output = dash_module.Output
+        State = dash_module.State
+    except ImportError as exc:
+        raise ImportError(
+            "dash is required for launch_bathymetry_and_sound_speed_viewer. "
+            "Install with `pip install dash`."
+        ) from exc
+
+    if not hasattr(bathymetry, "_ensure_loaded") or not hasattr(bathymetry, "get_grid"):
+        raise TypeError(
+            "bathymetry must provide _ensure_loaded() and get_grid(x_range, y_range)."
+        )
+    if not hasattr(ssp, "_ensure_loaded"):
+        raise TypeError("ssp must provide _ensure_loaded().")
+
+    bathymetry._ensure_loaded()
+    ssp._ensure_loaded()
+
+    required_ssp_attrs = [
+        "_x_m",
+        "_y_m",
+        "_z_m",
+        "_c_zyx",
+        "_interp_3d_horizontal",
+        "_extrapolate_columns_to_depth",
+        "fill_speed_m_s",
+    ]
+    missing_ssp_attrs = [name for name in required_ssp_attrs if not hasattr(ssp, name)]
+    if missing_ssp_attrs:
+        raise TypeError(
+            "ssp is missing required attributes/methods for measured-data viewing: "
+            f"{missing_ssp_attrs}"
+        )
+
+    if not hasattr(bathymetry, "_x_m") or not hasattr(bathymetry, "_y_m"):
+        raise TypeError("bathymetry must expose _x_m and _y_m coverage arrays.")
+
+    overlap_x_min = max(float(np.min(bathymetry._x_m)), float(np.min(ssp._x_m)))
+    overlap_x_max = min(float(np.max(bathymetry._x_m)), float(np.max(ssp._x_m)))
+    overlap_y_min = max(float(np.min(bathymetry._y_m)), float(np.min(ssp._y_m)))
+    overlap_y_max = min(float(np.max(bathymetry._y_m)), float(np.max(ssp._y_m)))
+
+    if overlap_x_min >= overlap_x_max or overlap_y_min >= overlap_y_max:
+        raise ValueError("Bathymetry and SSP domains do not overlap in x/y.")
+
+    if x_range is None:
+        x_range = (overlap_x_min, overlap_x_max)
+    if y_range is None:
+        y_range = (overlap_y_min, overlap_y_max)
+
+    x_range = (float(x_range[0]), float(x_range[1]))
+    y_range = (float(y_range[0]), float(y_range[1]))
+    if x_range[0] >= x_range[1] or y_range[0] >= y_range[1]:
+        raise ValueError("x_range and y_range must be strictly increasing")
+
+    if x_range[0] < overlap_x_min or x_range[1] > overlap_x_max:
+        raise ValueError("x_range must lie within overlapping bathymetry/SSP x-domain")
+    if y_range[0] < overlap_y_min or y_range[1] > overlap_y_max:
+        raise ValueError("y_range must lie within overlapping bathymetry/SSP y-domain")
+
+    x_bty_m, y_bty_m, z_bty_xy_m = bathymetry.get_grid(x_range=x_range, y_range=y_range)
+    x_bty_m = np.asarray(x_bty_m, dtype=float)
+    y_bty_m = np.asarray(y_bty_m, dtype=float)
+    z_bty_xy_m = np.asarray(z_bty_xy_m, dtype=float)
+
+    if z_bty_xy_m.shape != (len(x_bty_m), len(y_bty_m)):
+        raise ValueError("bathymetry.get_grid returned unexpected z-grid shape")
+
+    z_bty_xy_m = np.minimum(z_bty_xy_m, 0.0)
+    depth_limit_yx_m = np.abs(z_bty_xy_m.T)
+    max_depth_m = float(np.nanmax(depth_limit_yx_m))
+    if not np.isfinite(max_depth_m) or max_depth_m <= 0.0:
+        raise ValueError("Unable to infer positive seabed depths from bathymetry grid")
+
+    num_depth_points = int(np.ceil(max_depth_m / z_res_m)) + 1
+    z_profile_m = np.linspace(0.0, max_depth_m, max(2, num_depth_points))
+
+    c_horiz_zyx = ssp._interp_3d_horizontal(
+        np.asarray(ssp._c_zyx, dtype=float),
+        np.asarray(ssp._x_m, dtype=float),
+        np.asarray(ssp._y_m, dtype=float),
+        x_bty_m,
+        y_bty_m,
+    )
+    c_profile_zyx = ssp._extrapolate_columns_to_depth(
+        c_horiz_zyx,
+        np.asarray(ssp._z_m, dtype=float),
+        z_profile_m,
+        c_fill=float(ssp.fill_speed_m_s),
+    )
+
+    water_mask_zyx = z_profile_m[:, None, None] <= depth_limit_yx_m[None, :, :]
+    c_profile_zyx = np.where(water_mask_zyx, c_profile_zyx, np.nan)
+
+    z_bty_min = float(np.nanmin(z_bty_xy_m))
+    z_bty_max = float(np.nanmax(z_bty_xy_m))
+    z_eps = max(1e-9, 1e-6 * max(abs(z_bty_min), abs(z_bty_max), 1.0))
+    z_bty_display_min = z_bty_min if z_bty_min < 0.0 else -z_eps
+    z_bty_display_max = z_bty_max if z_bty_max > 0.0 else z_eps
+
+    bathymetry_colorscale = _two_slope_colorscale(
+        cmocean.cm.topo,
+        z_bty_display_min,
+        z_bty_display_max,
+        vcenter=0.0,
+    )
+
+    ix0 = len(x_bty_m) // 2
+    iy0 = len(y_bty_m) // 2
+
+    def _nearest_index(values: np.ndarray, target: float) -> int:
+        return int(np.argmin(np.abs(values - float(target))))
+
+    def _map_figure(ix: int, iy: int) -> go.Figure:
+        fig = go.Figure()
+        fig.add_trace(
+            go.Heatmap(
+                x=x_bty_m,
+                y=y_bty_m,
+                z=z_bty_xy_m.T,
+                colorscale=bathymetry_colorscale,
+                zmin=z_bty_display_min,
+                zmax=z_bty_display_max,
+                colorbar=dict(title=dict(text="Bathymetry z (m)"), thickness=20),
+                hovertemplate=(
+                    "x=%{x:.1f} m<br>y=%{y:.1f} m"
+                    "<br>Bathymetry z=%{z:.1f} m<extra></extra>"
+                ),
+            )
+        )
+        fig.add_trace(
+            go.Scatter(
+                x=[x_bty_m[ix]],
+                y=[y_bty_m[iy]],
+                mode="markers",
+                marker=dict(symbol="star", color="yellow", size=12, line=dict(color="black", width=1)),
+                name="Selected",
+                hovertemplate="Selected<br>x=%{x:.1f} m<br>y=%{y:.1f} m<extra></extra>",
+            )
+        )
+        fig.update_layout(
+            template="plotly_white",
+            title=dict(text="Bathymetry Selector", x=0.5),
+            xaxis=dict(title="x (m)"),
+            yaxis=dict(title="y (m)", scaleanchor="x", scaleratio=1),
+            margin=dict(l=40, r=20, t=44, b=40),
+            legend=dict(x=0.01, y=0.99),
+        )
+        return fig
+
+    def _profile_figure(ix: int, iy: int) -> go.Figure:
+        profile = c_profile_zyx[:, iy, ix]
+        finite_profile = profile[np.isfinite(profile)]
+        if finite_profile.size:
+            c_min = float(np.nanmin(finite_profile)) - 5.0
+            c_max = float(np.nanmax(finite_profile)) + 5.0
+        else:
+            c_min, c_max = 1450.0, 1550.0
+
+        seabed_depth_m = float(depth_limit_yx_m[iy, ix])
+
+        fig = go.Figure()
+        fig.add_trace(
+            go.Scatter(
+                x=profile,
+                y=z_profile_m,
+                mode="lines",
+                line=dict(width=2),
+                name="c(z)",
+                hovertemplate="c=%{x:.2f} m/s<br>depth=%{y:.1f} m<extra></extra>",
+            )
+        )
+        fig.add_trace(
+            go.Scatter(
+                x=[c_min, c_max],
+                y=[seabed_depth_m, seabed_depth_m],
+                mode="lines",
+                line=dict(color="saddlebrown", width=1.5, dash="dot"),
+                name="Seabed",
+                hovertemplate=f"Seabed depth={seabed_depth_m:.1f} m<extra></extra>",
+                showlegend=False,
+            )
+        )
+        fig.update_layout(
+            template="plotly_white",
+            title=dict(text="Sound Speed Profile", x=0.5),
+            xaxis=dict(title="c (m/s)", range=[c_min, c_max]),
+            yaxis=dict(title="Depth (+z, m)", autorange="reversed", range=[seabed_depth_m, 0.0]),
+            margin=dict(l=40, r=20, t=44, b=40),
+            showlegend=False,
+        )
+        return fig
+
+    app = Dash(__name__)
+    app.title = "Bathymetry and Sound Speed Viewer"
+
+    app.layout = html.Div(
+        style={"fontFamily": "Arial, sans-serif", "padding": "12px"},
+        children=[
+            html.H2("Bathymetry and Sound Speed Viewer", style={"textAlign": "center"}),
+            html.Div(
+                id="info-bar",
+                style={"textAlign": "center", "marginBottom": "10px", "fontSize": "13px"},
+                children=(
+                    "Click any bathymetry point to inspect the local sound speed profile. "
+                    "Bathymetry uses Blue Pebble -z; profile depth is shown as +z downward."
+                ),
+            ),
+            dcc.Store(id="selected-indices", data={"ix": ix0, "iy": iy0}),
+            html.Div(
+                style={"display": "flex", "gap": "10px"},
+                children=[
+                    dcc.Graph(
+                        id="bathymetry-map",
+                        style={"flex": "2", "minWidth": "0", "height": "64vh"},
+                        config={"scrollZoom": True},
+                    ),
+                    dcc.Graph(
+                        id="ssp-profile",
+                        style={"flex": "1", "minWidth": "0", "height": "64vh"},
+                    ),
+                ],
+            ),
+            html.Div(
+                id="selected-point-label",
+                style={"textAlign": "center", "marginTop": "10px", "fontSize": "13px"},
+            ),
+        ],
+    )
+
+    @app.callback(
+        Output("selected-indices", "data"),
+        Input("bathymetry-map", "clickData"),
+        State("selected-indices", "data"),
+    )
+    def _update_selected_indices(click_data, selected_data):
+        if not click_data or "points" not in click_data or len(click_data["points"]) == 0:
+            return selected_data
+        point = click_data["points"][0]
+        if "x" not in point or "y" not in point:
+            return selected_data
+
+        ix = _nearest_index(x_bty_m, point["x"])
+        iy = _nearest_index(y_bty_m, point["y"])
+        return {"ix": ix, "iy": iy}
+
+    @app.callback(Output("bathymetry-map", "figure"), Input("selected-indices", "data"))
+    def _update_bathymetry_map(selected_data):
+        ix = int(selected_data["ix"])
+        iy = int(selected_data["iy"])
+        return _map_figure(ix, iy)
+
+    @app.callback(
+        Output("ssp-profile", "figure"),
+        Output("selected-point-label", "children"),
+        Input("selected-indices", "data"),
+    )
+    def _update_profile(selected_data):
+        ix = int(selected_data["ix"])
+        iy = int(selected_data["iy"])
+        seabed_z_m = float(z_bty_xy_m[ix, iy])
+        label = (
+            f"Selected point: x={x_bty_m[ix]:.1f} m, y={y_bty_m[iy]:.1f} m, "
+            f"bathymetry z={seabed_z_m:.1f} m"
+        )
+        return _profile_figure(ix, iy), label
+
+    if jupyter_mode is None:
+        print(f"\n  Bathymetry and Sound Speed Viewer running -> http://{host}:{port}/\n")
+        app.run(host=host, port=int(port), debug=bool(debug))
+    else:
+        print(
+            "\n  Bathymetry and Sound Speed Viewer running in notebook mode "
+            f"'{jupyter_mode}' -> http://{host}:{port}/\n"
+        )
+        app.run(host=host, port=int(port), debug=bool(debug), jupyter_mode=jupyter_mode)
+
+
 def plot_world(
     truths: list[GroundTruthPath],
     platform: Platform,
