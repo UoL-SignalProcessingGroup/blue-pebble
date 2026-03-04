@@ -30,6 +30,10 @@ jobs:
         run: |
           ruff check .
 
+      - name: Tests (Pytest)
+        run: |
+          pytest
+
       - name: Smoke import
         run: |
           python -c "import bluepebble; print(getattr(bluepebble, '__version__', 'no __version__'))"
