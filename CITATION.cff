@@ -21,9 +21,6 @@ url: "https://github.com/jjwakefield/blue-pebble"
 
 license: "MIT"
 
-version: "1.0.0"
-date-released: 2026-01-01
-
 keywords:
   - passive sonar
   - underwater acoustics
