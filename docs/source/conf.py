@@ -8,7 +8,7 @@ import sys
 import warnings
 from pathlib import Path
 
-ROOT = Path(__file__).resolve().parents[1]
+ROOT = Path(__file__).resolve().parents[2]
 sys.path.insert(0, os.fspath(ROOT))
 
 try:
@@ -27,6 +27,7 @@ project = "Blue Pebble"
 author = "Joshua J Wakefield and Finley Boulton"
 copyright = "2026, Joshua J Wakefield and Finley Boulton"
 release = __version__
+root_doc = "source/index"
 
 extensions = [
     "sphinx.ext.autodoc",

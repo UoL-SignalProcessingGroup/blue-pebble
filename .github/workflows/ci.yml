@@ -7,6 +7,28 @@ on:
     branches: [ main ]
 
 jobs:
+  pr-title:
+    if: github.event_name == 'pull_request'
+    runs-on: ubuntu-latest
+    steps:
+      - name: Validate PR title
+        env:
+          PR_TITLE: ${{ github.event.pull_request.title }}
+        run: |
+          pattern='^(feat|fix|docs|style|refactor|perf|test|build|ci|chore)(\([^)]+\))?!?: .+'
+          if [[ "$PR_TITLE" =~ $pattern ]]; then
+            echo "PR title is a valid Conventional Commit: $PR_TITLE"
+          else
+            echo "PR title must follow Conventional Commits."
+            echo "Use: type(scope): summary"
+            echo "Scope is encouraged but not required."
+            echo "Examples:"
+            echo "  ci: add pytest step to workflow"
+            echo "  fix(plotter): handle empty detections"
+            echo "  docs(api): clarify Bellhop installation"
+            exit 1
+          fi
+
   core:
     runs-on: ubuntu-latest
     strategy:

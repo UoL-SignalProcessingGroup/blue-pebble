@@ -77,6 +77,9 @@ By contributing, you agree your contribution is under the repository license (MI
 
 - Use feature branches (for example `feat/<topic>` or `fix/<topic>`).
 - Keep PRs focused and reviewable.
+- Use a Conventional Commit-formatted PR title, for example `ci: add pytest step to workflow`.
+- Prefer the form `type(scope): summary`; scope is encouraged when it adds clarity, but it is not required.
+- Prefer squash merging so the PR title becomes the commit message on `main`.
 - In the PR description, include:
   - what changed
   - why it changed
