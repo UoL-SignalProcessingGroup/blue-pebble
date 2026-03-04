@@ -14,6 +14,7 @@ on:
 
 permissions:
   contents: write
+  pull-requests: write
 
 jobs:
   sync-citation:
@@ -31,6 +32,7 @@ jobs:
           python-version: "3.12"
 
       - name: Update CITATION.cff release metadata
+        id: citation
         env:
           TAG_NAME: ${{ github.event_name == 'release' && github.event.release.tag_name || inputs.tag_name }}
           RELEASE_DATE: ${{ github.event_name == 'release' && github.event.release.published_at || inputs.release_date }}
@@ -85,17 +87,38 @@ jobs:
               raise SystemExit("Failed to insert date-released after version line.")
 
           path.write_text(text, encoding="utf-8")
+          github_output = Path(os.environ["GITHUB_OUTPUT"])
+          with github_output.open("a", encoding="utf-8") as stream:
+              stream.write(f"version={version}\n")
+              stream.write(f"release_date={release_date}\n")
           PY
 
-      - name: Commit updated CITATION.cff
+      - name: Create pull request with updated CITATION.cff
         run: |
           if git diff --quiet -- CITATION.cff; then
             echo "CITATION.cff already up to date."
             exit 0
           fi
 
+          branch="automation/sync-citation-v${{ steps.citation.outputs.version }}"
+
           git config user.name "github-actions[bot]"
           git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git checkout -b "$branch"
           git add CITATION.cff
           git commit -m "docs(citation): sync release metadata"
-          git push origin HEAD:${{ github.event.repository.default_branch }}
+          git push --force-with-lease origin "$branch"
+
+          existing_pr="$(gh pr list --head "$branch" --base "${{ github.event.repository.default_branch }}" --state open --json number --jq '.[0].number')"
+          if [ -n "$existing_pr" ]; then
+            echo "Updated existing pull request #$existing_pr"
+            exit 0
+          fi
+
+          gh pr create \
+            --base "${{ github.event.repository.default_branch }}" \
+            --head "$branch" \
+            --title "docs(citation): sync release metadata for v${{ steps.citation.outputs.version }}" \
+            --body "Update \`CITATION.cff\` with the released software version \`${{ steps.citation.outputs.version }}\` and date \`${{ steps.citation.outputs.release_date }}\`."
+        env:
+          GH_TOKEN: ${{ github.token }}
