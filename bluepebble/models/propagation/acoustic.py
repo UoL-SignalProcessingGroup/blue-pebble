@@ -400,18 +400,18 @@ class BellhopAcousticPropagationModel(AcousticPropagationModel):
 
         np.seterr(divide="ignore")
         pressure = np.squeeze(pressure)
-        tloss = np.abs(pressure)
-        tloss = -20 * np.log10(tloss + 1e-12)  # Avoid log(0) by adding a small constant
+        pressure_magnitude = np.abs(pressure)
+        tloss = -20 * np.log10(np.maximum(pressure_magnitude, 1e-12))
 
         distance = np.linalg.norm(source.state_vector[[0, 2, 4]] - platform.array.ref_state_vector)
-        speed = self.ssp.calculate(platform.array.ref_state_vector[2])
+        speed = float(np.asarray(self.ssp.calculate(platform.array.ref_state_vector[2])).item())
         time = distance / speed
 
-        # Handle cases where pressure is zero, resulting in infinite tloss
-        if np.isinf(tloss[-1]):
+        # Handle cases where pressure is effectively zero by returning a large finite loss.
+        if np.atleast_1d(pressure_magnitude)[-1] < 1e-12:
             return 999.0, time  # Return a large, finite loss value
 
-        return tloss[-1], time
+        return float(np.atleast_1d(tloss)[-1]), time
 
     def _create_env_file(
         self,
@@ -468,8 +468,8 @@ class BellhopAcousticPropagationModel(AcousticPropagationModel):
         max_range_m = np.linalg.norm(source_position - array_ref_position)
 
         # Source and receiver depths
-        source_depth = np.abs(source_position[2])
-        receiver_depth = np.abs(array_ref_position[2])
+        source_depth = float(np.abs(source_position[2]).item())
+        receiver_depth = float(np.abs(array_ref_position[2]).item())
 
         # Define bathymetry and check if a .bty file is needed
         bathy = [[0, self.env_depth]]  # Simple flat bottom

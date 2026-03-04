@@ -291,13 +291,13 @@ class SweepResult:
     def auc_roc(self) -> float:
         """Area under the ROC curve, computed via trapezoidal integration."""
         order = np.argsort(self.fpr)
-        return float(np.trapz(self.tpr[order], self.fpr[order]))
+        return float(np.trapezoid(self.tpr[order], self.fpr[order]))
 
     @property
     def auc_pr(self) -> float:
         """Area under the precision-recall curve, computed via trapezoidal integration."""
         order = np.argsort(self.recall)
-        return float(np.trapz(self.precision[order], self.recall[order]))
+        return float(np.trapezoid(self.precision[order], self.recall[order]))
 
     @property
     def best_param(self) -> float:

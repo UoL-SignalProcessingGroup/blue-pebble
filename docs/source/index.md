@@ -62,10 +62,11 @@ Implemented capabilities include:
 
 installation
 getting_started
-tutorials/index
-examples/index
+../tutorials/index
+../examples/index
 api/index
 development
+testing
 citation
 roadmap
 ```

@@ -71,6 +71,7 @@ tag_regex = "^v?(?P<version>\\d+\\.\\d+\\.\\d+)(?:[-+].*)?$"
 
 [tool.ruff]
 line-length = 99
+extend-exclude = ["external_tools"]
 
 [tool.ruff.lint]
 select = ["F", "E", "W", "I", "B", "D", "UP"]

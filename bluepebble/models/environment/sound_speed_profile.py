@@ -150,7 +150,10 @@ class Constant(SoundSpeedProfile):
             Sound speed in m/s.
 
         """
-        return self.speed
+        depth_array = np.asarray(depth)
+        if depth_array.ndim == 0:
+            return float(self.speed)
+        return np.full(depth_array.shape, self.speed, dtype=float)
 
 
 class Linear(SoundSpeedProfile):
