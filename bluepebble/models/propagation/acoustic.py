@@ -176,8 +176,9 @@ class CylindricalAcousticPropagationModel(AcousticPropagationModel):
         time_delays = distances / speeds_per_sensor  # Shape: (num_sensors,)
 
         # Broadcast to (num_sensors, num_frequencies)
+        # Delay convention follows FFT forward sign: delay tau => exp(-j2pi f tau)
         phase_shifts = np.exp(
-            2j * np.pi * frequencies_hz[np.newaxis, :] * time_delays[:, np.newaxis]
+            -2j * np.pi * frequencies_hz[np.newaxis, :] * time_delays[:, np.newaxis]
         )
 
         # Combine amplitude and phase
@@ -293,8 +294,9 @@ class SphericalAcousticPropagationModel(AcousticPropagationModel):
         time_delays = distances / speeds_per_sensor  # Shape: (num_sensors,)
 
         # Broadcast to (num_sensors, num_frequencies)
+        # Delay convention follows FFT forward sign: delay tau => exp(-j2pi f tau)
         phase_shifts = np.exp(
-            2j * np.pi * frequencies_hz[np.newaxis, :] * time_delays[:, np.newaxis]
+            -2j * np.pi * frequencies_hz[np.newaxis, :] * time_delays[:, np.newaxis]
         )
 
         # Combine amplitude and phase
