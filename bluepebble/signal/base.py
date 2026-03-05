@@ -103,3 +103,20 @@ class Signal(Base):
         signals = np.fft.ifft(signals_fft, axis=1)
 
         return signals.astype(np.complex128)
+
+
+# Stubs
+class SnapshotSignal(Signal):
+    """Snapshot signal class."""
+
+    def generate(self):
+        """Generate a snapshot signal."""
+        pass
+
+
+class STFTSignal(Signal):
+    """STFT signal class."""
+
+    def generate(self):
+        """Generate a STFT signal."""
+        pass
