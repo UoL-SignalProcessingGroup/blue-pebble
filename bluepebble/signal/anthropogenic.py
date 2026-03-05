@@ -1,6 +1,11 @@
 """Anthropogenic signal models for sensor arrays."""
 
+from fractions import Fraction
+from pathlib import Path
+
 import numpy as np
+from scipy import signal as scipy_signal
+from scipy.io import wavfile
 from stonesoup.base import Property
 
 from .base import Signal
@@ -1013,3 +1018,205 @@ class BroadbandShipSignal(Signal):
         self._source_signal = None
         self._noise_realization = None
         self._tonal_realizations = None
+
+
+class BroadbandMeasuredSignal(Signal):
+    """Generates broadband source signals from measured WAV recordings.
+
+    This signal model loads a measured waveform from disk, resamples it to the
+    simulator sampling rate, matches the requested simulation duration, scales to
+    a target RMS level in dB re 1 µPa, and then computes/caches an STFT for
+    frequency-domain propagation.
+
+    Parameters
+    ----------
+    wav_path : str
+        Path to the measured WAV file.
+    frame_len : int, optional
+        STFT frame length in samples. Default is 1024.
+    hop_factor : int, optional
+        Hop factor, where hop size = frame_len // hop_factor. Default is 4.
+    window_type : str, optional
+        STFT window type. Default is "hann".
+    segment_start_s : float, optional
+        Start time (seconds) within the WAV to extract. Default is 0.0.
+    segment_duration_s : float, optional
+        Duration (seconds) to extract before duration matching. If <= 0, uses to
+        the end of file.
+    duration_match_mode : str, optional
+        Method to match requested duration when audio is shorter than required.
+        Supported values: "tile", "zero_pad". Default is "tile".
+    level_db_re_1upa : float, optional
+        Target RMS level of the source signal in dB re 1 µPa. Default is 85.0.
+
+    """
+
+    wav_path = Property(str, doc="Path to measured WAV recording")
+    frame_len = Property(int, default=1024, doc="STFT frame length in samples")
+    hop_factor = Property(int, default=4, doc="Hop factor (hop = frame_len // hop_factor)")
+    window_type = Property(str, default="hann", doc="Window type for STFT")
+    segment_start_s = Property(float, default=0.0, doc="Segment start time in WAV (seconds)")
+    segment_duration_s = Property(
+        float,
+        default=0.0,
+        doc="Segment duration in WAV (seconds); <=0 uses to end of recording",
+    )
+    duration_match_mode = Property(
+        str,
+        default="tile",
+        doc='Duration matching mode when audio is short: "tile" or "zero_pad"',
+    )
+    level_db_re_1upa = Property(
+        float,
+        default=85.0,
+        doc="Target RMS source level in dB re 1 µPa",
+    )
+
+    def __init__(self, *args, **kwargs):
+        """Initialize measured broadband signal generator."""
+        super().__init__(*args, **kwargs)
+        self._stft_cache = None
+        self._frequencies = None
+        self._hop = None
+        self._window = None
+        self._source_signal = None
+
+    @staticmethod
+    def _to_float_mono(audio: np.ndarray) -> np.ndarray:
+        """Convert waveform to mono float64 in approximately [-1, 1]."""
+        if audio.ndim > 1:
+            audio = np.mean(audio, axis=1)
+
+        if np.issubdtype(audio.dtype, np.floating):
+            return np.asarray(audio, dtype=np.float64)
+
+        if np.issubdtype(audio.dtype, np.signedinteger):
+            info = np.iinfo(audio.dtype)
+            denom = max(abs(info.min), info.max)
+            return np.asarray(audio, dtype=np.float64) / float(denom)
+
+        if np.issubdtype(audio.dtype, np.unsignedinteger):
+            info = np.iinfo(audio.dtype)
+            midpoint = info.max / 2.0
+            return (np.asarray(audio, dtype=np.float64) - midpoint) / midpoint
+
+        return np.asarray(audio, dtype=np.float64)
+
+    def _resample_to_sim_rate(self, signal: np.ndarray, source_fs_hz: float) -> np.ndarray:
+        """Resample waveform to simulator sampling rate."""
+        target_fs_hz = float(self.sampling_rate_hz)
+        if np.isclose(source_fs_hz, target_fs_hz):
+            return signal
+
+        ratio = Fraction(target_fs_hz / source_fs_hz).limit_denominator(1000)
+        return scipy_signal.resample_poly(signal, ratio.numerator, ratio.denominator)
+
+    def _match_duration(self, signal: np.ndarray) -> np.ndarray:
+        """Match waveform length to required simulation sample count."""
+        target_samples = self.num_samples
+
+        if len(signal) >= target_samples:
+            return signal[:target_samples]
+
+        if self.duration_match_mode == "zero_pad":
+            return np.pad(signal, (0, target_samples - len(signal)))
+
+        if self.duration_match_mode == "tile":
+            reps = int(np.ceil(target_samples / max(len(signal), 1)))
+            return np.tile(signal, reps)[:target_samples]
+
+        msg = (
+            f"Unknown duration_match_mode: {self.duration_match_mode}. "
+            "Expected 'tile' or 'zero_pad'."
+        )
+        raise ValueError(msg)
+
+    def _apply_level(self, signal: np.ndarray) -> np.ndarray:
+        """Scale waveform to target RMS level in dB re 1 µPa."""
+        target_rms_upa = 10 ** (self.level_db_re_1upa / 20.0)
+        current_rms = np.sqrt(np.mean(signal**2))
+        if current_rms <= 0:
+            return signal
+        return signal * (target_rms_upa / current_rms)
+
+    def _generate_base_signal(self, source) -> np.ndarray:
+        """Generate full-duration source signal from measured WAV data."""
+        wav_file = Path(self.wav_path)
+        if not wav_file.exists():
+            msg = f"Measured WAV file not found: {wav_file}"
+            raise FileNotFoundError(msg)
+
+        fs_hz, audio = wavfile.read(str(wav_file))
+        waveform = self._to_float_mono(audio)
+
+        start_sample = int(max(self.segment_start_s, 0.0) * fs_hz)
+        if self.segment_duration_s > 0:
+            end_sample = start_sample + int(self.segment_duration_s * fs_hz)
+            waveform = waveform[start_sample:end_sample]
+        else:
+            waveform = waveform[start_sample:]
+
+        if len(waveform) == 0:
+            msg = "Selected WAV segment is empty. Check segment_start_s and segment_duration_s."
+            raise ValueError(msg)
+
+        waveform = self._resample_to_sim_rate(waveform, fs_hz)
+        waveform = self._match_duration(waveform)
+        waveform = self._apply_level(waveform)
+
+        return np.asarray(waveform, dtype=np.complex128)
+
+    def compute_stft(self, source) -> tuple[np.ndarray, np.ndarray, int, np.ndarray]:
+        """Compute and cache the STFT of the measured source signal."""
+        if self._stft_cache is not None:
+            return self._stft_cache, self._frequencies, self._hop, self._window
+
+        self._source_signal = self._generate_base_signal(source)
+
+        from .utils import compute_stft
+
+        stft, freq_normalized, hop, window = compute_stft(
+            self._source_signal, self.frame_len, self.hop_factor, self.window_type
+        )
+
+        frequencies = freq_normalized * self.sampling_rate_hz
+
+        self._stft_cache = stft
+        self._frequencies = frequencies
+        self._hop = hop
+        self._window = window
+
+        return stft, frequencies, hop, window
+
+    def get_stft(self) -> tuple[np.ndarray, np.ndarray, int, np.ndarray]:
+        """Get cached STFT data for measured signal."""
+        if self._stft_cache is None:
+            msg = "STFT not computed yet. Call compute_stft() first."
+            raise RuntimeError(msg)
+
+        return self._stft_cache, self._frequencies, self._hop, self._window
+
+    def get_source_signal(self) -> np.ndarray:
+        """Get cached time-domain measured source signal."""
+        if self._source_signal is None:
+            msg = "Source signal not generated yet. Call compute_stft() first."
+            raise RuntimeError(msg)
+
+        return self._source_signal
+
+    def generate(self, source, sensor_delays_s, tloss_db, propagation_time_s) -> np.ndarray:
+        """Not used for broadband processing - use compute_stft() instead."""
+        msg = (
+            "BroadbandMeasuredSignal does not support per-timestep generation. "
+            "Use compute_stft() and process in frequency domain via "
+            "BroadbandPassiveSonarArraySimulator."
+        )
+        raise NotImplementedError(msg)
+
+    def reset(self):
+        """Clear cached STFT and source signal data."""
+        self._stft_cache = None
+        self._frequencies = None
+        self._hop = None
+        self._window = None
+        self._source_signal = None
