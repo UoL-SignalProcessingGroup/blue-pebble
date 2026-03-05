@@ -144,6 +144,14 @@ From a configured development environment:
 pytest
 ```
 
+To run with coverage reporting:
+
+```bash
+pytest --cov=bluepebble --cov-report=term-missing --cov-report=xml
+```
+
+In CI, coverage is collected on the Python 3.12 matrix job to keep overall runtime manageable.
+
 Some propagation tests are optional:
 
 - real `rtrs` tests run only when the `rtrs` package is installed
