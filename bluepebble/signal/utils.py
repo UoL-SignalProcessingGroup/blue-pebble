@@ -38,7 +38,12 @@ def compute_stft(
                 The window array used.
 
     """
-    signal = np.asarray(signal, dtype=np.complex64)
+    signal = np.asarray(signal)
+    if signal.ndim != 1:
+        msg = "Input signal must be 1D"
+        raise ValueError(msg)
+
+    has_imag = np.iscomplexobj(signal) and np.any(np.abs(np.imag(signal)) > 0.0)
     hop = frame_len // hop_factor
 
     # Get window
@@ -58,24 +63,21 @@ def compute_stft(
     signal_padded = np.concatenate([signal, np.zeros(pad_amount, dtype=signal.dtype)])
 
     # Compute STFT
-    stft_bins = frame_len // 2 + 1
+    stft_bins = frame_len if has_imag else (frame_len // 2 + 1)
     stft = np.zeros((num_frames, stft_bins), dtype=np.complex64)
 
     for i in range(num_frames):
         start = i * hop
-        frame = signal_padded[start : start + frame_len] * w
-        # Handle complex signals by taking real part for FFT
-        # (For complex baseband signals, use full FFT instead of rfft)
-        if np.iscomplexobj(signal):
-            # For complex signals, compute FFT of real part
-            frame_real = np.real(frame).astype(np.float32)
-            stft[i, :] = np.fft.rfft(frame_real)
+        frame = signal_padded[start : start + frame_len]
+        if has_imag:
+            frame_complex = np.asarray(frame * w, dtype=np.complex64)
+            stft[i, :] = np.fft.fft(frame_complex)
         else:
-            frame_real = np.asarray(frame, dtype=np.float32)
+            frame_real = np.asarray(np.real(frame) * w, dtype=np.float32)
             stft[i, :] = np.fft.rfft(frame_real)
 
     # Generate frequency array (assuming sampling rate of 1.0, caller must scale)
-    frequencies = np.fft.rfftfreq(frame_len, 1.0)
+    frequencies = np.fft.fftfreq(frame_len, 1.0) if has_imag else np.fft.rfftfreq(frame_len, 1.0)
 
     return stft, frequencies, hop, w
 
@@ -112,10 +114,22 @@ def inverse_stft(
     reconstructed = np.zeros(signal_len, dtype=np.complex64)
     window_sum = np.zeros(signal_len, dtype=np.float32)
 
+    onesided_bins = frame_len // 2 + 1
+    twosided_bins = frame_len
+    is_twosided = stft.shape[1] == twosided_bins
+    is_onesided = stft.shape[1] == onesided_bins
+
+    if not (is_twosided or is_onesided):
+        msg = (
+            f"Invalid STFT shape {stft.shape}. Expected num_freq_bins "
+            f"to be {onesided_bins} (rFFT) or {twosided_bins} (FFT)."
+        )
+        raise ValueError(msg)
+
     for i in range(num_frames):
         start = i * hop
         frame_freq = stft[i, :]
-        frame_time = np.fft.irfft(frame_freq, n=frame_len)
+        frame_time = np.fft.ifft(frame_freq, n=frame_len) if is_twosided else np.fft.irfft(frame_freq, n=frame_len)
         frame_time = np.asarray(frame_time, dtype=np.complex64)
 
         # Apply window and accumulate
