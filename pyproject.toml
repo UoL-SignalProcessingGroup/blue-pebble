@@ -50,6 +50,7 @@ Repository = "https://github.com/jjwakefield/blue-pebble"
 dev = [
     "ruff",
     "pytest",
+    "pytest-cov",
     "build",
 ]
 docs = [
@@ -81,3 +82,12 @@ select = ["F", "E", "W", "I", "B", "D", "UP"]
 
 [tool.setuptools.packages.find]
 where = ["."]
+
+[tool.coverage.run]
+source = ["bluepebble"]
+branch = true
+
+[tool.coverage.report]
+show_missing = true
+skip_covered = false
+omit = ["*/__init__.py"]

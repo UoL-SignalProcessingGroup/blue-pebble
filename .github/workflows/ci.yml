@@ -54,7 +54,11 @@ jobs:
 
       - name: Tests (Pytest)
         run: |
-          pytest
+          if [[ "${{ matrix.python-version }}" == "3.12" ]]; then
+            pytest --cov=bluepebble --cov-report=term-missing --cov-report=xml --cov-fail-under=55
+          else
+            pytest
+          fi
 
       - name: Smoke import
         run: |
