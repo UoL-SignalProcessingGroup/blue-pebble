@@ -675,7 +675,9 @@ def plot_world(
         zmax = zmax_raw if zmax_raw > 0.0 else eps
         colorscale = _two_slope_colorscale(cmocean.cm.topo, zmin, zmax, vcenter=0.0)
 
-        hovertemplate = "X: %{x:.2f} {unit}<br>Y: %{y:.2f} {unit}<br>Bathymetry z: %{z:.2f} m<extra></extra>"
+        hovertemplate = (
+            "X: %{x:.2f} {unit}<br>Y: %{y:.2f} {unit}<br>Bathymetry z: %{z:.2f} m<extra></extra>"
+        )
         fig.add_trace(
             go.Heatmap(
                 x=bty_x,
