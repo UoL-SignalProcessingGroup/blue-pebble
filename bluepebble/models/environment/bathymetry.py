@@ -323,6 +323,7 @@ class GEBCOBathymetry(Bathymetry):
     -----
     - Coordinates are converted from lat/lon to local Cartesian meters.
     - Internally and at output, depth follows the Nereus convention (``-z`` underwater).
+
     """
 
     file_path: str = Property(doc="Path to GEBCO NetCDF file")

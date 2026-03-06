@@ -2,11 +2,11 @@
 
 from datetime import datetime
 
+import cmocean
 import numpy as np
 import plotly.express as px
 import plotly.graph_objects as go
 from plotly.subplots import make_subplots
-import cmocean
 from scipy import signal as scipy_signal
 from stonesoup.platform.base import Platform
 from stonesoup.types.detection import Detection
@@ -106,14 +106,18 @@ def _two_slope_colorscale(
     for i, c in enumerate(np.linspace(0.0, 0.5, n_lo)):
         pos = t0 * i / (n_lo - 1)
         r, g, b, _ = cmap(c)
-        colorscale.append([round(float(pos), 6), f"rgb({int(r * 255)},{int(g * 255)},{int(b * 255)})"])
+        colorscale.append(
+            [round(float(pos), 6), f"rgb({int(r * 255)},{int(g * 255)},{int(b * 255)})"]
+            )
 
     for i, c in enumerate(np.linspace(0.5, 1.0, n_hi)):
         if i == 0:
             continue
         pos = t0 + (1.0 - t0) * i / (n_hi - 1)
         r, g, b, _ = cmap(c)
-        colorscale.append([round(float(pos), 6), f"rgb({int(r * 255)},{int(g * 255)},{int(b * 255)})"])
+        colorscale.append(
+            [round(float(pos), 6), f"rgb({int(r * 255)},{int(g * 255)},{int(b * 255)})"]
+            )
 
     return colorscale
 
@@ -431,7 +435,9 @@ def launch_bathymetry_and_sound_speed_viewer(
                 x=[x_bty_m[ix]],
                 y=[y_bty_m[iy]],
                 mode="markers",
-                marker=dict(symbol="star", color="yellow", size=12, line=dict(color="black", width=1)),
+                marker=dict(
+                    symbol="star", color="yellow", size=12, line=dict(color="black", width=1)
+                    ),
                 name="Selected",
                 hovertemplate="Selected<br>x=%{x:.1f} m<br>y=%{y:.1f} m<extra></extra>",
             )
@@ -669,6 +675,7 @@ def plot_world(
         zmax = zmax_raw if zmax_raw > 0.0 else eps
         colorscale = _two_slope_colorscale(cmocean.cm.topo, zmin, zmax, vcenter=0.0)
 
+        hovertemplate = "X: %{x:.2f} {unit}<br>Y: %{y:.2f} {unit}<br>Bathymetry z: %{z:.2f} m<extra></extra>"
         fig.add_trace(
             go.Heatmap(
                 x=bty_x,
@@ -688,7 +695,7 @@ def plot_world(
                     xanchor="left",
                     xpad=0,
                 ),
-                hovertemplate="X: %{x:.2f}<br>Y: %{y:.2f}<br>Bathymetry z: %{z:.2f} m<extra></extra>",
+                hovertemplate=hovertemplate,
             )
         )
 
