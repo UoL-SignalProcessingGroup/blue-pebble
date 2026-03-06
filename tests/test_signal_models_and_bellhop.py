@@ -6,7 +6,6 @@ import builtins
 from pathlib import Path
 
 import numpy as np
-import pytest
 
 from .support import install_fake_stonesoup, load_module_from_repo
 
@@ -22,7 +21,12 @@ def test_signal_generate_applies_tloss_and_sensor_delay_phase(monkeypatch) -> No
 
     model = ConstantSignal(duration_s=1.0, sampling_rate_hz=8)
     delays = np.array([0.0, 0.125], dtype=float)
-    output = model.generate(source=None, sensor_delays_s=delays, tloss_db=20.0, propagation_time_s=0)
+    output = model.generate(
+        source=None,
+        sensor_delays_s=delays,
+        tloss_db=20.0,
+        propagation_time_s=0,
+    )
 
     assert output.shape == (2, 8)
     np.testing.assert_allclose(np.abs(output[0, 0]), 0.1, rtol=1e-12)
@@ -70,7 +74,9 @@ def test_reverb_applies_mix_with_deterministic_ir(monkeypatch) -> None:
 
     monkeypatch.setattr(effects.np.random, "randn", lambda n: np.ones(n, dtype=float))
 
-    signal = np.vstack([np.arange(8, dtype=float), np.arange(8, dtype=float)]).astype(np.complex128)
+    signal = np.vstack([np.arange(8, dtype=float), np.arange(8, dtype=float)]).astype(
+        np.complex128
+    )
     effect = effects.Reverb(duration_s=0.25, wet_dry_mix=0.5)
     reverbed = effect.apply(signal, sampling_rate_hz=8)
 

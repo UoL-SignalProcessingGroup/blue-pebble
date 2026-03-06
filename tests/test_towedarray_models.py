@@ -2,10 +2,10 @@
 
 from __future__ import annotations
 
-from dataclasses import dataclass
-from datetime import datetime
 import sys
 import types
+from dataclasses import dataclass
+from datetime import datetime
 
 import numpy as np
 
@@ -87,7 +87,10 @@ def _install_fake_stonesoup_towedarray(monkeypatch) -> None:
 
 def _load_towedarray(monkeypatch):
     _install_fake_stonesoup_towedarray(monkeypatch)
-    return load_module_from_repo("bluepebble/platform/towedarray.py", "bluepebble.platform.towedarray")
+    return load_module_from_repo(
+        "bluepebble/platform/towedarray.py",
+        "bluepebble.platform.towedarray",
+    )
 
 
 def test_follower_model_uses_default_direction_when_positions_overlap(monkeypatch) -> None:
