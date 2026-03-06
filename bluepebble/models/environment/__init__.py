@@ -3,12 +3,14 @@
 from .bathymetry import (
     Bathymetry,
     FlatBathymetry,
+    GEBCOBathymetry,
     SeamountBathymetry,
     WedgeBathymetry,
 )
 from .sound_speed_profile import (
     Arctan,
     Constant,
+    LeroyCopernicusSoundSpeedProfile,
     Linear,
     Mackenzie,
     Munk,
@@ -20,6 +22,8 @@ __all__ = [
     "Bathymetry",
     "Constant",
     "FlatBathymetry",
+    "GEBCOBathymetry",
+    "LeroyCopernicusSoundSpeedProfile",
     "Linear",
     "Mackenzie",
     "Munk",

@@ -41,6 +41,9 @@ dependencies = [
     "rocket-fft>=0.3.1",
     "tqdm>=4.64",
     "plotly>=5",
+    "dash>=4.0.0",
+    "cmocean>=4.0.3",
+    "netCDF4>=1.7.4",
 ]
 
 [project.urls]

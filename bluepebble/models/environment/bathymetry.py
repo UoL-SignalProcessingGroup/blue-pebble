@@ -1,6 +1,7 @@
 """Defines bathymetry models for representing seafloor topography."""
 
 from abc import ABC, abstractmethod
+from pathlib import Path
 
 import numpy as np
 from stonesoup.base import Base, Property
@@ -310,6 +311,150 @@ class SeamountBathymetry(Bathymetry):
             self.plateau_depth,
         )
 
+        z_grid = np.minimum(z_grid, 0.0)
+
+        return x_grid, y_grid, z_grid
+
+
+class GEBCOBathymetry(Bathymetry):
+    """Bathymetry model backed by a GEBCO NetCDF dataset.
+
+    Notes
+    -----
+    - Coordinates are converted from lat/lon to local Cartesian meters.
+    - Internally and at output, depth follows the Nereus convention (``-z`` underwater).
+
+    """
+
+    file_path: str = Property(doc="Path to GEBCO NetCDF file")
+    reference_lat_deg: float | None = Property(
+        default=None,
+        doc="Reference latitude for local x/y conversion. Defaults to dataset midpoint.",
+    )
+    reference_lon_deg: float | None = Property(
+        default=None,
+        doc="Reference longitude for local x/y conversion. Defaults to dataset midpoint.",
+    )
+
+    def _load_data(self):
+        """Load and cache GEBCO bathymetry data."""
+        path = Path(self.file_path)
+        if not path.exists():
+            raise FileNotFoundError(f"GEBCO bathymetry file not found: {path}")
+
+        try:
+            import netCDF4 as nc
+        except ImportError as exc:
+            raise ImportError(
+                "netCDF4 is required for GEBCOBathymetry. Install with `pip install netCDF4`."
+            ) from exc
+
+        with nc.Dataset(path, "r") as ds:
+            self._lat_deg = np.asarray(ds.variables["lat"][:], dtype=float)
+            self._lon_deg = np.asarray(ds.variables["lon"][:], dtype=float)
+            elev_m = np.asarray(ds.variables["elevation"][:], dtype=float)
+
+        if self._lat_deg.ndim != 1 or self._lon_deg.ndim != 1 or elev_m.ndim != 2:
+            raise ValueError("GEBCO bathymetry must provide 1D lat/lon and 2D elevation arrays.")
+
+        if elev_m.shape != (len(self._lat_deg), len(self._lon_deg)):
+            raise ValueError("GEBCO elevation shape must match (lat, lon).")
+
+        lat0 = self.reference_lat_deg
+        lon0 = self.reference_lon_deg
+        if lat0 is None:
+            lat0 = float(0.5 * (self._lat_deg.min() + self._lat_deg.max()))
+        if lon0 is None:
+            lon0 = float(0.5 * (self._lon_deg.min() + self._lon_deg.max()))
+
+        self.reference_lat_deg = float(lat0)
+        self.reference_lon_deg = float(lon0)
+
+        self._x_m, _ = self._latlon_to_xy_m(
+            np.full_like(self._lon_deg, self.reference_lat_deg),
+            self._lon_deg,
+            self.reference_lat_deg,
+            self.reference_lon_deg,
+        )
+        _, self._y_m = self._latlon_to_xy_m(
+            self._lat_deg,
+            np.full_like(self._lat_deg, self.reference_lon_deg),
+            self.reference_lat_deg,
+            self.reference_lon_deg,
+        )
+
+        if np.any(np.diff(self._x_m) <= 0.0) or np.any(np.diff(self._y_m) <= 0.0):
+            raise ValueError("Converted GEBCO x/y axes must be strictly increasing.")
+
+        # GEBCO elevation: underwater is negative. Nereus convention is -z underwater.
+        self._z_grid_yx = np.minimum(elev_m, 0.0)
+        self._is_loaded = True
+
+    def __post_init__(self):
+        """Attempt eager load; get_depth/get_grid also support lazy loading."""
+        self._is_loaded = False
+        self._load_data()
+
+    def _ensure_loaded(self):
+        """Ensure cached GEBCO arrays are loaded."""
+        if getattr(self, "_is_loaded", False):
+            return
+        self._load_data()
+
+    @staticmethod
+    def _latlon_to_xy_m(lat_deg, lon_deg, lat0_deg, lon0_deg):
+        """Convert geodetic coordinates to local tangent-plane x/y in meters."""
+        lat0_rad = np.deg2rad(lat0_deg)
+        dlon_rad = np.deg2rad(lon_deg - lon0_deg)
+        dlat_rad = np.deg2rad(lat_deg - lat0_deg)
+
+        a = 6_378_137.0
+        f = 1.0 / 298.257223563
+        e2 = f * (2.0 - f)
+
+        sin_lat0 = np.sin(lat0_rad)
+        w = np.sqrt(1.0 - e2 * sin_lat0**2)
+        n = a / w
+        m = a * (1.0 - e2) / (w**3)
+
+        x = dlon_rad * n * np.cos(lat0_rad)
+        y = dlat_rad * m
+        return x, y
+
+    @staticmethod
+    def _nearest_indices(old_axis: np.ndarray, new_axis: np.ndarray) -> np.ndarray:
+        """Map target coordinates to nearest indices on a monotonic source axis."""
+        idx = np.searchsorted(old_axis, new_axis)
+        idx = np.clip(idx, 1, len(old_axis) - 1)
+        left = old_axis[idx - 1]
+        right = old_axis[idx]
+        choose_left = np.abs(new_axis - left) <= np.abs(right - new_axis)
+        return np.where(choose_left, idx - 1, idx)
+
+    def get_depth(self, x: float, y: float) -> float:
+        """Get nearest-neighbour GEBCO depth at ``(x, y)`` in meters (Nereus ``-z``)."""
+        self._ensure_loaded()
+        ix = int(self._nearest_indices(self._x_m, np.asarray([x], dtype=float))[0])
+        iy = int(self._nearest_indices(self._y_m, np.asarray([y], dtype=float))[0])
+        return float(min(0.0, self._z_grid_yx[iy, ix]))
+
+    def get_grid(self, x_range: tuple, y_range: tuple):
+        """Get a regular GEBCO bathymetry grid for the requested x/y extent."""
+        self._ensure_loaded()
+        x_min, x_max = x_range
+        y_min, y_max = y_range
+
+        x_points = int((x_max - x_min) / self.resolution) + 1
+        y_points = int((y_max - y_min) / self.resolution) + 1
+
+        x_grid = np.linspace(x_min, x_max, max(2, x_points))
+        y_grid = np.linspace(y_min, y_max, max(2, y_points))
+
+        ix = self._nearest_indices(self._x_m, x_grid)
+        iy = self._nearest_indices(self._y_m, y_grid)
+
+        z_yx = self._z_grid_yx[np.ix_(iy, ix)]
+        z_grid = z_yx.T
         z_grid = np.minimum(z_grid, 0.0)
 
         return x_grid, y_grid, z_grid
