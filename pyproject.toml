@@ -12,7 +12,7 @@ authors = [
     { name = "Joshua J Wakefield", email = "J.J.Wakefield@liverpool.ac.uk" },
     { name = "Fin Boulton", email = "F.Boulton@liverpool.ac.uk" },
 ]
-license = { text = "MIT" }
+license = "MIT"
 keywords = [
     "blue pebble",
     "underwater acoustics",
@@ -23,9 +23,8 @@ keywords = [
     "stone soup",
 ]
 classifiers = [
-    "Development Status :: 4 - Beta",
+    "Development Status :: 5 - Production/Stable",
     "Intended Audience :: Science/Research",
-    "License :: OSI Approved :: MIT License",
     "Operating System :: OS Independent",
     "Programming Language :: Python :: 3 :: Only",
     "Programming Language :: Python :: 3.11",
@@ -54,6 +53,7 @@ Repository = "https://github.com/jjwakefield/blue-pebble"
 dev = [
     "ruff",
     "pytest",
+    "pytest-cov",
     "build",
 ]
 docs = [
@@ -74,6 +74,7 @@ tag_regex = "^v?(?P<version>\\d+\\.\\d+\\.\\d+)(?:[-+].*)?$"
 
 [tool.ruff]
 line-length = 99
+extend-exclude = ["external_tools"]
 
 [tool.ruff.lint]
 select = ["F", "E", "W", "I", "B", "D", "UP"]
@@ -84,3 +85,12 @@ select = ["F", "E", "W", "I", "B", "D", "UP"]
 
 [tool.setuptools.packages.find]
 where = ["."]
+
+[tool.coverage.run]
+source = ["bluepebble"]
+branch = true
+
+[tool.coverage.report]
+show_missing = true
+skip_covered = false
+omit = ["*/__init__.py"]

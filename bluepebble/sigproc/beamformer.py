@@ -90,7 +90,10 @@ class DelayAndSumBeamformer(Beamformer):
         super().__init__(*args, **kwargs)
 
         if self.shading is not None:
-            self.shading = self.shading / np.sum(self.shading)
+            shading_sum = np.sum(self.shading)
+            if not np.isfinite(shading_sum) or np.isclose(shading_sum, 0.0):
+                raise ValueError("Shading weights must sum to a finite non-zero value")
+            self.shading = self.shading / shading_sum
 
         # Store number of sensors for consistent shading
         self._num_sensors = None

@@ -2,9 +2,8 @@
 
 [![PyPI version](https://img.shields.io/pypi/v/blue-pebble.svg)](https://pypi.org/project/blue-pebble/)
 [![Python versions](https://img.shields.io/pypi/pyversions/blue-pebble.svg)](https://pypi.org/project/blue-pebble/)
-[![Ruff](https://img.shields.io/badge/lint-ruff-46a2f1)](https://github.com/astral-sh/ruff)
+[![Coverage](https://codecov.io/gh/jjwakefield/blue-pebble/branch/main/graph/badge.svg)](https://codecov.io/gh/jjwakefield/blue-pebble)
 [![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](https://github.com/jjwakefield/blue-pebble/blob/main/LICENSE)
-[![DOI](https://zenodo.org/badge/DOI/10.5281/zenodo.XXXXXXX.svg)](https://doi.org/10.5281/zenodo.XXXXXXX)
 
 **Blue Pebble** is a research-oriented simulation framework for underwater acoustic sensing, currently focused on passive sonar signal processing, acoustic propagation modelling, beamforming, detection, and multi-target tracking.
 
@@ -83,15 +82,44 @@ Download precompiled binaries from the [bellhopcuda Releases page](https://githu
 
 Place `bellhopcxx.exe` somewhere on your system `PATH`, or provide its path explicitly in Blue Pebble.
 
-**Linux/macOS (Build from Source)**
+**Linux/macOS (Build from Source, Outside Docker)**
+
+Install the native build tools first.
+
+On Debian/Ubuntu:
 
 ```bash
-git clone https://github.com/A-New-BellHope/bellhopcuda.git
-cd bellhopcuda
-# Follow build instructions in their README
+sudo apt-get update
+sudo apt-get install -y git cmake build-essential
 ```
 
-Ensure the resulting `bellhopcxx` executable is available on your `PATH`.
+On macOS with Homebrew:
+
+```bash
+brew install cmake
+xcode-select --install
+```
+
+To keep Bellhop local to this repository rather than installing it system-wide:
+
+```bash
+git clone --recurse-submodules https://github.com/A-New-BellHope/bellhopcuda.git external_tools/bellhopcuda
+cd external_tools/bellhopcuda
+mkdir -p build
+cd build
+cmake -DBHC_ENABLE_CUDA=OFF -DBHC_BUILD_EXAMPLES=OFF ..
+cmake --build . -j
+```
+
+This produces a local executable at `external_tools/bellhopcuda/bin/bellhopcxx`.
+
+You can then either add it to `PATH`:
+
+```bash
+export PATH="$PWD/external_tools/bellhopcuda/bin:$PATH"
+```
+
+or pass the path explicitly in Blue Pebble.
 
 #### Using Bellhop in Blue Pebble
 
@@ -114,7 +142,7 @@ from bluepebble.models.propagation import BellhopAcousticPropagationModel
 model = BellhopAcousticPropagationModel(
     env_depth=3000,
     ssp=my_ssp,
-    exe_path="/full/path/to/bellhopcxx"
+    exe_path="external_tools/bellhopcuda/bin/bellhopcxx"
 )
 ```
 
