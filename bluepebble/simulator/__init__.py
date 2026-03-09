@@ -2,12 +2,12 @@
 
 from .acoustic import (
     BroadbandPassiveSonarArraySimulator,
-    PassiveSonarArraySimulator,
 )
 from .sensor_data import PassiveSonarSensorData
+from .discrete import DiscretePassiveSonarArraySimulator
 
 __all__ = [
     "BroadbandPassiveSonarArraySimulator",
-    "PassiveSonarArraySimulator",
     "PassiveSonarSensorData",
+    "DiscretePassiveSonarArraySimulator",
 ]
