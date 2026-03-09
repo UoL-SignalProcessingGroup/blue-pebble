@@ -13,6 +13,7 @@ from ..platform import TowedArrayPlatform
 from ..signal.ambient import AmbientNoise
 from ..signal.base import Signal
 from ..sigproc.beamformer import Beamformer, SteeringCalculator
+from ..simulator.sensor_data import PassiveSonarSensorData
 
 
 class PassiveSonarArraySimulator(SensorSimulator):
