@@ -1,4 +1,4 @@
-"""Acoustic sensor simulation module."""
+"""Continuous sensor simulation module."""
 
 from collections.abc import Iterator
 from datetime import datetime
@@ -12,7 +12,7 @@ from ..models.propagation import AcousticPropagationModel
 from ..platform import TowedArrayPlatform
 from ..signal.ambient import AmbientNoise
 from ..sigproc.beamformer import Beamformer, SteeringCalculator
-from ..simulator.sensor_data import PassiveSonarSensorData
+from .sensor_data import PassiveSonarSensorData
 
 
 class BroadbandPassiveSonarArraySimulator(SensorSimulator):
