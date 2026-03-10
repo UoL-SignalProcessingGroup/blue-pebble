@@ -2,6 +2,7 @@
 
 from collections.abc import Iterator
 from datetime import datetime
+import warnings
 
 import numpy as np
 from stonesoup.base import Property
@@ -11,8 +12,13 @@ from ..signal.base import Signal
 from .base import PassiveSonarArraySimulatorBase
 
 
-class DiscretePassiveSonarArraySimulator(PassiveSonarArraySimulatorBase):
-    """Discrete-time passive-sonar array simulator.
+class DepreciatedDiscretePassiveSonarArraySimulator(PassiveSonarArraySimulatorBase):
+    """Depreciated discrete-time passive-sonar array simulator.
+
+    Warning
+    -------
+    This class is deprecated and retained for backward compatibility only.
+    Prefer ``DiscretePassiveSonarArraySimulator`` for new broadband work.
 
     This simulator produces one sensor-data snapshot per platform timestamp and supports two
     propagation modes:
@@ -48,6 +54,16 @@ class DiscretePassiveSonarArraySimulator(PassiveSonarArraySimulatorBase):
         ``"spectrum"``.
 
     """
+
+    def __init__(self, *args, **kwargs):
+        """Initialise simulator and emit a deprecation warning."""
+        warnings.warn(
+            "DepreciatedDiscretePassiveSonarArraySimulator is deprecated; "
+            "use DiscretePassiveSonarArraySimulator instead.",
+            DeprecationWarning,
+            stacklevel=2,
+        )
+        super().__init__(*args, **kwargs)
 
     signal_models = Property(
         list,
@@ -212,3 +228,211 @@ class DiscretePassiveSonarArraySimulator(PassiveSonarArraySimulatorBase):
             sensor_signals=sensor_signals,
             beamformed_data=beamformed_data,
         )
+
+
+class DiscretePassiveSonarArraySimulator(PassiveSonarArraySimulatorBase):
+    """Discrete broadband simulator with per-timestamp spectrum rendering.
+
+    This simulator synthesizes one independent snapshot per platform timestamp.
+    It is intended for broadband scenarios where each timestep can be processed
+    as a standalone frame, without enforcing waveform continuity across adjacent
+    timestamps.
+
+    Processing stages
+    -----------------
+    1. Resolve one signal model per target (or broadcast a single shared model).
+    2. Build one full source waveform per target via
+       ``compute_stft/get_source_signal`` or ``_generate_base_signal``.
+    3. Partition source waveforms into timestamp-aligned chunks using platform
+       time spacing and sampling rate.
+    4. For each timestamp, evaluate ``H(f)`` from ``propagate_spectrum`` at the
+       chunk FFT bins for each active target.
+    5. Apply ``H(f)`` in the frequency domain and IFFT per sensor, summing
+       contributions from all targets.
+    6. Add optional ambient noise, run optional beamforming, and emit one
+       ``PassiveSonarSensorData`` payload.
+
+    Notes
+    -----
+    - This method does not interpolate transfer functions across timesteps.
+    - No overlap-add or continuity smoothing is applied between emitted chunks.
+    - Timestamp boundaries that produce zero-length chunks are clamped to a
+      minimum one-sample snapshot to keep FFT processing valid.
+
+    Tradeoffs
+    ---------
+    - Lower complexity and simpler reasoning than continuous STFT/WOLA methods.
+    - Best suited to analyses where per-timestep independence is acceptable.
+    """
+
+    signal_models = Property(
+        list,
+        doc="List of broadband signal models (one per target, or single-element list for all)",
+    )
+
+    def _resolve_signal_models(self, num_targets: int) -> list[Signal]:
+        """Resolve signal model mapping for targets."""
+        return self._resolve_models(self.signal_models, num_targets, "signal models")
+
+    @staticmethod
+    def _get_target_first_state(target_path):
+        """Return first state in ``target_path`` or ``None`` if empty."""
+        try:
+            return next(iter(target_path))
+        except StopIteration:
+            return None
+
+    @staticmethod
+    def _get_broadband_source_signal(signal_model, first_state) -> np.ndarray:
+        """Return a source waveform using broadband or generic signal APIs."""
+        if hasattr(signal_model, "compute_stft") and hasattr(signal_model, "get_source_signal"):
+            try:
+                source_signal = signal_model.get_source_signal()
+            except RuntimeError:
+                if first_state is None:
+                    msg = (
+                        "Cannot initialize broadband source signal for an empty target path. "
+                        "Provide a target state or pre-compute the source signal."
+                    )
+                    raise ValueError(msg)
+                signal_model.compute_stft(first_state)
+                source_signal = signal_model.get_source_signal()
+            return np.asarray(source_signal, dtype=np.complex128)
+
+        if hasattr(signal_model, "_generate_base_signal"):
+            if first_state is None:
+                msg = (
+                    "Cannot initialize source signal for an empty target path when using "
+                    "_generate_base_signal."
+                )
+                raise ValueError(msg)
+            return np.asarray(signal_model._generate_base_signal(first_state), dtype=np.complex128)
+
+        msg = (
+            "Signal model must implement either compute_stft/get_source_signal "
+            "or _generate_base_signal."
+        )
+        raise TypeError(msg)
+
+    def sensor_data_gen(self) -> Iterator[tuple[datetime, set[SensorData]]]:
+        """Generate independent broadband sensor snapshots for each timestamp."""
+        if not hasattr(self.propagation_model, "propagate_spectrum"):
+            msg = (
+                "DiscreteBroadbandPassiveSonarArraySimulator requires propagation_model "
+                "to implement propagate_spectrum"
+            )
+            raise AttributeError(msg)
+
+        all_timestamps = self._sorted_timestamps()
+        ground_truth_paths = self.ground_truth_paths or []
+        signal_models_list = self._resolve_signal_models(len(ground_truth_paths))
+
+        if len(signal_models_list) == 0:
+            msg = "signal models must contain at least one model"
+            raise ValueError(msg)
+
+        num_sensors = int(self.platform.num_sensors)
+        sampling_rate_hz = float(signal_models_list[0].sampling_rate_hz)
+        total_samples = int(signal_models_list[0].num_samples)
+
+        if total_samples <= 0:
+            msg = "signal model num_samples must be greater than zero"
+            raise ValueError(msg)
+
+        t0 = all_timestamps[0]
+        step_times_s = np.array(
+            [(ts - t0).total_seconds() for ts in all_timestamps],
+            dtype=np.float64,
+        )
+        step_sample_idx = np.rint(step_times_s * sampling_rate_hz).astype(np.int64)
+        step_sample_idx = np.clip(step_sample_idx, 0, total_samples)
+        step_sample_idx = np.maximum.accumulate(step_sample_idx)
+
+        source_signal_by_target: list[np.ndarray] = []
+        for target_idx, target_path in enumerate(ground_truth_paths):
+            target_signal_model = signal_models_list[target_idx]
+
+            if int(target_signal_model.num_samples) != total_samples:
+                msg = (
+                    "All signal models must share the same num_samples for discrete "
+                    "broadband simulation."
+                )
+                raise ValueError(msg)
+
+            if float(target_signal_model.sampling_rate_hz) != sampling_rate_hz:
+                msg = (
+                    "All signal models must share the same sampling_rate_hz for "
+                    "discrete broadband simulation."
+                )
+                raise ValueError(msg)
+
+            first_state = self._get_target_first_state(target_path)
+            source_signal = self._get_broadband_source_signal(target_signal_model, first_state)
+
+            if len(source_signal) < total_samples:
+                pad_len = total_samples - len(source_signal)
+                source_signal = np.concatenate(
+                    [source_signal, np.zeros(pad_len, dtype=np.complex64)]
+                )
+            elif len(source_signal) > total_samples:
+                source_signal = source_signal[:total_samples]
+
+            source_signal_by_target.append(np.asarray(source_signal, dtype=np.complex64))
+
+        n_steps = len(all_timestamps)
+        for step_idx, timestamp in enumerate(all_timestamps):
+            platform_state = self.platform.get_platform_state_at(timestamp)
+
+            start_sample = int(step_sample_idx[step_idx])
+            if step_idx < n_steps - 1:
+                end_sample = int(step_sample_idx[step_idx + 1])
+            else:
+                end_sample = total_samples
+
+            # Ensure a non-empty chunk for FFT processing.
+            if end_sample <= start_sample:
+                if start_sample >= total_samples:
+                    start_sample = max(0, total_samples - 1)
+                    end_sample = total_samples
+                else:
+                    end_sample = min(total_samples, start_sample + 1)
+
+            num_samples_snapshot = end_sample - start_sample
+            frequencies_hz = np.fft.fftfreq(num_samples_snapshot, d=1.0 / sampling_rate_hz)
+            sensor_signals = np.zeros((num_sensors, num_samples_snapshot), dtype=np.complex64)
+
+            for target_idx, target_path in enumerate(ground_truth_paths):
+                target_state = self._target_state_at(target_path, timestamp)
+                if target_state is None:
+                    continue
+
+                source_chunk = source_signal_by_target[target_idx][start_sample:end_sample]
+                source_fft = np.fft.fft(source_chunk)
+
+                H_sensors, _ = self.propagation_model.propagate_spectrum(
+                    platform_state,
+                    target_state,
+                    frequencies_hz,
+                )
+                target_fft = np.asarray(H_sensors, dtype=np.complex64) * source_fft[np.newaxis, :]
+                sensor_signals += np.fft.ifft(target_fft, axis=1).astype(np.complex64)
+
+            noise = self._generate_noise(
+                num_sensors=num_sensors,
+                num_samples=num_samples_snapshot,
+                sampling_rate_hz=sampling_rate_hz,
+            )
+            if noise is not None:
+                sensor_signals += noise
+
+            beamformed_data = self._beamform_if_configured(
+                timestamp=timestamp,
+                sensor_signals=sensor_signals,
+            )
+
+            sensor_data = self._make_sensor_data(
+                timestamp=timestamp,
+                sensor_signals=sensor_signals,
+                beamformed_data=beamformed_data,
+            )
+            yield timestamp, {sensor_data}
