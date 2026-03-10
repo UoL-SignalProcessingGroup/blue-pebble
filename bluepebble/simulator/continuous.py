@@ -1,74 +1,45 @@
-"""Continuous sensor simulation module."""
+"""Continuous acoustic sensor simulatiors module."""
 
 from collections.abc import Iterator
 from datetime import datetime
 
 import numpy as np
 from stonesoup.base import Property
-from stonesoup.simulator.base import SensorSimulator
 from stonesoup.types.sensordata import SensorData
 
-from ..models.propagation import AcousticPropagationModel
-from ..platform import TowedArrayPlatform
-from ..signal.ambient import AmbientNoise
-from ..sigproc.beamformer import Beamformer, SteeringCalculator
-from .sensor_data import PassiveSonarSensorData
+from .base import PassiveSonarArraySimulatorBase
 
 
-class BroadbandPassiveSonarArraySimulator(SensorSimulator):
-    """Stone Soup sensor simulator for broadband passive sonar arrays.
+class ContinuousPassiveSonarArraySimulator(PassiveSonarArraySimulatorBase):
+    """STFT-interpolated broadband passive-sonar simulator.
 
-    This simulator uses STFT-based frequency-domain propagation for continuous broadband signal
-    processing. Unlike the standard PassiveSonarArraySimulator which generates signals
-    per-timestep, this simulator:
+    This simulator implements an STFT-domain propagation workflow intended for continuous
+    broadband scenarios with moving source/receiver geometry. Unlike snapshot simulators that
+    synthesize each timestamp independently, this class renders one continuous receive sequence
+    per sensor and then slices it into timestamped outputs.
 
-    1. Generates a long-duration source signal once using BroadbandTonalSignal
-    2. Computes STFT of the source signal
-    3. At each timestep, runs rtrs propagation to get H(f) for all frequencies
-    4. Applies transfer functions to STFT frames
-    5. Reconstructs time-domain signals per sensor using overlap-add
+    Processing stages
+    -----------------
+    1. Build a source STFT per target.
+    2. Sample ``H(f)`` from ``propagate_spectrum`` at each simulation timestamp.
+    3. Linearly interpolate ``H(f)`` across frame centers.
+    4. Apply channel response to each target STFT and sum targets in the frequency domain.
+    5. Reconstruct per-sensor time signals and slice by timestamp boundaries.
 
-    This approach enables time-varying propagation (moving platforms) with continuous
-    phase-coherent signals across the full simulation duration.
-
-    Attributes
-    ----------
-    platform : TowedArrayPlatform
-        The towed array platform providing geometry.
-    propagation_model : AcousticPropagationModel
-        Model for acoustic propagation (must support ``propagate_spectrum``).
-    signal_models : list of Signal
-        List of broadband signal models for STFT-based generation. Use a single-element list to
-        share one signal model across all targets, or provide one Signal per target for unique
-        source characteristics.
-    noise_model : AmbientNoise, optional
-        Model for generating ambient noise.
-    beamformer : Beamformer, optional
-        The beamforming algorithm to apply.
-    steering_calculator : SteeringCalculator, optional
-        Calculator for steering delays.
-    ground_truth_paths : list
-        List of ``GroundTruthPath`` objects representing targets.
-    fade_in_ms : float
-        Fade-in duration at signal arrival in milliseconds.
-
+    Notes
+    -----
+    - Interpolation is delay-aware: dominant phase is de-rotated before interpolation and
+        re-applied afterwards.
+    - Sensor output ordering is reversed during reconstruction to preserve expected
+      beamformer channel ordering.
+    - For stronger phase-stability in rapidly varying channels, prefer
+      ``BroadbandWOLAPassiveSonarArraySimulator``.
     """
 
-    platform = Property(TowedArrayPlatform, doc="Towed array platform")
-    propagation_model = Property(
-        AcousticPropagationModel,
-        doc="Acoustic propagation model (must support propagate_spectrum)",
-    )
     signal_models = Property(
         list,
         doc="List of broadband signal models (one per target, or single-element list for all)",
     )
-    noise_model = Property(AmbientNoise, default=None, doc="Noise model (optional)")
-    beamformer = Property(Beamformer, default=None, doc="Beamforming algorithm (optional)")
-    steering_calculator = Property(
-        SteeringCalculator, default=None, doc="Steering calculator (optional)"
-    )
-    ground_truth_paths = Property(list, default=[], doc="List of GroundTruthPath objects")
     fade_in_ms = Property(float, default=1000.0, doc="Fade-in duration at arrival (ms)")
 
     def sensor_data_gen(self) -> Iterator[tuple[datetime, set[SensorData]]]:
@@ -90,9 +61,7 @@ class BroadbandPassiveSonarArraySimulator(SensorSimulator):
         from bluepebble.signal.utils import apply_fade_in, inverse_stft
 
         # Get all timestamps
-        all_timestamps = sorted(
-            list(set(state.timestamp for state in self.platform.movement_controller.states))
-        )
+        all_timestamps = self._sorted_timestamps()
 
         if len(all_timestamps) < 2:
             msg = "Need at least 2 timesteps for broadband processing"
@@ -105,18 +74,11 @@ class BroadbandPassiveSonarArraySimulator(SensorSimulator):
             raise ValueError(msg)
 
         # Normalize signal_models to list (support single or per-target)
-        if len(self.signal_models) == 1:
-            # Single signal model: replicate for all targets
-            signal_models_list = self.signal_models * len(ground_truth_paths)
-        else:
-            # List of signal models: one per target
-            signal_models_list = self.signal_models
-            if len(signal_models_list) != len(ground_truth_paths):
-                msg = (
-                    f"Number of signal models ({len(signal_models_list)}) must match "
-                    f"number of targets ({len(ground_truth_paths)})"
-                )
-                raise ValueError(msg)
+        signal_models_list = self._resolve_models(
+            self.signal_models,
+            len(ground_truth_paths),
+            "signal models",
+        )
 
         # Get first target state from first path to initialize STFT parameters
         first_target_path = ground_truth_paths[0]
@@ -134,14 +96,17 @@ class BroadbandPassiveSonarArraySimulator(SensorSimulator):
         # Calculate timestep parameters
         total_duration_s = len(source_signal) / signal_models_list[0].sampling_rate_hz
         n_steps = len(all_timestamps)
-        step_duration_s = total_duration_s / n_steps
+        if n_steps > 1:
+            step_duration_s = (all_timestamps[1] - all_timestamps[0]).total_seconds()
+        else:
+            step_duration_s = total_duration_s
 
         num_sensors = self.platform.num_sensors
 
         # Storage for transfer functions at each timestep for each target
         # Structure: list of dicts, one dict per target containing:
         #   - 'H_list': list of (num_sensors, num_frequencies) per timestep
-        #   - 'tdelay_list': list of propagation delays per timestep
+        #   - 'tdelay_sensor_list': list of per-sensor propagation delays per timestep
         #   - 'source_stft': STFT of this target's source signal
         targets_data = []
 
@@ -157,7 +122,7 @@ class BroadbandPassiveSonarArraySimulator(SensorSimulator):
             target_source_stft, _, _, _ = target_signal_model.compute_stft(target_first_state)
 
             H_list_all = []  # List of (num_sensors, num_frequencies) per timestep
-            tdelay_list = []  # List of propagation delays per timestep
+            tdelay_sensor_list = []  # List of per-sensor delays per timestep
 
             # Run propagation simulation for each timestep to get H(f)
             for timestamp in all_timestamps:
@@ -165,19 +130,13 @@ class BroadbandPassiveSonarArraySimulator(SensorSimulator):
                 platform_state = self.platform.get_platform_state_at(timestamp)
 
                 # Get target state at this timestamp
-                target_state = None
-                for state in target_path:
-                    if state.timestamp == timestamp:
-                        target_state = state
-                        break
+                target_state = self._target_state_at(target_path, timestamp)
 
                 if target_state is None:
-                    # Keep histories aligned with the timestep list so interpolation remains
-                    # valid when a target is absent at one or more steps.
-                    H_list_all.append(
-                        np.zeros((num_sensors, len(frequencies)), dtype=np.complex64)
-                    )
-                    tdelay_list.append(0.0)
+                    # Keep list lengths aligned with timestamps.
+                    # Absent target contributes zero transfer for this timestep.
+                    H_list_all.append(np.zeros((num_sensors, len(frequencies)), dtype=np.complex64))
+                    tdelay_sensor_list.append(np.zeros(num_sensors, dtype=np.float64))
                     continue
 
                 # Run spectrum propagation to get H(f) for all sensors
@@ -190,13 +149,21 @@ class BroadbandPassiveSonarArraySimulator(SensorSimulator):
 
                 # H_sensors shape: (num_sensors, num_frequencies)
                 H_list_all.append(H_sensors)
-                tdelay_list.append(prop_time_s)
+
+                # Build per-sensor absolute delay history for robust de-rotation.
+                # compute_sensor_delays returns delays relative to array reference.
+                sensor_delays_s = self.propagation_model.compute_sensor_delays(
+                    platform_state,
+                    target_state,
+                )
+                tdelay_sensors = np.asarray(prop_time_s + sensor_delays_s, dtype=np.float64)
+                tdelay_sensor_list.append(tdelay_sensors)
 
             # Store this target's data
             targets_data.append(
                 {
                     "H_list": H_list_all,
-                    "tdelay_list": tdelay_list,
+                    "tdelay_sensor_list": tdelay_sensor_list,
                     "source_stft": target_source_stft,
                 }
             )
@@ -205,46 +172,93 @@ class BroadbandPassiveSonarArraySimulator(SensorSimulator):
         # For multiple targets, sum contributions in the frequency domain
         receiver_signals = []
 
-        # Reverse sensor order to match beamformer (expects back-to-front)
-        for sensor_idx in reversed(range(num_sensors)):
+        for sensor_idx in range(num_sensors):
             # Accumulate STFT output from all targets
             STFT_out_total = np.zeros((num_frames, num_freq_bins), dtype=np.complex64)
 
             # Process each target
             for target_data in targets_data:
                 H_list_all = target_data["H_list"]
+                tdelay_sensor_list = target_data["tdelay_sensor_list"]
                 target_source_stft = target_data["source_stft"]
 
+                if len(H_list_all) != n_steps:
+                    msg = (
+                        f"Transfer-function history length ({len(H_list_all)}) does not match "
+                        f"number of timesteps ({n_steps})."
+                    )
+                    raise RuntimeError(msg)
+
+                if len(tdelay_sensor_list) != n_steps:
+                    msg = (
+                        f"Propagation-delay history length ({len(tdelay_sensor_list)}) does not "
+                        f"match number of timesteps ({n_steps})."
+                    )
+                    raise RuntimeError(msg)
+
                 # Extract transfer function history for this sensor and target
-                H_sensor_history = [H_list[sensor_idx, :] for H_list in H_list_all]
+                H_sensor_history = np.asarray(
+                    [H_list[sensor_idx, :] for H_list in H_list_all],
+                    dtype=np.complex64,
+                )
+
+                # Prepare interpolation indices once per target
+                frame_times_s = (
+                    (np.arange(num_frames, dtype=np.float64) * hop + hop // 2)
+                    / signal_models_list[0].sampling_rate_hz
+                )
+                step_idx_float = frame_times_s / max(step_duration_s, 1e-12)
+                step_idx = np.floor(step_idx_float).astype(np.int32)
+                step_idx = np.clip(step_idx, 0, n_steps - 2)
+                alpha = np.clip(step_idx_float - step_idx, 0.0, 1.0)
 
                 # Interpolate H(f) across time for each STFT frame
                 STFT_out_target = np.zeros((num_frames, num_freq_bins), dtype=np.complex64)
 
-                for frame_idx in range(num_frames):
-                    # Calculate time for this frame (center of frame)
-                    frame_time_s = (frame_idx * hop + hop // 2) / signal_models_list[
-                        0
-                    ].sampling_rate_hz
+                # De-rotate with known propagation delay at each timestep to remove
+                # the dominant high-rate phase term before interpolation.
+                # This prevents phase-branch aliasing when target/platform motion is
+                # fast relative to coarse simulator timesteps.
+                tdelay_history = np.asarray(
+                    [delays[sensor_idx] for delays in tdelay_sensor_list],
+                    dtype=np.float64,
+                )
+                freq_axis = np.asarray(frequencies, dtype=np.float64)
 
-                    # Find which timestep this frame belongs to
-                    step_idx_float = frame_time_s / step_duration_s
-                    step_idx = int(np.floor(step_idx_float))
+                phase_derotate = np.exp(
+                    2j
+                    * np.pi
+                    * tdelay_history[:, np.newaxis]
+                    * freq_axis[np.newaxis, :]
+                )
+                H_residual = H_sensor_history * phase_derotate
 
-                    # Clamp to valid range
-                    if step_idx >= n_steps - 1:
-                        step_idx = n_steps - 2
+                # Interpolate residual transfer functions in magnitude/phase domain
+                # to avoid chord artifacts from direct complex interpolation.
+                H_mag = np.abs(H_residual)
+                H_phase = np.unwrap(np.angle(H_residual), axis=0)
 
-                    # Interpolation weight
-                    alpha = step_idx_float - step_idx
+                H_mag_interp = (
+                    H_mag[step_idx, :] * (1.0 - alpha)[:, np.newaxis]
+                    + H_mag[step_idx + 1, :] * alpha[:, np.newaxis]
+                )
+                H_phase_interp = (
+                    H_phase[step_idx, :] * (1.0 - alpha)[:, np.newaxis]
+                    + H_phase[step_idx + 1, :] * alpha[:, np.newaxis]
+                )
 
-                    # Interpolate H(f) between timesteps
-                    H_current = H_sensor_history[step_idx]
-                    H_next = H_sensor_history[step_idx + 1]
-                    H_interp = H_current * (1 - alpha) + H_next * alpha
+                # Re-apply interpolated delay phase term.
+                tdelay_interp = (
+                    tdelay_history[step_idx] * (1.0 - alpha)
+                    + tdelay_history[step_idx + 1] * alpha
+                )
+                phase_rerotate = np.exp(
+                    -2j * np.pi * tdelay_interp[:, np.newaxis] * freq_axis[np.newaxis, :]
+                )
+                H_interp = H_mag_interp * np.exp(1j * H_phase_interp) * phase_rerotate
 
-                    # Apply transfer function to this target's source STFT
-                    STFT_out_target[frame_idx, :] = target_source_stft[frame_idx, :] * H_interp
+                # Apply transfer function to this target's source STFT
+                STFT_out_target[:, :] = target_source_stft * H_interp
 
                 # Add this target's contribution to total
                 STFT_out_total += STFT_out_target
@@ -294,42 +308,30 @@ class BroadbandPassiveSonarArraySimulator(SensorSimulator):
             sensor_signals = receiver_signals_array[:, start_sample:end_sample]
 
             # Add noise if provided
-            if self.noise_model:
-                # Get actual number of samples in this slice
-                # (may differ due to STFT trimming)
-                actual_samples = sensor_signals.shape[1]
-
-                # Generate noise with the correct length
-                # Temporarily adjust noise model duration to match actual slice length
-                original_duration = self.noise_model.duration_s
-                actual_duration_s = actual_samples / signal_models_list[0].sampling_rate_hz
-                self.noise_model.duration_s = actual_duration_s
-
-                noise = self.noise_model.generate(num_sensors)
-
-                # Restore original duration
-                self.noise_model.duration_s = original_duration
-
-                # Ensure noise matches signal length exactly (in case of rounding)
-                if noise.shape[1] != actual_samples:
-                    if noise.shape[1] > actual_samples:
-                        noise = noise[:, :actual_samples]
-                    else:
-                        # Pad with zeros if needed
-                        pad_len = actual_samples - noise.shape[1]
-                        noise = np.concatenate(
-                            [
-                                noise,
-                                np.zeros((num_sensors, pad_len), dtype=noise.dtype),
-                            ],
-                            axis=1,
-                        )
-
+            actual_samples = sensor_signals.shape[1]
+            noise = self._generate_noise(
+                num_sensors=num_sensors,
+                num_samples=actual_samples,
+                sampling_rate_hz=signal_models_list[0].sampling_rate_hz,
+            )
+            if noise is not None:
                 sensor_signals += noise
 
             # Apply beamforming if provided
-            beamformed_data = None
-            if self.beamformer and self.steering_calculator:
+            beamformed_data = self._beamform_if_configured(
+                timestamp=timestamp,
+                sensor_signals=sensor_signals,
+            )
+
+            sensor_data = self._make_sensor_data(
+                timestamp=timestamp,
+                sensor_signals=sensor_signals,
+                beamformed_data=beamformed_data,
+            )
+
+            yield timestamp, {sensor_data}
+
+
                 platform_state = self.platform.get_platform_state_at(timestamp)
                 steering_delays_s = self.steering_calculator.calculate(platform_state)
 

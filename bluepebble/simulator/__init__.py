@@ -1,11 +1,15 @@
 """Simulator package public API."""
 
+from .base import PassiveSonarArraySimulatorBase
 from .sensor_data import PassiveSonarSensorData
-from .continuous import BroadbandPassiveSonarArraySimulator
+from .continuous import (
+    ContinuousPassiveSonarArraySimulator,
+)
 from .discrete import DiscretePassiveSonarArraySimulator
 
 __all__ = [
-    "BroadbandPassiveSonarArraySimulator",
+    "ContinuousPassiveSonarArraySimulator",
+    "PassiveSonarArraySimulatorBase",
     "PassiveSonarSensorData",
     "DiscretePassiveSonarArraySimulator",
 ]
