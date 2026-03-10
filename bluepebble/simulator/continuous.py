@@ -13,7 +13,28 @@ from .base import PassiveSonarArraySimulatorBase
 
 
 class ContinuousPassiveSonarArraySimulator(PassiveSonarArraySimulatorBase):
-    """STFT-interpolated broadband passive-sonar simulator."""
+    """STFT-interpolated broadband passive-sonar simulator.
+
+    This simulator implements an STFT-domain propagation workflow intended for continuous
+    broadband scenarios with moving source/receiver geometry. Unlike snapshot simulators that
+    synthesize each timestamp independently, this class renders one continuous receive sequence
+    per sensor and then slices it into timestamped outputs.
+
+    Processing stages
+    -----------------
+    1. Build a source STFT per target.
+    2. Sample ``H(f)`` from ``propagate_spectrum`` at each simulation timestamp.
+    3. Linearly interpolate ``H(f)`` across frame centers.
+    4. Apply channel response to each target STFT and sum targets in the frequency domain.
+    5. Reconstruct per-sensor time signals and slice by timestamp boundaries.
+
+    Notes
+    -----
+    - Interpolation is delay-aware: dominant phase is de-rotated before interpolation and
+        re-applied afterwards.
+    - For stronger phase-stability in rapidly varying channels, prefer
+      ``BroadbandWOLAPassiveSonarArraySimulator``.
+    """
 
     signal_models = Property(
         list,
@@ -186,6 +207,15 @@ class ContinuousPassiveSonarArraySimulator(PassiveSonarArraySimulatorBase):
                 timestamp=timestamp,
                 sensor_signals=sensor_signals_for_beamformer,
             )
+
+            sensor_data = self._make_sensor_data(
+                timestamp=timestamp,
+                sensor_signals=sensor_signals,
+                beamformed_data=beamformed_data,
+            )
+
+            yield timestamp, {sensor_data}
+
 
             sensor_data = self._make_sensor_data(
                 timestamp=timestamp,
