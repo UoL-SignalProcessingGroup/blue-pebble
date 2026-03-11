@@ -184,3 +184,32 @@ def apply_fade_in(signal: np.ndarray, fade_samples: int) -> np.ndarray:
     signal_faded = signal.copy()
     signal_faded[:fade_samples] *= fade
     return signal_faded
+
+
+def apply_fade_out(signal: np.ndarray, fade_samples: int) -> np.ndarray:
+    """Apply smooth cosine-taper fade-out to the end of a signal.
+
+    Uses the same raised-cosine profile as :func:`apply_fade_in`, reversed so
+    the signal transitions smoothly from 1 to 0 over ``fade_samples``.
+
+    Parameters
+    ----------
+    signal : np.ndarray
+        Input signal.
+    fade_samples : int
+        Number of samples for fade-out duration.
+
+    Returns
+    -------
+    np.ndarray
+        Signal with fade-out applied.
+
+    """
+    if fade_samples <= 0 or fade_samples >= len(signal):
+        return signal
+
+    # Reuse the same raised-cosine taper and reverse it for a 1 -> 0 ramp.
+    fade = 0.5 * (1.0 - np.cos(np.pi * np.arange(fade_samples) / fade_samples))
+    signal_faded = signal.copy()
+    signal_faded[-fade_samples:] *= fade[::-1]
+    return signal_faded

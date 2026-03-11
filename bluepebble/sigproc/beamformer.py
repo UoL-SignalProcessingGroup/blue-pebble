@@ -124,6 +124,11 @@ class DelayAndSumBeamformer(Beamformer):
             steering_delays.
 
         """
+        # Numba kernels below are compiled for complex128/float64 C-contiguous arrays.
+        # Normalizing inputs here prevents dispatcher type mismatches (e.g. complex64 data).
+        sensor_signals = np.ascontiguousarray(sensor_signals, dtype=np.complex128)
+        steering_delays_s = np.ascontiguousarray(steering_delays_s, dtype=np.float64)
+
         num_sensors, _ = sensor_signals.shape
 
         if num_sensors != steering_delays_s.shape[1]:
@@ -140,6 +145,8 @@ class DelayAndSumBeamformer(Beamformer):
                 )
             # Shading is already normalized in __init__
             shading_weights = self.shading
+
+        shading_weights = np.ascontiguousarray(shading_weights, dtype=np.float64)
 
         if self.domain == "time":
             return _time_das(

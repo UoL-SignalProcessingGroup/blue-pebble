@@ -9,7 +9,8 @@ The examples expand on specific modelling and analysis tasks, from signal genera
 - [Detector Metrics](detector_metrics_example.ipynb) demonstrates ROC- and PR-style detector evaluation workflows.
 - [Ownship Noise Example](ownship_noise_example.ipynb) explores the effect of self-noise on the simulated array.
 - [Challenging Tracking Example](challenging_tracking_example.ipynb) combines sensing and tracking in a more demanding scenario.
-- [Broadband Continuous Signal Processing with STFT-Based Propagation](broadband_signal_analysis_example.ipynb) demonstrates broadband propagation and processing.
+- [Broadband Simulator Mode Spectrogram Comparison](bb_sig_analysis_simulator_comparison.py) compares received-signal spectrograms across simulator implementations for both synthetic and measured sources.
+- [Using Measured Data](using_measured_data.ipynb) demonstrates importing measured source data into a simulator workflow.
 - [FUSION 2026 Single Target Example](fusion2026/FUSION2026_singletarget_example.ipynb) presents the single-target conference scenario.
 - [FUSION 2026 Multi-Target Example](fusion2026/FUSION2026_multitarget_example.ipynb) presents the multi-target conference scenario.
 
@@ -24,7 +25,8 @@ multi_narrowband_beamformers_example
 detector_metrics_example
 ownship_noise_example
 challenging_tracking_example
-broadband_signal_analysis_example
+simulators_comparison
+using_measured_data
 fusion2026/FUSION2026_singletarget_example
 fusion2026/FUSION2026_multitarget_example
 ```

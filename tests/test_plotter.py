@@ -378,3 +378,48 @@ def test_plot_btr_groups_multiple_tracks_and_truths_in_legend(monkeypatch) -> No
     assert truth_one.legendgroup == "truths"
     assert truth_two.legendgroup == "truths"
     assert truth_one.legendgrouptitle.text == "Ground Truths"
+
+
+def test_plot_btr_accepts_custom_color_limits(monkeypatch) -> None:
+    """BTR heatmaps should honor explicitly provided color scale bounds."""
+    plotter = _load_plotter(monkeypatch)
+    t0 = datetime(2026, 1, 1, 12, 0, 0)
+    t1 = datetime(2026, 1, 1, 12, 1, 0)
+
+    fig = plotter.plot_btr(
+        timesteps=np.array([t0, t1]),
+        steering_azimuths=np.array([-180.0, 180.0]),
+        data=np.array([[0.0, 5.0], [10.0, 15.0]]),
+        cmin=-10.0,
+        cmax=20.0,
+    )
+
+    heatmap = fig.data[0]
+    assert heatmap.zmin == -10.0
+    assert heatmap.zmax == 20.0
+
+
+def test_plot_btr_rejects_invalid_color_limits(monkeypatch) -> None:
+    """BTR color scale bounds should be finite and ordered when both are provided."""
+    plotter = _load_plotter(monkeypatch)
+    t0 = datetime(2026, 1, 1, 12, 0, 0)
+    timesteps = np.array([t0])
+    steering = np.array([0.0])
+    data = np.array([[1.0]])
+
+    with pytest.raises(ValueError, match="cmin must be less than cmax"):
+        plotter.plot_btr(
+            timesteps=timesteps,
+            steering_azimuths=steering,
+            data=data,
+            cmin=1.0,
+            cmax=1.0,
+        )
+
+    with pytest.raises(ValueError, match="cmax must be finite"):
+        plotter.plot_btr(
+            timesteps=timesteps,
+            steering_azimuths=steering,
+            data=data,
+            cmax=np.inf,
+        )

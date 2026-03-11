@@ -792,6 +792,8 @@ def plot_btr(
     detections: list[Detection] | None = None,
     tracks: list[Track] | None = None,
     data_type: str = "SNR (dB)",
+    cmin: float | None = None,
+    cmax: float | None = None,
     figsize: tuple[int, int] = (800, 600),
     fig: go.Figure | None = None,
     row: int | None = None,
@@ -822,6 +824,12 @@ def plot_btr(
     data_type : str
         A string label for the type of data being plotted (e.g., "SNR (dB)").
         This is used for the colorbar title. Default is "SNR (dB)".
+    cmin : float | None
+        Optional lower bound of the heatmap color scale. If ``None`` (default),
+        Plotly automatically chooses the lower bound from the data.
+    cmax : float | None
+        Optional upper bound of the heatmap color scale. If ``None`` (default),
+        Plotly automatically chooses the upper bound from the data.
     figsize : tuple[int, int]
         The width and height of the standalone plot in pixels. Ignored when ``fig``
         is provided. Default is (800, 600).
@@ -878,6 +886,17 @@ def plot_btr(
     if fig is None and (row is not None or col is not None):
         raise ValueError("row and col can only be used when fig is supplied")
 
+    if cmin is not None:
+        cmin = float(cmin)
+        if not np.isfinite(cmin):
+            raise ValueError("cmin must be finite when provided")
+    if cmax is not None:
+        cmax = float(cmax)
+        if not np.isfinite(cmax):
+            raise ValueError("cmax must be finite when provided")
+    if cmin is not None and cmax is not None and cmin >= cmax:
+        raise ValueError("cmin must be less than cmax")
+
     timesteps_array, steering_array, data_array = _validate_btr_shapes(
         timesteps=timesteps,
         steering_azimuths=steering_azimuths,
@@ -931,6 +950,8 @@ def plot_btr(
             y=timesteps_array,
             x=steering_array,
             colorscale="Viridis",
+            zmin=cmin,
+            zmax=cmax,
             colorbar=dict(
                 title=dict(text=data_type),
                 thickness=24,

@@ -1024,6 +1024,9 @@ class rtrsAcousticPropagationModel(AcousticPropagationModel):
         # Transpose to (num_sensors, num_frequencies) for consistency with processing
         transfer_functions = transfer_functions.T
 
+        # flip sensor order to match convention
+        transfer_functions = np.flip(transfer_functions, axis=0)
+
         # Calculate mean travel time
         speed = self.ssp.calculate(array_ref_pos[2])
         propagation_time_s = distance / speed

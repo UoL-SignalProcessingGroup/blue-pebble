@@ -1,12 +1,16 @@
 """Base signal properties and methods for signal models."""
 
-from abc import abstractmethod
+from __future__ import annotations
+
+from abc import ABC
+from typing import Any
 
 import numpy as np
+from numpy.typing import ArrayLike, NDArray
 from stonesoup.base import Base, Property
 
 
-class Signal(Base):
+class Signal(Base, ABC):
     """Signal base class.
 
     This class provides a common interface for all signal types. It includes a `generate` method
@@ -37,32 +41,14 @@ class Signal(Base):
         """
         return int(self.duration_s * self.sampling_rate_hz)
 
-    @abstractmethod
-    def _generate_base_signal(self, source) -> np.ndarray:
-        """Generate the base 1D time-domain signal. Must be implemented by subclasses.
-
-        Parameters
-        ----------
-        source : State
-            The source state, which may be used by some models.
-
-        Returns
-        -------
-        numpy.ndarray
-            A 1D NumPy array representing the base signal.
-
-        """
-        pass
-
-    def generate(self, source, sensor_delays_s, tloss_db, propagation_time_s) -> np.ndarray:
+    def generate(
+        self,
+        source: Any,
+        sensor_delays_s: ArrayLike,
+        tloss_db: ArrayLike | float,
+        propagation_time_s: float,
+    ) -> np.ndarray:
         """Generate the signal, apply attenuation, and propagate it to a sensor array.
-
-        This method performs the following steps:
-        1. Calls `_generate_base_signal` to get the source waveform.
-        2. Attenuates the signal based on transmission loss.
-        3. Converts the signal to the frequency domain using an FFT.
-        4. Applies phase shifts to simulate propagation to each sensor.
-        5. Converts the signals back to the time domain using an IFFT.
 
         Parameters
         ----------
@@ -81,25 +67,60 @@ class Signal(Base):
             An array of complex signals with shape (num_sensors, num_samples).
 
         """
-        # 1. Generate the base signal from the subclass implementation
-        base_signal = self._generate_base_signal(source)
+        sensor_delays = np.asarray(sensor_delays_s, dtype=float)
+        if sensor_delays.ndim != 1:
+            msg = "sensor_delays_s must be one-dimensional"
+            raise ValueError(msg)
 
-        # 2. Attenuate the signal
-        amplitude_scaling = 10 ** (-tloss_db / 20.0)
-        base_signal *= amplitude_scaling
+        base_generator = getattr(self, "_generate_base_signal", None)
+        if not callable(base_generator):
+            msg = (
+                f"{type(self).__name__} must implement either generate() or "
+                "_generate_base_signal(source)"
+            )
+            raise NotImplementedError(msg)
 
-        # 3. Convert to frequency domain
-        base_signal_fft = np.fft.fft(base_signal)
-        fft_freqs_hz = np.fft.fftfreq(self.num_samples, 1 / self.sampling_rate_hz)
+        base_signal = np.asarray(base_generator(source), dtype=np.complex128)
+        if base_signal.ndim != 1:
+            msg = "_generate_base_signal(source) must return a one-dimensional array"
+            raise ValueError(msg)
 
-        # 4. Calculate and apply phase shifts for propagation
-        total_delays_s = propagation_time_s + sensor_delays_s
+        if len(base_signal) < self.num_samples:
+            pad_width = self.num_samples - len(base_signal)
+            base_signal = np.concatenate(
+                [base_signal, np.zeros(pad_width, dtype=np.complex128)],
+            )
+        elif len(base_signal) > self.num_samples:
+            base_signal = base_signal[: self.num_samples]
+
+        signal_fft = np.fft.fft(base_signal)
+        tloss = np.asarray(tloss_db, dtype=float)
+        if tloss.ndim == 0:
+            signal_fft = signal_fft * (10.0 ** (-float(tloss) / 20.0))
+        elif tloss.ndim == 1:
+            if len(tloss) != self.num_samples:
+                msg = (
+                    "tloss_db array must have length equal to num_samples when "
+                    "frequency-dependent loss is provided"
+                )
+                raise ValueError(msg)
+            signal_fft = signal_fft * (10.0 ** (-tloss / 20.0))
+        else:
+            msg = "tloss_db must be scalar-like or one-dimensional"
+            raise ValueError(msg)
+
+        fft_freqs_hz = np.fft.fftfreq(self.num_samples, d=1.0 / self.sampling_rate_hz)
+        total_delays_s = float(propagation_time_s) + sensor_delays
         phase_shifts = np.exp(
-            -1j * 2 * np.pi * total_delays_s[:, np.newaxis] * fft_freqs_hz[np.newaxis, :]
+            -1j * 2.0 * np.pi * total_delays_s[:, np.newaxis] * fft_freqs_hz[np.newaxis, :]
         )
-        signals_fft = base_signal_fft[np.newaxis, :] * phase_shifts
+        signals_fft: NDArray[np.complex128] = signal_fft[np.newaxis, :] * phase_shifts
+        return np.fft.ifft(signals_fft, axis=1).astype(np.complex128)
 
-        # 5. Convert back to time domain
-        signals = np.fft.ifft(signals_fft, axis=1)
 
-        return signals.astype(np.complex128)
+class DiscreteTimestepSignal(Signal):
+    """Discrete timestep signal class."""
+
+
+class ContinuousTimestepSignal(Signal):
+    """Continuous timestep signal class."""
