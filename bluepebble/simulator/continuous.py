@@ -46,20 +46,29 @@ class ContinuousSTFTPassiveSonarArraySimulator(PassiveSonarArraySimulatorBase):
         Use ``mode`` for channel update method. All three modes use the same 
         propagation history, then differ in reconstruction method:
 
+        - ``stft_interp`` and ``wola_interp`` common interpolation steps:
+            1. De-rotate channel phase using per-sensor delay history (remove delay phase).
+            2. Interpolate residual channel magnitude and unwrapped phase at frame-center times.
+            3. Re-apply interpolated delay phase and form per-target frame spectra.
+
         - ``stft_interp``
-            Interpolate channel magnitude/phase in the STFT domain, apply to each target source
-            STFT, sum targets in frequency, then reconstruct with ``inverse_stft``.
-            Usually the fastest option.
+            4. Sum target spectra in the frequency domain.
+            5. Reconstruct sensor time series with ``inverse_stft``.
 
         - ``wola_interp``
-            Use frame-by-frame WOLA synthesis with delay-aware interpolation.
-            This is often more stable when geometry changes quickly, but it costs more compute.
+            4. IFFT each frame and accumulate with weighted overlap-add (WOLA).
+            5. Normalize overlap energy to produce output sensor signals.
 
         - ``cola``
-            Use piecewise-constant transfer functions between knots (no interpolation)
-            with COLA-style synthesis. Good as a simple baseline.
+            1. Select the nearest previous knot transfer function for each frame.
+            2. Apply knot transfer function to each target source spectrum.
+            3. IFFT and overlap-add frame signals.
+            4. Apply COLA-style overlap normalization.
 
         All modes share fades, noise addition, beamforming, and timestamp chunk output.
+        In practice, each method produces largely similar results. The default ``stft_interp``
+        and ``wola_interp`` methods are recommended. The ``cola`` method can produce 
+        interference artefacts, but is good as a fast baseline.
     """
 
     signal_models = Property(
@@ -221,6 +230,58 @@ class ContinuousSTFTPassiveSonarArraySimulator(PassiveSonarArraySimulatorBase):
         alpha = np.clip((frame_times_s - t0) / dt, 0.0, 1.0)
         return step_idx, alpha
 
+    def _build_residual_channel_histories(
+        self,
+        H_hist: np.ndarray,
+        tau_hist: np.ndarray,
+        frequencies_hz: np.ndarray,
+    ) -> tuple[np.ndarray, np.ndarray]:
+        """Build delay-de-rotated channel magnitude and unwrapped phase histories."""
+        phase_derotate = np.exp(
+            2j
+            * np.pi
+            * tau_hist[:, :, np.newaxis]
+            * frequencies_hz[np.newaxis, np.newaxis, :]
+        )
+        H_residual = H_hist * phase_derotate
+        H_mag_hist = np.abs(H_residual)
+        H_phase_hist = np.unwrap(np.angle(H_residual), axis=0)
+        return H_mag_hist, H_phase_hist
+
+    def _interpolate_channel_from_residual_histories(
+        self,
+        H_mag_hist: np.ndarray,
+        H_phase_hist: np.ndarray,
+        tau_hist: np.ndarray,
+        step_idx,
+        alpha,
+        frequencies_hz: np.ndarray,
+    ) -> np.ndarray:
+        """Interpolate residual channel history and re-apply delay phase."""
+        alpha_arr = np.asarray(alpha, dtype=np.float64)
+        w0 = 1.0 - alpha_arr
+
+        if np.ndim(alpha_arr) == 0:
+            H_mag = H_mag_hist[step_idx, :] * w0 + H_mag_hist[step_idx + 1, :] * alpha_arr
+            H_phase = H_phase_hist[step_idx, :] * w0 + H_phase_hist[step_idx + 1, :] * alpha_arr
+            tau = tau_hist[step_idx] * w0 + tau_hist[step_idx + 1] * alpha_arr
+            phase_rerotate = np.exp(-2j * np.pi * frequencies_hz * tau)
+            return H_mag * np.exp(1j * H_phase) * phase_rerotate
+
+        H_mag = (
+            H_mag_hist[step_idx, :] * w0[:, np.newaxis]
+            + H_mag_hist[step_idx + 1, :] * alpha_arr[:, np.newaxis]
+        )
+        H_phase = (
+            H_phase_hist[step_idx, :] * w0[:, np.newaxis]
+            + H_phase_hist[step_idx + 1, :] * alpha_arr[:, np.newaxis]
+        )
+        tau = tau_hist[step_idx] * w0 + tau_hist[step_idx + 1] * alpha_arr
+        phase_rerotate = np.exp(
+            -2j * np.pi * tau[:, np.newaxis] * frequencies_hz[np.newaxis, :]
+        )
+        return H_mag * np.exp(1j * H_phase) * phase_rerotate
+
     def _slice_uniform_step_samples(self, receiver_signals: np.ndarray, n_steps: int) -> np.ndarray:
         actual_signal_len = receiver_signals.shape[1]
         samples_per_step = actual_signal_len // n_steps
@@ -270,37 +331,19 @@ class ContinuousSTFTPassiveSonarArraySimulator(PassiveSonarArraySimulatorBase):
             stft_total = np.zeros((ctx.num_frames, ctx.num_freq_bins), dtype=np.complex64)
 
             for target_data in targets_data:
-                H_sensor_history = np.asarray(target_data.H_hist[:, sensor_idx, :], dtype=np.complex64)
-                tdelay_history = np.asarray(target_data.tau_hist[:, sensor_idx], dtype=np.float64)
-
-                phase_derotate = np.exp(
-                    2j
-                    * np.pi
-                    * tdelay_history[:, np.newaxis]
-                    * ctx.frequencies[np.newaxis, :]
+                H_mag_hist, H_phase_hist = self._build_residual_channel_histories(
+                    H_hist=np.asarray(target_data.H_hist[:, sensor_idx : sensor_idx + 1, :]),
+                    tau_hist=np.asarray(target_data.tau_hist[:, sensor_idx : sensor_idx + 1]),
+                    frequencies_hz=ctx.frequencies,
                 )
-                H_residual = H_sensor_history * phase_derotate
-
-                H_mag = np.abs(H_residual)
-                H_phase = np.unwrap(np.angle(H_residual), axis=0)
-
-                H_mag_interp = (
-                    H_mag[step_idx, :] * (1.0 - alpha)[:, np.newaxis]
-                    + H_mag[step_idx + 1, :] * alpha[:, np.newaxis]
+                H_interp = self._interpolate_channel_from_residual_histories(
+                    H_mag_hist=H_mag_hist[:, 0, :],
+                    H_phase_hist=H_phase_hist[:, 0, :],
+                    tau_hist=np.asarray(target_data.tau_hist[:, sensor_idx], dtype=np.float64),
+                    step_idx=step_idx,
+                    alpha=alpha,
+                    frequencies_hz=ctx.frequencies,
                 )
-                H_phase_interp = (
-                    H_phase[step_idx, :] * (1.0 - alpha)[:, np.newaxis]
-                    + H_phase[step_idx + 1, :] * alpha[:, np.newaxis]
-                )
-
-                tdelay_interp = (
-                    tdelay_history[step_idx] * (1.0 - alpha)
-                    + tdelay_history[step_idx + 1] * alpha
-                )
-                phase_rerotate = np.exp(
-                    -2j * np.pi * tdelay_interp[:, np.newaxis] * ctx.frequencies[np.newaxis, :]
-                )
-                H_interp = H_mag_interp * np.exp(1j * H_phase_interp) * phase_rerotate
                 stft_total += target_data.source_stft * H_interp
 
             signal_reconstructed = inverse_stft(stft_total, ctx.frame_len, ctx.hop, ctx.window)
@@ -333,19 +376,17 @@ class ContinuousSTFTPassiveSonarArraySimulator(PassiveSonarArraySimulatorBase):
         # Doing this inside the frame loop is the dominant runtime cost.
         wola_histories = []
         for target_data in targets_data:
-            phase_derotate = np.exp(
-                2j
-                * np.pi
-                * target_data.tau_hist[:, :, np.newaxis]
-                * ctx.frequencies[np.newaxis, np.newaxis, :]
+            H_mag_hist, H_phase_hist = self._build_residual_channel_histories(
+                H_hist=target_data.H_hist,
+                tau_hist=target_data.tau_hist,
+                frequencies_hz=ctx.frequencies,
             )
-            H_residual = target_data.H_hist * phase_derotate
             wola_histories.append(
                 {
                     "source_stft": target_data.source_stft,
                     "tau_hist": target_data.tau_hist,
-                    "H_mag_hist": np.abs(H_residual),
-                    "H_phase_hist": np.unwrap(np.angle(H_residual), axis=0),
+                    "H_mag_hist": H_mag_hist,
+                    "H_phase_hist": H_phase_hist,
                 }
             )
 
@@ -366,20 +407,14 @@ class ContinuousSTFTPassiveSonarArraySimulator(PassiveSonarArraySimulatorBase):
                     H_phase_hist = wola_data["H_phase_hist"][:, sensor_idx, :]
                     tau_hist = wola_data["tau_hist"][:, sensor_idx]
 
-                    H_mag = (
-                        H_mag_hist[step_idx, :] * (1.0 - alpha)
-                        + H_mag_hist[step_idx + 1, :] * alpha
+                    H_interp = self._interpolate_channel_from_residual_histories(
+                        H_mag_hist=H_mag_hist,
+                        H_phase_hist=H_phase_hist,
+                        tau_hist=tau_hist,
+                        step_idx=step_idx,
+                        alpha=alpha,
+                        frequencies_hz=ctx.frequencies,
                     )
-                    H_phase = (
-                        H_phase_hist[step_idx, :] * (1.0 - alpha)
-                        + H_phase_hist[step_idx + 1, :] * alpha
-                    )
-                    tau = (
-                        tau_hist[step_idx] * (1.0 - alpha)
-                        + tau_hist[step_idx + 1] * alpha
-                    )
-                    phase_rerotate = np.exp(-2j * np.pi * ctx.frequencies * tau)
-                    H_interp = H_mag * np.exp(1j * H_phase) * phase_rerotate
 
                     frame_spec = source_spec * H_interp
                     frame_td = self._ifft_frame(frame_spec, ctx.frame_len, ctx.num_freq_bins)
