@@ -1,35 +1,50 @@
 """Beamforming algorithms for processing signals from an array of sensors."""
 
+from __future__ import annotations
+
 from abc import ABC, abstractmethod
+from typing import TYPE_CHECKING, Literal, TypeAlias
 
 import numpy as np
 from numba import njit, prange, types
+from numpy.typing import ArrayLike, NDArray
 from scipy.linalg import cho_factor, cho_solve
 from stonesoup.base import Base, Property
-from stonesoup.platform.base import Platform
 
 from ..models.environment import SoundSpeedProfile
 
+if TYPE_CHECKING:
+    from stonesoup.platform.base import Platform
+
+ComplexArray: TypeAlias = NDArray[np.complex128]
+FloatArray: TypeAlias = NDArray[np.float64]
+BeamformerOutput: TypeAlias = ComplexArray | FloatArray
+DomainType: TypeAlias = Literal["time", "frequency", "broadband_power"]
+
 
 class Beamformer(Base, ABC):
-    """Abstract base class for beamformers."""
+    """Abstract interface for beamforming algorithms."""
 
     @abstractmethod
-    def beamform(self, sensor_signals: np.ndarray, steering_delays_s: np.ndarray) -> np.ndarray:
-        """Process sensor signals to form beams in specified directions.
+    def beamform(
+        self,
+        sensor_signals: ArrayLike,
+        steering_delays_s: ArrayLike,
+    ) -> BeamformerOutput:
+        """Form directional beams from multi-sensor input data.
 
         Parameters
         ----------
-        sensor_signals : np.ndarray
-            An array of sensor signals with shape (num_sensors, num_samples).
-        steering_delays_s : np.ndarray
-            An array of time delays in seconds for each sensor and steering direction,
-            with shape (num_directions, num_sensors).
+        sensor_signals : ArrayLike
+            Sensor signal matrix with shape ``(num_sensors, num_samples)``.
+        steering_delays_s : ArrayLike
+            Steering-delay matrix (seconds) with shape ``(num_directions, num_sensors)``.
 
         Returns
         -------
-        np.ndarray
-            An array of beamformed signals with shape (num_directions, num_samples).
+        BeamformerOutput
+            Beamformer output matrix. Concrete implementations define whether this
+            contains complex beamformed time-series or real-valued beam power.
 
         """
         pass
@@ -38,30 +53,37 @@ class Beamformer(Base, ABC):
 class DelayAndSumBeamformer(Beamformer):
     """A Delay-and-Sum (DAS) beamformer.
 
-    This class implements the DAS algorithm in either the time or frequency domain. It steers an
-    array of sensors by applying time delays to the received signals and summing them to enhance
-    the signal from desired directions.
+    Supports three processing modes:
+
+    - ``'time'``: time-domain delay-and-sum.
+    - ``'frequency'``: frequency-domain delay-and-sum.
+    - ``'broadband_power'``: STFT-based incoherent broadband power integration.
+
+    In all modes, steering is controlled via per-direction per-sensor delay values.
     """
 
-    sampling_rate_hz = Property(float, doc="The sampling frequency of the sensor signals, in Hz")
-    shading = Property(
+    sampling_rate_hz: float = Property(
+        float,
+        doc="The sampling frequency of the sensor signals, in Hz",
+    )
+    shading: FloatArray | None = Property(
         np.ndarray,
         default=None,
         doc="An array of shading weights applied to each sensor. If None, uniform weights are "
         "used.",
     )
-    domain = Property(
+    domain: DomainType = Property(
         str,
         default="time",
-        doc="The domain for beamforming, either 'time' or 'frequency'",
+        doc="Beamforming domain: 'time', 'frequency', or 'broadband_power'.",
     )
-    nfft = Property(int, default=500, doc="STFT window size (samples)")
-    overlap = Property(int, default=250, doc="STFT overlap (samples)")
-    f0 = Property(float, default=0.0, doc="Carrier frequency for baseband data (Hz)")
-    fmin = Property(float, default=None, doc="Minimum frequency to integrate (Hz)")
-    fmax = Property(float, default=None, doc="Maximum frequency to integrate (Hz)")
+    nfft: int = Property(int, default=500, doc="STFT window size (samples)")
+    overlap: int = Property(int, default=250, doc="STFT overlap (samples)")
+    f0: float = Property(float, default=0.0, doc="Carrier frequency for baseband data (Hz)")
+    fmin: float | None = Property(float, default=None, doc="Minimum frequency to integrate (Hz)")
+    fmax: float | None = Property(float, default=None, doc="Maximum frequency to integrate (Hz)")
 
-    def __init__(self, *args, **kwargs):
+    def __init__(self, *args: object, **kwargs: object) -> None:
         """Initialise the DelayAndSumBeamformer.
 
         Parameters
@@ -69,22 +91,17 @@ class DelayAndSumBeamformer(Beamformer):
         *args
             Positional arguments to pass to the parent class.
         **kwargs
-            Keyword arguments to pass to the parent class.
-            Specifically expects:
-            - sampling_rate_hz : float
-                The sampling frequency of the sensor
-                    signals, in Hz.
-            - shading : np.ndarray | None, optional
-                An array of shading weights
-                    to apply to each sensor. If None, uniform weights are used.
-            - domain : str, optional
-                The domain for beamforming, either 'time'
-                    or 'frequency'. Defaults to "time".
+            Keyword arguments forwarded to the parent class.
+            Common options include ``sampling_rate_hz``, ``shading``, ``domain``,
+            ``nfft``, ``overlap``, ``f0``, ``fmin``, and ``fmax``.
 
         Raises
         ------
         ValueError
-            If the specified domain is not 'time' or 'frequency'.
+            If explicit shading weights do not sum to a finite non-zero value.
+        ValueError
+            If the specified domain is not ``'time'``, ``'frequency'``, or
+            ``'broadband_power'``.
 
         """
         super().__init__(*args, **kwargs)
@@ -96,42 +113,56 @@ class DelayAndSumBeamformer(Beamformer):
             self.shading = self.shading / shading_sum
 
         # Store number of sensors for consistent shading
-        self._num_sensors = None
+        self._num_sensors: int | None = None
 
         if self.domain not in ["time", "frequency", "broadband_power"]:
-            raise ValueError("Invalid beamforming domain. Must be 'time' or 'frequency'")
+            raise ValueError(
+                "Invalid beamforming domain. Must be 'time', 'frequency', or 'broadband_power'"
+            )
 
-    def beamform(self, sensor_signals: np.ndarray, steering_delays_s: np.ndarray) -> np.ndarray:
-        """Process sensor signals to form beams in specified directions.
+    def beamform(
+        self, sensor_signals: ArrayLike, steering_delays_s: ArrayLike
+    ) -> BeamformerOutput:
+        """Beamform sensor data using the configured DAS processing domain.
 
         Parameters
         ----------
-        sensor_signals : np.ndarray
-            An array of sensor signals with shape (num_sensors, num_samples).
-        steering_delays_s : np.ndarray
-            An array of time delays for each sensor and steering direction, with shape
-            (num_directions, num_sensors).
+        sensor_signals : ArrayLike
+            Sensor data matrix with shape ``(num_sensors, num_samples)``.
+        steering_delays_s : ArrayLike
+            Steering-delay matrix with shape ``(num_directions, num_sensors)``.
 
         Returns
         -------
-        np.ndarray
-            An array of beamformed signals with shape (num_directions, num_samples).
+        BeamformerOutput
+            - ``domain='time'`` or ``'frequency'``: complex signals with shape
+              ``(num_directions, num_samples_or_cropped_samples)``.
+            - ``domain='broadband_power'``: real-valued power map with shape
+              ``(num_directions, num_frames)``.
 
         Raises
         ------
         ValueError
-            If the number of sensors in signal_array does not match the number of sensors in
-            steering_delays.
+            If the number of sensors in ``sensor_signals`` does not match
+            ``steering_delays_s``.
+        ValueError
+            If explicit shading length does not match the sensor count.
 
         """
         # Numba kernels below are compiled for complex128/float64 C-contiguous arrays.
-        # Normalizing inputs here prevents dispatcher type mismatches (e.g. complex64 data).
-        sensor_signals = np.ascontiguousarray(sensor_signals, dtype=np.complex128)
-        steering_delays_s = np.ascontiguousarray(steering_delays_s, dtype=np.float64)
+        # Normalising inputs here prevents dispatcher type mismatches (e.g. complex64 data).
+        sensor_signals_array: ComplexArray = np.ascontiguousarray(
+            sensor_signals,
+            dtype=np.complex128,
+        )
+        steering_delays_array: FloatArray = np.ascontiguousarray(
+            steering_delays_s,
+            dtype=np.float64,
+        )
 
-        num_sensors, _ = sensor_signals.shape
+        num_sensors, _ = sensor_signals_array.shape
 
-        if num_sensors != steering_delays_s.shape[1]:
+        if num_sensors != steering_delays_array.shape[1]:
             raise ValueError("Number of sensors must match the number of steering delays")
 
         # Use consistent shading normalization
@@ -150,49 +181,55 @@ class DelayAndSumBeamformer(Beamformer):
 
         if self.domain == "time":
             return _time_das(
-                sensor_signals,
-                steering_delays_s,
+                sensor_signals_array,
+                steering_delays_array,
                 shading_weights,
                 self.sampling_rate_hz,
             )
-        elif self.domain == "frequency":
+        if self.domain == "frequency":
             return _frequency_das(
-                sensor_signals,
-                steering_delays_s,
+                sensor_signals_array,
+                steering_delays_array,
                 shading_weights,
                 self.sampling_rate_hz,
             )
-        elif self.domain == "broadband_power":
+        if self.domain == "broadband_power":
             return self.das_broadband_power(
-                sensor_signals,
+                sensor_signals_array,
                 self.sampling_rate_hz,
                 self.nfft,
-                steering_delays_s,
+                steering_delays_array,
                 shading_weights,
                 f0=self.f0,
                 fmin=self.fmin,
                 fmax=self.fmax,
                 overlap=self.overlap,
             )
+        msg = f"Unsupported beamforming domain: {self.domain}"
+        raise ValueError(msg)
 
     @staticmethod
-    def _stft(x: np.ndarray, nfft: int, overlap: int) -> np.ndarray:
-        """Compute the Short-Time Fourier Transform (STFT) of the input signal.
+    def _stft(x: ComplexArray, nfft: int, overlap: int) -> ComplexArray:
+        """Compute a per-sensor STFT using a Hann window and fixed overlap.
 
         Parameters
         ----------
-        x : np.ndarray
-            Input signal array of shape (M, T) where M is the number of sensors and T is the number
-            of time samples.
+        x : ComplexArray
+            Complex sensor data with shape ``(num_sensors, num_samples)``.
         nfft : int
-            The number of FFT points (window size).
+            STFT window length (FFT size).
         overlap : int
-            The number of overlapping samples between windows.
+            Overlap between adjacent windows in samples.
 
         Returns
         -------
-        np.ndarray
-            STFT of the input signal with shape (M, n_frames, nfft).
+        ComplexArray
+            STFT tensor with shape ``(num_sensors, num_frames, nfft)``.
+
+        Raises
+        ------
+        ValueError
+            If ``num_samples < nfft``.
 
         """
         # x: (M, T) complex
@@ -220,17 +257,17 @@ class DelayAndSumBeamformer(Beamformer):
 
     def das_broadband_power(
         self,
-        x: np.ndarray,  # (M, T)
+        x: ComplexArray,  # (M, T)
         fs: float,
         nfft: int,
-        sd: np.ndarray,  # (Ndir, M) steering delays [s]
-        shading_weights: np.ndarray,  # (M,)
+        sd: FloatArray,  # (Ndir, M) steering delays [s]
+        shading_weights: FloatArray,  # (M,)
         f0: float = 0.0,
         fmin: float | None = None,
         fmax: float | None = None,
         overlap: int = 0,
-    ) -> np.ndarray:
-        """Perform broadband delay-and-sum beamforming in the frequency domain.
+    ) -> FloatArray:
+        """Compute STFT-based broadband DAS power over steering directions.
 
         The input sensor array data are transformed using STFT, steered at each frequency bin using
         phase shifts derived from ``sd``, and then integrated incoherently (power sum across
@@ -238,15 +275,15 @@ class DelayAndSumBeamformer(Beamformer):
 
         Parameters
         ----------
-        x : np.ndarray
-            Complex or real sensor data with shape ``(num_sensors, num_samples)``.
+        x : ComplexArray
+            Sensor data matrix with shape ``(num_sensors, num_samples)``.
         fs : float
             Sampling frequency in Hz.
         nfft : int
             STFT window length (number of FFT points).
-        sd : np.ndarray
+        sd : FloatArray
             Steering delays in seconds with shape ``(num_directions, num_sensors)``.
-        shading_weights : np.ndarray
+        shading_weights : FloatArray
             Per-sensor beamforming weights with shape ``(num_sensors,)``.
         f0 : float, optional
             Carrier frequency offset in Hz for baseband data. Defaults to ``0.0``.
@@ -261,7 +298,7 @@ class DelayAndSumBeamformer(Beamformer):
 
         Returns
         -------
-        np.ndarray
+        FloatArray
             Broadband beam power map with shape ``(num_directions, num_frames)``. Each entry
             contains integrated beam power over the active frequency bins for one steering
             direction and one STFT frame.
@@ -319,29 +356,29 @@ class DelayAndSumBeamformer(Beamformer):
     fastmath=True,
 )
 def _time_das(
-    sensor_signals: np.ndarray,
-    steering_delays_s: np.ndarray,
-    shading_weights: np.ndarray,
+    sensor_signals: ComplexArray,
+    steering_delays_s: FloatArray,
+    shading_weights: FloatArray,
     sampling_rate_hz: float,
-) -> np.ndarray:
-    """Perform Delay-and-Sum beamforming in the time domain.
+) -> ComplexArray:
+    """Perform time-domain delay-and-sum beamforming.
 
     Parameters
     ----------
-    sensor_signals : np.ndarray
-        An array of sensor signals with shape (num_sensors, num_samples).
-    steering_delays_s : np.ndarray
-        An array of time delays for each sensor and steering direction, with shape (num_directions,
-        num_sensors).
-    shading_weights : np.ndarray
-        An array of shading weights for each sensor, with shape (num_sensors,).
+    sensor_signals : ComplexArray
+        Sensor data matrix with shape ``(num_sensors, num_samples)``.
+    steering_delays_s : FloatArray
+        Steering-delay matrix with shape ``(num_directions, num_sensors)``.
+    shading_weights : FloatArray
+        Sensor shading/weight vector with shape ``(num_sensors,)``.
     sampling_rate_hz : float
-        The sampling frequency of the sensor signals, in Hz.
+        Sampling frequency in Hz.
 
     Returns
     -------
-    np.ndarray
-        An array of beamformed signals with shape (num_directions, num_samples).
+    ComplexArray
+        Complex beamformed signals with shape
+        ``(num_directions, num_samples_or_cropped_samples)``.
 
     """
     num_directions = steering_delays_s.shape[0]
@@ -398,29 +435,28 @@ def _time_das(
     fastmath=True,
 )
 def _frequency_das(
-    sensor_signals: np.ndarray,
-    steering_delays_s: np.ndarray,
-    shading_weights: np.ndarray,
+    sensor_signals: ComplexArray,
+    steering_delays_s: FloatArray,
+    shading_weights: FloatArray,
     sampling_rate_hz: float,
-) -> np.ndarray:
-    """Perform Delay-and-Sum beamforming in the frequency domain.
+) -> ComplexArray:
+    """Perform frequency-domain delay-and-sum beamforming.
 
     Parameters
     ----------
-    sensor_signals  : np.ndarray
-        An array of sensor signals with shape (num_sensors, num_samples).
-    steering_delays_s  : np.ndarray
-        An array of time delays for each sensor and steering direction, with shape (num_directions,
-        num_sensors).
-    shading_weights  : np.ndarray
-        An array of shading weights for each sensor, with shape (num_sensors,).
-    sampling_rate_hz  : float
-        The sampling frequency of the sensor signals, in Hz.
+    sensor_signals : ComplexArray
+        Sensor data matrix with shape ``(num_sensors, num_samples)``.
+    steering_delays_s : FloatArray
+        Steering-delay matrix with shape ``(num_directions, num_sensors)``.
+    shading_weights : FloatArray
+        Sensor shading/weight vector with shape ``(num_sensors,)``.
+    sampling_rate_hz : float
+        Sampling frequency in Hz.
 
     Returns
     -------
-    np.ndarray
-        An array of beamformed signals with shape (num_directions, num_samples).
+    ComplexArray
+        Complex beamformed signals with shape ``(num_directions, num_samples)``.
 
     """
     num_directions, num_sensors = steering_delays_s.shape
@@ -459,49 +495,54 @@ class MinimumVarianceDistortionlessResponseBeamformer(Beamformer):
     This implementation uses an STFT-based broadband approach: the sensor time-series are
     transformed into short-time frequency bins, a frequency-domain Capon (MVDR) beamformer is
     applied in each bin, and the narrowband outputs are integrated over frequency to produce power
-    as a function of steering direction and time-frame.
+    as a function of steering direction and time frame.
 
     """
 
-    sampling_rate_hz = Property(float, doc="The sampling frequency of the sensor signals, in Hz")
-    nfft = Property(int, default=500, doc="STFT window size (samples)")
-    overlap = Property(int, default=250, doc="STFT overlap (samples)")
-    f0 = Property(float, default=0.0, doc="Carrier frequency for baseband data (Hz)")
-    fmin = Property(float, default=None, doc="Minimum frequency to integrate (Hz)")
-    fmax = Property(float, default=None, doc="Maximum frequency to integrate (Hz)")
+    sampling_rate_hz: float = Property(
+        float,
+        doc="The sampling frequency of the sensor signals, in Hz",
+    )
+    nfft: int = Property(int, default=500, doc="STFT window size (samples)")
+    overlap: int = Property(int, default=250, doc="STFT overlap (samples)")
+    f0: float = Property(float, default=0.0, doc="Carrier frequency for baseband data (Hz)")
+    fmin: float | None = Property(float, default=None, doc="Minimum frequency to integrate (Hz)")
+    fmax: float | None = Property(float, default=None, doc="Maximum frequency to integrate (Hz)")
 
-    def beamform(self, sensor_signals: np.ndarray, steering_delays_s: np.ndarray) -> np.ndarray:
+    def beamform(self, sensor_signals: ArrayLike, steering_delays_s: ArrayLike) -> FloatArray:
         """Perform broadband MVDR beamforming and return power time-series.
 
         Parameters
         ----------
-        sensor_signals : np.ndarray
-            An array of sensor signals with shape (num_sensors, num_samples).
-        steering_delays_s : np.ndarray
-            An array of time delays for each sensor and steering direction, with shape
-            (num_directions, num_sensors).
+        sensor_signals : ArrayLike
+            Sensor data matrix with shape ``(num_sensors, num_samples)``.
+        steering_delays_s : ArrayLike
+            Steering-delay matrix with shape ``(num_directions, num_sensors)``.
 
         Raises
         ------
         ValueError
-            If the number of sensors in signal_array does not match the number of sensors in
-            steering_delays.
+            If the number of sensors in ``sensor_signals`` does not match
+            ``steering_delays_s``.
 
         Returns
         -------
-        np.ndarray
-            Array of beamformed power with shape (num_directions, num_time_frames).
+        FloatArray
+            Real-valued beamformed power with shape ``(num_directions, num_time_frames)``.
 
         """
-        num_sensors, _ = sensor_signals.shape
-        if num_sensors != steering_delays_s.shape[1]:
+        sensor_signals_array = np.asarray(sensor_signals)
+        steering_delays_array = np.asarray(steering_delays_s, dtype=np.float64)
+
+        num_sensors, _ = sensor_signals_array.shape
+        if num_sensors != steering_delays_array.shape[1]:
             raise ValueError("Number of sensors must match the number of steering delays")
 
         return self._mvdr_broadband(
-            sensor_signals,
+            sensor_signals_array,
             self.sampling_rate_hz,
             self.nfft,
-            steering_delays_s,
+            steering_delays_array,
             f0=self.f0,
             fmin=self.fmin,
             fmax=self.fmax,
@@ -509,27 +550,32 @@ class MinimumVarianceDistortionlessResponseBeamformer(Beamformer):
         )
 
     @staticmethod
-    def _stft(x: np.ndarray, nfft: int, overlap: int) -> np.ndarray:
-        """Compute the Short-Time Fourier Transform (STFT) of the input signal.
+    def _stft(x: ArrayLike, nfft: int, overlap: int) -> ComplexArray:
+        """Compute a per-sensor STFT used by MVDR processing.
 
         Parameters
         ----------
-        x : np.ndarray
-            Input signal array of shape (M, T) where M is the number of sensors and T is the number
-            of time samples.
+        x : ArrayLike
+            Sensor data matrix with shape ``(num_sensors, num_samples)``.
         nfft : int
-            The number of FFT points (window size).
+            STFT window length (FFT size).
         overlap : int
-            The number of overlapping samples between windows.
+            Overlap between adjacent windows in samples.
 
         Returns
         -------
-            np.ndarray
-                STFT of the input signal with shape (M, n_frames, nfft).
+        ComplexArray
+            STFT tensor with shape ``(num_sensors, num_frames, nfft)``.
+
+        Raises
+        ------
+        ValueError
+            If ``num_samples < nfft``.
 
         """
         # x: (M, T) complex
-        M, T = x.shape
+        x_array = np.asarray(x)
+        M, T = x_array.shape
         if T < nfft:
             raise ValueError(f"Input signal length T={T} is less than window size nfft={nfft}.")
         hop = max(1, nfft - overlap)
@@ -537,15 +583,15 @@ class MinimumVarianceDistortionlessResponseBeamformer(Beamformer):
         n_frames = 1 + (max(0, T - nfft) // hop)
         pad = (n_frames - 1) * hop + nfft - T
         if pad > 0:
-            x = np.pad(x, ((0, 0), (0, pad)), mode="constant")
+            x_array = np.pad(x_array, ((0, 0), (0, pad)), mode="constant")
 
-        window = np.hanning(nfft).astype(x.real.dtype)
+        window = np.hanning(nfft).astype(x_array.real.dtype)
         # Make a 3D view: (M, n_frames, nfft)
-        stride_t = x.strides[1]
+        stride_t = x_array.strides[1]
         frames = np.lib.stride_tricks.as_strided(
-            x,
+            x_array,
             shape=(M, n_frames, nfft),
-            strides=(x.strides[0], hop * stride_t, stride_t),
+            strides=(x_array.strides[0], hop * stride_t, stride_t),
             writeable=False,
         )
         frames = frames * window  # broadcasts over last axis
@@ -553,37 +599,35 @@ class MinimumVarianceDistortionlessResponseBeamformer(Beamformer):
 
     def _mvdr_broadband(
         self,
-        x: np.ndarray,
+        x: ArrayLike,
         fs: float,
         nfft: int,
-        sd: np.ndarray,
-        f0: float = 0,
-        fmin: float = None,
-        fmax: float = None,
+        sd: ArrayLike,
+        f0: float = 0.0,
+        fmin: float | None = None,
+        fmax: float | None = None,
         overlap: int = 0,
-    ) -> np.ndarray:
-        """Perform broadband MVDR beamforming.
+    ) -> FloatArray:
+        """Compute STFT-based broadband MVDR (Capon) beam power.
 
         Parameters
         ----------
-        x : np.ndarray
-            Input signal array of shape (M, T) where M is the number of sensors and T is the number
-            of time samples.
+        x : ArrayLike
+            Sensor data matrix with shape ``(num_sensors, num_samples)``.
         fs : float
             Sampling frequency in Hz.
         nfft : int
-            The number of FFT points (window size).
-        sd : np.ndarray
-            Steering delays array of shape (Ndir, M) where Ndir is the number of steering
-            directions.
+            STFT window length (FFT size).
+        sd : ArrayLike
+            Steering-delay matrix with shape ``(num_directions, num_sensors)``.
         f0 : float, optional
-            Carrier frequency for baseband data (Hz). Defaults to 0.
-        fmin : float, optional
-            Minimum frequency to integrate (Hz). Defaults to None.
-        fmax : float, optional
-            Maximum frequency to integrate (Hz). Defaults to None.
+            Carrier frequency for baseband data in Hz. Defaults to ``0.0``.
+        fmin : float | None, optional
+            Minimum frequency to integrate in Hz. Defaults to ``None``.
+        fmax : float | None, optional
+            Maximum frequency to integrate in Hz. Defaults to ``None``.
         overlap : int, optional
-            The number of overlapping samples between windows. Defaults to 0.
+            Overlap between adjacent windows in samples. Defaults to ``0``.
 
         Raises
         ------
@@ -592,17 +636,21 @@ class MinimumVarianceDistortionlessResponseBeamformer(Beamformer):
 
         Returns
         -------
-        np.ndarray
-            Array of beamformed power with shape (Ndir, n_frames).
+        FloatArray
+            Real-valued beamformed power with shape
+            ``(num_directions, num_frames)``.
 
         """
         # x: (M, T), sd: (Ndir, M)
-        M, _ = x.shape
-        if nfft / fs < (np.max(sd) - np.min(sd)):
+        x_array = np.asarray(x)
+        sd_array = np.asarray(sd, dtype=np.float64)
+
+        M, _ = x_array.shape
+        if nfft / fs < (np.max(sd_array) - np.min(sd_array)):
             raise ValueError("nfft too small for this array")
 
         # STFT (M, n_frames, nfft)
-        X = self._stft(x, nfft, overlap)
+        X = self._stft(x_array, nfft, overlap)
         M, n_frames, nfft_actual = X.shape
 
         # frequency bins (full complex spectrum as signal is complex/baseband)
@@ -621,7 +669,7 @@ class MinimumVarianceDistortionlessResponseBeamformer(Beamformer):
         active_idx = np.nonzero(active)[0]
 
         # Output power accumulator: (Ndir, n_frames)
-        P = np.zeros((sd.shape[0], n_frames), dtype=np.float64)
+        P = np.zeros((sd_array.shape[0], n_frames), dtype=np.float64)
 
         # Loop only the active bins
         for i in active_idx:
@@ -641,7 +689,7 @@ class MinimumVarianceDistortionlessResponseBeamformer(Beamformer):
 
             # Steering matrix A: (M, Ndir)
             # (we build as (Ndir, M) then transpose for solve)
-            A = np.exp(-2j * np.pi * f * sd).T  # (M, Ndir)
+            A = np.exp(-2j * np.pi * f * sd_array).T  # (M, Ndir)
 
             # Solve R X = A  -> X = R^{-1} A using Cholesky once
             # scipy LAPACK is faster than np.linalg.solve or numba
@@ -665,13 +713,19 @@ class MinimumVarianceDistortionlessResponseBeamformer(Beamformer):
 
 
 class SteeringCalculator(Base):
-    """Computes time delays for beamforming with a horizontal sensor array."""
+    """Compute steering delays for a horizontal sensor array."""
 
-    ssp = Property(SoundSpeedProfile, doc="Sound speed profile for calculating delays")
-    steering_azimuths_rad = Property(np.ndarray, doc="Azimuth angles for steering, in radians")
+    ssp: SoundSpeedProfile = Property(
+        SoundSpeedProfile,
+        doc="Sound speed profile for calculating delays",
+    )
+    steering_azimuths_rad: FloatArray = Property(
+        np.ndarray,
+        doc="Azimuth angles for steering, in radians",
+    )
 
-    def calculate(self, platform: Platform) -> np.ndarray:
-        """Calculate steering delays for the current horizontal array geometry.
+    def calculate(self, platform: Platform) -> FloatArray:
+        """Calculate per-direction per-sensor steering delays.
 
         This method assumes the platform has an `array` attribute which is an object with
         `state_vector` and `ref_state_vector` attributes, such as the one configured by
@@ -679,14 +733,14 @@ class SteeringCalculator(Base):
 
         Parameters
         ----------
-        platform  : Platform
+        platform : Platform
             The platform containing the sensor array.
 
         Returns
         -------
-        np.ndarray
-            An array of steering delays for each sensor relative to the steering direction, with
-            shape (num_directions, num_sensors).
+        FloatArray
+            Steering-delay matrix in seconds with shape
+            ``(num_directions, num_sensors)``.
 
         """
         # Get sensor positions - these are 3D positions [x, y, z] for each sensor

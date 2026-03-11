@@ -1,15 +1,27 @@
 """Defines a passive sonar detector that processes beamformed sensor data."""
 
-from collections.abc import Generator
+from __future__ import annotations
+
+from collections.abc import Generator, Iterable
+from datetime import datetime
+from typing import TYPE_CHECKING, TypeAlias
 
 import numpy as np
+from numpy.typing import ArrayLike, NDArray
 from stonesoup.base import Property
 from stonesoup.buffered_generator import BufferedGenerator
 from stonesoup.reader.base import DetectionReader
 from stonesoup.types.detection import Detection
 from tqdm import tqdm
 
-from .algorithms import DetectionAlgorithm
+if TYPE_CHECKING:
+    from ..types.sensordata import PassiveSonarSensorData
+    from .algorithms import DetectionAlgorithm
+
+FloatArray: TypeAlias = NDArray[np.float64]
+DetectionArray: TypeAlias = NDArray[np.float64]
+SensorDataStep: TypeAlias = tuple[datetime, Iterable["PassiveSonarSensorData"]]
+DetectionBatch: TypeAlias = tuple[datetime, set[Detection]]
 
 
 class PassiveSonarDetector(DetectionReader):
@@ -27,44 +39,44 @@ class PassiveSonarDetector(DetectionReader):
     ----------
     detection_chain : list[DetectionAlgorithm]
         A list of detection algorithms to apply sequentially to the SNR map.
-    sensor_data_gen : Generator
-        A generator that yields ``PassiveSonarSensorData`` objects.
-    steering_azimuths_rad : np.ndarray
+    sensor_data_gen : Generator[SensorDataStep, None, None]
+        Generator yielding sensor-data batches.
+    steering_azimuths_rad : FloatArray
         An array of steering azimuth angles in radians corresponding to the beams.
 
     """
 
-    detection_chain = Property(
-        list[DetectionAlgorithm],
+    detection_chain: list[DetectionAlgorithm] = Property(
+        list,
         doc="A list of detection algorithms to apply sequentially.",
     )
-    sensor_data_gen = Property(
+    sensor_data_gen: Generator[SensorDataStep, None, None] = Property(
         Generator, doc="Generator that yields PassiveSonarSensorData objects"
     )
-    steering_azimuths_rad = Property(
+    steering_azimuths_rad: FloatArray = Property(
         np.ndarray,
         doc="Array of steering azimuth angles in radians.",
     )
 
-    def __init__(self, *args, **kwargs):
+    def __init__(self, *args: object, **kwargs: object) -> None:
         """Initialise the passive sonar detector."""
         super().__init__(*args, **kwargs)
-        self._snr_history = []
+        self._snr_history: list[FloatArray] = []
 
     @property
-    def snr_history(self):
+    def snr_history(self) -> FloatArray:
         """Recorded SNR history.
 
         Returns
         -------
-        np.ndarray
+        FloatArray
             Array of shape (num_timesteps, num_beams) containing SNR values. If no history is
             available an empty array is returned.
 
         """
         if not self._snr_history:
-            return np.array([])
-        return np.array(self._snr_history)
+            return np.array([], dtype=np.float64)
+        return np.asarray(self._snr_history, dtype=np.float64)
 
     @BufferedGenerator.generator_method
     def detections_gen(
@@ -73,7 +85,7 @@ class PassiveSonarDetector(DetectionReader):
         total_timesteps: int | None = None,
         beamformer_output_type: str = "snr_percentile",
         snr_percentile_val: int = 10,
-    ):
+    ) -> Generator[DetectionBatch, None, None]:
         """Generate detections from sensor data.
 
         The generator iterates through ``sensor_data_gen``, computes an SNR map for each beamformed
@@ -98,14 +110,15 @@ class PassiveSonarDetector(DetectionReader):
             A tuple of ``(timestamp, set[Detection])`` for each processed timestep.
 
         """
-        sensor_data_iterator = self.sensor_data_gen
+        sensor_data_iterator: Iterable[SensorDataStep] = self.sensor_data_gen
         if progress_bar:
             sensor_data_iterator = tqdm(
                 sensor_data_iterator, desc="Generating Detections", total=total_timesteps
             )
 
         for timestamp, sensor_data_set in sensor_data_iterator:
-            detections = set()
+            detections: set[Detection] = set()
+            snr: FloatArray = np.array([], dtype=np.float64)
 
             # Process each sensor data object in the set
             for sensor_data in sensor_data_set:
@@ -145,7 +158,7 @@ class PassiveSonarDetector(DetectionReader):
                     )
 
                 # Run the detection chain on the SNR map
-                raw_detections = self._run_detection_chain(snr)
+                raw_detections: DetectionArray = self._run_detection_chain(snr)
 
                 # Create Stone Soup Detections from the raw results
                 if raw_detections.size > 0:
@@ -167,7 +180,7 @@ class PassiveSonarDetector(DetectionReader):
 
             yield timestamp, detections
 
-    def _run_detection_chain(self, initial_snr_map: np.ndarray) -> np.ndarray:
+    def _run_detection_chain(self, initial_snr_map: ArrayLike) -> DetectionArray:
         """Process a data map through a sequential chain of detection algorithms.
 
         Each algorithm in ``detection_chain`` is applied in sequence; the set of detections
@@ -176,33 +189,34 @@ class PassiveSonarDetector(DetectionReader):
 
         Parameters
         ----------
-        initial_snr_map : np.ndarray
+        initial_snr_map : ArrayLike
             The initial 1D data map (for example, SNR in dB) to be processed.
 
         Returns
         -------
-        np.ndarray
+        DetectionArray
             A 2D array of final detections where each row is ``[index, value]``. Returns an empty
             array if no detections are found at any stage.
 
         """
+        initial_snr_map_array = np.asarray(initial_snr_map, dtype=np.float64)
         if not self.detection_chain:
-            return np.empty((0, 2))
+            return np.empty((0, 2), dtype=np.float64)
 
-        input_data_map = initial_snr_map
-        final_detections = np.empty((0, 2))
+        input_data_map = initial_snr_map_array
+        final_detections = np.empty((0, 2), dtype=np.float64)
 
         for algorithm in self.detection_chain:
             current_detections = algorithm.detect(input_data_map)
 
             if current_detections.size == 0:
-                return np.empty((0, 2))
+                return np.empty((0, 2), dtype=np.float64)
 
             final_detections = current_detections
 
-            input_data_map = np.full(len(initial_snr_map), -np.inf)
+            input_data_map = np.full(len(initial_snr_map_array), -np.inf, dtype=np.float64)
             indices = final_detections[:, 0].astype(int)
             values = final_detections[:, 1]
             input_data_map[indices] = values
 
-        return final_detections
+        return np.asarray(final_detections, dtype=np.float64)

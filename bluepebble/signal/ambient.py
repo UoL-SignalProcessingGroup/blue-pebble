@@ -1,9 +1,13 @@
 """Statistical ambient noise models for sensor arrays."""
 
 from abc import abstractmethod
+from typing import Any, TypeAlias
 
 import numpy as np
+from numpy.typing import NDArray
 from stonesoup.base import Base, Property
+
+ComplexArray: TypeAlias = NDArray[np.complexfloating[Any, Any]]
 
 
 class AmbientNoise(Base):
@@ -24,8 +28,8 @@ class AmbientNoise(Base):
     """
 
     amplitude_upa: float = Property(doc="The noise amplitude (e.g., in µPa)")
-    duration_s = Property(float, doc="Duration of the signal in seconds")
-    sampling_rate_hz = Property(int, doc="Sampling rate in Hertz")
+    duration_s: float = Property(float, doc="Duration of the signal in seconds")
+    sampling_rate_hz: int = Property(int, doc="Sampling rate in Hertz")
 
     @property
     def num_samples(self) -> int:
@@ -39,7 +43,7 @@ class AmbientNoise(Base):
         """
         return int(self.duration_s * self.sampling_rate_hz)
 
-    def _generate_unit_white_noise(self, num_sensors: int) -> np.ndarray:
+    def _generate_unit_white_noise(self, num_sensors: int) -> ComplexArray:
         """Generate standard complex white noise with unit power.
 
         Parameters
@@ -49,8 +53,8 @@ class AmbientNoise(Base):
 
         Returns
         -------
-        numpy.ndarray
-            A complex array of shape (num_sensors, num_samples) with unit
+        ComplexArray
+            Complex array of shape ``(num_sensors, num_samples)`` with unit
             power.
 
         """
@@ -62,7 +66,7 @@ class AmbientNoise(Base):
         ) / np.sqrt(2)
 
     @abstractmethod
-    def generate(self, num_sensors: int = 1) -> np.ndarray:
+    def generate(self, num_sensors: int = 1) -> ComplexArray:
         """Generate a noise array. This must be implemented by subclasses.
 
         Parameters
@@ -72,8 +76,8 @@ class AmbientNoise(Base):
 
         Returns
         -------
-        numpy.ndarray
-            A noise array of shape (num_sensors, num_samples).
+        ComplexArray
+            Noise matrix of shape ``(num_sensors, num_samples)``.
 
         """
 
@@ -92,7 +96,7 @@ class WhiteNoise(AmbientNoise):
 
     """
 
-    def generate(self, num_sensors: int = 1) -> np.ndarray:
+    def generate(self, num_sensors: int = 1) -> ComplexArray:
         """Generate a complex white Gaussian noise array.
 
         Parameters
@@ -102,8 +106,8 @@ class WhiteNoise(AmbientNoise):
 
         Returns
         -------
-        numpy.ndarray
-            A complex array of white noise of shape (num_sensors, num_samples).
+        ComplexArray
+            Complex white-noise matrix of shape ``(num_sensors, num_samples)``.
 
         """
         # Generate the base noise with unit power
@@ -137,7 +141,7 @@ class ColouredNoise(AmbientNoise):
         "red/brownian noise)."
     )
 
-    def generate(self, num_sensors: int = 1) -> np.ndarray:
+    def generate(self, num_sensors: int = 1) -> ComplexArray:
         """Generate a complex coloured noise array.
 
         Parameters
@@ -147,9 +151,9 @@ class ColouredNoise(AmbientNoise):
 
         Returns
         -------
-        numpy.ndarray
-            A complex array of coloured noise of shape (num_sensors, num_samples), normalised to
-            the specified amplitude.
+        ComplexArray
+            Complex coloured-noise matrix of shape ``(num_sensors, num_samples)``,
+            normalised to the specified amplitude.
 
         """
         # 1. Generate the base white noise with a flat spectrum

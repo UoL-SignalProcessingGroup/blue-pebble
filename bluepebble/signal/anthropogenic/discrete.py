@@ -2,13 +2,16 @@
 
 from __future__ import annotations
 
-from typing import Any
+from typing import TYPE_CHECKING
 
 import numpy as np
 from numpy.typing import ArrayLike, NDArray
 from stonesoup.base import Property
 
-from .base import NarrowbandSignalBase, NarrowbandStatefulSignalBase
+from .base import Complex128Array, NarrowbandSignalBase, NarrowbandStatefulSignalBase
+
+if TYPE_CHECKING:
+    from stonesoup.types.state import State
 
 
 class NarrowbandTonalSignal(NarrowbandSignalBase):
@@ -16,12 +19,31 @@ class NarrowbandTonalSignal(NarrowbandSignalBase):
 
     def generate(
         self,
-        source: Any,
+        source: State,
         sensor_delays_s: ArrayLike,
         tloss_db: ArrayLike | float,
         propagation_time_s: float,
-    ) -> NDArray[np.complex128]:
-        """Generate the received narrowband signal across all sensors."""
+    ) -> Complex128Array:
+        """Generate received narrowband tonal snapshots for all sensors.
+
+        Parameters
+        ----------
+        source : State
+            Source state with tonal metadata.
+        sensor_delays_s : ArrayLike
+            One-dimensional per-sensor delays in seconds.
+        tloss_db : ArrayLike | float
+            Scalar or one-dimensional transmission loss in dB.
+        propagation_time_s : float
+            Propagation time from source to array origin in seconds.
+
+        Returns
+        -------
+        Complex128Array
+            Complex sensor snapshot matrix with shape
+            ``(num_sensors, num_samples)``.
+
+        """
         time_array_s = self._build_time_array()
         amplitudes_upa, frequencies_hz, phases_rad = self._extract_tonal_metadata(source)
         received_amplitude_upa = self._scale_amplitudes_for_tloss(amplitudes_upa, tloss_db)
@@ -43,12 +65,31 @@ class NarrowbandBlendedTonalSignal(NarrowbandStatefulSignalBase):
 
     def generate(
         self,
-        source: Any,
+        source: State,
         sensor_delays_s: ArrayLike,
         tloss_db: ArrayLike | float,
         propagation_time_s: float,
-    ) -> NDArray[np.complex128]:
-        """Generate blended narrowband signal with phase and amplitude continuity."""
+    ) -> Complex128Array:
+        """Generate narrowband snapshots with overlap blending continuity.
+
+        Parameters
+        ----------
+        source : State
+            Source state with tonal metadata and timestamp.
+        sensor_delays_s : ArrayLike
+            One-dimensional per-sensor delays in seconds.
+        tloss_db : ArrayLike | float
+            Scalar or one-dimensional transmission loss in dB.
+        propagation_time_s : float
+            Propagation time from source to array origin in seconds.
+
+        Returns
+        -------
+        Complex128Array
+            Complex sensor snapshot matrix with shape
+            ``(num_sensors, num_samples)``.
+
+        """
         num_sensors = len(sensor_delays_s)
         state = self._get_or_create_source_state(
             source,
@@ -98,19 +139,38 @@ class NarrowbandBlendedTonalSignal(NarrowbandStatefulSignalBase):
 class NarrowbandOverlapAddTonalSignal(NarrowbandStatefulSignalBase):
     """Generate narrowband tonal signals using overlap-add reconstruction."""
 
-    def __init__(self, *args, **kwargs):
+    def __init__(self, *args: object, **kwargs: object) -> None:
         """Initialise overlap-add state and synthesis window cache."""
         super().__init__(*args, **kwargs)
         self._synthesis_window: NDArray[np.float64] | None = None
 
     def generate(
         self,
-        source: Any,
+        source: State,
         sensor_delays_s: ArrayLike,
         tloss_db: ArrayLike | float,
         propagation_time_s: float,
-    ) -> NDArray[np.complex128]:
-        """Generate narrowband signal using overlap-add with 50% overlap."""
+    ) -> Complex128Array:
+        """Generate narrowband snapshots via overlap-add reconstruction.
+
+        Parameters
+        ----------
+        source : State
+            Source state with tonal metadata and timestamp.
+        sensor_delays_s : ArrayLike
+            One-dimensional per-sensor delays in seconds.
+        tloss_db : ArrayLike | float
+            Scalar or one-dimensional transmission loss in dB.
+        propagation_time_s : float
+            Propagation time from source to array origin in seconds.
+
+        Returns
+        -------
+        Complex128Array
+            Complex sensor snapshot matrix with shape
+            ``(num_sensors, num_samples)``.
+
+        """
         num_sensors = len(sensor_delays_s)
         state = self._get_or_create_source_state(
             source,
@@ -158,7 +218,7 @@ class NarrowbandOverlapAddTonalSignal(NarrowbandStatefulSignalBase):
 
         return sensor_signals
 
-    def reset(self):
+    def reset(self) -> None:
         """Clear overlap-add state and synthesis window cache."""
         super().reset()
         self._synthesis_window = None

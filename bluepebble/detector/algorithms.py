@@ -1,35 +1,52 @@
 """Signal detection algorithms for 1D time-series and beamformed data."""
 
 from abc import ABC, abstractmethod
-from typing import Self
+from typing import Any, TypeAlias
 
 import numpy as np
 from numpy.lib.stride_tricks import sliding_window_view
+from numpy.typing import ArrayLike, NDArray
 from scipy.signal import find_peaks
 from stonesoup.base import Base, Property
+
+IntArray: TypeAlias = NDArray[np.integer[Any]]
+DetectionArray: TypeAlias = NDArray[np.float64]
+
+
+def _empty_detections() -> DetectionArray:
+    """Return a standard empty detection matrix of shape ``(0, 2)``."""
+    return np.empty((0, 2), dtype=np.float64)
+
+
+def _stack_detections(indices: IntArray, data: ArrayLike) -> DetectionArray:
+    """Create a ``(N, 2)`` matrix with detection indices and values."""
+    data_array = np.asarray(data, dtype=np.float64)
+    if indices.size == 0:
+        return _empty_detections()
+    return np.column_stack((indices, data_array[indices])).astype(np.float64, copy=False)
 
 
 class DetectionAlgorithm(Base, ABC):
     """Abstract base class for all detector types."""
 
     @abstractmethod
-    def detect(self: Self, data: np.ndarray) -> np.ndarray:
+    def detect(self, data: ArrayLike) -> DetectionArray:
         """Detect signals in the data array.
 
         Parameters
         ----------
-        data : np.ndarray
-            A 1D NumPy array of numerical data to process.
+        data : ArrayLike
+            One-dimensional numeric data to process.
 
         Returns
         -------
-        np.ndarray
-            A 2D NumPy array where each row contains two elements: the index of a detection and its
-            corresponding value. Returns an empty array with shape (0, 2) if no detections are
-            found.
+        DetectionArray
+            Detection matrix of shape ``(N, 2)`` with columns
+            ``[detection_index, detection_value]``. Returns an empty
+            ``(0, 2)`` matrix when no detections are found.
 
         """
-        pass
+        ...
 
 
 class ThresholdDetector(DetectionAlgorithm):
@@ -45,16 +62,15 @@ class ThresholdDetector(DetectionAlgorithm):
 
     """
 
-    threshold = Property(
+    threshold: float = Property(
         float, doc="The value that data points must exceed to be considered a detection"
     )
 
-    def detect(self: Self, data: np.ndarray) -> np.ndarray:
+    def detect(self, data: ArrayLike) -> DetectionArray:
         """Detect values in the data array that are above the threshold."""
-        indices = np.where(data > self.threshold)[0]
-        if indices.size == 0:
-            return np.empty((0, 2))
-        return np.column_stack((indices, data[indices]))
+        data_array = np.asarray(data)
+        indices = np.where(data_array > self.threshold)[0]
+        return _stack_detections(indices, data_array)
 
 
 class PeakDetector(DetectionAlgorithm):
@@ -77,12 +93,11 @@ class PeakDetector(DetectionAlgorithm):
         "peaks",
     )
 
-    def detect(self: Self, data: np.ndarray) -> np.ndarray:
+    def detect(self, data: ArrayLike) -> DetectionArray:
         """Find all peaks in the data array."""
-        indices, _ = find_peaks(data, distance=self.distance)
-        if indices.size == 0:
-            return np.empty((0, 2))
-        return np.column_stack((indices, data[indices]))
+        data_array = np.asarray(data)
+        indices, _ = find_peaks(data_array, distance=self.distance)
+        return _stack_detections(indices, data_array)
 
 
 class CACFARDetector(DetectionAlgorithm):
@@ -110,27 +125,27 @@ class CACFARDetector(DetectionAlgorithm):
 
     """
 
-    num_guard_cells = Property(
+    num_guard_cells: int = Property(
         int,
         doc="The number of cells to ignore on each side of the Cell Under Test (CUT). "
         "These cells are ignored to prevent signal leakage from the CUT into the noise estimate",
     )
-    num_training_cells = Property(
+    num_training_cells: int = Property(
         int,
         doc="The number of cells to use for noise estimation on each side of the guard cells",
     )
-    threshold_factor = Property(
+    threshold_factor: float = Property(
         float,
         doc="A scaling factor (alpha) used to set the detection threshold above the estimated"
         "noise floor",
     )
-    mode = Property(
+    mode: str = Property(
         str,
         default="wrap",
         doc="The convolution mode for boundary handling ('valid', 'same', or 'wrap')",
     )
 
-    def detect(self: Self, data: np.ndarray) -> np.ndarray:
+    def detect(self, data: ArrayLike) -> DetectionArray:
         """Detect signals in the data array using the CFAR algorithm.
 
         This method applies the Cell-Averaging CFAR (CA-CFAR) algorithm. It assumes the input data
@@ -139,19 +154,20 @@ class CACFARDetector(DetectionAlgorithm):
 
         Parameters
         ----------
-        data : np.ndarray
-            A 1D NumPy array of signal data (e.g., SNR) in decibels.
+        data : ArrayLike
+            One-dimensional signal data (for example SNR) in decibels.
 
         Returns
         -------
-        np.ndarray
-            A 2D NumPy array where each row contains two elements: the index of a detection and its
-            corresponding value in dB. Returns an empty array with shape (0, 2) if no detections
-            are found.
+        DetectionArray
+            Detection matrix of shape ``(N, 2)`` with columns
+            ``[detection_index, detection_value_db]``. Returns an empty
+            ``(0, 2)`` matrix when no detections are found.
 
         """
         # Convert dB to linear power, as CFAR averaging is done on power.
-        power = 10 ** (data / 10)
+        data_array = np.asarray(data)
+        power = 10 ** (data_array / 10)
 
         # Total number of cells on one side of the CUT
         one_sided_window = self.num_guard_cells + self.num_training_cells
@@ -189,11 +205,7 @@ class CACFARDetector(DetectionAlgorithm):
 
         # Find indices where the signal power exceeds the adaptive threshold
         indices = np.where(power > threshold)[0]
-
-        if indices.size == 0:
-            return np.empty((0, 2))
-
-        return np.column_stack((indices, data[indices]))
+        return _stack_detections(indices, data_array)
 
 
 class OSCFARDetector(DetectionAlgorithm):
@@ -221,57 +233,61 @@ class OSCFARDetector(DetectionAlgorithm):
 
     """
 
-    num_guard_cells = Property(
+    num_guard_cells: int = Property(
         int,
         doc="The number of cells to ignore on each side of the Cell Under Test (CUT).",
     )
-    num_training_cells = Property(
+    num_training_cells: int = Property(
         int,
         doc="The number of cells to use for noise estimation on each side of the guard cells.",
     )
-    rank = Property(
+    rank: int = Property(
         int,
         default=1,
         doc="The k-th smallest value (1-indexed) to select from the sorted "
         "training cells. Must be between 1 and (2 * num_training_cells).",
     )
-    threshold_factor = Property(
+    threshold_factor: float = Property(
         float,
         default=1.0,
         doc="A scaling factor (alpha) to apply to the k-th rank value.",
     )
 
-    def __init__(self, *args, **kwargs):
+    def __init__(self, *args: object, **kwargs: object):
         """Initialise the OS-CFAR detector and validate parameters."""
         super().__init__(*args, **kwargs)
 
         # Validate the rank parameter
-        self.num_training_total = 2 * self.num_training_cells
+        self.num_training_total: int = 2 * self.num_training_cells
         if not 1 <= self.rank <= self.num_training_total:
             raise ValueError(
                 f"Rank ({self.rank}) must be between 1 and "
                 f"2 * num_training_cells ({self.num_training_total})"
             )
 
-    def detect(self: Self, data: np.ndarray) -> np.ndarray:
+    def detect(self, data: ArrayLike) -> DetectionArray:
         """Detect signals in the data array using the OS-CFAR algorithm.
 
         This method applies the OS-CFAR algorithm. It assumes the
         input data is in decibels (dB) and converts it to linear
         power for processing, as the sorting is performed on power values.
 
-        Args:
-            data (np.ndarray): A 1D NumPy array of signal data (e.g., SNR) in
-                decibels.
+        Parameters
+        ----------
+        data : ArrayLike
+            One-dimensional signal data (for example SNR) in decibels.
 
-        Returns:
-            np.ndarray: A 2D NumPy array where each row contains two elements:
-            the index of a detection and its corresponding value in dB.
-            Returns an empty array with shape (0, 2) if no detections are found.
+        Returns
+        -------
+        DetectionArray
+            Detection matrix of shape ``(N, 2)`` with columns
+            ``[detection_index, detection_value_db]``. Returns an empty
+            ``(0, 2)`` matrix when no detections are found.
 
         """
         # Convert dB to linear power, as CFAR processing is done on power.
-        power = 10 ** (data / 10)
+        data_array = np.asarray(data)
+        power = 10 ** (data_array / 10)
 
         # Total number of cells on one side of the CUT
         one_sided_window = self.num_guard_cells + self.num_training_cells
@@ -308,9 +324,4 @@ class OSCFARDetector(DetectionAlgorithm):
 
         # Find indices where the original signal power exceeds the threshold
         indices = np.where(power > threshold)[0]
-
-        if indices.size == 0:
-            return np.empty((0, 2))
-
-        # Return the indices and the original dB values
-        return np.column_stack((indices, data[indices]))
+        return _stack_detections(indices, data_array)

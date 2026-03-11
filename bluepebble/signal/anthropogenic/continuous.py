@@ -2,7 +2,7 @@
 
 from fractions import Fraction
 from pathlib import Path
-from typing import Any
+from typing import TYPE_CHECKING, TypeAlias
 
 import numpy as np
 from numpy.typing import ArrayLike, NDArray
@@ -11,6 +11,12 @@ from scipy.io import wavfile
 from stonesoup.base import Property
 
 from .base import BroadbandStftSignalBase
+
+if TYPE_CHECKING:
+    from stonesoup.types.state import State
+
+FloatArray: TypeAlias = NDArray[np.float64]
+Complex128Array: TypeAlias = NDArray[np.complex128]
 
 
 class BroadbandSyntheticSignal(BroadbandStftSignalBase):
@@ -77,17 +83,17 @@ class BroadbandSyntheticSignal(BroadbandStftSignalBase):
     noise_spectral_exponent = Property(
         float, default=-2.0, doc="Spectral shape exponent (-2=pink, 0=white)"
     )
-    noise_freq_range_hz = Property(
+    noise_freq_range_hz: tuple[float, float] = Property(
         tuple, default=(20.0, 200.0), doc="Frequency range for noise (Hz)"
     )
-    noise_variance = Property(
+    noise_variance: float = Property(
         float,
         default=1.0,
         doc=(
             "Variance multiplier for generated white noise before shaping; std = sqrt(variance)."
         ),
     )
-    tonal_noise_is_constant = Property(
+    tonal_noise_is_constant: bool = Property(
         bool,
         default=False,
         doc=(
@@ -95,7 +101,7 @@ class BroadbandSyntheticSignal(BroadbandStftSignalBase):
             "phase and amplitude are still applied per call."
         ),
     )
-    use_powerlaw_noise = Property(
+    use_powerlaw_noise: bool = Property(
         bool,
         default=False,
         doc=(
@@ -103,20 +109,20 @@ class BroadbandSyntheticSignal(BroadbandStftSignalBase):
             "random white-noise seed)."
         ),
     )
-    noise_is_constant = Property(
+    noise_is_constant: bool = Property(
         bool,
         default=True,
         doc="If True, use same noise realization across calls; "
         "if False, generate new noise each time",
     )
 
-    def __init__(self, *args, **kwargs):
-        """Initialize realistic ship signal generator."""
+    def __init__(self, *args: object, **kwargs: object) -> None:
+        """Initialise realistic ship signal generator."""
         super().__init__(*args, **kwargs)
-        self._noise_realization: NDArray[np.complex128] | None = None
-        self._tonal_realizations: list[NDArray[np.complex128]] | None = None
+        self._noise_realization: Complex128Array | None = None
+        self._tonal_realizations: list[Complex128Array] | None = None
 
-    def _generate_source_signal(self, source: Any) -> NDArray[np.complex128]:
+    def _generate_source_signal(self, source: State) -> Complex128Array:
         """Generate the complete source signal with broadband tonals and noise.
 
         This method creates:
@@ -126,19 +132,19 @@ class BroadbandSyntheticSignal(BroadbandStftSignalBase):
         Parameters
         ----------
         source : State
-            The source state with tonal parameters in metadata.
+            Source state with tonal parameters in metadata.
 
         Returns
         -------
-        numpy.ndarray
-            Complex time-domain signal of shape (num_samples,).
+        Complex128Array
+            Complex source signal with shape ``(num_samples,)``.
 
         """
         amplitudes_upa = source.metadata["amplitudes_upa"]
         frequencies_hz = source.metadata["frequencies_hz"]
         phases_rad = source.metadata["phases_rad"]
 
-        # Initialize output signal
+        # Initialise output signal
         signal = np.zeros(self.num_samples, dtype=np.complex128)
 
         tonal_cache_available = (
@@ -146,7 +152,7 @@ class BroadbandSyntheticSignal(BroadbandStftSignalBase):
             and self._tonal_realizations is not None
             and len(self._tonal_realizations) == len(frequencies_hz)
         )
-        tonal_cache: list[NDArray[np.complex128]] = []
+        tonal_cache: list[Complex128Array] = []
 
         # Generate broadband tonals (each tonal has finite bandwidth)
         for idx, (freq, amp, phase) in enumerate(
@@ -178,7 +184,7 @@ class BroadbandSyntheticSignal(BroadbandStftSignalBase):
                 filtered_noise_fft = noise_fft * bandpass_filter
                 filtered_noise = np.fft.ifft(filtered_noise_fft)
 
-                # Normalize to unit RMS for later amplitude scaling
+                # Normalise to unit RMS for later amplitude scaling
                 rms = np.sqrt(np.mean(np.abs(filtered_noise) ** 2))
                 base_noise = filtered_noise if rms == 0 else filtered_noise / rms
 
@@ -227,7 +233,7 @@ class BroadbandSyntheticSignal(BroadbandStftSignalBase):
 
                 colored_noise = np.fft.ifft(colored_noise_fft)
 
-                # Normalize to desired RMS amplitude
+                # Normalise to desired RMS amplitude
                 rms = np.sqrt(np.mean(np.abs(colored_noise) ** 2))
                 if rms > 0:
                     colored_noise = colored_noise * (self.noise_amplitude_upa / rms)
@@ -240,7 +246,7 @@ class BroadbandSyntheticSignal(BroadbandStftSignalBase):
 
         return signal
 
-    def reset(self):
+    def reset(self) -> None:
         """Clear cached STFT and source signal data.
 
         Call this when starting a new simulation with different source parameters.
@@ -281,31 +287,47 @@ class BroadbandRecordedSignal(BroadbandStftSignalBase):
 
     """
 
-    wav_path = Property(str, doc="Path to measured WAV recording")
-    segment_start_s = Property(float, default=0.0, doc="Segment start time in WAV (seconds)")
-    segment_duration_s = Property(
+    wav_path: str = Property(str, doc="Path to measured WAV recording")
+    segment_start_s: float = Property(
+        float,
+        default=0.0,
+        doc="Segment start time in WAV (seconds)",
+    )
+    segment_duration_s: float = Property(
         float,
         default=0.0,
         doc="Segment duration in WAV (seconds); <=0 uses to end of recording",
     )
-    duration_match_mode = Property(
+    duration_match_mode: str = Property(
         str,
         default="tile",
         doc='Duration matching mode when audio is short: "tile" or "zero_pad"',
     )
-    level_db_re_1upa = Property(
+    level_db_re_1upa: float = Property(
         float,
         default=85.0,
         doc="Target RMS source level in dB re 1 µPa",
     )
 
-    def __init__(self, *args, **kwargs):
-        """Initialize measured broadband signal generator."""
+    def __init__(self, *args: object, **kwargs: object) -> None:
+        """Initialise measured broadband signal generator."""
         super().__init__(*args, **kwargs)
 
     @staticmethod
-    def _to_float_mono(audio: ArrayLike) -> NDArray[np.float64]:
-        """Convert waveform to mono float64 in approximately [-1, 1]."""
+    def _to_float_mono(audio: ArrayLike) -> FloatArray:
+        """Convert waveform to mono ``float64`` in approximately ``[-1, 1]``.
+
+        Parameters
+        ----------
+        audio : ArrayLike
+            Input waveform as mono or multi-channel samples.
+
+        Returns
+        -------
+        FloatArray
+            Mono waveform as one-dimensional ``float64`` samples.
+
+        """
         audio = np.asarray(audio)
         if audio.ndim > 1:
             audio = np.mean(audio, axis=1)
@@ -327,10 +349,24 @@ class BroadbandRecordedSignal(BroadbandStftSignalBase):
 
     def _resample_to_sim_rate(
         self,
-        signal: NDArray[np.float64],
+        signal: FloatArray,
         source_fs_hz: float,
-    ) -> NDArray[np.float64]:
-        """Resample waveform to simulator sampling rate."""
+    ) -> FloatArray:
+        """Resample waveform to the simulator sampling rate.
+
+        Parameters
+        ----------
+        signal : FloatArray
+            Input mono waveform.
+        source_fs_hz : float
+            Source sample rate in Hz.
+
+        Returns
+        -------
+        FloatArray
+            Resampled mono waveform.
+
+        """
         target_fs_hz = float(self.sampling_rate_hz)
         if np.isclose(source_fs_hz, target_fs_hz):
             return signal
@@ -338,8 +374,25 @@ class BroadbandRecordedSignal(BroadbandStftSignalBase):
         ratio = Fraction(target_fs_hz / source_fs_hz).limit_denominator(1000)
         return scipy_signal.resample_poly(signal, ratio.numerator, ratio.denominator)
 
-    def _match_duration(self, signal: NDArray[np.float64]) -> NDArray[np.float64]:
-        """Match waveform length to required simulation sample count."""
+    def _match_duration(self, signal: FloatArray) -> FloatArray:
+        """Match waveform length to required simulation sample count.
+
+        Parameters
+        ----------
+        signal : FloatArray
+            Input mono waveform.
+
+        Returns
+        -------
+        FloatArray
+            Waveform trimmed, tiled, or padded to ``self.num_samples``.
+
+        Raises
+        ------
+        ValueError
+            If ``duration_match_mode`` is unsupported.
+
+        """
         target_samples = self.num_samples
 
         if len(signal) >= target_samples:
@@ -358,16 +411,47 @@ class BroadbandRecordedSignal(BroadbandStftSignalBase):
         )
         raise ValueError(msg)
 
-    def _apply_level(self, signal: NDArray[np.float64]) -> NDArray[np.float64]:
-        """Scale waveform to target RMS level in dB re 1 µPa."""
+    def _apply_level(self, signal: FloatArray) -> FloatArray:
+        """Scale waveform to target RMS level in dB re 1 µPa.
+
+        Parameters
+        ----------
+        signal : FloatArray
+            Input mono waveform.
+
+        Returns
+        -------
+        FloatArray
+            Level-adjusted mono waveform.
+
+        """
         target_rms_upa = 10 ** (self.level_db_re_1upa / 20.0)
         current_rms = np.sqrt(np.mean(signal**2))
         if current_rms <= 0:
             return signal
         return signal * (target_rms_upa / current_rms)
 
-    def _generate_source_signal(self, source: Any) -> NDArray[np.complex128]:
-        """Generate full-duration source signal from measured WAV data."""
+    def _generate_source_signal(self, source: State) -> Complex128Array:
+        """Generate full-duration source signal from measured WAV data.
+
+        Parameters
+        ----------
+        source : State
+            Source state (unused placeholder for interface compatibility).
+
+        Returns
+        -------
+        Complex128Array
+            Complex source signal with shape ``(num_samples,)``.
+
+        Raises
+        ------
+        FileNotFoundError
+            If the configured WAV file does not exist.
+        ValueError
+            If the selected WAV segment is empty.
+
+        """
         _ = source
         wav_file = Path(self.wav_path)
         if not wav_file.exists():

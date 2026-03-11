@@ -1,40 +1,49 @@
 """Signal post-processing effects."""
 
+from abc import ABC, abstractmethod
+from typing import Any, TypeAlias
+
 import numpy as np
+from numpy.typing import NDArray
 from stonesoup.base import Base, Property
 
+ComplexArray: TypeAlias = NDArray[np.complexfloating[Any, Any]]
 
-class Effect(Base):
+
+class Effect(Base, ABC):
     """A base class for all signal post-processing effects."""
 
-    def apply(self, signals: np.ndarray, sampling_rate_hz: int) -> np.ndarray:
+    @abstractmethod
+    def apply(self, signals: ComplexArray, sampling_rate_hz: int) -> ComplexArray:
         """Apply the effect to the signal. Must be implemented by subclasses."""
-        raise NotImplementedError("Subclasses must implement the apply method.")
+        pass
 
 
 class Reverb(Effect):
     """Applies a simple convolutional reverb effect to the signal."""
 
-    duration_s = Property(float, default=1.0, doc="The decay time of the reverb tail in seconds.")
-    wet_dry_mix = Property(
+    duration_s: float = Property(
+        float, default=1.0, doc="The decay time of the reverb tail in seconds."
+    )
+    wet_dry_mix: float = Property(
         float,
         default=0.3,
         doc="Mix between wet (reverb) and dry signal (0=dry, 1=wet).",
     )
 
-    def apply(self, signals: np.ndarray, sampling_rate_hz: int) -> np.ndarray:
+    def apply(self, signals: ComplexArray, sampling_rate_hz: int) -> ComplexArray:
         """Apply a simple convolutional reverb effect to the signal.
 
         Parameters
         ----------
-        signals : np.ndarray
+        signals : ComplexArray
             An array of complex signals with shape (num_sensors, num_samples).
         sampling_rate_hz : int
             The sampling rate in Hertz.
 
         Returns
         -------
-        np.ndarray
+        ComplexArray
             An array of complex signals with the reverb effect applied,
             with shape (num_sensors, num_samples).
 
