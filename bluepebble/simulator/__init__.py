@@ -9,7 +9,7 @@ from .discrete import (
     DepreciatedDiscretePassiveSonarArraySimulator,
     DiscretePassiveSonarArraySimulator,
 )
-from .sensor_data import PassiveSonarSensorData
+from .sensordata import PassiveSonarSensorData
 
 __all__ = [
     "PassiveSonarSensorData",
