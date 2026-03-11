@@ -290,6 +290,57 @@ def test_mvdr_returns_zero_when_no_frequency_bins_are_active(monkeypatch) -> Non
     np.testing.assert_array_equal(power, np.zeros((1, 1), dtype=np.float64))
 
 
+def test_mvdr_beamspace_returns_finite_power_for_simple_input(monkeypatch) -> None:
+    """Beamspace MVDR should return finite non-negative broadband power."""
+    beamformer = _load_beamformer_module(monkeypatch)
+    model = beamformer.MinimumVarianceDistortionlessResponseBeamformer(
+        sampling_rate_hz=8.0,
+        nfft=4,
+        overlap=0,
+        transform_domain="beamspace",
+        beamspace_dim=1,
+    )
+
+    power = model.beamform(
+        np.array([[1.0, 2.0, 3.0, 4.0], [1.0, 2.0, 3.0, 4.0]], dtype=np.complex128),
+        np.array([[0.0, 0.0], [0.0, 0.1]], dtype=float),
+    )
+
+    assert power.shape == (2, 1)
+    assert np.isfinite(power).all()
+    assert np.all(power >= 0.0)
+
+
+def test_mvdr_rejects_invalid_transform_domain(monkeypatch) -> None:
+    """MVDR should reject unsupported transform domains."""
+    beamformer = _load_beamformer_module(monkeypatch)
+
+    with pytest.raises(ValueError, match="Invalid transform_domain"):
+        beamformer.MinimumVarianceDistortionlessResponseBeamformer(
+            sampling_rate_hz=8.0,
+            nfft=4,
+            transform_domain="invalid",
+        )
+
+
+def test_mvdr_rejects_beamspace_dim_above_sensor_count(monkeypatch) -> None:
+    """Beamspace dimension cannot exceed the number of sensors."""
+    beamformer = _load_beamformer_module(monkeypatch)
+    model = beamformer.MinimumVarianceDistortionlessResponseBeamformer(
+        sampling_rate_hz=8.0,
+        nfft=4,
+        overlap=0,
+        transform_domain="beamspace",
+        beamspace_dim=3,
+    )
+
+    with pytest.raises(ValueError, match="cannot exceed number of sensors"):
+        model.beamform(
+            np.ones((2, 4), dtype=np.complex128),
+            np.zeros((1, 2), dtype=float),
+        )
+
+
 def test_steering_calculator_returns_expected_horizontal_delays(monkeypatch) -> None:
     """Steering delays should match the 2D projected sensor offsets."""
     beamformer = _load_beamformer_module(monkeypatch)

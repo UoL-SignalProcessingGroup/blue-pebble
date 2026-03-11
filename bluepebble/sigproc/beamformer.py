@@ -99,7 +99,8 @@ class DelayAndSumBeamformer(Beamformer):
         self._num_sensors = None
 
         if self.domain not in ["time", "frequency", "broadband_power"]:
-            raise ValueError("Invalid beamforming domain. Must be 'time' or 'frequency' or 'broadband_power'.")
+            raise ValueError("Invalid beamforming domain. Must be "
+            "'time' or 'frequency' or 'broadband_power'.")
 
     def beamform(self, sensor_signals: np.ndarray, steering_delays_s: np.ndarray) -> np.ndarray:
         """Process sensor signals to form beams in specified directions.
@@ -217,6 +218,94 @@ class DelayAndSumBeamformer(Beamformer):
         )
         frames = frames * window  # broadcasts over last axis
         return np.fft.fft(frames, axis=2)
+
+    def das_broadband_power(
+        self,
+        x: np.ndarray,  # (M, T)
+        fs: float,
+        nfft: int,
+        sd: np.ndarray,  # (Ndir, M) steering delays [s]
+        shading_weights: np.ndarray,  # (M,)
+        f0: float = 0.0,
+        fmin: float | None = None,
+        fmax: float | None = None,
+        overlap: int = 0,
+    ) -> np.ndarray:
+        """Perform broadband delay-and-sum beamforming in the frequency domain.
+
+        The input sensor array data are transformed using STFT, steered at each frequency bin using
+        phase shifts derived from ``sd``, and then integrated incoherently (power sum across
+        selected frequencies) to produce a direction-time power map.
+
+        Parameters
+        ----------
+        x : np.ndarray
+            Complex or real sensor data with shape ``(num_sensors, num_samples)``.
+        fs : float
+            Sampling frequency in Hz.
+        nfft : int
+            STFT window length (number of FFT points).
+        sd : np.ndarray
+            Steering delays in seconds with shape ``(num_directions, num_sensors)``.
+        shading_weights : np.ndarray
+            Per-sensor beamforming weights with shape ``(num_sensors,)``.
+        f0 : float, optional
+            Carrier frequency offset in Hz for baseband data. Defaults to ``0.0``.
+        fmin : float | None, optional
+            Minimum frequency (Hz) included in the power integration. If ``None``, the minimum
+            available STFT bin frequency is used.
+        fmax : float | None, optional
+            Maximum frequency (Hz) included in the power integration. If ``None``, the maximum
+            available STFT bin frequency is used.
+        overlap : int, optional
+            Number of overlapping samples between adjacent STFT frames. Defaults to ``0``.
+
+        Returns
+        -------
+        np.ndarray
+            Broadband beam power map with shape ``(num_directions, num_frames)``. Each entry
+            contains integrated beam power over the active frequency bins for one steering
+            direction and one STFT frame.
+
+        """
+        M, _ = x.shape
+        X = self._stft(x, nfft, overlap)  # (M, n_frames, nfft)
+        M, n_frames, nfft_actual = X.shape
+
+        k = np.arange(nfft_actual)
+        k_centered = np.where(k <= nfft_actual // 2, k, k - nfft_actual)
+        f_bins = f0 + (fs / nfft_actual) * k_centered
+
+        if fmin is None:
+            fmin = f_bins.min()
+        if fmax is None:
+            fmax = f_bins.max()
+        active = (f_bins >= fmin) & (f_bins <= fmax)
+        active_idx = np.nonzero(active)[0]
+
+        Ndir = sd.shape[0]
+        P = np.zeros((Ndir, n_frames), dtype=np.float64)
+
+        # Normalize weights
+        w = shading_weights.reshape(1, M, 1)  # (1, M, 1) for broadcasting
+
+        for i in active_idx:
+            f = f_bins[i]
+
+            # Snapshots at this bin: (M, n_frames)
+            S = X[:, :, i]
+
+            # Steering phase for all dirs/sensors: (Ndir, M)
+            A = np.exp(1j * 2 * np.pi * f * sd)
+
+            # Beamform: Y = sum_m w_m * A(dir,m) * S(m,frame)
+            # Result: (Ndir, n_frames)
+            Y = np.sum((A[:, :, None] * S[None, :, :]) * w, axis=1)
+
+            # Accumulate power over frequency bins
+            P += np.abs(Y) ** 2
+
+        return P
 
 
 class DelayAndSumBeamformerFast(DelayAndSumBeamformer):
@@ -553,6 +642,30 @@ class MinimumVarianceDistortionlessResponseBeamformer(Beamformer):
     f0 = Property(float, default=0.0, doc="Carrier frequency for baseband data (Hz)")
     fmin = Property(float, default=None, doc="Minimum frequency to integrate (Hz)")
     fmax = Property(float, default=None, doc="Maximum frequency to integrate (Hz)")
+    transform_domain = Property(
+        str,
+        default="element",
+        doc="MVDR processing domain: 'element' (default) or 'beamspace'",
+    )
+    beamspace_dim = Property(
+        int,
+        default=None,
+        doc="Number of beamspace components to retain when transform_domain='beamspace'",
+    )
+
+    def __init__(self, *args, **kwargs):
+        """Initialise MVDR beamformer and validate beamspace options."""
+        super().__init__(*args, **kwargs)
+
+        domain = str(self.transform_domain).strip().lower()
+        if domain not in {"element", "beamspace"}:
+            raise ValueError(
+                "Invalid transform_domain. Must be 'element' or 'beamspace'."
+            )
+        self.transform_domain = domain
+
+        if self.beamspace_dim is not None and int(self.beamspace_dim) < 1:
+            raise ValueError("beamspace_dim must be a positive integer when provided")
 
     def beamform(self, sensor_signals: np.ndarray, steering_delays_s: np.ndarray) -> np.ndarray:
         """Perform broadband MVDR beamforming and return power time-series.
@@ -685,6 +798,11 @@ class MinimumVarianceDistortionlessResponseBeamformer(Beamformer):
         if nfft / fs < (np.max(sd) - np.min(sd)):
             raise ValueError("nfft too small for this array")
 
+        use_beamspace = self.transform_domain == "beamspace"
+        beamspace_basis = None
+        if use_beamspace:
+            beamspace_basis = self._build_beamspace_basis(M)
+
         # STFT (M, n_frames, nfft)
         X = self._stft(x, nfft, overlap)
         M, n_frames, nfft_actual = X.shape
@@ -727,10 +845,17 @@ class MinimumVarianceDistortionlessResponseBeamformer(Beamformer):
             # (we build as (Ndir, M) then transpose for solve)
             A = np.exp(-2j * np.pi * f * sd).T  # (M, Ndir)
 
+            if use_beamspace:
+                # Project covariance and steering vectors into reduced beamspace.
+                B = beamspace_basis
+                R = B.conj().T @ R @ B
+                A = B.conj().T @ A
+                S = B.conj().T @ S
+
             # Solve R X = A  -> X = R^{-1} A using Cholesky once
             # scipy LAPACK is faster than np.linalg.solve or numba
             c, lower = cho_factor(R, overwrite_a=False, check_finite=False)
-            RinvA = cho_solve((c, lower), A, overwrite_b=False, check_finite=False)  # (M, Ndir)
+            RinvA = cho_solve((c, lower), A, overwrite_b=False, check_finite=False)
 
             # Denominator: diag(A^H R^{-1} A) -> (Ndir,)
             den = np.sum(A.conj() * RinvA, axis=0)
@@ -746,6 +871,43 @@ class MinimumVarianceDistortionlessResponseBeamformer(Beamformer):
             P += np.abs(Y) ** 2
 
         return P
+
+    def _build_beamspace_basis(self, num_sensors: int) -> np.ndarray:
+        """Build a unitary DFT beamspace basis with optional dimensionality reduction."""
+        if num_sensors < 1:
+            raise ValueError("num_sensors must be positive")
+
+        if self.beamspace_dim is None:
+            num_components = num_sensors
+        else:
+            num_components = int(self.beamspace_dim)
+            if num_components > num_sensors:
+                raise ValueError(
+                    f"beamspace_dim ({num_components}) cannot exceed number of sensors "
+                    f"({num_sensors})"
+                )
+
+        n = np.arange(num_sensors, dtype=np.float64)
+        k = np.arange(num_sensors, dtype=np.float64)
+        full_dft = np.exp(-2j * np.pi * np.outer(n, k) / float(num_sensors)) / np.sqrt(
+            float(num_sensors)
+        )
+
+        if num_components == num_sensors:
+            return full_dft
+
+        # Keep the lowest-magnitude spatial frequencies around DC.
+        half = num_components // 2
+        if num_components % 2 == 1:
+            selected = np.concatenate(
+                (np.arange(0, half + 1), np.arange(num_sensors - half, num_sensors))
+            )
+        else:
+            selected = np.concatenate(
+                (np.arange(0, half), np.arange(num_sensors - half, num_sensors))
+            )
+
+        return full_dft[:, selected]
 
 
 class SteeringCalculator(Base):
