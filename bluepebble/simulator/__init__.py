@@ -8,16 +8,10 @@ from .discrete import (
 )
 from .continuous import (
     ContinuousPassiveSonarArraySimulator,
-    ContinuousCOLAPassiveSonarArraySimulator,
-    ContinuousWOLAPassiveSonarArraySimulator,
-    ContinuousFractionalDelayPassiveSonarArraySimulator,
 )
 
 __all__ = [
     "ContinuousPassiveSonarArraySimulator",
-    "ContinuousCOLAPassiveSonarArraySimulator",
-    "ContinuousWOLAPassiveSonarArraySimulator",
-    "ContinuousFractionalDelayPassiveSonarArraySimulator",
     "DepreciatedDiscretePassiveSonarArraySimulator",
     "DiscretePassiveSonarArraySimulator",
     "PassiveSonarArraySimulatorBase",
