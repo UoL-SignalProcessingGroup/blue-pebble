@@ -18,10 +18,11 @@ def test_dir_exposes_public_names() -> None:
         assert name in exported_names
 
 
-def test_getattr_lazily_imports_and_caches_submodules(monkeypatch) -> None:
+@pytest.mark.parametrize("submodule_name", ["signal", "types"])
+def test_getattr_lazily_imports_and_caches_submodules(monkeypatch, submodule_name: str) -> None:
     """Lazy submodule access should import once and cache the result."""
     importlib.reload(bluepebble)
-    sentinel_module = SimpleNamespace(__name__="bluepebble.signal")
+    sentinel_module = SimpleNamespace(__name__=f"bluepebble.{submodule_name}")
     import_calls: list[str] = []
 
     def fake_import_module(name: str):
@@ -30,13 +31,13 @@ def test_getattr_lazily_imports_and_caches_submodules(monkeypatch) -> None:
 
     monkeypatch.setattr(bluepebble, "import_module", fake_import_module)
 
-    assert "signal" not in bluepebble.__dict__
+    assert submodule_name not in bluepebble.__dict__
 
-    result = bluepebble.signal
+    result = getattr(bluepebble, submodule_name)
 
     assert result is sentinel_module
-    assert bluepebble.__dict__["signal"] is sentinel_module
-    assert import_calls == ["bluepebble.signal"]
+    assert bluepebble.__dict__[submodule_name] is sentinel_module
+    assert import_calls == [f"bluepebble.{submodule_name}"]
 
 
 def test_getattr_rejects_unknown_attributes() -> None:

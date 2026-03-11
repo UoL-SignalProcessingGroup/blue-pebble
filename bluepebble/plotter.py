@@ -108,7 +108,7 @@ def _two_slope_colorscale(
         r, g, b, _ = cmap(c)
         colorscale.append(
             [round(float(pos), 6), f"rgb({int(r * 255)},{int(g * 255)},{int(b * 255)})"]
-            )
+        )
 
     for i, c in enumerate(np.linspace(0.5, 1.0, n_hi)):
         if i == 0:
@@ -117,7 +117,7 @@ def _two_slope_colorscale(
         r, g, b, _ = cmap(c)
         colorscale.append(
             [round(float(pos), 6), f"rgb({int(r * 255)},{int(g * 255)},{int(b * 255)})"]
-            )
+        )
 
     return colorscale
 
@@ -281,15 +281,13 @@ def launch_bathymetry_and_sound_speed_viewer(
     if jupyter_mode is not None:
         if not isinstance(jupyter_mode, str):
             raise ValueError(
-                "jupyter_mode must be one of {'inline', 'tab', 'external', 'jupyterlab'} "
-                "or None"
+                "jupyter_mode must be one of {'inline', 'tab', 'external', 'jupyterlab'} or None"
             )
         jupyter_mode = jupyter_mode.strip().lower()
         allowed_jupyter_modes = {"inline", "tab", "external", "jupyterlab"}
         if jupyter_mode not in allowed_jupyter_modes:
             raise ValueError(
-                "jupyter_mode must be one of {'inline', 'tab', 'external', 'jupyterlab'} "
-                "or None"
+                "jupyter_mode must be one of {'inline', 'tab', 'external', 'jupyterlab'} or None"
             )
 
     try:
@@ -309,9 +307,7 @@ def launch_bathymetry_and_sound_speed_viewer(
         ) from exc
 
     if not hasattr(bathymetry, "_ensure_loaded") or not hasattr(bathymetry, "get_grid"):
-        raise TypeError(
-            "bathymetry must provide _ensure_loaded() and get_grid(x_range, y_range)."
-        )
+        raise TypeError("bathymetry must provide _ensure_loaded() and get_grid(x_range, y_range).")
     if not hasattr(ssp, "_ensure_loaded"):
         raise TypeError("ssp must provide _ensure_loaded().")
 
@@ -425,8 +421,7 @@ def launch_bathymetry_and_sound_speed_viewer(
                 zmax=z_bty_display_max,
                 colorbar=dict(title=dict(text="Bathymetry z (m)"), thickness=20),
                 hovertemplate=(
-                    "x=%{x:.1f} m<br>y=%{y:.1f} m"
-                    "<br>Bathymetry z=%{z:.1f} m<extra></extra>"
+                    "x=%{x:.1f} m<br>y=%{y:.1f} m<br>Bathymetry z=%{z:.1f} m<extra></extra>"
                 ),
             )
         )
@@ -437,7 +432,7 @@ def launch_bathymetry_and_sound_speed_viewer(
                 mode="markers",
                 marker=dict(
                     symbol="star", color="yellow", size=12, line=dict(color="black", width=1)
-                    ),
+                ),
                 name="Selected",
                 hovertemplate="Selected<br>x=%{x:.1f} m<br>y=%{y:.1f} m<extra></extra>",
             )

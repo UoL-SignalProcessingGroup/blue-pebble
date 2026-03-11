@@ -13,5 +13,6 @@ plotter
 signal
 sigproc
 simulator
+types
 utils
 ```

@@ -377,8 +377,9 @@ class LeroyCopernicusSoundSpeedProfile(SoundSpeedProfile):
             s = self._to_float_with_nan(ds_s.variables["so"][0, :, :, :])
 
         if t.shape != s.shape:
-            raise ValueError("Copernicus temperature and salinity arrays " \
-            "must have matching shapes.")
+            raise ValueError(
+                "Copernicus temperature and salinity arrays must have matching shapes."
+            )
         if t.ndim != 3:
             raise ValueError("Copernicus arrays must have shape (depth, lat, lon).")
         if self._z_m.ndim != 1 or self._lat_deg.ndim != 1 or self._lon_deg.ndim != 1:

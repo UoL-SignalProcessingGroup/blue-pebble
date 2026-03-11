@@ -17,6 +17,7 @@ __all__ = [
     "signal",
     "sigproc",
     "simulator",
+    "types",
     "utils",
 ]
 
@@ -31,6 +32,7 @@ def __getattr__(name: str):
         "signal",
         "sigproc",
         "simulator",
+        "types",
         "utils",
     }:
         module = import_module(f"{__name__}.{name}")

@@ -67,6 +67,7 @@ def _load_simulator_modules(monkeypatch):
     install_fake_stonesoup_simulator_modules(monkeypatch)
     install_repo_package(monkeypatch, "bluepebble", "bluepebble")
     install_repo_package(monkeypatch, "bluepebble.simulator", "bluepebble/simulator")
+    install_repo_package(monkeypatch, "bluepebble.types", "bluepebble/types")
     _install_fake_simulator_dependencies(monkeypatch)
     base = load_package_module_from_repo(
         "bluepebble/simulator/base.py",
@@ -128,10 +129,11 @@ def test_base_resolve_models_and_target_lookup(monkeypatch) -> None:
         discrete.DiscretePassiveSonarArraySimulator._resolve_models([], 1, "models")
 
     assert discrete.DiscretePassiveSonarArraySimulator._resolve_models([1], 1, "models") == [1]
-    assert (
-        discrete.DiscretePassiveSonarArraySimulator._resolve_models([1], 3, "models")
-        == [1, 1, 1]
-    )
+    assert discrete.DiscretePassiveSonarArraySimulator._resolve_models([1], 3, "models") == [
+        1,
+        1,
+        1,
+    ]
 
     with pytest.raises(ValueError, match="must match number of targets"):
         discrete.DiscretePassiveSonarArraySimulator._resolve_models([1, 2], 3, "models")
@@ -247,6 +249,7 @@ def test_base_beamform_if_configured_and_make_sensor_data(monkeypatch) -> None:
     np.testing.assert_array_equal(payload.raw_signals, sensor_signals)
     np.testing.assert_array_equal(payload.beamformed_data, beamformed)
     assert payload.timestamp == timestamp
+    assert type(payload).__module__ == "bluepebble.types.sensordata"
 
 
 def test_discrete_source_signal_resolution_and_validation_errors(monkeypatch) -> None:

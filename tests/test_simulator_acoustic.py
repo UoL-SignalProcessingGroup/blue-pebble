@@ -37,8 +37,8 @@ def _install_fake_acoustic_dependencies(monkeypatch) -> None:
     signal_utils_module = ModuleType("bluepebble.signal.utils")
     signal_utils_module.apply_fade_in = lambda signal, fade_samples: signal
     signal_utils_module.apply_fade_out = lambda signal, fade_samples: signal
-    signal_utils_module.inverse_stft = (
-        lambda stft, frame_len, hop, window: np.zeros(stft.shape[0], dtype=np.complex64)
+    signal_utils_module.inverse_stft = lambda stft, frame_len, hop, window: np.zeros(
+        stft.shape[0], dtype=np.complex64
     )
     signal_package.ambient = ambient_module
     signal_package.base = signal_base_module
@@ -63,6 +63,7 @@ def _load_acoustic_module(monkeypatch):
     install_fake_stonesoup_simulator_modules(monkeypatch)
     install_repo_package(monkeypatch, "bluepebble", "bluepebble")
     install_repo_package(monkeypatch, "bluepebble.simulator", "bluepebble/simulator")
+    install_repo_package(monkeypatch, "bluepebble.types", "bluepebble/types")
     _install_fake_acoustic_dependencies(monkeypatch)
     discrete = load_package_module_from_repo(
         "bluepebble/simulator/discrete.py",
@@ -91,11 +92,9 @@ def _install_fake_signal_utils(
     utils_module.apply_fade_in = lambda signal, fade_samples: signal
     utils_module.apply_fade_out = lambda signal, fade_samples: signal
     if inverse_stft_fn is None:
-        utils_module.inverse_stft = (
-            lambda stft, frame_len, hop, window: np.asarray(
-                reconstructed_signal,
-                dtype=np.complex64,
-            )
+        utils_module.inverse_stft = lambda stft, frame_len, hop, window: np.asarray(
+            reconstructed_signal,
+            dtype=np.complex64,
         )
     else:
         utils_module.inverse_stft = inverse_stft_fn

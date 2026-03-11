@@ -129,8 +129,11 @@ def inverse_stft(
     for i in range(num_frames):
         start = i * hop
         frame_freq = stft[i, :]
-        frame_time = (np.fft.ifft(frame_freq, n=frame_len) if is_twosided
-                      else np.fft.irfft(frame_freq, n=frame_len))
+        frame_time = (
+            np.fft.ifft(frame_freq, n=frame_len)
+            if is_twosided
+            else np.fft.irfft(frame_freq, n=frame_len)
+        )
         frame_time = np.asarray(frame_time, dtype=np.complex64)
 
         # Apply window and accumulate
