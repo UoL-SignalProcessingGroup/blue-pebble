@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 from collections.abc import Iterator
+from dataclasses import dataclass
 from datetime import datetime
 
 import numpy as np
@@ -13,227 +14,273 @@ from .base import PassiveSonarArraySimulatorBase
 from ..signal.utils import apply_fade_in, apply_fade_out, inverse_stft
 
 
-class ContinuousPassiveSonarArraySimulator(PassiveSonarArraySimulatorBase):
-    """STFT-interpolated broadband passive-sonar simulator.
+@dataclass
+class _STFTCommonContext:
+    """Shared STFT simulation metadata used by all synthesis modes."""
 
-    This simulator implements an STFT-domain propagation workflow intended for continuous
-    broadband scenarios with moving source/receiver geometry. Unlike snapshot simulators that
-    synthesize each timestamp independently, this class renders one continuous receive sequence
-    per sensor and then slices it into timestamped outputs.
+    all_timestamps: list[datetime]
+    step_times_s: np.ndarray
+    n_steps: int
+    num_sensors: int
+    num_frames: int
+    num_freq_bins: int
+    frame_len: int
+    fs: float
+    frequencies: np.ndarray
+    hop: int
+    window: np.ndarray
 
-    Processing stages
-    -----------------
-    1. Build a source STFT per target.
-    2. Sample ``H(f)`` from ``propagate_spectrum`` at each simulation timestamp.
-    3. Linearly interpolate ``H(f)`` across frame centers.
-    4. Apply channel response to each target STFT and sum targets in the frequency domain.
-    5. Reconstruct per-sensor time signals and slice by timestamp boundaries.
 
-    Notes
-    -----
-    - Interpolation is delay-aware: dominant phase is de-rotated before interpolation and
-        re-applied afterwards.
-    - For stronger phase-stability in rapidly varying channels, prefer
-      ``BroadbandWOLAPassiveSonarArraySimulator``.
+@dataclass
+class _STFTTargetHistory:
+    """Per-target STFT source and channel histories sampled at simulator knots."""
+
+    source_stft: np.ndarray
+    H_hist: np.ndarray
+    tau_hist: np.ndarray
+
+
+class ContinuousSTFTPassiveSonarArraySimulator(PassiveSonarArraySimulatorBase):
+    """Continuous broadband passive-sonar simulator with selectable STFT synthesis mode.
+
+        Use ``mode`` for channel update method. All three modes use the same 
+        propagation history, then differ in reconstruction method:
+
+        - ``stft_interp``
+            Interpolate channel magnitude/phase in the STFT domain, apply to each target source
+            STFT, sum targets in frequency, then reconstruct with ``inverse_stft``.
+            Usually the fastest option.
+
+        - ``wola_interp``
+            Use frame-by-frame WOLA synthesis with delay-aware interpolation.
+            This is often more stable when geometry changes quickly, but it costs more compute.
+
+        - ``cola``
+            Use piecewise-constant transfer functions between knots (no interpolation)
+            with COLA-style synthesis. Good as a simple baseline.
+
+        All modes share fades, noise addition, beamforming, and timestamp chunk output.
     """
 
     signal_models = Property(
         list,
         doc="List of broadband signal models (one per target, or single-element list for all)",
     )
+    mode = Property(
+        str,
+        default="stft_interp",
+        doc="Synthesis mode: stft_interp, wola_interp, or cola",
+    )
     fade_in_ms = Property(float, default=100.0, doc="Fade-in duration at arrival (ms)")
+    fade_out_ms = Property(float, default=100.0, doc="Fade-out duration at end (ms)")
+    norm_floor_ratio = Property(
+        float,
+        default=1e-3,
+        doc=(
+            "Relative floor (fraction of max overlap weight) below which COLA/WOLA "
+            "normalization is not applied to avoid edge gain blow-up"
+        ),
+    )
 
-    def sensor_data_gen(self) -> Iterator[tuple[datetime, set[SensorData]]]:
-        """Generate continuous broadband sensor data using STFT processing.
+    @staticmethod
+    def _valid_modes() -> set[str]:
+        return {"stft_interp", "wola_interp", "cola"}
 
-        This generator implements the BroadbandArrayProcessor methodology:
-            1. Compute source STFT once
-            2. For each timestep, get transfer functions H(f)
-            3. Interpolate H(f) between timesteps
-            4. Apply to STFT frames and reconstruct per sensor
-
-        Yields
-        ------
-        tuple
-            (timestamp, set of PassiveSonarSensorData) for each timestep.
-
-        """
-
-        # Get all timestamps
-        all_timestamps = self._sorted_timestamps()
-
-        if len(all_timestamps) < 2:
-            msg = "Need at least 2 timesteps for broadband processing"
+    def _validate_mode(self) -> str:
+        selected_mode = str(self.mode)
+        if selected_mode not in self._valid_modes():
+            msg = (
+                f"Unsupported mode: {selected_mode!r}. "
+                f"Expected one of {sorted(self._valid_modes())}."
+            )
             raise ValueError(msg)
+        return selected_mode
 
-        # Get all target paths
-        ground_truth_paths = self.ground_truth_paths or []
-        if len(ground_truth_paths) == 0:
-            msg = "BroadbandPassiveSonarArraySimulator requires at least one target"
-            raise ValueError(msg)
+    @staticmethod
+    def _interp_index_alpha(time_s: float, knot_times_s: np.ndarray) -> tuple[int, float]:
+        """Return interpolation index and alpha for monotonic knot times."""
+        if len(knot_times_s) < 2:
+            return 0, 0.0
 
-        # Normalize signal_models to list (support single or per-target)
-        signal_models_list = self._resolve_models(
-            self.signal_models,
-            len(ground_truth_paths),
-            "signal models",
+        idx = int(np.searchsorted(knot_times_s, time_s, side="right") - 1)
+        idx = int(np.clip(idx, 0, len(knot_times_s) - 2))
+
+        t0 = float(knot_times_s[idx])
+        t1 = float(knot_times_s[idx + 1])
+        dt = max(t1 - t0, 1e-12)
+        alpha = float(np.clip((time_s - t0) / dt, 0.0, 1.0))
+        return idx, alpha
+
+    @staticmethod
+    def _ifft_frame(frame_spec: np.ndarray, frame_len: int, num_freq_bins: int) -> np.ndarray:
+        """Inverse-transform one STFT frame for one-sided or two-sided spectra."""
+        if num_freq_bins == frame_len:
+            return np.fft.ifft(frame_spec, n=frame_len)
+
+        if num_freq_bins == frame_len // 2 + 1:
+            return np.fft.irfft(frame_spec, n=frame_len)
+
+        msg = (
+            f"Invalid STFT bin count: {num_freq_bins}. Expected {frame_len} "
+            f"(two-sided) or {frame_len // 2 + 1} (one-sided)."
+        )
+        raise ValueError(msg)
+
+    def _build_common_context(
+        self,
+        all_timestamps: list[datetime],
+        signal_models_list: list,
+        first_state,
+    ) -> _STFTCommonContext:
+        ref_stft, frequencies, hop, window = signal_models_list[0].compute_stft(first_state)
+        num_frames, num_freq_bins = ref_stft.shape
+        frame_len = int(signal_models_list[0].frame_len)
+        fs = float(signal_models_list[0].sampling_rate_hz)
+        num_sensors = int(self.platform.num_sensors)
+
+        t0 = all_timestamps[0]
+        step_times_s = np.array(
+            [(ts - t0).total_seconds() for ts in all_timestamps],
+            dtype=np.float64,
+        )
+        return _STFTCommonContext(
+            all_timestamps=all_timestamps,
+            step_times_s=step_times_s,
+            n_steps=len(step_times_s),
+            num_sensors=num_sensors,
+            num_frames=num_frames,
+            num_freq_bins=num_freq_bins,
+            frame_len=frame_len,
+            fs=fs,
+            frequencies=np.asarray(frequencies, dtype=np.float64),
+            hop=int(hop),
+            window=np.asarray(window),
         )
 
-        # Get first target state from first path to initialize STFT parameters
-        first_target_path = ground_truth_paths[0]
-        first_state = next(iter(first_target_path))
+    def _build_target_histories(
+        self,
+        ctx: _STFTCommonContext,
+        ground_truth_paths: list,
+        signal_models_list: list,
+    ) -> list[_STFTTargetHistory]:
+        targets_data: list[_STFTTargetHistory] = []
 
-        # Compute STFT of first source signal to get parameters
-        # (all signal models should have same STFT parameters)
-        source_stft, frequencies, hop, window = signal_models_list[0].compute_stft(first_state)
-        num_frames = source_stft.shape[0]
-        num_freq_bins = source_stft.shape[1]
-
-        # Get source time-domain signal for reference
-        source_signal = signal_models_list[0].get_source_signal()
-
-        # Calculate timestep parameters
-        total_duration_s = len(source_signal) / signal_models_list[0].sampling_rate_hz
-        n_steps = len(all_timestamps)
-        if n_steps > 1:
-            step_duration_s = (all_timestamps[1] - all_timestamps[0]).total_seconds()
-        else:
-            step_duration_s = total_duration_s
-
-        num_sensors = self.platform.num_sensors
-
-        # Storage for transfer functions at each timestep for each target
-        # Structure: list of dicts, one dict per target containing:
-        #   - 'H_list': list of (num_sensors, num_frequencies) per timestep
-        #   - 'tdelay_sensor_list': list of per-sensor propagation delays per timestep
-        #   - 'source_stft': STFT of this target's source signal
-        targets_data = []
-
-        # Process each target
         for target_idx, target_path in enumerate(ground_truth_paths):
-            # Get first state to generate STFT for this target
             target_first_state = next(iter(target_path))
-
-            # Get signal model for this specific target
             target_signal_model = signal_models_list[target_idx]
-
-            # Compute STFT for this target's unique source signal
             target_source_stft, _, _, _ = target_signal_model.compute_stft(target_first_state)
 
-            H_list_all = []  # List of (num_sensors, num_frequencies) per timestep
-            tdelay_sensor_list = []  # List of per-sensor delays per timestep
+            if target_source_stft.shape != (ctx.num_frames, ctx.num_freq_bins):
+                msg = (
+                    "All target source STFTs must share the same shape. "
+                    f"Expected {(ctx.num_frames, ctx.num_freq_bins)}, "
+                    f"got {target_source_stft.shape}."
+                )
+                raise RuntimeError(msg)
 
-            # Run propagation simulation for each timestep to get H(f)
-            for timestamp in all_timestamps:
-                # Get platform state
+            H_hist = np.zeros((ctx.n_steps, ctx.num_sensors, ctx.num_freq_bins), dtype=np.complex64)
+            tau_hist = np.zeros((ctx.n_steps, ctx.num_sensors), dtype=np.float64)
+
+            for step_idx, timestamp in enumerate(ctx.all_timestamps):
                 platform_state = self.platform.get_platform_state_at(timestamp)
-
-                # Get target state at this timestamp
                 target_state = self._target_state_at(target_path, timestamp)
-
                 if target_state is None:
-                    # Keep list lengths aligned with timestamps.
-                    # Absent target contributes zero transfer for this timestep.
-                    H_list_all.append(np.zeros((num_sensors, len(frequencies)), dtype=np.complex64))
-                    tdelay_sensor_list.append(np.zeros(num_sensors, dtype=np.float64))
                     continue
 
-                # Run spectrum propagation to get H(f) for all sensors
-                # NOTE: H_sensors already contains full phase information from rtrs,
-                # including propagation delay, multipath interference, and caustics.
-                # No additional phase shift is needed.
                 H_sensors, prop_time_s = self.propagation_model.propagate_spectrum(
-                    platform_state, target_state, frequencies
+                    platform_state,
+                    target_state,
+                    ctx.frequencies,
                 )
+                H_hist[step_idx, :, :] = np.asarray(H_sensors, dtype=np.complex64)
 
-                # H_sensors shape: (num_sensors, num_frequencies)
-                H_list_all.append(H_sensors)
-
-                # Build per-sensor absolute delay history for robust de-rotation.
-                # compute_sensor_delays returns delays relative to array reference.
                 sensor_delays_s = self.propagation_model.compute_sensor_delays(
                     platform_state,
                     target_state,
                 )
-                tdelay_sensors = np.asarray(prop_time_s + sensor_delays_s, dtype=np.float64)
-                tdelay_sensor_list.append(tdelay_sensors)
+                tau_hist[step_idx, :] = np.asarray(prop_time_s + sensor_delays_s, dtype=np.float64)
 
-            # Store this target's data
             targets_data.append(
-                {
-                    "H_list": H_list_all,
-                    "tdelay_sensor_list": tdelay_sensor_list,
-                    "source_stft": target_source_stft,
-                }
+                _STFTTargetHistory(
+                    source_stft=target_source_stft,
+                    H_hist=H_hist,
+                    tau_hist=tau_hist,
+                )
             )
 
-        # Now reconstruct signals for each sensor using overlap-add
-        # For multiple targets, sum contributions in the frequency domain
+        return targets_data
+
+    def _frame_interp_indices(self, ctx: _STFTCommonContext) -> tuple[np.ndarray, np.ndarray]:
+        frame_times_s = (np.arange(ctx.num_frames, dtype=np.float64) * ctx.hop + 0.5 * ctx.frame_len) / ctx.fs
+        step_idx = np.searchsorted(ctx.step_times_s, frame_times_s, side="right") - 1
+        step_idx = np.clip(step_idx, 0, ctx.n_steps - 2).astype(np.int32)
+
+        t0 = ctx.step_times_s[step_idx]
+        t1 = ctx.step_times_s[step_idx + 1]
+        dt = np.maximum(t1 - t0, 1e-12)
+        alpha = np.clip((frame_times_s - t0) / dt, 0.0, 1.0)
+        return step_idx, alpha
+
+    def _slice_uniform_step_samples(self, receiver_signals: np.ndarray, n_steps: int) -> np.ndarray:
+        actual_signal_len = receiver_signals.shape[1]
+        samples_per_step = actual_signal_len // n_steps
+        sample_idx = np.arange(n_steps + 1, dtype=np.int64) * samples_per_step
+        sample_idx[-1] = actual_signal_len
+        return sample_idx
+
+    def _slice_knot_step_samples(self, ctx: _STFTCommonContext, out_len: int) -> np.ndarray:
+        step_sample_idx = np.rint(ctx.step_times_s * ctx.fs).astype(int)
+        step_sample_idx = np.clip(step_sample_idx, 0, out_len)
+        step_sample_idx = np.maximum.accumulate(step_sample_idx)
+        return step_sample_idx
+
+    def _apply_fades(
+        self,
+        receiver_signals: np.ndarray,
+        fs: float,
+        *,
+        do_fade_out: bool,
+    ) -> np.ndarray:
+        if self.fade_in_ms > 0:
+            fade_samples = int(self.fade_in_ms * fs / 1000.0)
+            for sensor_idx in range(receiver_signals.shape[0]):
+                receiver_signals[sensor_idx, :] = apply_fade_in(
+                    receiver_signals[sensor_idx, :],
+                    fade_samples,
+                )
+
+        if do_fade_out and self.fade_out_ms > 0:
+            fade_samples = int(self.fade_out_ms * fs / 1000.0)
+            for sensor_idx in range(receiver_signals.shape[0]):
+                receiver_signals[sensor_idx, :] = apply_fade_out(
+                    receiver_signals[sensor_idx, :],
+                    fade_samples,
+                )
+        return receiver_signals
+
+    def _synthesise_stft_interp(
+        self,
+        ctx: _STFTCommonContext,
+        targets_data: list[_STFTTargetHistory],
+    ) -> tuple[np.ndarray, np.ndarray]:
+        step_idx, alpha = self._frame_interp_indices(ctx)
         receiver_signals = []
 
-        for sensor_idx in range(num_sensors):
-            # Accumulate STFT output from all targets
-            STFT_out_total = np.zeros((num_frames, num_freq_bins), dtype=np.complex64)
+        for sensor_idx in range(ctx.num_sensors):
+            stft_total = np.zeros((ctx.num_frames, ctx.num_freq_bins), dtype=np.complex64)
 
-            # Process each target
             for target_data in targets_data:
-                H_list_all = target_data["H_list"]
-                tdelay_sensor_list = target_data["tdelay_sensor_list"]
-                target_source_stft = target_data["source_stft"]
-
-                if len(H_list_all) != n_steps:
-                    msg = (
-                        f"Transfer-function history length ({len(H_list_all)}) does not match "
-                        f"number of timesteps ({n_steps})."
-                    )
-                    raise RuntimeError(msg)
-
-                if len(tdelay_sensor_list) != n_steps:
-                    msg = (
-                        f"Propagation-delay history length ({len(tdelay_sensor_list)}) does not "
-                        f"match number of timesteps ({n_steps})."
-                    )
-                    raise RuntimeError(msg)
-
-                # Extract transfer function history for this sensor and target
-                H_sensor_history = np.asarray(
-                    [H_list[sensor_idx, :] for H_list in H_list_all],
-                    dtype=np.complex64,
-                )
-
-                # Prepare interpolation indices once per target
-                frame_times_s = (
-                    (np.arange(num_frames, dtype=np.float64) * hop + hop // 2)
-                    / signal_models_list[0].sampling_rate_hz
-                )
-                step_idx_float = frame_times_s / max(step_duration_s, 1e-12)
-                step_idx = np.floor(step_idx_float).astype(np.int32)
-                step_idx = np.clip(step_idx, 0, n_steps - 2)
-                alpha = np.clip(step_idx_float - step_idx, 0.0, 1.0)
-
-                # Interpolate H(f) across time for each STFT frame
-                STFT_out_target = np.zeros((num_frames, num_freq_bins), dtype=np.complex64)
-
-                # De-rotate with known propagation delay at each timestep to remove
-                # the dominant high-rate phase term before interpolation.
-                # This prevents phase-branch aliasing when target/platform motion is
-                # fast relative to coarse simulator timesteps.
-                tdelay_history = np.asarray(
-                    [delays[sensor_idx] for delays in tdelay_sensor_list],
-                    dtype=np.float64,
-                )
-                freq_axis = np.asarray(frequencies, dtype=np.float64)
+                H_sensor_history = np.asarray(target_data.H_hist[:, sensor_idx, :], dtype=np.complex64)
+                tdelay_history = np.asarray(target_data.tau_hist[:, sensor_idx], dtype=np.float64)
 
                 phase_derotate = np.exp(
                     2j
                     * np.pi
                     * tdelay_history[:, np.newaxis]
-                    * freq_axis[np.newaxis, :]
+                    * ctx.frequencies[np.newaxis, :]
                 )
                 H_residual = H_sensor_history * phase_derotate
 
-                # Interpolate residual transfer functions in magnitude/phase domain
-                # to avoid chord artifacts from direct complex interpolation.
                 H_mag = np.abs(H_residual)
                 H_phase = np.unwrap(np.angle(H_residual), axis=0)
 
@@ -246,77 +293,192 @@ class ContinuousPassiveSonarArraySimulator(PassiveSonarArraySimulatorBase):
                     + H_phase[step_idx + 1, :] * alpha[:, np.newaxis]
                 )
 
-                # Re-apply interpolated delay phase term.
                 tdelay_interp = (
                     tdelay_history[step_idx] * (1.0 - alpha)
                     + tdelay_history[step_idx + 1] * alpha
                 )
                 phase_rerotate = np.exp(
-                    -2j * np.pi * tdelay_interp[:, np.newaxis] * freq_axis[np.newaxis, :]
+                    -2j * np.pi * tdelay_interp[:, np.newaxis] * ctx.frequencies[np.newaxis, :]
                 )
                 H_interp = H_mag_interp * np.exp(1j * H_phase_interp) * phase_rerotate
+                stft_total += target_data.source_stft * H_interp
 
-                # Apply transfer function to this target's source STFT
-                STFT_out_target[:, :] = target_source_stft * H_interp
+            signal_reconstructed = inverse_stft(stft_total, ctx.frame_len, ctx.hop, ctx.window)
+            receiver_signals.append(np.asarray(signal_reconstructed, dtype=np.complex64))
 
-                # Add this target's contribution to total
-                STFT_out_total += STFT_out_target
+        max_len = max(len(sig) for sig in receiver_signals)
+        padded_signals = []
+        for signal in receiver_signals:
+            if len(signal) < max_len:
+                pad_len = max_len - len(signal)
+                signal = np.concatenate([signal, np.zeros(pad_len, dtype=np.complex64)])
+            padded_signals.append(signal)
 
-            # Reconstruct time-domain signal using inverse STFT (sum of all targets)
-            signal_reconstructed = inverse_stft(
-                STFT_out_total, signal_models_list[0].frame_len, hop, window
+        receiver = np.asarray(padded_signals, dtype=np.complex64)
+        receiver = self._apply_fades(receiver, ctx.fs, do_fade_out=False)
+        return receiver, self._slice_uniform_step_samples(receiver, ctx.n_steps)
+
+    def _synthesise_wola_interp(
+        self,
+        ctx: _STFTCommonContext,
+        targets_data: list[_STFTTargetHistory],
+    ) -> tuple[np.ndarray, np.ndarray]:
+        out_len = (ctx.num_frames - 1) * ctx.hop + ctx.frame_len
+        receiver_accum = np.zeros((ctx.num_sensors, out_len), dtype=np.complex64)
+        norm_accum = np.zeros(out_len, dtype=np.float64)
+        window_arr = np.asarray(ctx.window, dtype=np.float32)
+        window_sq = np.asarray(ctx.window, dtype=np.float64) ** 2
+
+        # Precompute residual channel magnitude/phase histories once per target.
+        # Doing this inside the frame loop is the dominant runtime cost.
+        wola_histories = []
+        for target_data in targets_data:
+            phase_derotate = np.exp(
+                2j
+                * np.pi
+                * target_data.tau_hist[:, :, np.newaxis]
+                * ctx.frequencies[np.newaxis, np.newaxis, :]
+            )
+            H_residual = target_data.H_hist * phase_derotate
+            wola_histories.append(
+                {
+                    "source_stft": target_data.source_stft,
+                    "tau_hist": target_data.tau_hist,
+                    "H_mag_hist": np.abs(H_residual),
+                    "H_phase_hist": np.unwrap(np.angle(H_residual), axis=0),
+                }
             )
 
-            # The delay has been handled in the frequency domain via phase shift.
-            # We only need to apply a fade-in if specified (to smooth the arrival).
-            if self.fade_in_ms > 0:
-                fade_samples = int(
-                    self.fade_in_ms * signal_models_list[0].sampling_rate_hz / 1000.0
-                )
-                signal_with_arrival = apply_fade_in(signal_reconstructed, fade_samples)
-            else:
-                signal_with_arrival = signal_reconstructed
+        for frame_idx in range(ctx.num_frames):
+            start = frame_idx * ctx.hop
+            end = start + ctx.frame_len
+            frame_center_s = (start + 0.5 * ctx.frame_len) / ctx.fs
+            step_idx, alpha = self._interp_index_alpha(frame_center_s, ctx.step_times_s)
 
-            receiver_signals.append(signal_with_arrival)
+            norm_accum[start:end] += window_sq
 
-        # Ensure all signals have the same length
-        max_len = max(len(sig) for sig in receiver_signals)
-        for i in range(num_sensors):
-            if len(receiver_signals[i]) < max_len:
-                pad_len = max_len - len(receiver_signals[i])
-                receiver_signals[i] = np.concatenate(
-                    [receiver_signals[i], np.zeros(pad_len, dtype=np.complex64)]
-                )
+            for sensor_idx in range(ctx.num_sensors):
+                frame_sensor_sum = np.zeros(ctx.frame_len, dtype=np.complex64)
 
-        receiver_signals_array = np.array(receiver_signals)  # Shape: (num_sensors, total_samples)
+                for wola_data in wola_histories:
+                    source_spec = wola_data["source_stft"][frame_idx, :]
+                    H_mag_hist = wola_data["H_mag_hist"][:, sensor_idx, :]
+                    H_phase_hist = wola_data["H_phase_hist"][:, sensor_idx, :]
+                    tau_hist = wola_data["tau_hist"][:, sensor_idx]
 
-        # Now yield sensor data for each timestep by slicing the continuous signals
-        # Account for trimmed signal length from inverse_stft
-        actual_signal_len = receiver_signals_array.shape[1]
-        samples_per_step = actual_signal_len // n_steps
+                    H_mag = (
+                        H_mag_hist[step_idx, :] * (1.0 - alpha)
+                        + H_mag_hist[step_idx + 1, :] * alpha
+                    )
+                    H_phase = (
+                        H_phase_hist[step_idx, :] * (1.0 - alpha)
+                        + H_phase_hist[step_idx + 1, :] * alpha
+                    )
+                    tau = (
+                        tau_hist[step_idx] * (1.0 - alpha)
+                        + tau_hist[step_idx + 1] * alpha
+                    )
+                    phase_rerotate = np.exp(-2j * np.pi * ctx.frequencies * tau)
+                    H_interp = H_mag * np.exp(1j * H_phase) * phase_rerotate
 
-        for step_idx, timestamp in enumerate(all_timestamps):
-            # Extract signal slice for this timestep
-            start_sample = step_idx * samples_per_step
-            end_sample = start_sample + samples_per_step
+                    frame_spec = source_spec * H_interp
+                    frame_td = self._ifft_frame(frame_spec, ctx.frame_len, ctx.num_freq_bins)
+                    frame_sensor_sum += np.asarray(frame_td, dtype=np.complex64) * window_arr
 
-            # Ensure we don't exceed array bounds on last timestep
-            if step_idx == n_steps - 1:
-                end_sample = actual_signal_len
+                receiver_accum[sensor_idx, start:end] += frame_sensor_sum
 
-            sensor_signals = receiver_signals_array[:, start_sample:end_sample]
+        norm_floor = max(1e-12, float(self.norm_floor_ratio) * float(np.max(norm_accum)))
+        valid = norm_accum > norm_floor
+        receiver_accum[:, valid] /= norm_accum[valid][np.newaxis, :]
+        receiver_accum[:, ~valid] = 0.0
 
-            # Add noise if provided
-            actual_samples = sensor_signals.shape[1]
+        receiver_accum = self._apply_fades(receiver_accum, ctx.fs, do_fade_out=True)
+        return receiver_accum, self._slice_knot_step_samples(ctx, out_len)
+
+    def _synthesise_cola(
+        self,
+        ctx: _STFTCommonContext,
+        targets_data: list[_STFTTargetHistory],
+    ) -> tuple[np.ndarray, np.ndarray]:
+        out_len = (ctx.num_frames - 1) * ctx.hop + ctx.frame_len
+        receiver_accum = np.zeros((ctx.num_sensors, out_len), dtype=np.complex64)
+        norm_accum = np.zeros(out_len, dtype=np.float64)
+        window_arr = np.asarray(ctx.window, dtype=np.float32)
+        window_sq = np.asarray(ctx.window, dtype=np.float64) ** 2
+
+        for frame_idx in range(ctx.num_frames):
+            start = frame_idx * ctx.hop
+            end = start + ctx.frame_len
+            frame_center_s = (start + 0.5 * ctx.frame_len) / ctx.fs
+
+            knot_idx = int(np.searchsorted(ctx.step_times_s, frame_center_s, side="right") - 1)
+            knot_idx = int(np.clip(knot_idx, 0, ctx.n_steps - 1))
+
+            norm_accum[start:end] += window_sq
+
+            for sensor_idx in range(ctx.num_sensors):
+                frame_sensor_sum = np.zeros(ctx.frame_len, dtype=np.complex64)
+                for target_data in targets_data:
+                    source_spec = target_data.source_stft[frame_idx, :]
+                    H_knot = target_data.H_hist[knot_idx, sensor_idx, :]
+                    frame_spec = source_spec * H_knot
+                    frame_td = self._ifft_frame(frame_spec, ctx.frame_len, ctx.num_freq_bins)
+                    frame_sensor_sum += np.asarray(frame_td, dtype=np.complex64) * window_arr
+
+                receiver_accum[sensor_idx, start:end] += frame_sensor_sum
+
+        norm_floor = max(1e-12, float(self.norm_floor_ratio) * float(np.max(norm_accum)))
+        valid = norm_accum > norm_floor
+        receiver_accum[:, valid] /= norm_accum[valid][np.newaxis, :]
+        receiver_accum[:, ~valid] = 0.0
+
+        receiver_accum = self._apply_fades(receiver_accum, ctx.fs, do_fade_out=True)
+        return receiver_accum, self._slice_knot_step_samples(ctx, out_len)
+
+    def sensor_data_gen(self) -> Iterator[tuple[datetime, set[SensorData]]]:
+        """Generate continuous broadband sensor data using the selected STFT mode."""
+
+        selected_mode = self._validate_mode()
+        all_timestamps = self._sorted_timestamps()
+        if len(all_timestamps) < 2:
+            msg = "Need at least 2 timesteps for broadband processing"
+            raise ValueError(msg)
+
+        ground_truth_paths = self.ground_truth_paths or []
+        if len(ground_truth_paths) == 0:
+            msg = "ContinuousSTFTPassiveSonarArraySimulator requires at least one target"
+            raise ValueError(msg)
+
+        signal_models_list = self._resolve_models(
+            self.signal_models,
+            len(ground_truth_paths),
+            "signal models",
+        )
+
+        first_state = next(iter(ground_truth_paths[0]))
+        ctx = self._build_common_context(all_timestamps, signal_models_list, first_state)
+        targets_data = self._build_target_histories(ctx, ground_truth_paths, signal_models_list)
+
+        if selected_mode == "stft_interp":
+            receiver_signals, step_sample_idx = self._synthesise_stft_interp(ctx, targets_data)
+        elif selected_mode == "wola_interp":
+            receiver_signals, step_sample_idx = self._synthesise_wola_interp(ctx, targets_data)
+        else:
+            receiver_signals, step_sample_idx = self._synthesise_cola(ctx, targets_data)
+
+        for step_idx, timestamp in enumerate(ctx.all_timestamps):
+            start = int(step_sample_idx[step_idx])
+            end = int(step_sample_idx[step_idx + 1]) if step_idx < ctx.n_steps - 1 else receiver_signals.shape[1]
+            sensor_signals = receiver_signals[:, start:end].copy()
+
             noise = self._generate_noise(
-                num_sensors=num_sensors,
-                num_samples=actual_samples,
-                sampling_rate_hz=signal_models_list[0].sampling_rate_hz,
+                num_sensors=ctx.num_sensors,
+                num_samples=sensor_signals.shape[1],
+                sampling_rate_hz=ctx.fs,
             )
             if noise is not None:
                 sensor_signals += noise
 
-            # Apply beamforming if provided
             beamformed_data = self._beamform_if_configured(
                 timestamp=timestamp,
                 sensor_signals=sensor_signals,
@@ -327,33 +489,202 @@ class ContinuousPassiveSonarArraySimulator(PassiveSonarArraySimulatorBase):
                 sensor_signals=sensor_signals,
                 beamformed_data=beamformed_data,
             )
-
             yield timestamp, {sensor_data}
 
 
+class ContinuousFractionalDelayPassiveSonarArraySimulator(PassiveSonarArraySimulatorBase):
+    """Broadband simulator with sample-domain fractional-delay rendering.
+
+    This method avoids frame-wise channel interpolation and renders each sensor using
+    time-varying fractional delay plus gain envelope:
+
+    ``y_s[n] = a_s[n] * x(n - tau_s[n] * fs)``
+
+    Here ``tau_s[n]`` is interpolated absolute delay and ``a_s[n]`` is interpolated broadband
+    gain. Broadband gain is estimated from ``propagate_spectrum`` using RMS magnitude across
+    frequency bins.
+
+    Algorithm overview
+    ------------------
+    1. Build per-target source signals with matched lengths.
+    2. Compute per-knot transfer functions and sensor delay history.
+    3. Derive broadband gain history from ``|H_s(f)|``.
+    4. Interpolate gain and delay to per-sample trajectories.
+    5. Fractionally resample and accumulate target contributions.
+    6. Apply fades, noise, beamforming, and timestamp slicing.
+    (A knot is a tie point between simulation steps)
+
+    Tradeoffs
+    ---------
+    - Strong arrival-time fidelity under fast geometry changes.
+    - Lower spectral-detail fidelity than full complex frame-wise synthesis.
+    """
+
+    signal_models = Property(
+        list,
+        doc="List of broadband signal models (one per target, or single-element list for all)",
+    )
+    fade_in_ms = Property(float, default=100.0, doc="Fade-in duration at arrival (ms)")
+    fade_out_ms = Property(float, default=100.0, doc="Fade-out duration at end (ms)")
+
+    @staticmethod
+    def _fractional_delay_resample(
+        source_signal: np.ndarray,
+        delay_s: np.ndarray,
+        fs: float,
+    ) -> np.ndarray:
+        """Apply time-varying fractional delay to one source signal."""
+        source = np.asarray(source_signal)
+        out_len = len(delay_s)
+        src_idx = np.arange(out_len, dtype=np.float64) - (np.asarray(delay_s, dtype=np.float64) * fs)
+        src_n = np.arange(len(source), dtype=np.float64)
+
+        if np.iscomplexobj(source):
+            y_real = np.interp(src_idx, src_n, np.real(source), left=0.0, right=0.0)
+            y_imag = np.interp(src_idx, src_n, np.imag(source), left=0.0, right=0.0)
+            return (y_real + 1j * y_imag).astype(np.complex64)
+
+        y = np.interp(src_idx, src_n, source.astype(np.float64), left=0.0, right=0.0)
+        return y.astype(np.complex64)
+
+    def sensor_data_gen(self) -> Iterator[tuple[datetime, set[SensorData]]]:
+        """Generate broadband data via time-domain exact-delay rendering."""
+
+        all_timestamps = self._sorted_timestamps()
+        if len(all_timestamps) < 2:
+            msg = "Need at least 2 timesteps for broadband processing"
+            raise ValueError(msg)
+
+        ground_truth_paths = self.ground_truth_paths or []
+        if len(ground_truth_paths) == 0:
+            msg = "BroadbandExactDelayPassiveSonarArraySimulator requires at least one target"
+            raise ValueError(msg)
+
+        signal_models_list = self._resolve_models(
+            self.signal_models,
+            len(ground_truth_paths),
+            "signal models",
+        )
+
+        first_state = next(iter(ground_truth_paths[0]))
+        fs = float(signal_models_list[0].sampling_rate_hz)
+        num_sensors = int(self.platform.num_sensors)
+
+        frame_len = int(signal_models_list[0].frame_len)
+        frequencies_hz = np.fft.rfftfreq(frame_len, d=1.0 / fs)
+
+        t0 = all_timestamps[0]
+        step_times_s = np.array([(ts - t0).total_seconds() for ts in all_timestamps], dtype=np.float64)
+        n_steps = len(step_times_s)
+
+        try:
+            ref_source = signal_models_list[0].get_source_signal()
+        except RuntimeError:
+            signal_models_list[0].compute_stft(first_state)
+            ref_source = signal_models_list[0].get_source_signal()
+
+        out_len = len(ref_source)
+        sample_times_s = np.arange(out_len, dtype=np.float64) / fs
+        receiver_accum = np.zeros((num_sensors, out_len), dtype=np.complex64)
+
+        for target_idx, target_path in enumerate(ground_truth_paths):
+            target_signal_model = signal_models_list[target_idx]
+            target_first_state = next(iter(target_path))
+
+            try:
+                source_signal = target_signal_model.get_source_signal()
+            except RuntimeError:
+                target_signal_model.compute_stft(target_first_state)
+                source_signal = target_signal_model.get_source_signal()
+
+            if len(source_signal) != out_len:
+                msg = (
+                    "All target source signals must have the same sample length. "
+                    f"Expected {out_len}, got {len(source_signal)}."
+                )
+                raise RuntimeError(msg)
+
+            broadband_rms = np.zeros((n_steps, num_sensors), dtype=np.float64)
+            sensor_delay_history_s = np.zeros((n_steps, num_sensors), dtype=np.float64)
+
+            for step_idx, timestamp in enumerate(all_timestamps):
+                platform_state = self.platform.get_platform_state_at(timestamp)
+                target_state = self._target_state_at(target_path, timestamp)
+                if target_state is None:
+                    continue
+
+                H_sensors, prop_time_s = self.propagation_model.propagate_spectrum(
+                    platform_state,
+                    target_state,
+                    frequencies_hz,
+                )
+                sensor_delays_s = self.propagation_model.compute_sensor_delays(
+                    platform_state,
+                    target_state,
+                )
+
+                sensor_delay_history_s[step_idx, :] = np.asarray(
+                    prop_time_s + sensor_delays_s,
+                    dtype=np.float64,
+                )
+
+                H_abs = np.abs(np.asarray(H_sensors, dtype=np.complex64))
+                broadband_rms[step_idx, :] = np.sqrt(np.mean(H_abs**2, axis=1)).astype(np.float64)
+
+            for sensor_idx in range(num_sensors):
+                amp_s = np.interp(
+                    sample_times_s,
+                    step_times_s,
+                    broadband_rms[:, sensor_idx],
+                    left=0.0,
+                    right=0.0,
+                )
+                tau_s = np.interp(
+                    sample_times_s,
+                    step_times_s,
+                    sensor_delay_history_s[:, sensor_idx],
+                    left=0.0,
+                    right=0.0,
+                )
+
+                delayed = self._fractional_delay_resample(source_signal, tau_s, fs)
+                receiver_accum[sensor_idx, :] += delayed * amp_s.astype(np.float32)
+
+        if self.fade_in_ms > 0:
+            fade_samples = int(self.fade_in_ms * fs / 1000.0)
+            for sensor_idx in range(num_sensors):
+                receiver_accum[sensor_idx, :] = apply_fade_in(receiver_accum[sensor_idx, :], fade_samples)
+
+        if self.fade_out_ms > 0:
+            fade_samples = int(self.fade_out_ms * fs / 1000.0)
+            for sensor_idx in range(num_sensors):
+                receiver_accum[sensor_idx, :] = apply_fade_out(
+                    receiver_accum[sensor_idx, :],
+                    fade_samples,
+                )
+
+        step_sample_idx = np.rint(step_times_s * fs).astype(int)
+        step_sample_idx = np.clip(step_sample_idx, 0, out_len)
+        step_sample_idx = np.maximum.accumulate(step_sample_idx)
+
+        for step_idx, timestamp in enumerate(all_timestamps):
+            start = int(step_sample_idx[step_idx])
+            end = int(step_sample_idx[step_idx + 1]) if step_idx < n_steps - 1 else out_len
+
+            sensor_signals = receiver_accum[:, start:end].copy()
 
             noise = self._generate_noise(
                 num_sensors=num_sensors,
                 num_samples=sensor_signals.shape[1],
-                sampling_rate_hz=sampling_rate_hz,
+                sampling_rate_hz=fs,
             )
             if noise is not None:
-                sensor_signals = sensor_signals + noise
+                sensor_signals += noise
 
-            sensor_signals_for_beamformer = np.real(sensor_signals).astype(np.complex128)
             beamformed_data = self._beamform_if_configured(
                 timestamp=timestamp,
-                sensor_signals=sensor_signals_for_beamformer,
-            )
-
-            sensor_data = self._make_sensor_data(
-                timestamp=timestamp,
                 sensor_signals=sensor_signals,
-                beamformed_data=beamformed_data,
             )
-
-            yield timestamp, {sensor_data}
-
 
             sensor_data = self._make_sensor_data(
                 timestamp=timestamp,
