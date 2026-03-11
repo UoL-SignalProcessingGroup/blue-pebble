@@ -1,4 +1,4 @@
-# %% [markdown]
+# %% [markdown]  # noqa: D100
 # # Broadband Measured vs Synthetic Comparison Across Simulator Modes
 #
 # This example extends `bb_sig_analysis.py` by looping over multiple simulator
@@ -215,7 +215,8 @@ measured_signal_model = BroadbandRecordedSignal(
 # %% [markdown]
 # ## Propagation Model
 #
-# Try switching between rtrs and cyclindrical to see how the propagation model affects the simulation results.
+# Try switching between rtrs and cyclindrical to see how the propagation model affects the
+# simulation results.
 
 # %%
 ssp = Constant(speed=1500.0)
@@ -322,6 +323,7 @@ SIMULATOR_CONFIGS = [
 
 
 def build_simulator(config, signal_model):
+    """Build a simulator based on the config dict and signal model."""
     common_kwargs = {
         "platform": platform,
         "propagation_model": prop_model,
@@ -354,6 +356,7 @@ def build_simulator(config, signal_model):
 
 
 def run_continuous_simulation(simulator_obj):
+    """Run a continuous simulator and return the received signal for the selected sensor."""
     all_sensor_signals = []
     for _, sensor_data_set in simulator_obj.sensor_data_gen():
         sensor_data = next(iter(sensor_data_set))
@@ -364,6 +367,7 @@ def run_continuous_simulation(simulator_obj):
 
 
 def compute_spectrogram_db(signal_data, sampling_rate_hz, n_fft=500, hop_length=250):
+    """Compute a spectrogram and return frequencies, times, and power in dB."""
     frequencies, times, spec_power = spsignal.spectrogram(
         np.real(signal_data),
         fs=sampling_rate_hz,
@@ -431,7 +435,9 @@ for row_idx, result in enumerate(comparison_results, start=1):
                 zmin=-50,
                 zmax=20,
                 showscale=(row_idx == 1 and col_idx == 2),
-                colorbar=dict(title="dB re 1 uPa^2/Hz") if (row_idx == 1 and col_idx == 2) else None,
+                colorbar=dict(title="dB re 1 uPa^2/Hz")
+                if (row_idx == 1 and col_idx == 2)
+                else None,
             ),
             row=row_idx,
             col=col_idx,
