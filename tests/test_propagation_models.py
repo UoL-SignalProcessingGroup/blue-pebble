@@ -319,9 +319,7 @@ def test_bellhop_propagate_returns_large_loss_for_zero_pressure(monkeypatch) -> 
         lambda path: (np.array([0.0 + 0.0j, 0.0 + 0.0j]), None),
     )
 
-    platform = SimpleNamespace(
-        array=SimpleNamespace(ref_state_vector=np.array([3.0, 4.0, -10.0]))
-    )
+    platform = SimpleNamespace(array=SimpleNamespace(ref_state_vector=np.array([3.0, 4.0, -10.0])))
     source = SimpleNamespace(
         state_vector=np.array([0.0, 0.0, 0.0, 0.0, -10.0]),
         metadata={
@@ -355,9 +353,7 @@ def test_bellhop_propagate_reraises_subprocess_errors(monkeypatch) -> None:
         )
 
     monkeypatch.setattr(propagation.subprocess, "run", fake_run)
-    platform = SimpleNamespace(
-        array=SimpleNamespace(ref_state_vector=np.array([3.0, 4.0, -10.0]))
-    )
+    platform = SimpleNamespace(array=SimpleNamespace(ref_state_vector=np.array([3.0, 4.0, -10.0])))
     source = SimpleNamespace(
         state_vector=np.array([0.0, 0.0, 0.0, 0.0, -10.0]),
         metadata={
@@ -394,9 +390,7 @@ def test_bellhop_propagate_invokes_executable_and_reads_shade_file(monkeypatch) 
 
     monkeypatch.setattr(propagation.subprocess, "run", fake_run)
     monkeypatch.setattr(propagation, "read_shade_file", fake_read_shade_file)
-    platform = SimpleNamespace(
-        array=SimpleNamespace(ref_state_vector=np.array([3.0, 4.0, -10.0]))
-    )
+    platform = SimpleNamespace(array=SimpleNamespace(ref_state_vector=np.array([3.0, 4.0, -10.0])))
     source = SimpleNamespace(
         state_vector=np.array([0.0, 0.0, 0.0, 0.0, -10.0]),
         metadata={
@@ -432,9 +426,7 @@ def test_bellhop_propagate_uses_last_pressure_value_from_shade_data(monkeypatch)
         "read_shade_file",
         lambda path: (np.array([0.25 + 0.0j, 0.5 + 0.0j]), None),
     )
-    platform = SimpleNamespace(
-        array=SimpleNamespace(ref_state_vector=np.array([3.0, 4.0, -10.0]))
-    )
+    platform = SimpleNamespace(array=SimpleNamespace(ref_state_vector=np.array([3.0, 4.0, -10.0])))
     source = SimpleNamespace(
         state_vector=np.array([0.0, 0.0, 0.0, 0.0, -10.0]),
         metadata={
@@ -498,9 +490,7 @@ def test_bellhop_propagate_handles_higher_dimensional_shade_output(monkeypatch) 
         "read_shade_file",
         lambda path: (np.array([[[[0.25 + 0.0j]], [[0.5 + 0.0j]]]]), None),
     )
-    platform = SimpleNamespace(
-        array=SimpleNamespace(ref_state_vector=np.array([3.0, 4.0, -10.0]))
-    )
+    platform = SimpleNamespace(array=SimpleNamespace(ref_state_vector=np.array([3.0, 4.0, -10.0])))
     source = SimpleNamespace(
         state_vector=np.array([0.0, 0.0, 0.0, 0.0, -10.0]),
         metadata={
@@ -560,9 +550,7 @@ def test_bellhop_propagate_runs_with_real_local_executable(monkeypatch) -> None:
     )
     monkeypatch.setattr(propagation, "read_shade_file", real_utils.read_shade_file)
 
-    platform = SimpleNamespace(
-        array=SimpleNamespace(ref_state_vector=np.array([3.0, 4.0, -10.0]))
-    )
+    platform = SimpleNamespace(array=SimpleNamespace(ref_state_vector=np.array([3.0, 4.0, -10.0])))
     source = SimpleNamespace(
         state_vector=np.array([0.0, 0.0, 0.0, 0.0, -10.0]),
         metadata={

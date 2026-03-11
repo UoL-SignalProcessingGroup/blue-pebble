@@ -10,6 +10,8 @@ Current primary simulator entrypoints are:
 
 For compatibility with older notebooks, `DepreciatedDiscretePassiveSonarArraySimulator` remains available but is deprecated for new work.
 
+`PassiveSonarSensorData` now lives in `bluepebble.types` and is documented with the types API surface.
+
 ```{eval-rst}
 .. automodule:: bluepebble.simulator
    :members:
