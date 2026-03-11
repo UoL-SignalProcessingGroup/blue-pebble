@@ -10,7 +10,7 @@ from stonesoup.base import Property
 from stonesoup.types.sensordata import SensorData
 
 from .base import PassiveSonarArraySimulatorBase
-from ..signal.utils import apply_fade_in, inverse_stft
+from ..signal.utils import apply_fade_in, apply_fade_out, inverse_stft
 
 
 class ContinuousPassiveSonarArraySimulator(PassiveSonarArraySimulatorBase):
@@ -41,7 +41,7 @@ class ContinuousPassiveSonarArraySimulator(PassiveSonarArraySimulatorBase):
         list,
         doc="List of broadband signal models (one per target, or single-element list for all)",
     )
-    fade_in_ms = Property(float, default=1000.0, doc="Fade-in duration at arrival (ms)")
+    fade_in_ms = Property(float, default=100.0, doc="Fade-in duration at arrival (ms)")
 
     def sensor_data_gen(self) -> Iterator[tuple[datetime, set[SensorData]]]:
         """Generate continuous broadband sensor data using STFT processing.
