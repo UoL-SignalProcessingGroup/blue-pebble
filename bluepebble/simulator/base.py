@@ -13,7 +13,7 @@ from ..models.propagation import AcousticPropagationModel
 from ..platform import TowedArrayPlatform
 from ..signal.ambient import AmbientNoise
 from ..sigproc.beamformer import Beamformer, SteeringCalculator
-from .sensor_data import PassiveSonarSensorData
+from .sensordata import PassiveSonarSensorData
 
 
 class PassiveSonarArraySimulatorBase(SensorSimulator):

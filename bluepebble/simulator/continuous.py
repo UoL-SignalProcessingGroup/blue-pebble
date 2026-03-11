@@ -551,6 +551,7 @@ class ContinuousFractionalDelayPassiveSonarArraySimulator(PassiveSonarArraySimul
     4. Interpolate gain and delay to per-sample trajectories.
     5. Fractionally resample and accumulate target contributions.
     6. Apply fades, noise, beamforming, and timestamp slicing.
+
     (A knot is a tie point between simulation steps)
 
     Tradeoffs

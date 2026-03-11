@@ -224,10 +224,9 @@ class DiscretePassiveSonarArraySimulator(PassiveSonarArraySimulatorBase):
 class DepreciatedDiscretePassiveSonarArraySimulator(PassiveSonarArraySimulatorBase):
     """Depreciated discrete-time passive-sonar array simulator.
 
-    Warning:
-    -------
-    This class is deprecated and retained for backward compatibility only.
-    Prefer ``DiscretePassiveSonarArraySimulator`` for new broadband work.
+    .. warning::
+       This class is deprecated and retained for backward compatibility only.
+       Prefer ``DiscretePassiveSonarArraySimulator`` for new broadband work.
 
     This simulator produces one sensor-data snapshot per platform timestamp and supports two
     propagation modes:
@@ -241,7 +240,7 @@ class DepreciatedDiscretePassiveSonarArraySimulator(PassiveSonarArraySimulatorBa
     phase and frequency-dependent attenuation more faithfully when the propagation model provides
     high-quality transfer functions.
 
-    Attributes:
+    Attributes
     ----------
     platform : TowedArrayPlatform
         The towed array platform providing geometry.
