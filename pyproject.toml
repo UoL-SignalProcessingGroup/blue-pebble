@@ -3,7 +3,7 @@ requires = ["setuptools>=64", "setuptools_scm>=8", "wheel"]
 build-backend = "setuptools.build_meta"
 
 [project]
-name = "nereus"
+name = "blue-pebble"
 dynamic = ["version"]
 description = "A Stone Soup plugin for underwater acoustic sensing."
 readme = "README.md"
@@ -12,9 +12,9 @@ authors = [
     { name = "Joshua J Wakefield", email = "J.J.Wakefield@liverpool.ac.uk" },
     { name = "Fin Boulton", email = "F.Boulton@liverpool.ac.uk" },
 ]
-license = { text = "MIT" }
+license = "MIT"
 keywords = [
-    "nereus",
+    "blue pebble",
     "underwater acoustics",
     "passive sonar",
     "beamforming",
@@ -23,9 +23,8 @@ keywords = [
     "stone soup",
 ]
 classifiers = [
-    "Development Status :: 4 - Beta",
+    "Development Status :: 5 - Production/Stable",
     "Intended Audience :: Science/Research",
-    "License :: OSI Approved :: MIT License",
     "Operating System :: OS Independent",
     "Programming Language :: Python :: 3 :: Only",
     "Programming Language :: Python :: 3.11",
@@ -42,15 +41,19 @@ dependencies = [
     "rocket-fft>=0.3.1",
     "tqdm>=4.64",
     "plotly>=5",
+    "dash>=4.0.0",
+    "cmocean>=4.0.3",
+    "netCDF4>=1.7.4",
 ]
 
 [project.urls]
-Repository = "https://github.com/jjwakefield/nereus"
+Repository = "https://github.com/jjwakefield/blue-pebble"
 
 [project.optional-dependencies]
 dev = [
     "ruff",
     "pytest",
+    "pytest-cov",
     "build",
 ]
 docs = [
@@ -63,18 +66,7 @@ examples = [
     "ipykernel",
     "ipywidgets",
     "jupyterlab",
-]
-all = [
-  "ruff",
-  "pytest",
-  "build",
-  "sphinx",
-  "sphinx-rtd-theme",
-  "myst-parser",
-  "myst-nb",
-  "ipykernel",
-  "ipywidgets",
-  "jupyterlab",
+    "kaleido",
 ]
 
 [tool.setuptools_scm]
@@ -82,6 +74,7 @@ tag_regex = "^v?(?P<version>\\d+\\.\\d+\\.\\d+)(?:[-+].*)?$"
 
 [tool.ruff]
 line-length = 99
+extend-exclude = ["external_tools"]
 
 [tool.ruff.lint]
 select = ["F", "E", "W", "I", "B", "D", "UP"]
@@ -92,3 +85,12 @@ select = ["F", "E", "W", "I", "B", "D", "UP"]
 
 [tool.setuptools.packages.find]
 where = ["."]
+
+[tool.coverage.run]
+source = ["bluepebble"]
+branch = true
+
+[tool.coverage.report]
+show_missing = true
+skip_covered = false
+omit = ["*/__init__.py"]

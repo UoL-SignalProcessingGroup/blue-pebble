@@ -7,6 +7,29 @@ on:
     branches: [ main ]
 
 jobs:
+  pr-title:
+    if: github.event_name == 'pull_request'
+    runs-on: ubuntu-latest
+    steps:
+      - name: Validate PR title
+        env:
+          PR_TITLE: ${{ github.event.pull_request.title }}
+        run: |
+          printf 'PR_TITLE=<%s>\n' "$PR_TITLE"
+          pattern='^(feat|fix|docs|style|refactor|perf|test|build|ci|chore)(\([^)]+\))?(!)?: .+$'
+          if printf '%s' "$PR_TITLE" | grep -Eq "$pattern"; then
+            echo "PR title is a valid Conventional Commit: $PR_TITLE"
+          else
+            echo "PR title must follow Conventional Commits."
+            echo "Use: type(scope): summary"
+            echo "Scope is encouraged but not required."
+            echo "Examples:"
+            echo "  ci: add pytest step to workflow"
+            echo "  fix(plotter): handle empty detections"
+            echo "  docs(api): clarify Bellhop installation"
+            exit 1
+          fi
+
   core:
     runs-on: ubuntu-latest
     strategy:
@@ -30,15 +53,23 @@ jobs:
         run: |
           ruff check .
 
+      - name: Tests (Pytest)
+        run: |
+          if [[ "${{ matrix.python-version }}" == "3.12" ]]; then
+            pytest --cov=bluepebble --cov-report=term-missing --cov-report=xml --cov-fail-under=55
+          else
+            pytest
+          fi
+
       - name: Smoke import
         run: |
-          python -c "import nereus; print(getattr(nereus, '__version__', 'no __version__'))"
+          python -c "import bluepebble; print(getattr(bluepebble, '__version__', 'no __version__'))"
 
       - name: Build (sdist/wheel)
         run: |
           python -m build --sdist --wheel
 
-  docs:
+  docs-build:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
@@ -56,3 +87,47 @@ jobs:
         run: |
           cd docs
           make html
+
+  notebooks:
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      pull-requests: read
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Check notebook-related changes
+        id: changes
+        uses: dorny/paths-filter@v3
+        with:
+          filters: |
+            notebooks:
+              - 'docs/**/*.ipynb'
+              - 'pyproject.toml'
+
+      - uses: actions/setup-python@v5
+        if: steps.changes.outputs.notebooks == 'true'
+        with:
+          python-version: "3.12"
+
+      - name: Validate notebook JSON
+        if: steps.changes.outputs.notebooks == 'true'
+        run: |
+          python - <<'PY'
+          import json
+          from pathlib import Path
+
+          notebooks = sorted(Path("docs").rglob("*.ipynb"))
+          if not notebooks:
+              raise SystemExit("No notebooks found under docs/")
+
+          for path in notebooks:
+              with path.open("r", encoding="utf-8") as stream:
+                  json.load(stream)
+              print(f"Validated {path}")
+          PY
+
+      - name: Skip notebook validation
+        if: steps.changes.outputs.notebooks != 'true'
+        run: |
+          echo "No notebook-related changes detected."

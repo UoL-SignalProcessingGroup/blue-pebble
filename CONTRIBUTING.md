@@ -1,6 +1,6 @@
-# Contributing to Nereus
+# Contributing to Blue Pebble
 
-Nereus follows Stone Soup-style contribution practices, adapted for this plugin and toolchain.
+Blue Pebble follows Stone Soup-style contribution practices, adapted for this plugin and toolchain.
 
 ## Development Setup
 
@@ -38,6 +38,15 @@ ruff check .
 - Add or update docs for behavior/API changes.
 - For significant new capability, include a minimal reproducible example in `docs/examples/` or `docs/tutorials/`.
 - Where relevant, include references to equations, assumptions, or papers.
+- `.ipynb` files under `docs/tutorials/` and `docs/examples/` are the canonical published sources for notebook-based documentation.
+- Published notebooks are rendered from the committed outputs; the docs build does not execute notebooks.
+- When notebook content changes, refresh the outputs locally before committing so the hosted documentation remains coherent.
+
+Build the docs locally with:
+
+```bash
+make -C docs html
+```
 
 ## Tests
 
@@ -51,6 +60,7 @@ Run local checks before opening a PR:
 ```bash
 ruff check .
 pytest
+make -C docs html
 ```
 
 ## License
@@ -67,6 +77,9 @@ By contributing, you agree your contribution is under the repository license (MI
 
 - Use feature branches (for example `feat/<topic>` or `fix/<topic>`).
 - Keep PRs focused and reviewable.
+- Use a Conventional Commit-formatted PR title, for example `ci: add pytest step to workflow`.
+- Prefer the form `type(scope): summary`; scope is encouraged when it adds clarity, but it is not required.
+- Prefer squash merging so the PR title becomes the commit message on `main`.
 - In the PR description, include:
   - what changed
   - why it changed
