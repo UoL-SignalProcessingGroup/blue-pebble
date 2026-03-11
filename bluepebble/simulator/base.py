@@ -32,7 +32,15 @@ class PassiveSonarArraySimulatorBase(SensorSimulator):
         default=None,
         doc="Steering calculator (optional)",
     )
-    ground_truth_paths = Property(list, default=[], doc="List of GroundTruthPath objects")
+    ground_truth_paths = Property(list, default=None, doc="List of GroundTruthPath objects")
+
+    def __init__(self, *args, **kwargs):
+        """Initialise simulator state and normalise optional list properties."""
+        super().__init__(*args, **kwargs)
+        if self.ground_truth_paths is None:
+            self.ground_truth_paths = []
+        else:
+            self.ground_truth_paths = list(self.ground_truth_paths)
 
     def _sorted_timestamps(self) -> list[datetime]:
         """Return sorted unique platform timestamps."""
@@ -133,4 +141,3 @@ class PassiveSonarArraySimulatorBase(SensorSimulator):
     @abstractmethod
     def sensor_data_gen(self):
         """Yield timestamped sensor-data snapshots."""
-

@@ -137,6 +137,24 @@ def test_base_resolve_models_and_target_lookup(monkeypatch) -> None:
         discrete.DiscretePassiveSonarArraySimulator._resolve_models([1, 2], 3, "models")
 
 
+def test_base_ground_truth_paths_default_is_not_shared(monkeypatch) -> None:
+    """Simulator instances should not share mutable ``ground_truth_paths`` defaults."""
+    _base, discrete, _continuous = _load_simulator_modules(monkeypatch)
+
+    simulator_a = discrete.DiscretePassiveSonarArraySimulator()
+    simulator_b = discrete.DiscretePassiveSonarArraySimulator()
+
+    assert simulator_a.ground_truth_paths == []
+    assert simulator_b.ground_truth_paths == []
+    assert simulator_a.ground_truth_paths is not simulator_b.ground_truth_paths
+
+    simulator_a.ground_truth_paths.append("path-a")
+    assert simulator_b.ground_truth_paths == []
+
+    simulator_c = discrete.DiscretePassiveSonarArraySimulator(ground_truth_paths=("path-c",))
+    assert simulator_c.ground_truth_paths == ["path-c"]
+
+
 def test_base_generate_noise_handles_shapes_and_duration_restore(monkeypatch) -> None:
     """Noise generation should truncate/pad outputs and restore temporary duration overrides."""
     _base, discrete, _continuous = _load_simulator_modules(monkeypatch)
