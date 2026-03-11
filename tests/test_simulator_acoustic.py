@@ -26,11 +26,23 @@ def _install_fake_acoustic_dependencies(monkeypatch) -> None:
     platform_module = ModuleType("bluepebble.platform")
     platform_module.TowedArrayPlatform = type("TowedArrayPlatform", (), {})
 
+    signal_package = ModuleType("bluepebble.signal")
+    signal_package.__path__ = []
     ambient_module = ModuleType("bluepebble.signal.ambient")
     ambient_module.AmbientNoise = type("AmbientNoise", (), {})
-
     signal_base_module = ModuleType("bluepebble.signal.base")
     signal_base_module.Signal = type("Signal", (), {})
+    signal_base_module.DiscreteTimestepSignal = type("DiscreteTimestepSignal", (), {})
+    signal_base_module.ContinuousTimestepSignal = type("ContinuousTimestepSignal", (), {})
+    signal_utils_module = ModuleType("bluepebble.signal.utils")
+    signal_utils_module.apply_fade_in = lambda signal, fade_samples: signal
+    signal_utils_module.apply_fade_out = lambda signal, fade_samples: signal
+    signal_utils_module.inverse_stft = (
+        lambda stft, frame_len, hop, window: np.zeros(stft.shape[0], dtype=np.complex64)
+    )
+    signal_package.ambient = ambient_module
+    signal_package.base = signal_base_module
+    signal_package.utils = signal_utils_module
 
     beamformer_module = ModuleType("bluepebble.sigproc.beamformer")
     beamformer_module.Beamformer = type("Beamformer", (), {})
@@ -38,21 +50,31 @@ def _install_fake_acoustic_dependencies(monkeypatch) -> None:
 
     monkeypatch.setitem(sys.modules, "bluepebble.models.propagation", propagation_module)
     monkeypatch.setitem(sys.modules, "bluepebble.platform", platform_module)
+    monkeypatch.setitem(sys.modules, "bluepebble.signal", signal_package)
     monkeypatch.setitem(sys.modules, "bluepebble.signal.ambient", ambient_module)
     monkeypatch.setitem(sys.modules, "bluepebble.signal.base", signal_base_module)
+    monkeypatch.setitem(sys.modules, "bluepebble.signal.utils", signal_utils_module)
     monkeypatch.setitem(sys.modules, "bluepebble.sigproc.beamformer", beamformer_module)
 
 
 def _load_acoustic_module(monkeypatch):
-    """Load ``simulator/acoustic.py`` with lightweight dependency scaffolding."""
+    """Load simulator modules and expose compatibility aliases used by these tests."""
     install_fake_stonesoup(monkeypatch)
     install_fake_stonesoup_simulator_modules(monkeypatch)
     install_repo_package(monkeypatch, "bluepebble", "bluepebble")
     install_repo_package(monkeypatch, "bluepebble.simulator", "bluepebble/simulator")
     _install_fake_acoustic_dependencies(monkeypatch)
-    return load_package_module_from_repo(
-        "bluepebble/simulator/acoustic.py",
-        "bluepebble.simulator.acoustic",
+    discrete = load_package_module_from_repo(
+        "bluepebble/simulator/discrete.py",
+        "bluepebble.simulator.discrete",
+    )
+    continuous = load_package_module_from_repo(
+        "bluepebble/simulator/continuous.py",
+        "bluepebble.simulator.continuous",
+    )
+    return SimpleNamespace(
+        PassiveSonarArraySimulator=discrete.DiscretePassiveSonarArraySimulator,
+        BroadbandPassiveSonarArraySimulator=continuous.ContinuousSTFTPassiveSonarArraySimulator,
     )
 
 
@@ -67,6 +89,7 @@ def _install_fake_signal_utils(
 
     utils_module = ModuleType("bluepebble.signal.utils")
     utils_module.apply_fade_in = lambda signal, fade_samples: signal
+    utils_module.apply_fade_out = lambda signal, fade_samples: signal
     if inverse_stft_fn is None:
         utils_module.inverse_stft = (
             lambda stft, frame_len, hop, window: np.asarray(
@@ -80,6 +103,13 @@ def _install_fake_signal_utils(
 
     monkeypatch.setitem(sys.modules, "bluepebble.signal", signal_package)
     monkeypatch.setitem(sys.modules, "bluepebble.signal.utils", utils_module)
+
+    # continuous.py imports these callables directly; patch bound names when already loaded.
+    continuous_module = sys.modules.get("bluepebble.simulator.continuous")
+    if continuous_module is not None:
+        continuous_module.apply_fade_in = utils_module.apply_fade_in
+        continuous_module.apply_fade_out = utils_module.apply_fade_out
+        continuous_module.inverse_stft = utils_module.inverse_stft
 
 
 @dataclass
@@ -164,19 +194,20 @@ def test_passive_generate_sensor_data_combines_targets_noise_and_beamforming(mon
     platform = FakePlatform([timestamp], num_sensors=2)
 
     class FakePropagationModel:
-        def propagate(self, platform_state, target_state):
-            return 12.0, 0.25
-
-        def compute_sensor_delays(self, platform_state, target_state):
-            return np.array([0.0, 0.1])
+        def propagate_spectrum(self, platform_state, target_state, frequencies):
+            _ = platform_state, target_state, frequencies
+            return np.array(
+                [[1.0, 1.0, 1.0], [10.0, 10.0, 10.0]],
+                dtype=np.complex128,
+            ), 0.0
 
     class FakeSignalModel:
+        sampling_rate_hz = 1.0
         num_samples = 3
 
-        def generate(self, target_state, sensor_delays_s, tloss_db, prop_time_s):
-            assert tloss_db == 12.0
-            assert prop_time_s == 0.25
-            return np.array([[1.0, 2.0, 3.0], [10.0, 20.0, 30.0]], dtype=np.complex128)
+        def _generate_base_signal(self, target_state):
+            _ = target_state
+            return np.array([1.0, 2.0, 3.0], dtype=np.complex128)
 
     class FakeNoiseModel:
         def generate(self, num_sensors):
@@ -200,14 +231,16 @@ def test_passive_generate_sensor_data_combines_targets_noise_and_beamforming(mon
     simulator = acoustic.PassiveSonarArraySimulator(
         platform=platform,
         propagation_model=FakePropagationModel(),
-        signal_model=FakeSignalModel(),
+        signal_models=[FakeSignalModel()],
         noise_model=FakeNoiseModel(),
         beamformer=beamformer,
         steering_calculator=FakeSteeringCalculator(),
         ground_truth_paths=[target_path],
     )
 
-    sensor_data = simulator._generate_sensor_data_at(timestamp)
+    generated = list(simulator.sensor_data_gen())
+    assert [generated_timestamp for generated_timestamp, _ in generated] == [timestamp]
+    sensor_data = next(iter(generated[0][1]))
 
     expected_raw = np.array([[2.0, 3.0, 4.0], [11.0, 21.0, 31.0]], dtype=np.complex128)
     np.testing.assert_array_equal(sensor_data.raw_signals, expected_raw)
@@ -224,17 +257,17 @@ def test_passive_sensor_data_gen_yields_sorted_unique_timestamps(monkeypatch) ->
     platform = FakePlatform([t1, t0, t1], num_sensors=1)
 
     class FakePropagationModel:
-        def propagate(self, platform_state, target_state):
-            return 0.0, 0.0
-
-        def compute_sensor_delays(self, platform_state, target_state):
-            return np.array([0.0])
+        def propagate_spectrum(self, platform_state, target_state, frequencies):
+            _ = platform_state, target_state, frequencies
+            return np.ones((1, 1), dtype=np.complex128), 0.0
 
     class FakeSignalModel:
+        sampling_rate_hz = 1.0
         num_samples = 1
 
-        def generate(self, target_state, sensor_delays_s, tloss_db, prop_time_s):
-            return np.array([[1.0]], dtype=np.complex128)
+        def _generate_base_signal(self, target_state):
+            _ = target_state
+            return np.array([1.0], dtype=np.complex128)
 
     class FakeBeamformer:
         def beamform(self, sensor_signals, steering_delays_s):
@@ -253,7 +286,7 @@ def test_passive_sensor_data_gen_yields_sorted_unique_timestamps(monkeypatch) ->
     simulator = acoustic.PassiveSonarArraySimulator(
         platform=platform,
         propagation_model=FakePropagationModel(),
-        signal_model=FakeSignalModel(),
+        signal_models=[FakeSignalModel()],
         noise_model=None,
         beamformer=FakeBeamformer(),
         steering_calculator=FakeSteeringCalculator(),
@@ -274,10 +307,12 @@ def test_passive_generate_sensor_data_uses_zero_signal_when_target_absent(monkey
     platform = FakePlatform([timestamp], num_sensors=2)
 
     class FakeSignalModel:
+        sampling_rate_hz = 1.0
         num_samples = 4
 
-        def generate(self, target_state, sensor_delays_s, tloss_db, prop_time_s):
-            raise AssertionError("generate should not be called when no target is present")
+        def _generate_base_signal(self, target_state):
+            _ = target_state
+            return np.array([1.0, 2.0, 3.0, 4.0], dtype=np.complex128)
 
     class FakeBeamformer:
         def beamform(self, sensor_signals, steering_delays_s):
@@ -289,8 +324,13 @@ def test_passive_generate_sensor_data_uses_zero_signal_when_target_absent(monkey
 
     simulator = acoustic.PassiveSonarArraySimulator(
         platform=platform,
-        propagation_model=SimpleNamespace(),
-        signal_model=FakeSignalModel(),
+        propagation_model=SimpleNamespace(
+            propagate_spectrum=lambda platform_state, target_state, frequencies: (
+                np.ones((2, len(frequencies)), dtype=np.complex128),
+                0.0,
+            )
+        ),
+        signal_models=[FakeSignalModel()],
         noise_model=None,
         beamformer=FakeBeamformer(),
         steering_calculator=FakeSteeringCalculator(),
@@ -299,33 +339,48 @@ def test_passive_generate_sensor_data_uses_zero_signal_when_target_absent(monkey
         ],
     )
 
-    sensor_data = simulator._generate_sensor_data_at(timestamp)
+    generated = list(simulator.sensor_data_gen())
+    assert [generated_timestamp for generated_timestamp, _ in generated] == [timestamp]
+    sensor_data = next(iter(generated[0][1]))
 
     np.testing.assert_array_equal(sensor_data.raw_signals, np.zeros((2, 4), dtype=np.complex128))
     np.testing.assert_array_equal(sensor_data.beamformed_data, np.zeros(4, dtype=np.complex128))
 
 
-def test_passive_sensor_data_gen_emits_empty_set_when_snapshot_is_none(monkeypatch) -> None:
-    """A ``None`` snapshot should be converted to an empty sensor-data set."""
+def test_passive_sensor_data_gen_emits_zero_snapshots_when_no_targets(monkeypatch) -> None:
+    """Passive simulation should emit zeroed snapshots when there are no targets."""
     acoustic = _load_acoustic_module(monkeypatch)
     t0 = datetime(2026, 1, 1, 12, 0, 0)
     t1 = t0 + timedelta(seconds=1)
     platform = FakePlatform([t0, t1], num_sensors=1)
+
+    class FakeSignalModel:
+        sampling_rate_hz = 1.0
+        num_samples = 1
+
     simulator = acoustic.PassiveSonarArraySimulator(
         platform=platform,
-        propagation_model=SimpleNamespace(),
-        signal_model=SimpleNamespace(num_samples=1),
+        propagation_model=SimpleNamespace(
+            propagate_spectrum=lambda platform_state, target_state, frequencies: (
+                np.ones((1, len(frequencies)), dtype=np.complex128),
+                0.0,
+            )
+        ),
+        signal_models=[FakeSignalModel()],
         noise_model=None,
-        beamformer=SimpleNamespace(),
-        steering_calculator=SimpleNamespace(),
+        beamformer=None,
+        steering_calculator=None,
         ground_truth_paths=[],
     )
-    monkeypatch.setattr(simulator, "_generate_sensor_data_at", lambda timestamp: None)
 
     generated = list(simulator.sensor_data_gen())
 
     assert [timestamp for timestamp, _ in generated] == [t0, t1]
-    assert all(sensor_data_set == set() for _, sensor_data_set in generated)
+    assert all(len(sensor_data_set) == 1 for _, sensor_data_set in generated)
+    first_data = next(iter(generated[0][1]))
+    second_data = next(iter(generated[1][1]))
+    np.testing.assert_array_equal(first_data.raw_signals, np.array([[0.0 + 0.0j]]))
+    np.testing.assert_array_equal(second_data.raw_signals, np.array([[0.0 + 0.0j]]))
 
 
 def test_broadband_requires_at_least_two_timesteps(monkeypatch) -> None:
@@ -424,6 +479,9 @@ def test_broadband_truncates_long_noise_and_restores_duration(monkeypatch) -> No
         def propagate_spectrum(self, platform_state, target_state, frequencies):
             return np.ones((1, len(frequencies)), dtype=np.complex64), 0.0
 
+        def compute_sensor_delays(self, platform_state, target_state):
+            return np.array([0.0], dtype=float)
+
     class LongNoiseModel:
         def __init__(self):
             self.duration_s = 9.0
@@ -476,6 +534,9 @@ def test_broadband_pads_short_noise_and_beamforms_real_part(monkeypatch) -> None
     class FakePropagationModel:
         def propagate_spectrum(self, platform_state, target_state, frequencies):
             return np.ones((1, len(frequencies)), dtype=np.complex64), 0.0
+
+        def compute_sensor_delays(self, platform_state, target_state):
+            return np.array([0.0], dtype=float)
 
     class ShortNoiseModel:
         def __init__(self):
@@ -565,6 +626,9 @@ def test_broadband_sums_multiple_targets_with_shared_signal_model(monkeypatch) -
             gain = float(target_state.state_vector[0])
             return np.full((1, len(frequencies)), gain, dtype=np.complex64), 0.0
 
+        def compute_sensor_delays(self, platform_state, target_state):
+            return np.array([0.0], dtype=float)
+
     simulator = acoustic.BroadbandPassiveSonarArraySimulator(
         platform=platform,
         propagation_model=FakePropagationModel(),
@@ -603,6 +667,9 @@ def test_broadband_handles_target_missing_at_a_timestep(monkeypatch) -> None:
         def propagate_spectrum(self, platform_state, target_state, frequencies):
             return np.ones((1, len(frequencies)), dtype=np.complex64), 0.0
 
+        def compute_sensor_delays(self, platform_state, target_state):
+            return np.array([0.0], dtype=float)
+
     simulator = acoustic.BroadbandPassiveSonarArraySimulator(
         platform=platform,
         propagation_model=FakePropagationModel(),
@@ -626,8 +693,8 @@ def test_broadband_handles_target_missing_at_a_timestep(monkeypatch) -> None:
     assert np.isfinite(second_data.raw_signals).all()
 
 
-def test_broadband_beamformer_receives_sensors_in_reverse_array_order(monkeypatch) -> None:
-    """Broadband reconstruction should present sensors to the beamformer back-to-front."""
+def test_broadband_beamformer_receives_sensors_in_native_array_order(monkeypatch) -> None:
+    """Broadband reconstruction should preserve simulator sensor ordering for beamforming."""
     acoustic = _load_acoustic_module(monkeypatch)
     _install_fake_signal_utils(
         monkeypatch,
@@ -644,6 +711,9 @@ def test_broadband_beamformer_receives_sensors_in_reverse_array_order(monkeypatc
     class FakePropagationModel:
         def propagate_spectrum(self, platform_state, target_state, frequencies):
             return np.array([[1.0], [2.0]], dtype=np.complex64), 0.0
+
+        def compute_sensor_delays(self, platform_state, target_state):
+            return np.array([0.0, 0.0], dtype=float)
 
     class FakeSteeringCalculator:
         def calculate(self, platform_state):
@@ -674,6 +744,6 @@ def test_broadband_beamformer_receives_sensors_in_reverse_array_order(monkeypatc
     assert len(beamformer.calls) == 2
     first_signals, first_delays = beamformer.calls[0]
     np.testing.assert_array_equal(first_delays, np.array([0.0, 0.1]))
-    np.testing.assert_array_equal(first_signals, np.array([[2.0 + 0.0j], [1.0 + 0.0j]]))
+    np.testing.assert_array_equal(first_signals, np.array([[1.0 + 0.0j], [2.0 + 0.0j]]))
     first_data = next(iter(generated[0][1]))
     np.testing.assert_array_equal(first_data.raw_signals, first_signals)

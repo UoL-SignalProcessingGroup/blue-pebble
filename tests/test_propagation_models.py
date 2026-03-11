@@ -809,8 +809,8 @@ def test_rtrs_propagate_spectrum_transposes_transfer_functions(monkeypatch) -> N
         transfer,
         np.array(
             [
-                [1.0 + 10.0j, 3.0 + 30.0j],
                 [2.0 + 20.0j, 4.0 + 40.0j],
+                [1.0 + 10.0j, 3.0 + 30.0j],
             ]
         ),
     )
