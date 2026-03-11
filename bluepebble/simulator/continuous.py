@@ -10,8 +10,8 @@ import numpy as np
 from stonesoup.base import Property
 from stonesoup.types.sensordata import SensorData
 
-from .base import PassiveSonarArraySimulatorBase
 from ..signal.utils import apply_fade_in, apply_fade_out, inverse_stft
+from .base import PassiveSonarArraySimulatorBase
 
 
 @dataclass
@@ -43,32 +43,32 @@ class _STFTTargetHistory:
 class ContinuousSTFTPassiveSonarArraySimulator(PassiveSonarArraySimulatorBase):
     """Continuous broadband passive-sonar simulator with selectable STFT synthesis mode.
 
-        Use ``mode`` for channel update method. All three modes use the same 
-        propagation history, then differ in reconstruction method:
+    Use ``mode`` for channel update method. All three modes use the samepropagation history, then
+    differ in reconstruction method:
 
-        - ``stft_interp`` and ``wola_interp`` common interpolation steps:
-            1. De-rotate channel phase using per-sensor delay history (remove delay phase).
-            2. Interpolate residual channel magnitude and unwrapped phase at frame-center times.
-            3. Re-apply interpolated delay phase and form per-target frame spectra.
+    - ``stft_interp`` and ``wola_interp`` common interpolation steps:
+        1. De-rotate channel phase using per-sensor delay history (remove delay phase).
+        2. Interpolate residual channel magnitude and unwrapped phase at frame-center times.
+        3. Re-apply interpolated delay phase and form per-target frame spectra.
 
-        - ``stft_interp``
-            4. Sum target spectra in the frequency domain.
-            5. Reconstruct sensor time series with ``inverse_stft``.
+    - ``stft_interp``
+        4. Sum target spectra in the frequency domain.
+        5. Reconstruct sensor time series with ``inverse_stft``.
 
-        - ``wola_interp``
-            4. IFFT each frame and accumulate with weighted overlap-add (WOLA).
-            5. Normalize overlap energy to produce output sensor signals.
+    - ``wola_interp``
+        4. IFFT each frame and accumulate with weighted overlap-add (WOLA).
+        5. Normalize overlap energy to produce output sensor signals.
 
-        - ``cola``
-            1. Select the nearest previous knot transfer function for each frame.
-            2. Apply knot transfer function to each target source spectrum.
-            3. IFFT and overlap-add frame signals.
-            4. Apply COLA-style overlap normalization.
+    - ``cola``
+        1. Select the nearest previous knot transfer function for each frame.
+        2. Apply knot transfer function to each target source spectrum.
+        3. IFFT and overlap-add frame signals.
+        4. Apply COLA-style overlap normalization.
 
-        All modes share fades, noise addition, beamforming, and timestamp chunk output.
-        In practice, each method produces largely similar results. The default ``stft_interp``
-        and ``wola_interp`` methods are recommended. The ``cola`` method can produce 
-        interference artefacts, but is good as a fast baseline.
+    All modes share fades, noise addition, beamforming, and timestamp chunk output.
+    In practice, each method produces largely similar results. The default ``stft_interp``
+    and ``wola_interp`` methods are recommended. The ``cola`` method can produce
+    interference artefacts, but is good as a fast baseline.
     """
 
     signal_models = Property(
@@ -187,7 +187,9 @@ class ContinuousSTFTPassiveSonarArraySimulator(PassiveSonarArraySimulatorBase):
                 )
                 raise RuntimeError(msg)
 
-            H_hist = np.zeros((ctx.n_steps, ctx.num_sensors, ctx.num_freq_bins), dtype=np.complex64)
+            H_hist = np.zeros(
+                (ctx.n_steps, ctx.num_sensors, ctx.num_freq_bins), dtype=np.complex64
+            )
             tau_hist = np.zeros((ctx.n_steps, ctx.num_sensors), dtype=np.float64)
 
             for step_idx, timestamp in enumerate(ctx.all_timestamps):
@@ -220,7 +222,9 @@ class ContinuousSTFTPassiveSonarArraySimulator(PassiveSonarArraySimulatorBase):
         return targets_data
 
     def _frame_interp_indices(self, ctx: _STFTCommonContext) -> tuple[np.ndarray, np.ndarray]:
-        frame_times_s = (np.arange(ctx.num_frames, dtype=np.float64) * ctx.hop + 0.5 * ctx.frame_len) / ctx.fs
+        frame_times_s = (
+            np.arange(ctx.num_frames, dtype=np.float64) * ctx.hop + 0.5 * ctx.frame_len
+        ) / ctx.fs
         step_idx = np.searchsorted(ctx.step_times_s, frame_times_s, side="right") - 1
         step_idx = np.clip(step_idx, 0, ctx.n_steps - 2).astype(np.int32)
 
@@ -238,10 +242,7 @@ class ContinuousSTFTPassiveSonarArraySimulator(PassiveSonarArraySimulatorBase):
     ) -> tuple[np.ndarray, np.ndarray]:
         """Build delay-de-rotated channel magnitude and unwrapped phase histories."""
         phase_derotate = np.exp(
-            2j
-            * np.pi
-            * tau_hist[:, :, np.newaxis]
-            * frequencies_hz[np.newaxis, np.newaxis, :]
+            2j * np.pi * tau_hist[:, :, np.newaxis] * frequencies_hz[np.newaxis, np.newaxis, :]
         )
         H_residual = H_hist * phase_derotate
         H_mag_hist = np.abs(H_residual)
@@ -277,12 +278,12 @@ class ContinuousSTFTPassiveSonarArraySimulator(PassiveSonarArraySimulatorBase):
             + H_phase_hist[step_idx + 1, :] * alpha_arr[:, np.newaxis]
         )
         tau = tau_hist[step_idx] * w0 + tau_hist[step_idx + 1] * alpha_arr
-        phase_rerotate = np.exp(
-            -2j * np.pi * tau[:, np.newaxis] * frequencies_hz[np.newaxis, :]
-        )
+        phase_rerotate = np.exp(-2j * np.pi * tau[:, np.newaxis] * frequencies_hz[np.newaxis, :])
         return H_mag * np.exp(1j * H_phase) * phase_rerotate
 
-    def _slice_uniform_step_samples(self, receiver_signals: np.ndarray, n_steps: int) -> np.ndarray:
+    def _slice_uniform_step_samples(
+        self, receiver_signals: np.ndarray, n_steps: int
+    ) -> np.ndarray:
         actual_signal_len = receiver_signals.shape[1]
         samples_per_step = actual_signal_len // n_steps
         sample_idx = np.arange(n_steps + 1, dtype=np.int64) * samples_per_step
@@ -472,7 +473,6 @@ class ContinuousSTFTPassiveSonarArraySimulator(PassiveSonarArraySimulatorBase):
 
     def sensor_data_gen(self) -> Iterator[tuple[datetime, set[SensorData]]]:
         """Generate continuous broadband sensor data using the selected STFT mode."""
-
         selected_mode = self._validate_mode()
         all_timestamps = self._sorted_timestamps()
         if len(all_timestamps) < 2:
@@ -503,7 +503,11 @@ class ContinuousSTFTPassiveSonarArraySimulator(PassiveSonarArraySimulatorBase):
 
         for step_idx, timestamp in enumerate(ctx.all_timestamps):
             start = int(step_sample_idx[step_idx])
-            end = int(step_sample_idx[step_idx + 1]) if step_idx < ctx.n_steps - 1 else receiver_signals.shape[1]
+            end = (
+                int(step_sample_idx[step_idx + 1])
+                if step_idx < ctx.n_steps - 1
+                else receiver_signals.shape[1]
+            )
             sensor_signals = receiver_signals[:, start:end].copy()
 
             noise = self._generate_noise(
@@ -571,7 +575,9 @@ class ContinuousFractionalDelayPassiveSonarArraySimulator(PassiveSonarArraySimul
         """Apply time-varying fractional delay to one source signal."""
         source = np.asarray(source_signal)
         out_len = len(delay_s)
-        src_idx = np.arange(out_len, dtype=np.float64) - (np.asarray(delay_s, dtype=np.float64) * fs)
+        src_idx = np.arange(out_len, dtype=np.float64) - (
+            np.asarray(delay_s, dtype=np.float64) * fs
+        )
         src_n = np.arange(len(source), dtype=np.float64)
 
         if np.iscomplexobj(source):
@@ -584,7 +590,6 @@ class ContinuousFractionalDelayPassiveSonarArraySimulator(PassiveSonarArraySimul
 
     def sensor_data_gen(self) -> Iterator[tuple[datetime, set[SensorData]]]:
         """Generate broadband data via time-domain exact-delay rendering."""
-
         all_timestamps = self._sorted_timestamps()
         if len(all_timestamps) < 2:
             msg = "Need at least 2 timesteps for broadband processing"
@@ -609,7 +614,9 @@ class ContinuousFractionalDelayPassiveSonarArraySimulator(PassiveSonarArraySimul
         frequencies_hz = np.fft.rfftfreq(frame_len, d=1.0 / fs)
 
         t0 = all_timestamps[0]
-        step_times_s = np.array([(ts - t0).total_seconds() for ts in all_timestamps], dtype=np.float64)
+        step_times_s = np.array(
+            [(ts - t0).total_seconds() for ts in all_timestamps], dtype=np.float64
+        )
         n_steps = len(step_times_s)
 
         try:
@@ -688,7 +695,9 @@ class ContinuousFractionalDelayPassiveSonarArraySimulator(PassiveSonarArraySimul
         if self.fade_in_ms > 0:
             fade_samples = int(self.fade_in_ms * fs / 1000.0)
             for sensor_idx in range(num_sensors):
-                receiver_accum[sensor_idx, :] = apply_fade_in(receiver_accum[sensor_idx, :], fade_samples)
+                receiver_accum[sensor_idx, :] = apply_fade_in(
+                    receiver_accum[sensor_idx, :], fade_samples
+                )
 
         if self.fade_out_ms > 0:
             fade_samples = int(self.fade_out_ms * fs / 1000.0)

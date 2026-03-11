@@ -1,15 +1,15 @@
 """Simulator package public API."""
 
-from .sensor_data import PassiveSonarSensorData
 from .base import PassiveSonarArraySimulatorBase
-from .discrete import (
-    DiscretePassiveSonarArraySimulator,
-    DepreciatedDiscretePassiveSonarArraySimulator
-)
 from .continuous import (
-    ContinuousSTFTPassiveSonarArraySimulator,
     ContinuousFractionalDelayPassiveSonarArraySimulator,
+    ContinuousSTFTPassiveSonarArraySimulator,
 )
+from .discrete import (
+    DepreciatedDiscretePassiveSonarArraySimulator,
+    DiscretePassiveSonarArraySimulator,
+)
+from .sensor_data import PassiveSonarSensorData
 
 __all__ = [
     "PassiveSonarSensorData",

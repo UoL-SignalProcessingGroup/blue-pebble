@@ -1,8 +1,8 @@
 """Discrete acoustic sensor simulators module."""
 
+import warnings
 from collections.abc import Iterator
 from datetime import datetime
-import warnings
 
 import numpy as np
 from stonesoup.base import Property
@@ -224,7 +224,7 @@ class DiscretePassiveSonarArraySimulator(PassiveSonarArraySimulatorBase):
 class DepreciatedDiscretePassiveSonarArraySimulator(PassiveSonarArraySimulatorBase):
     """Depreciated discrete-time passive-sonar array simulator.
 
-    Warning
+    Warning:
     -------
     This class is deprecated and retained for backward compatibility only.
     Prefer ``DiscretePassiveSonarArraySimulator`` for new broadband work.
@@ -232,8 +232,8 @@ class DepreciatedDiscretePassiveSonarArraySimulator(PassiveSonarArraySimulatorBa
     This simulator produces one sensor-data snapshot per platform timestamp and supports two
     propagation modes:
 
-    1. ``"transmission_loss"`` (default): uses ``propagate`` + per-sensor delays with the signal model's
-       ``generate`` method.
+    1. ``"transmission_loss"`` (default): uses ``propagate`` + per-sensor delays with the signal
+        model's ``generate`` method.
     2. ``"spectrum"``: applies ``propagate_spectrum`` transfer functions to each target's source
        spectrum and reconstructs sensor channels by IFFT.
 
@@ -241,7 +241,7 @@ class DepreciatedDiscretePassiveSonarArraySimulator(PassiveSonarArraySimulatorBa
     phase and frequency-dependent attenuation more faithfully when the propagation model provides
     high-quality transfer functions.
 
-    Attributes
+    Attributes:
     ----------
     platform : TowedArrayPlatform
         The towed array platform providing geometry.
@@ -259,8 +259,8 @@ class DepreciatedDiscretePassiveSonarArraySimulator(PassiveSonarArraySimulatorBa
     ground_truth_paths : list
         A list of ``GroundTruthPath`` objects representing targets.
     propagation_method : str
-        Propagation path used for target rendering. Supported values are ``"transmission_loss"`` and
-        ``"spectrum"``.
+        Propagation path used for target rendering. Supported values are ``"transmission_loss"``
+        and ``"spectrum"``.
 
     """
 
@@ -390,12 +390,18 @@ class DepreciatedDiscretePassiveSonarArraySimulator(PassiveSonarArraySimulatorBa
                     elif len(base_signal) > num_samples:
                         base_signal = base_signal[:num_samples]
                     source_fft = np.fft.fft(base_signal)
-                    target_fft = np.asarray(H_sensors, dtype=np.complex128) * source_fft[np.newaxis, :]
+                    target_fft = (
+                        np.asarray(H_sensors, dtype=np.complex128) * source_fft[np.newaxis, :]
+                    )
                     target_signal = np.fft.ifft(target_fft, axis=1).astype(np.complex128)
                 else:
                     # Fallback for non-standard signal models.
-                    tloss_db, prop_time_s = self.propagation_model.propagate(platform, target_state)
-                    sensor_delays_s = self.propagation_model.compute_sensor_delays(platform, target_state)
+                    tloss_db, prop_time_s = self.propagation_model.propagate(
+                        platform, target_state
+                    )
+                    sensor_delays_s = self.propagation_model.compute_sensor_delays(
+                        platform, target_state
+                    )
                     target_signal = target_signal_model.generate(
                         target_state,
                         sensor_delays_s,
@@ -407,7 +413,9 @@ class DepreciatedDiscretePassiveSonarArraySimulator(PassiveSonarArraySimulatorBa
                 tloss_db, prop_time_s = self.propagation_model.propagate(platform, target_state)
 
                 # Calculate sensor delays
-                sensor_delays_s = self.propagation_model.compute_sensor_delays(platform, target_state)
+                sensor_delays_s = self.propagation_model.compute_sensor_delays(
+                    platform, target_state
+                )
 
                 # Generate target signal with acoustic properties from metadata
                 target_signal = target_signal_model.generate(
