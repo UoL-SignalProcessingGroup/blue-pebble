@@ -44,6 +44,11 @@ class Reverb(Effect):
             An array of complex signals with the reverb effect applied,
             with shape (num_sensors, num_samples).
 
+        Raises
+        ------
+        ValueError
+            If ``duration_s`` is not positive or ``wet_dry_mix`` is not in ``(0, 1]``.
+
         """
         if self.duration_s <= 0:
             msg = f"duration_s must be positive, got {self.duration_s}"

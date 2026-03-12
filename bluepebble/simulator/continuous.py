@@ -282,6 +282,8 @@ class ContinuousSTFTPassiveSonarArraySimulator(PassiveSonarArraySimulatorBase):
 
         Raises
         ------
+        TypeError
+            If the propagation model does not implement ``propagate_spectrum``.
         RuntimeError
             If target STFT shapes are inconsistent across targets.
 
@@ -898,6 +900,8 @@ class ContinuousFractionalDelayPassiveSonarArraySimulator(PassiveSonarArraySimul
         ValueError
             If fewer than two timesteps are available or no targets are
             configured.
+        TypeError
+            If the propagation model does not implement ``propagate_spectrum``.
         RuntimeError
             If target source-signal lengths are inconsistent.
 
