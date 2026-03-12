@@ -45,15 +45,21 @@ class Reverb(Effect):
             with shape (num_sensors, num_samples).
 
         """
-        if not (0 < self.wet_dry_mix <= 1 and self.duration_s > 0):
-            return signals
+        if self.duration_s <= 0:
+            msg = f"duration_s must be positive, got {self.duration_s}"
+            raise ValueError(msg)
+        if not 0 < self.wet_dry_mix <= 1:
+            msg = f"wet_dry_mix must be in (0, 1], got {self.wet_dry_mix}"
+            raise ValueError(msg)
 
         # Generate a synthetic Impulse Response (IR) for the reverb effect
         ir_samples = int(self.duration_s * sampling_rate_hz)
         time = np.arange(ir_samples) / sampling_rate_hz
         decay = np.exp(-5.0 * time / self.duration_s)  # Exponential decay
         ir = decay * np.random.randn(ir_samples)  # White noise modulated by decay
-        ir /= np.max(np.abs(ir))  # Normalise the IR
+        ir_max = np.max(np.abs(ir))
+        if ir_max > 0:
+            ir /= ir_max  # Normalise the IR
 
         # Apply reverb to each sensor channel independently
         reverbed_signals = np.copy(signals)

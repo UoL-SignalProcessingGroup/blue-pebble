@@ -287,6 +287,12 @@ class ContinuousSTFTPassiveSonarArraySimulator(PassiveSonarArraySimulatorBase):
 
         """
         targets_data: list[_STFTTargetHistory] = []
+        if not hasattr(self.propagation_model, "propagate_spectrum"):
+            msg = (
+                f"{type(self.propagation_model).__name__} does not implement "
+                "'propagate_spectrum', which is required for STFT-based simulation"
+            )
+            raise TypeError(msg)
         spectrum_propagation_model = cast(_SpectrumPropagationModel, self.propagation_model)
 
         for target_idx, target_path in enumerate(ground_truth_paths):
@@ -934,6 +940,12 @@ class ContinuousFractionalDelayPassiveSonarArraySimulator(PassiveSonarArraySimul
         out_len = len(ref_source)
         sample_times_s = np.arange(out_len, dtype=np.float64) / fs
         receiver_accum = np.zeros((num_sensors, out_len), dtype=np.complex64)
+        if not hasattr(self.propagation_model, "propagate_spectrum"):
+            msg = (
+                f"{type(self.propagation_model).__name__} does not implement "
+                "'propagate_spectrum', which is required for STFT-based simulation"
+            )
+            raise TypeError(msg)
         spectrum_propagation_model = cast(_SpectrumPropagationModel, self.propagation_model)
 
         for target_idx, target_path in enumerate(ground_truth_paths):

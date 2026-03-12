@@ -22,6 +22,67 @@ CachedStftResult: TypeAlias = tuple[NDArray[np.complex64], FloatArray, int, Floa
 SourceStateStore: TypeAlias = dict[str, object]
 
 
+def _extract_tonal_metadata(
+    source: "State",
+) -> tuple[FloatArray, FloatArray, FloatArray]:
+    """Extract and validate tonal metadata from a source state.
+
+    Parameters
+    ----------
+    source : State
+        Source state exposing metadata containing tonal parameters.
+
+    Returns
+    -------
+    tuple[FloatArray, FloatArray, FloatArray]
+        Tuple of ``(amplitudes_upa, frequencies_hz, phases_rad)``.
+
+    Raises
+    ------
+    ValueError
+        If metadata is missing, malformed, or arrays are shape-incompatible.
+
+    """
+    metadata = getattr(source, "metadata", None)
+    if metadata is None:
+        msg = "Source state must define metadata for tonal synthesis"
+        raise ValueError(msg)
+    if not isinstance(metadata, Mapping):
+        msg = "Source metadata must be mapping-like"
+        raise ValueError(msg)
+
+    required_keys = ("amplitudes_upa", "frequencies_hz", "phases_rad")
+    missing_keys = [key for key in required_keys if key not in metadata]
+    if missing_keys:
+        missing = ", ".join(missing_keys)
+        msg = f"Source metadata missing required keys: {missing}"
+        raise ValueError(msg)
+
+    amplitudes_upa = np.asarray(metadata["amplitudes_upa"], dtype=float)
+    frequencies_hz = np.asarray(metadata["frequencies_hz"], dtype=float)
+    phases_rad = np.asarray(metadata["phases_rad"], dtype=float)
+
+    if amplitudes_upa.ndim != 1 or frequencies_hz.ndim != 1 or phases_rad.ndim != 1:
+        msg = "Tonal metadata arrays must be one-dimensional"
+        raise ValueError(msg)
+
+    num_tonals = len(amplitudes_upa)
+    if len(frequencies_hz) != num_tonals or len(phases_rad) != num_tonals:
+        msg = (
+            "Source tonal metadata arrays must have matching lengths: "
+            f"len(amplitudes_upa)={len(amplitudes_upa)}, "
+            f"len(frequencies_hz)={len(frequencies_hz)}, "
+            f"len(phases_rad)={len(phases_rad)}"
+        )
+        raise ValueError(msg)
+
+    return (
+        cast(FloatArray, amplitudes_upa),
+        cast(FloatArray, frequencies_hz),
+        cast(FloatArray, phases_rad),
+    )
+
+
 class NarrowbandSignalBase(DiscreteTimestepSignal, ABC):
     """Base class for narrowband anthropogenic signal models."""
 
@@ -29,62 +90,8 @@ class NarrowbandSignalBase(DiscreteTimestepSignal, ABC):
         self,
         source: "State",
     ) -> tuple[FloatArray, FloatArray, FloatArray]:
-        """Extract and validate tonal metadata from a source state.
-
-        Parameters
-        ----------
-        source : State
-            Source state exposing metadata containing tonal parameters.
-
-        Returns
-        -------
-        tuple[FloatArray, FloatArray, FloatArray]
-            Tuple of ``(amplitudes_upa, frequencies_hz, phases_rad)``.
-
-        Raises
-        ------
-        ValueError
-            If metadata is missing, malformed, or arrays are shape-incompatible.
-
-        """
-        metadata = getattr(source, "metadata", None)
-        if metadata is None:
-            msg = "Source state must define metadata for tonal synthesis"
-            raise ValueError(msg)
-        if not isinstance(metadata, Mapping):
-            msg = "Source metadata must be mapping-like"
-            raise ValueError(msg)
-
-        required_keys = ("amplitudes_upa", "frequencies_hz", "phases_rad")
-        missing_keys = [key for key in required_keys if key not in metadata]
-        if missing_keys:
-            missing = ", ".join(missing_keys)
-            msg = f"Source metadata missing required keys: {missing}"
-            raise ValueError(msg)
-
-        amplitudes_upa = np.asarray(metadata["amplitudes_upa"], dtype=float)
-        frequencies_hz = np.asarray(metadata["frequencies_hz"], dtype=float)
-        phases_rad = np.asarray(metadata["phases_rad"], dtype=float)
-
-        if amplitudes_upa.ndim != 1 or frequencies_hz.ndim != 1 or phases_rad.ndim != 1:
-            msg = "Tonal metadata arrays must be one-dimensional"
-            raise ValueError(msg)
-
-        num_tonals = len(amplitudes_upa)
-        if len(frequencies_hz) != num_tonals or len(phases_rad) != num_tonals:
-            msg = (
-                "Source tonal metadata arrays must have matching lengths: "
-                f"len(amplitudes_upa)={len(amplitudes_upa)}, "
-                f"len(frequencies_hz)={len(frequencies_hz)}, "
-                f"len(phases_rad)={len(phases_rad)}"
-            )
-            raise ValueError(msg)
-
-        return (
-            cast(FloatArray, amplitudes_upa),
-            cast(FloatArray, frequencies_hz),
-            cast(FloatArray, phases_rad),
-        )
+        """Extract and validate tonal metadata from a source state."""
+        return _extract_tonal_metadata(source)
 
     def _scale_amplitudes_for_tloss(
         self,

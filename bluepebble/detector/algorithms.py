@@ -193,8 +193,10 @@ class CACFARDetector(DetectionAlgorithm):
                 mode="constant",
             )
             effective_num_training = np.convolve(edge_kernel, kernel, mode="valid")
-            with np.errstate(divide="ignore", invalid="ignore"):
-                noise_estimate = noise_sum / effective_num_training
+            safe_count = np.where(effective_num_training > 0, effective_num_training, 1)
+            noise_estimate = np.where(
+                effective_num_training > 0, noise_sum / safe_count, 0.0
+            )
 
         # The adaptive threshold is the noise estimate scaled by the factor.
         threshold = self.threshold_factor * noise_estimate
