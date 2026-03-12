@@ -353,12 +353,8 @@ def test_detections_gen_accumulates_across_multiple_sensor_data_per_step(monkeyp
     timestamp = datetime(2026, 1, 1, 12, 0, 0)
 
     # Two sensor data objects at the same timestamp, each with one beam
-    sd1 = SimpleNamespace(
-        beamformed_data=np.array([[3.0 + 0.0j]]), timestamp=timestamp
-    )
-    sd2 = SimpleNamespace(
-        beamformed_data=np.array([[5.0 + 0.0j]]), timestamp=timestamp
-    )
+    sd1 = SimpleNamespace(beamformed_data=np.array([[3.0 + 0.0j]]), timestamp=timestamp)
+    sd2 = SimpleNamespace(beamformed_data=np.array([[5.0 + 0.0j]]), timestamp=timestamp)
 
     class SelectFirst:
         def detect(self, data_map):
@@ -448,9 +444,9 @@ def test_snr_history_accumulates_one_row_per_timestep(monkeypatch) -> None:
     passive = _load_passive_detector_module(monkeypatch)
     t1 = datetime(2026, 1, 1, 12, 0, 0)
     t2 = datetime(2026, 1, 1, 12, 0, 1)
-    make_sd = lambda t: SimpleNamespace(
-        beamformed_data=np.array([[1.0 + 0.0j, 1.0 + 0.0j]]), timestamp=t
-    )
+
+    def make_sd(t):
+        return SimpleNamespace(beamformed_data=np.array([[1.0 + 0.0j, 1.0 + 0.0j]]), timestamp=t)
 
     detector = passive.PassiveSonarDetector(
         detection_chain=[],
@@ -487,7 +483,7 @@ def test_detections_gen_custom_snr_percentile_val(monkeypatch) -> None:
             captured_10.append(data_map.copy())
             return np.empty((0, 2))
 
-    for captured, pct, chain in [
+    for _captured, pct, chain in [
         (captured_50, 50, [Capture50()]),
         (captured_10, 10, [Capture10()]),
     ]:
@@ -496,7 +492,11 @@ def test_detections_gen_custom_snr_percentile_val(monkeypatch) -> None:
             sensor_data_gen=iter([(timestamp, [sensor_data])]),
             steering_azimuths_rad=np.array([0.1, 0.2, 0.3, 0.4]),
         )
-        list(detector.detections_gen(beamformer_output_type="snr_percentile", snr_percentile_val=pct))
+        list(
+            detector.detections_gen(
+                beamformer_output_type="snr_percentile", snr_percentile_val=pct
+            )
+        )
 
     # Higher percentile → higher noise floor → lower SNR values
     assert captured_50[0].max() < captured_10[0].max()
