@@ -13,10 +13,10 @@ from stonesoup.types.sensordata import SensorData
 from ..signal.utils import apply_fade_in, apply_fade_out, inverse_stft
 from .base import PassiveSonarArraySimulatorBase
 
+from ..signal.anthropogenic.base import BroadbandStftSignalBase
+
 if TYPE_CHECKING:
     from stonesoup.types.state import State
-
-    from ..signal.anthropogenic.base import BroadbandStftSignalBase
 
 FloatArray: TypeAlias = NDArray[np.float64]
 Complex64Array: TypeAlias = NDArray[np.complex64]
@@ -31,7 +31,7 @@ class _SpectrumPropagationModel(Protocol):
     def propagate_spectrum(
         self,
         platform: object,
-        source: State,
+        source: "State",
         frequencies_hz: ArrayLike,
     ) -> tuple[ComplexArray, float]:
         """Return per-sensor transfer functions and propagation time."""
@@ -214,8 +214,8 @@ class ContinuousSTFTPassiveSonarArraySimulator(PassiveSonarArraySimulatorBase):
     def _build_common_context(
         self,
         all_timestamps: list[datetime],
-        signal_models_list: list[BroadbandStftSignalBase],
-        first_state: State,
+        signal_models_list: "list[BroadbandStftSignalBase]",
+        first_state: "State",
     ) -> _STFTCommonContext:
         """Build shared STFT metadata for synthesis.
 
@@ -262,8 +262,8 @@ class ContinuousSTFTPassiveSonarArraySimulator(PassiveSonarArraySimulatorBase):
     def _build_target_histories(
         self,
         ctx: _STFTCommonContext,
-        ground_truth_paths: list[Iterable[State]],
-        signal_models_list: list[BroadbandStftSignalBase],
+        ground_truth_paths: "list[Iterable[State]]",
+        signal_models_list: "list[BroadbandStftSignalBase]",
     ) -> list[_STFTTargetHistory]:
         """Build per-target source and channel histories at knot times.
 

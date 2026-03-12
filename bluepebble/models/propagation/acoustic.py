@@ -63,7 +63,7 @@ class _RtrsRunSimulation(Protocol):
         ...
 
 
-def _get_source_metadata(source: State) -> Mapping[str, object]:
+def _get_source_metadata(source: "State") -> Mapping[str, object]:
     """Return validated source metadata mapping."""
     metadata = getattr(source, "metadata", None)
     if not isinstance(metadata, Mapping):
@@ -72,7 +72,7 @@ def _get_source_metadata(source: State) -> Mapping[str, object]:
     return metadata
 
 
-def _get_source_position(source: State) -> FloatArray:
+def _get_source_position(source: "State") -> FloatArray:
     """Extract source position vector using ``position_mapping`` metadata."""
     metadata = _get_source_metadata(source)
     position_mapping = metadata.get("position_mapping")
@@ -88,7 +88,7 @@ def _get_source_position(source: State) -> FloatArray:
     return np.asarray(source.state_vector[mapping_array.tolist()], dtype=float)
 
 
-def _get_source_tonal_arrays(source: State) -> tuple[FloatArray, FloatArray]:
+def _get_source_tonal_arrays(source: "State") -> tuple[FloatArray, FloatArray]:
     """Extract validated source tonal frequencies and amplitudes."""
     metadata = _get_source_metadata(source)
     required_keys = ("frequencies_hz", "amplitudes_upa")

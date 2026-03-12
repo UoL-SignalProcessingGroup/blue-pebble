@@ -24,7 +24,7 @@ SensorBatch: TypeAlias = tuple[datetime, set[SensorData]]
 class _StftSourceSignalModel(Protocol):
     """Protocol for signal models exposing STFT-backed source caching."""
 
-    def compute_stft(self, source: State) -> object:
+    def compute_stft(self, source: "State") -> object:
         """Compute and cache a source STFT."""
         ...
 
@@ -38,7 +38,7 @@ class _BaseSignalModel(Protocol):
 
     def _generate_base_signal(
         self,
-        source: State,
+        source: "State",
     ) -> NDArray[np.floating[Any] | np.complexfloating[Any, Any]]:
         """Generate base source waveform."""
         ...
@@ -50,7 +50,7 @@ class _SpectrumPropagationModel(Protocol):
     def propagate_spectrum(
         self,
         platform: object,
-        source: State,
+        source: "State",
         frequencies_hz: NDArray[np.float64],
     ) -> tuple[NDArray[np.complexfloating[Any, Any]], float]:
         """Return per-sensor transfer functions and propagation time."""
@@ -114,7 +114,7 @@ class DiscretePassiveSonarArraySimulator(PassiveSonarArraySimulatorBase):
         return self._resolve_models(self.signal_models, num_targets, "signal models")
 
     @staticmethod
-    def _get_target_first_state(target_path: Iterable[State]) -> State | None:
+    def _get_target_first_state(target_path: "Iterable[State]") -> "State | None":
         """Return the first state from a target path.
 
         Parameters
@@ -136,7 +136,7 @@ class DiscretePassiveSonarArraySimulator(PassiveSonarArraySimulatorBase):
     @staticmethod
     def _get_broadband_source_signal(
         signal_model: Signal,
-        first_state: State | None,
+        first_state: "State | None",
     ) -> Complex128Array:
         """Get a source waveform from supported signal-model interfaces.
 
