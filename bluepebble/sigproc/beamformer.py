@@ -716,7 +716,7 @@ class SteeringCalculator(Base):
         doc="Azimuth angles for steering, in radians",
     )
 
-    def calculate(self, platform: Platform) -> FloatArray:
+    def calculate(self, platform: "Platform") -> FloatArray:
         """Calculate per-direction per-sensor steering delays.
 
         This method assumes the platform has an `array` attribute which is an object with

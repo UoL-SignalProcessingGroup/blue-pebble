@@ -20,7 +20,7 @@ FloatArray: TypeAlias = NDArray[np.float64]
 Complex128Array: TypeAlias = NDArray[np.complex128]
 
 
-def _extract_tonal_metadata(source: State) -> tuple[FloatArray, FloatArray, FloatArray]:
+def _extract_tonal_metadata(source: "State") -> tuple[FloatArray, FloatArray, FloatArray]:
     """Extract and validate tonal metadata from a source state."""
     metadata = getattr(source, "metadata", None)
     if metadata is None:
@@ -161,7 +161,7 @@ class BroadbandSyntheticSignal(BroadbandStftSignalBase):
         self._noise_realization: Complex128Array | None = None
         self._tonal_realizations: list[Complex128Array] | None = None
 
-    def _generate_source_signal(self, source: State) -> Complex128Array:
+    def _generate_source_signal(self, source: "State") -> Complex128Array:
         """Generate the complete source signal with broadband tonals and noise.
 
         This method creates:
@@ -470,7 +470,7 @@ class BroadbandRecordedSignal(BroadbandStftSignalBase):
             return signal
         return signal * (target_rms_upa / current_rms)
 
-    def _generate_source_signal(self, source: State) -> Complex128Array:
+    def _generate_source_signal(self, source: "State") -> Complex128Array:
         """Generate full-duration source signal from measured WAV data.
 
         Parameters

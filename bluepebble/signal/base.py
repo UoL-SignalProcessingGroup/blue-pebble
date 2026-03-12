@@ -47,7 +47,7 @@ class Signal(Base, ABC):
 
     def generate(
         self,
-        source: State,
+        source: "State",
         sensor_delays_s: ArrayLike,
         tloss_db: ArrayLike | float,
         propagation_time_s: float,

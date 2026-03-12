@@ -27,7 +27,7 @@ class NarrowbandSignalBase(DiscreteTimestepSignal, ABC):
 
     def _extract_tonal_metadata(
         self,
-        source: State,
+        source: "State",
     ) -> tuple[FloatArray, FloatArray, FloatArray]:
         """Extract and validate tonal metadata from a source state.
 
@@ -222,7 +222,7 @@ class NarrowbandStatefulSignalBase(NarrowbandSignalBase, ABC):
 
     def _get_source_key(
         self,
-        source: State,
+        source: "State",
         num_sensors: int,
     ) -> tuple[tuple[float, ...], int]:
         """Generate a hashable key for per-source state tracking."""
@@ -231,7 +231,7 @@ class NarrowbandStatefulSignalBase(NarrowbandSignalBase, ABC):
 
     def _get_or_create_source_state(
         self,
-        source: State,
+        source: "State",
         num_sensors: int,
         default_factory: Callable[[], SourceStateStore],
     ) -> SourceStateStore:
@@ -244,7 +244,7 @@ class NarrowbandStatefulSignalBase(NarrowbandSignalBase, ABC):
     def _update_cumulative_time_s(
         self,
         state: MutableMapping[str, object],
-        source: State,
+        source: "State",
     ) -> float:
         """Update cumulative synthesis time used for phase continuity."""
         source_time = getattr(source, "timestamp", None)
@@ -300,10 +300,10 @@ class BroadbandStftSignalBase(ContinuousTimestepSignal, ABC):
         self._source_signal: ComplexArray | None = None
 
     @abstractmethod
-    def _generate_source_signal(self, source: State) -> ComplexArray:
+    def _generate_source_signal(self, source: "State") -> ComplexArray:
         """Generate full-duration source waveform for STFT processing."""
 
-    def compute_stft(self, source: State) -> CachedStftResult:
+    def compute_stft(self, source: "State") -> CachedStftResult:
         """Compute and cache STFT outputs for the source signal.
 
         Parameters
@@ -388,7 +388,7 @@ class BroadbandStftSignalBase(ContinuousTimestepSignal, ABC):
 
     def generate(
         self,
-        source: State,
+        source: "State",
         sensor_delays_s: ArrayLike,
         tloss_db: ArrayLike | float,
         propagation_time_s: float,

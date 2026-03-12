@@ -48,7 +48,7 @@ class PassiveSonarArraySimulatorBase(SensorSimulator):
         default=None,
         doc="Steering calculator (optional)",
     )
-    ground_truth_paths: list[GroundTruthPath] = Property(
+    ground_truth_paths: list["GroundTruthPath"] = Property(
         default=None,
         doc="List of GroundTruthPath objects",
     )
@@ -88,7 +88,7 @@ class PassiveSonarArraySimulatorBase(SensorSimulator):
         )
 
     @staticmethod
-    def _target_state_at(target_path: Iterable[State], timestamp: datetime) -> State | None:
+    def _target_state_at(target_path: Iterable["State"], timestamp: datetime) -> "State | None":
         """Return the target state at a requested timestamp.
 
         Parameters

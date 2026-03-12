@@ -50,7 +50,7 @@ class NarrowbandTonalSignal(NarrowbandSignalBase):
 
     def generate(
         self,
-        source: State,
+        source: "State",
         sensor_delays_s: ArrayLike,
         tloss_db: ArrayLike | float,
         propagation_time_s: float,
@@ -71,8 +71,7 @@ class NarrowbandTonalSignal(NarrowbandSignalBase):
         Returns
         -------
         Complex128Array
-            Complex sensor snapshot matrix with shape
-            ``(num_sensors, num_samples)``.
+            Complex sensor snapshot matrix with shape ``(num_sensors, num_samples)``.
 
         """
         time_array_s = self._build_time_array()
@@ -96,7 +95,7 @@ class NarrowbandBlendedTonalSignal(NarrowbandStatefulSignalBase):
 
     def generate(
         self,
-        source: State,
+        source: "State",
         sensor_delays_s: ArrayLike,
         tloss_db: ArrayLike | float,
         propagation_time_s: float,
@@ -117,8 +116,7 @@ class NarrowbandBlendedTonalSignal(NarrowbandStatefulSignalBase):
         Returns
         -------
         Complex128Array
-            Complex sensor snapshot matrix with shape
-            ``(num_sensors, num_samples)``.
+            Complex sensor snapshot matrix with shape ``(num_sensors, num_samples)``.
 
         """
         num_sensors = len(sensor_delays_s)
@@ -180,7 +178,7 @@ class NarrowbandOverlapAddTonalSignal(NarrowbandStatefulSignalBase):
 
     def generate(
         self,
-        source: State,
+        source: "State",
         sensor_delays_s: ArrayLike,
         tloss_db: ArrayLike | float,
         propagation_time_s: float,
@@ -201,8 +199,7 @@ class NarrowbandOverlapAddTonalSignal(NarrowbandStatefulSignalBase):
         Returns
         -------
         Complex128Array
-            Complex sensor snapshot matrix with shape
-            ``(num_sensors, num_samples)``.
+            Complex sensor snapshot matrix with shape ``(num_sensors, num_samples)``.
 
         """
         num_sensors = len(sensor_delays_s)

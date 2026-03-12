@@ -135,7 +135,7 @@ class AcousticPropagationModel(ABC, Base):
     ssp: SoundSpeedProfile = Property(doc="Sound speed profile")
 
     @abstractmethod
-    def propagate(self, platform: Platform, source: State) -> PropagationResult:
+    def propagate(self, platform: "Platform", source: "State") -> PropagationResult:
         """Propagate a signal from a source to a platform.
 
         Notes
@@ -145,7 +145,7 @@ class AcousticPropagationModel(ABC, Base):
         """
         ...
 
-    def compute_sensor_delays(self, platform: Platform, source: State) -> FloatArray:
+    def compute_sensor_delays(self, platform: "Platform", source: "State") -> FloatArray:
         """Compute time delays for each sensor in an array.
 
         The method calculates time-differences-of-arrival (TDOA) relative to the array reference
@@ -207,7 +207,7 @@ class CylindricalAcousticPropagationModel(AcousticPropagationModel):
         if self.attenuation_factor < 0:
             raise ValueError("Attenuation factor must be non-negative.")
 
-    def propagate(self, platform: Platform, source: State) -> tuple[float, float]:
+    def propagate(self, platform: "Platform", source: "State") -> tuple[float, float]:
         """Propagate a signal using a cylindrical spreading loss model.
 
         The model combines cylindrical spreading (10*log10(r)) with a frequency-independent
@@ -237,7 +237,7 @@ class CylindricalAcousticPropagationModel(AcousticPropagationModel):
         return float(tloss), float(time)
 
     def propagate_spectrum(
-        self, platform: Platform, source: State, frequencies_hz: ArrayLike
+        self, platform: "Platform", source: "State", frequencies_hz: ArrayLike
     ) -> SpectrumResult:
         """Propagate spectrum using cylindrical spreading.
 
@@ -326,7 +326,7 @@ class SphericalAcousticPropagationModel(AcousticPropagationModel):
         if self.attenuation_factor < 0:
             raise ValueError("Attenuation factor must be non-negative.")
 
-    def propagate(self, platform: Platform, source: State) -> tuple[float, float]:
+    def propagate(self, platform: "Platform", source: "State") -> tuple[float, float]:
         """Propagate a signal using a spherical spreading loss model.
 
         The model combines spherical spreading (20*log10(r)) with a frequency-independent
@@ -356,7 +356,7 @@ class SphericalAcousticPropagationModel(AcousticPropagationModel):
         return float(tloss), float(time)
 
     def propagate_spectrum(
-        self, platform: Platform, source: State, frequencies_hz: ArrayLike
+        self, platform: "Platform", source: "State", frequencies_hz: ArrayLike
     ) -> SpectrumResult:
         """Propagate spectrum using spherical spreading.
 
@@ -466,7 +466,7 @@ class BellhopAcousticPropagationModel(AcousticPropagationModel):
             )
         return bellhop_path
 
-    def propagate(self, platform: Platform, source: State) -> tuple[float, float]:
+    def propagate(self, platform: "Platform", source: "State") -> tuple[float, float]:
         """Run a Bellhop simulation for a single source and receiver.
 
         The method writes a Bellhop environment file, executes the Bellhop binary, reads the
@@ -539,8 +539,8 @@ class BellhopAcousticPropagationModel(AcousticPropagationModel):
 
     def _create_env_file(
         self,
-        platform: Platform,
-        source: State,
+        platform: "Platform",
+        source: "State",
         output_dir: Path = Path("."),
         options: str = "SVW",
         bottom_bc: str = "A",
@@ -808,7 +808,7 @@ class rtrsAcousticPropagationModel(AcousticPropagationModel):
 
         return max_steps, max_range_m
 
-    def propagate(self, platform: Platform, source: State) -> PropagationResult:
+    def propagate(self, platform: "Platform", source: "State") -> PropagationResult:
         """Run an rtrs simulation for a single source and receiver.
 
         The method prepares the rtrs environment, runs the ray-tracing simulation and returns
@@ -1001,8 +1001,8 @@ class rtrsAcousticPropagationModel(AcousticPropagationModel):
 
     def propagate_spectrum(
         self,
-        platform: Platform,
-        source: State,
+        platform: "Platform",
+        source: "State",
         frequencies_hz: ArrayLike,
     ) -> SpectrumResult:
         """Run rtrs simulation for broadband spectrum propagation.

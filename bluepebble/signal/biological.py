@@ -30,7 +30,7 @@ class CallEvent(TypedDict):
     amplitude: float
 
 
-def _get_source_metadata(source: State) -> Mapping[str, object]:
+def _get_source_metadata(source: "State") -> Mapping[str, object]:
     """Return validated source metadata mapping."""
     metadata = getattr(source, "metadata", None)
     if not isinstance(metadata, Mapping):
@@ -39,7 +39,7 @@ def _get_source_metadata(source: State) -> Mapping[str, object]:
     return metadata
 
 
-def _get_source_amplitude_upa(source: State) -> float:
+def _get_source_amplitude_upa(source: "State") -> float:
     """Read scalar source amplitude metadata."""
     metadata = _get_source_metadata(source)
     if "amplitude_upa" not in metadata:
@@ -48,7 +48,7 @@ def _get_source_amplitude_upa(source: State) -> float:
     return float(metadata["amplitude_upa"])
 
 
-def _get_source_position(source: State) -> FloatArray:
+def _get_source_position(source: "State") -> FloatArray:
     """Extract source position vector using metadata mapping."""
     metadata = _get_source_metadata(source)
     position_mapping = metadata.get("position_mapping")
@@ -213,7 +213,7 @@ class PointSourceSnappingShrimpSignal(Signal):
         )
         return np.maximum(0, base_rate * (1 + diurnal_mod + tidal_mod))
 
-    def _generate_base_signal(self, source: State) -> FloatArray:
+    def _generate_base_signal(self, source: "State") -> FloatArray:
         """Generate the base snapping shrimp signal for a single point source.
 
         This creates a 1-D time series of snapping events for the point colony. Event amplitudes
@@ -299,7 +299,7 @@ class PointSourceSnappingShrimpSignal(Signal):
 
     def generate(
         self,
-        source: State,
+        source: "State",
         sensor_delays_s: ArrayLike,
         tloss_db: ArrayLike | float,
         propagation_time_s: float,
@@ -438,7 +438,7 @@ class DiffuseSnappingShrimpSignal(Signal):
         )
         return np.maximum(0, base_rate * (1 + diurnal_mod + tidal_mod))
 
-    def _generate_base_signal(self, source: State, lambda_rate_fraction: float) -> FloatArray:
+    def _generate_base_signal(self, source: "State", lambda_rate_fraction: float) -> FloatArray:
         """Generate a sparse base signal for a single sub-source.
 
         This is used by the diffuse-field model to simulate one incoherent contributor in the
@@ -507,7 +507,7 @@ class DiffuseSnappingShrimpSignal(Signal):
 
     def generate(
         self,
-        source: State,
+        source: "State",
         sensor_delays_s: ArrayLike,
         tloss_db: ArrayLike | float,
         propagation_time_s: float,
@@ -855,7 +855,7 @@ class WhaleCallSignal(Signal):
 
         return filtered_call
 
-    def _generate_random_call_sequence(self, source: State) -> list[CallEvent]:
+    def _generate_random_call_sequence(self, source: "State") -> list[CallEvent]:
         """Generate a sequence of random, unstructured whale calls.
 
         Parameters
@@ -907,7 +907,7 @@ class WhaleCallSignal(Signal):
 
         return potential_events
 
-    def _generate_structured_song_sequence(self, source: State) -> list[CallEvent]:
+    def _generate_structured_song_sequence(self, source: "State") -> list[CallEvent]:
         """Generate a structured song based on themes and phrases.
 
         Parameters
@@ -974,7 +974,7 @@ class WhaleCallSignal(Signal):
 
         return potential_events
 
-    def _generate_call_sequence(self, source: State) -> list[CallEvent]:
+    def _generate_call_sequence(self, source: "State") -> list[CallEvent]:
         """Generate a sequential sequence of whale calls from a single source.
 
         Prevents overlapping calls.
@@ -1016,7 +1016,7 @@ class WhaleCallSignal(Signal):
 
         return sequential_events
 
-    def _generate_base_signal(self, source: State) -> FloatArray:
+    def _generate_base_signal(self, source: "State") -> FloatArray:
         """Generate the base 1D time-domain signal for the whale calls.
 
         Parameters
@@ -1050,7 +1050,7 @@ class WhaleCallSignal(Signal):
 
     def generate(
         self,
-        source: State,
+        source: "State",
         sensor_delays_s: ArrayLike,
         tloss_db: ArrayLike | float,
         propagation_time_s: float,
