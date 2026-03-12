@@ -600,7 +600,7 @@ def test_deprecated_discrete_simulator_warns_and_yields(monkeypatch) -> None:
     t1 = t0 + timedelta(seconds=1)
 
     with pytest.warns(DeprecationWarning, match="deprecated"):
-        simulator = discrete.DepreciatedDiscretePassiveSonarArraySimulator(
+        simulator = discrete.DeprecatedDiscretePassiveSonarArraySimulator(
             platform=_FakePlatform([t1, t0], num_sensors=1)
         )
 
@@ -630,7 +630,7 @@ def test_deprecated_discrete_generate_sensor_data_validates_and_covers_modes(mon
             return np.array([[7.0 + 0.0j, 8.0 + 0.0j]], dtype=np.complex128)
 
     with pytest.warns(DeprecationWarning, match="deprecated"):
-        simulator = discrete.DepreciatedDiscretePassiveSonarArraySimulator(
+        simulator = discrete.DeprecatedDiscretePassiveSonarArraySimulator(
             platform=platform,
             propagation_model=SimpleNamespace(),
             signal_models=[FallbackSignalModel()],
@@ -641,7 +641,7 @@ def test_deprecated_discrete_generate_sensor_data_validates_and_covers_modes(mon
         simulator._generate_sensor_data_at(timestamp)
 
     with pytest.warns(DeprecationWarning, match="deprecated"):
-        simulator = discrete.DepreciatedDiscretePassiveSonarArraySimulator(
+        simulator = discrete.DeprecatedDiscretePassiveSonarArraySimulator(
             platform=platform,
             propagation_model=SimpleNamespace(),
             signal_models=[FallbackSignalModel()],
@@ -660,7 +660,7 @@ def test_deprecated_discrete_generate_sensor_data_validates_and_covers_modes(mon
         compute_sensor_delays=lambda platform_state, target_state: np.array([0.0]),
     )
     with pytest.warns(DeprecationWarning, match="deprecated"):
-        simulator = discrete.DepreciatedDiscretePassiveSonarArraySimulator(
+        simulator = discrete.DeprecatedDiscretePassiveSonarArraySimulator(
             platform=platform,
             propagation_model=propagation,
             signal_models=[FallbackSignalModel()],
@@ -701,7 +701,7 @@ def test_deprecated_discrete_generate_sensor_data_validates_and_covers_modes(mon
         compute_sensor_delays=lambda platform_state, target_state: np.array([0.0]),
     )
     with pytest.warns(DeprecationWarning, match="deprecated"):
-        simulator = discrete.DepreciatedDiscretePassiveSonarArraySimulator(
+        simulator = discrete.DeprecatedDiscretePassiveSonarArraySimulator(
             platform=platform,
             propagation_model=propagation_tl,
             signal_models=[TlSignalModel()],
@@ -735,7 +735,7 @@ def test_deprecated_discrete_generate_sensor_data_validates_and_covers_modes(mon
         compute_sensor_delays=lambda platform_state, target_state: np.array([0.0]),
     )
     with pytest.warns(DeprecationWarning, match="deprecated"):
-        simulator = discrete.DepreciatedDiscretePassiveSonarArraySimulator(
+        simulator = discrete.DeprecatedDiscretePassiveSonarArraySimulator(
             platform=platform,
             propagation_model=propagation_spectrum,
             signal_models=[SpectrumBaseSignal()],
@@ -751,7 +751,7 @@ def test_deprecated_discrete_generate_sensor_data_validates_and_covers_modes(mon
             return np.array([1.0, 2.0, 3.0, 4.0, 9.0], dtype=np.complex128)
 
     with pytest.warns(DeprecationWarning, match="deprecated"):
-        simulator = discrete.DepreciatedDiscretePassiveSonarArraySimulator(
+        simulator = discrete.DeprecatedDiscretePassiveSonarArraySimulator(
             platform=platform,
             propagation_model=propagation_spectrum,
             signal_models=[SpectrumLongSignal()],
@@ -767,7 +767,7 @@ def test_deprecated_discrete_generate_sensor_data_validates_and_covers_modes(mon
             return np.array([1.0, 2.0, 3.0, 4.0], dtype=np.complex128)
 
     with pytest.warns(DeprecationWarning, match="deprecated"):
-        simulator = discrete.DepreciatedDiscretePassiveSonarArraySimulator(
+        simulator = discrete.DeprecatedDiscretePassiveSonarArraySimulator(
             platform=platform,
             propagation_model=propagation_spectrum,
             signal_models=[SpectrumExactSignal()],
@@ -779,7 +779,7 @@ def test_deprecated_discrete_generate_sensor_data_validates_and_covers_modes(mon
 
     missing_path = _FakePath(states=[_FakeState(timestamp + timedelta(seconds=1))])
     with pytest.warns(DeprecationWarning, match="deprecated"):
-        simulator = discrete.DepreciatedDiscretePassiveSonarArraySimulator(
+        simulator = discrete.DeprecatedDiscretePassiveSonarArraySimulator(
             platform=platform,
             propagation_model=propagation_tl,
             signal_models=[TlSignalModel()],

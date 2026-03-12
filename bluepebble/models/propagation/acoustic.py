@@ -134,7 +134,7 @@ class AcousticPropagationModel(ABC, Base):
     It defines a common interface and implements shared functionality.
     """
 
-    ssp: SoundSpeedProfile = Property(SoundSpeedProfile, doc="Sound speed profile")
+    ssp: SoundSpeedProfile = Property(doc="Sound speed profile")
 
     @abstractmethod
     def propagate(self, platform: Platform, source: State) -> PropagationResult:
@@ -202,9 +202,7 @@ class CylindricalAcousticPropagationModel(AcousticPropagationModel):
 
     """
 
-    attenuation_factor: float = Property(
-        float, default=0.5, doc="The absorption loss factor in dB/km"
-    )
+    attenuation_factor: float = Property(default=0.5, doc="The absorption loss factor in dB/km")
 
     def __post_init__(self) -> None:
         """Validate the attenuation factor after initialisation."""
@@ -323,9 +321,7 @@ class SphericalAcousticPropagationModel(AcousticPropagationModel):
 
     """
 
-    attenuation_factor: float = Property(
-        float, default=0.001, doc="The absorption loss factor in dB/km"
-    )
+    attenuation_factor: float = Property(default=0.001, doc="The absorption loss factor in dB/km")
 
     def __post_init__(self) -> None:
         """Validate the attenuation factor after initialization."""
@@ -449,9 +445,8 @@ class BellhopAcousticPropagationModel(AcousticPropagationModel):
 
     """
 
-    env_depth: float = Property(float, doc="The depth of the environment in meters")
+    env_depth: float = Property(doc="The depth of the environment in meters")
     exe_path: str = Property(
-        str,
         default="bellhopcxx",
         doc="The path to Bellhop executable, defaults to 'bellhopcxx'",
     )
@@ -696,50 +691,43 @@ class rtrsAcousticPropagationModel(AcousticPropagationModel):
 
     """
 
-    bathymetry: Bathymetry = Property(Bathymetry, doc="Bathymetry model")
-    step_m: float = Property(float, default=15.0, doc="Ray tracing step size in meters")
+    bathymetry: Bathymetry = Property(doc="Bathymetry model")
+    step_m: float = Property(default=15.0, doc="Ray tracing step size in meters")
     ssp_resolution: tuple[float, float, float] = Property(
-        tuple,
         default=(5000.0, 5000.0, 100.0),
         doc="Resolution for SSP grid (x, y, z) in meters",
     )
     azimuth_search_width: float = Property(
-        float,
         default=1.0,
         doc="Angular width in degrees to search for azimuth angles",
     )
     azimuth_resolution: float = Property(
-        float, default=0.5, doc="Angular resolution for azimuth search in degrees"
+        default=0.5, doc="Angular resolution for azimuth search in degrees"
     )
     elevation_range: tuple[float, float] = Property(
-        tuple, default=(-70.0, 70.0), doc="Min and max elevation angles in degrees"
+        default=(-70.0, 70.0), doc="Min and max elevation angles in degrees"
     )
     elevation_resolution: float = Property(
-        float, default=1.0, doc="Angular resolution for elevation in degrees"
+        default=1.0, doc="Angular resolution for elevation in degrees"
     )
     use_all_frequencies: bool = Property(
-        bool,
         default=False,
         doc="If True, run rtrs for all tonal frequencies. If False, use only the "
         "loudest frequency. Not used for propagated spectrum method.",
     )
     water_density_g_cm3: float | None = Property(
-        float,
         default=None,
         doc="Optional water density passed to rtrs bathymetry config (g/cm^3)",
     )
     bottom_model: dict[str, object] | None = Property(
-        dict,
         default=None,
         doc="Bottom boundary model dictionary for rtrs",
     )
     store_ray_paths: bool = Property(
-        bool,
         default=False,
         doc="If True, store full ray paths in rtrs output, not needed for Blue Pebble",
     )
     integration_method: str = Property(
-        str,
         default="euler",
         doc='Beam integration method for rtrs ("euler" or "rk2")',
     )

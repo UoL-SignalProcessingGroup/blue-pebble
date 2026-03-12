@@ -32,8 +32,8 @@ class Signal(Base, ABC):
 
     """
 
-    duration_s: float = Property(float, doc="Duration of the signal in seconds")
-    sampling_rate_hz: int = Property(int, doc="Sampling rate in Hertz")
+    duration_s: float = Property(doc="Duration of the signal in seconds")
+    sampling_rate_hz: int = Property(doc="Sampling rate in Hertz")
 
     @property
     def num_samples(self) -> int:

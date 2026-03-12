@@ -285,13 +285,12 @@ class NarrowbandStatefulSignalBase(NarrowbandSignalBase, ABC):
 class BroadbandStftSignalBase(ContinuousTimestepSignal, ABC):
     """Base class for broadband STFT-first anthropogenic signal models."""
 
-    frame_len: int = Property(int, default=1024, doc="STFT frame length in samples")
+    frame_len: int = Property(default=1024, doc="STFT frame length in samples")
     hop_factor: int = Property(
-        int,
         default=4,
         doc="Hop factor (hop = frame_len // hop_factor)",
     )
-    window_type: str = Property(str, default="hann", doc="Window type for STFT")
+    window_type: str = Property(default="hann", doc="Window type for STFT")
 
     def __init__(self, *args: object, **kwargs: object) -> None:
         """Initialise shared broadband STFT caches."""

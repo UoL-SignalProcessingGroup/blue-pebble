@@ -77,11 +77,11 @@ class DelayAndSumBeamformer(Beamformer):
         default="time",
         doc="Beamforming domain: 'time', 'frequency', or 'broadband_power'.",
     )
-    nfft: int = Property(int, default=500, doc="STFT window size (samples)")
-    overlap: int = Property(int, default=250, doc="STFT overlap (samples)")
-    f0: float = Property(float, default=0.0, doc="Carrier frequency for baseband data (Hz)")
-    fmin: float | None = Property(float, default=None, doc="Minimum frequency to integrate (Hz)")
-    fmax: float | None = Property(float, default=None, doc="Maximum frequency to integrate (Hz)")
+    nfft: int = Property(default=500, doc="STFT window size (samples)")
+    overlap: int = Property(default=250, doc="STFT overlap (samples)")
+    f0: float = Property(default=0.0, doc="Carrier frequency for baseband data (Hz)")
+    fmin: float | None = Property(default=None, doc="Minimum frequency to integrate (Hz)")
+    fmax: float | None = Property(default=None, doc="Maximum frequency to integrate (Hz)")
 
     def __init__(self, *args: object, **kwargs: object) -> None:
         """Initialise the DelayAndSumBeamformer.
@@ -503,11 +503,11 @@ class MinimumVarianceDistortionlessResponseBeamformer(Beamformer):
         float,
         doc="The sampling frequency of the sensor signals, in Hz",
     )
-    nfft: int = Property(int, default=500, doc="STFT window size (samples)")
-    overlap: int = Property(int, default=250, doc="STFT overlap (samples)")
-    f0: float = Property(float, default=0.0, doc="Carrier frequency for baseband data (Hz)")
-    fmin: float | None = Property(float, default=None, doc="Minimum frequency to integrate (Hz)")
-    fmax: float | None = Property(float, default=None, doc="Maximum frequency to integrate (Hz)")
+    nfft: int = Property(default=500, doc="STFT window size (samples)")
+    overlap: int = Property(default=250, doc="STFT overlap (samples)")
+    f0: float = Property(default=0.0, doc="Carrier frequency for baseband data (Hz)")
+    fmin: float | None = Property(default=None, doc="Minimum frequency to integrate (Hz)")
+    fmax: float | None = Property(default=None, doc="Maximum frequency to integrate (Hz)")
 
     def beamform(self, sensor_signals: ArrayLike, steering_delays_s: ArrayLike) -> FloatArray:
         """Perform broadband MVDR beamforming and return power time-series.

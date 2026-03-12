@@ -94,7 +94,7 @@ class NarrowbandTonalSignal(NarrowbandSignalBase):
 class NarrowbandBlendedTonalSignal(NarrowbandStatefulSignalBase):
     """Generate narrowband tonal signals with overlap blending for continuity."""
 
-    blend_fraction = Property(float, default=0.1, doc="Fraction of signal to blend for continuity")
+    blend_fraction: float = Property(default=0.1, doc="Fraction of signal to blend for continuity")
 
     def generate(
         self,

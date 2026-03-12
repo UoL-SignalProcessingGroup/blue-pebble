@@ -47,14 +47,12 @@ class PassiveSonarDetector(DetectionReader):
     """
 
     detection_chain: list[DetectionAlgorithm] = Property(
-        list,
         doc="A list of detection algorithms to apply sequentially.",
     )
     sensor_data_gen: Generator[SensorDataStep, None, None] = Property(
-        Generator, doc="Generator that yields PassiveSonarSensorData objects"
+        doc="Generator that yields PassiveSonarSensorData objects"
     )
     steering_azimuths_rad: FloatArray = Property(
-        np.ndarray,
         doc="Array of steering azimuth angles in radians.",
     )
 

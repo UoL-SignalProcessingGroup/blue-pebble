@@ -34,7 +34,7 @@ class PassiveSonarArraySimulatorBase(SensorSimulator):
     discrete-time and continuous broadband simulator implementations.
     """
 
-    platform: TowedArrayPlatform = Property(TowedArrayPlatform, doc="Towed array platform")
+    platform: TowedArrayPlatform = Property(doc="Towed array platform")
     propagation_model: AcousticPropagationModel = Property(
         AcousticPropagationModel,
         doc="Acoustic propagation model",

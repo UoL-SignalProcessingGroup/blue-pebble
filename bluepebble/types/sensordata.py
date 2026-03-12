@@ -28,4 +28,4 @@ class PassiveSonarSensorData(SensorData):
         default=None,
         doc="Processed beamformed output",
     )
-    timestamp: datetime = Property(datetime, doc="Timestamp of the sensor data")
+    timestamp: datetime = Property(doc="Timestamp of the sensor data")

@@ -16,7 +16,7 @@ class Effect(Base, ABC):
     @abstractmethod
     def apply(self, signals: ComplexArray, sampling_rate_hz: int) -> ComplexArray:
         """Apply the effect to the signal. Must be implemented by subclasses."""
-        pass
+        ...
 
 
 class Reverb(Effect):

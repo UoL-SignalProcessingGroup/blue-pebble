@@ -216,16 +216,18 @@ class OSCFARDetector(DetectionAlgorithm):
     This implementation uses a 'wrap' mode for boundary handling, consistent
     with the 'wrap' mode in the CA-CFAR detector.
 
-    Attributes:
-        num_guard_cells (int): The number of cells to ignore on each side of
-            the Cell Under Test (CUT).
-        num_training_cells (int): The number of cells to use for noise
-            estimation on each side of the guard cells.
-        rank (int): The k-th smallest value (1-indexed) to select from the
-            sorted training cells. Must be between 1 and
-            (2 * num_training_cells).
-        threshold_factor (float): A scaling factor (alpha) used to set the
-            detection threshold above the estimated noise floor.
+    Attributes
+    ----------
+    num_guard_cells : int
+        The number of cells to ignore on each side of the Cell Under Test (CUT).
+    num_training_cells : int
+        The number of cells to use for noise estimation on each side of the guard cells.
+    rank : int
+        The k-th smallest value (1-indexed) to select from the sorted training cells. Must be
+        between 1 and (2 * num_training_cells).
+    threshold_factor : float
+        A scaling factor (alpha) used to set the detection threshold above the estimated noise
+        floor.
 
     """
 

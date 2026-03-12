@@ -122,22 +122,20 @@ class PointSourceSnappingShrimpSignal(Signal):
     TEMP_TO_RATE_INTERCEPT = -685.0
 
     # --- Temporal Distribution Parameters ---
-    temperature_celsius: float = Property(float, doc="Water temperature in Celsius.")
+    temperature_celsius: float = Property(doc="Water temperature in Celsius.")
     start_time_hours: float = Property(
-        float, default=0.0, doc="Simulation start time in hours from midnight (0-24)."
+        default=0.0, doc="Simulation start time in hours from midnight (0-24)."
     )
     diurnal_amplitude: float = Property(
-        float, default=0.0, doc="Amplitude of diurnal snap rate modulation (0-1)."
+        default=0.0, doc="Amplitude of diurnal snap rate modulation (0-1)."
     )
     diurnal_phase_hours: float = Property(
-        float, default=0.0, doc="Phase offset of diurnal cycle in hours."
+        default=0.0, doc="Phase offset of diurnal cycle in hours."
     )
     tidal_amplitude: float = Property(
-        float, default=0.0, doc="Amplitude of tidal snap rate modulation (0-1)."
+        default=0.0, doc="Amplitude of tidal snap rate modulation (0-1)."
     )
-    tidal_phase_hours: float = Property(
-        float, default=0.0, doc="Phase offset of tidal cycle in hours."
-    )
+    tidal_phase_hours: float = Property(default=0.0, doc="Phase offset of tidal cycle in hours.")
 
     # --- Snap Amplitude Distribution Parameters ---
     alpha: float = Property(
@@ -147,15 +145,15 @@ class PointSourceSnappingShrimpSignal(Signal):
     )
 
     # --- Individual Snap Waveform Parameters ---
-    delay_duration: float = Property(float, default=0.0006, doc="Pre-snap delay in seconds.")
-    onset_duration: float = Property(float, default=0.0001, doc="Snap onset duration in seconds.")
-    snap_duration: float = Property(float, default=0.0014, doc="Snap impulse duration in seconds.")
-    onset_level: float = Property(float, default=0.15, doc="Relative amplitude of the onset.")
+    delay_duration: float = Property(default=0.0006, doc="Pre-snap delay in seconds.")
+    onset_duration: float = Property(default=0.0001, doc="Snap onset duration in seconds.")
+    snap_duration: float = Property(default=0.0014, doc="Snap impulse duration in seconds.")
+    onset_level: float = Property(default=0.15, doc="Relative amplitude of the onset.")
     onset_freq: float = Property(
         float, default=2500, doc="Frequency of the onset sine wave in Hz."
     )
-    snap_decay: float = Property(float, default=1000, doc="Exponential decay rate for the snap.")
-    low_cutoff_hz: float = Property(float, default=2000, doc="Bandpass filter low cutoff in Hz.")
+    snap_decay: float = Property(default=1000, doc="Exponential decay rate for the snap.")
+    low_cutoff_hz: float = Property(default=2000, doc="Bandpass filter low cutoff in Hz.")
     high_cutoff_hz: float = Property(
         float, default=15000, doc="Bandpass filter high cutoff in Hz."
     )
@@ -371,7 +369,7 @@ class DiffuseSnappingShrimpSignal(Signal):
     )
 
     # --- Temporal and Waveform Properties ---
-    temperature_celsius: float = Property(float, doc="Water temperature in Celsius.")
+    temperature_celsius: float = Property(doc="Water temperature in Celsius.")
     start_time_hours: float = Property(
         float, default=0.0, doc="Simulation start time in hours from midnight (0-24)."
     )
@@ -392,19 +390,19 @@ class DiffuseSnappingShrimpSignal(Signal):
         default=1.5,
         doc="Alpha parameter for the Symmetric Alpha-Stable distribution.",
     )
-    delay_duration: float = Property(float, default=0.0006, doc="Pre-snap delay in seconds.")
-    onset_duration: float = Property(float, default=0.0001, doc="Snap onset duration in seconds.")
-    snap_duration: float = Property(float, default=0.0014, doc="Snap impulse duration in seconds.")
-    onset_level: float = Property(float, default=0.15, doc="Relative amplitude of the onset.")
+    delay_duration: float = Property(default=0.0006, doc="Pre-snap delay in seconds.")
+    onset_duration: float = Property(default=0.0001, doc="Snap onset duration in seconds.")
+    snap_duration: float = Property(default=0.0014, doc="Snap impulse duration in seconds.")
+    onset_level: float = Property(default=0.15, doc="Relative amplitude of the onset.")
     onset_freq: float = Property(
         float, default=2500, doc="Frequency of the onset sine wave in Hz."
     )
-    snap_decay: float = Property(float, default=1000, doc="Exponential decay rate for the snap.")
-    low_cutoff_hz: float = Property(float, default=2000, doc="Bandpass filter low cutoff in Hz.")
+    snap_decay: float = Property(default=1000, doc="Exponential decay rate for the snap.")
+    low_cutoff_hz: float = Property(default=2000, doc="Bandpass filter low cutoff in Hz.")
     high_cutoff_hz: float = Property(
         float, default=15000, doc="Bandpass filter high cutoff in Hz."
     )
-    ssp: SoundSpeedProfile = Property(SoundSpeedProfile, doc="Sound speed profile object.")
+    ssp: SoundSpeedProfile = Property(doc="Sound speed profile object.")
     effects: list[Effect] | None = Property(
         list[Effect], default=None, doc="List of effects to apply to the signal."
     )
@@ -614,14 +612,14 @@ class WhaleCallSignal(Signal):
     )
 
     # --- Harmonic Structure Parameters ---
-    min_harmonics: int = Property(int, default=8, doc="Minimum number of harmonics per call.")
-    max_harmonics: int = Property(int, default=40, doc="Maximum number of harmonics per call.")
+    min_harmonics: int = Property(default=8, doc="Minimum number of harmonics per call.")
+    max_harmonics: int = Property(default=40, doc="Maximum number of harmonics per call.")
     harmonic_decay_db: float = Property(
         float, default=6.0, doc="Amplitude decay per harmonic in dB."
     )
 
     # --- Individual Call Waveform Parameters ---
-    call_duration_s: float = Property(float, default=2.0, doc="Duration of each call in seconds.")
+    call_duration_s: float = Property(default=2.0, doc="Duration of each call in seconds.")
     duration_jitter_s: float = Property(
         float, default=0.2, doc="Standard deviation of call duration jitter in seconds."
     )
@@ -631,7 +629,7 @@ class WhaleCallSignal(Signal):
     start_freq_jitter_hz: float = Property(
         float, default=100, doc="Standard deviation of starting frequency jitter in Hz."
     )
-    end_freq_hz: float = Property(float, default=5000, doc="Ending frequency of the call in Hz.")
+    end_freq_hz: float = Property(default=5000, doc="Ending frequency of the call in Hz.")
     end_freq_jitter_hz: float = Property(
         float, default=500, doc="Standard deviation of ending frequency jitter in Hz."
     )
@@ -654,7 +652,7 @@ class WhaleCallSignal(Signal):
     vibrato_rate_hz: float = Property(
         float, default=0.0, doc="Speed of the vibrato in oscillations per second (Hz)."
     )
-    vibrato_depth_hz: float = Property(float, default=0.0, doc="Intensity of the vibrato in Hz.")
+    vibrato_depth_hz: float = Property(default=0.0, doc="Intensity of the vibrato in Hz.")
     low_cutoff_hz: float = Property(
         float, default=50, doc="Bandpass filter low cutoff frequency in Hz."
     )
