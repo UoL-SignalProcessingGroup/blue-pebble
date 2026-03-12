@@ -55,11 +55,36 @@ Typical usage::
 from __future__ import annotations
 
 import copy
+from collections.abc import Sequence
 from dataclasses import dataclass
+from typing import TYPE_CHECKING, Protocol, TypeAlias
 
 import numpy as np
+from numpy.typing import ArrayLike, NDArray
 
-from .algorithms import DetectionAlgorithm
+if TYPE_CHECKING:
+    from .algorithms import DetectionAlgorithm
+
+FloatArray: TypeAlias = NDArray[np.float64]
+IntArray: TypeAlias = NDArray[np.int64]
+DetectionArray: TypeAlias = NDArray[np.float64]
+
+
+class _BearingStateLike(Protocol):
+    """Protocol for states carrying a bearing in ``state_vector``."""
+
+    state_vector: FloatArray
+
+
+class _GroundTruthPathLike(Protocol):
+    """Protocol for Stone Soup-like ground-truth paths."""
+
+    states: Sequence[_BearingStateLike]
+
+
+def _empty_detections() -> DetectionArray:
+    """Return a standard empty detection matrix of shape ``(0, 2)``."""
+    return np.empty((0, 2), dtype=np.float64)
 
 
 @dataclass
@@ -76,7 +101,7 @@ class SweepSpec:
         is swept (0-based).
     param_name : str
         Attribute name to sweep (e.g. ``"threshold_factor"``).
-    param_values : np.ndarray | list[float]
+    param_values : ArrayLike
         Sequence of values to evaluate, ordered from most permissive to most
         strict so ROC / PR curves trace in the canonical direction.
     label : str | None
@@ -85,10 +110,10 @@ class SweepSpec:
 
     """
 
-    detection_chain: list[DetectionAlgorithm]
+    detection_chain: Sequence[DetectionAlgorithm]
     algorithm_index: int
     param_name: str
-    param_values: np.ndarray | list[float] | list[int]
+    param_values: ArrayLike
     label: str | None = None
 
 
@@ -103,9 +128,9 @@ class _TimestepMetrics:
 
 
 def _run_detection_chain(
-    detection_chain: list[DetectionAlgorithm],
-    snr_vector: np.ndarray,
-) -> np.ndarray:
+    detection_chain: Sequence[DetectionAlgorithm],
+    snr_vector: ArrayLike,
+) -> DetectionArray:
     """Run a detection chain on a single SNR vector without a detector instance.
 
     Mirrors ``PassiveSonarDetector._run_detection_chain`` but operates as a
@@ -115,40 +140,41 @@ def _run_detection_chain(
     ----------
     detection_chain : list[DetectionAlgorithm]
         Ordered list of detection algorithms to apply sequentially.
-    snr_vector : np.ndarray
+    snr_vector : ArrayLike
         1-D SNR data vector (dB) of shape ``(N_beams,)``.
 
     Returns
     -------
-    np.ndarray
+    DetectionArray
         Array of shape ``(N_det, 2)`` with columns ``[beam_index, snr_dB]``, or
         an empty ``(0, 2)`` array when no detections pass the full chain.
 
     """
+    snr_vector_array = np.asarray(snr_vector, dtype=np.float64)
     if not detection_chain:
-        return np.empty((0, 2))
+        return _empty_detections()
 
-    input_data = snr_vector.copy()
-    final_detections = np.empty((0, 2))
+    input_data = snr_vector_array.copy()
+    final_detections = _empty_detections()
 
     for algorithm in detection_chain:
         current_detections = algorithm.detect(input_data)
 
         if current_detections.size == 0:
-            return np.empty((0, 2))
+            return _empty_detections()
 
         final_detections = current_detections
 
         # Build a sparse input for the next stage: set non-detected cells to −∞
-        input_data = np.full(len(snr_vector), -np.inf)
+        input_data = np.full(len(snr_vector_array), -np.inf, dtype=np.float64)
         input_data[final_detections[:, 0].astype(int)] = final_detections[:, 1]
 
-    return final_detections
+    return np.asarray(final_detections, dtype=np.float64)
 
 
 def _compute_timestep_metrics(
-    detected_bearings_rad: np.ndarray,
-    ground_truth_bearings_rad: np.ndarray,
+    detected_bearings_rad: ArrayLike,
+    ground_truth_bearings_rad: ArrayLike,
     association_threshold_rad: float,
     num_beam_cells: int,
 ) -> _TimestepMetrics:
@@ -161,9 +187,9 @@ def _compute_timestep_metrics(
 
     Parameters
     ----------
-    detected_bearings_rad : np.ndarray
+    detected_bearings_rad : ArrayLike
         Detected bearing angles in radians, shape ``(N_det,)``.
-    ground_truth_bearings_rad : np.ndarray
+    ground_truth_bearings_rad : ArrayLike
         Ground-truth bearing angles in radians, shape ``(N_gt,)``.
     association_threshold_rad : float
         Maximum angular distance (rad) for a detection to be counted as a TP.
@@ -176,8 +202,10 @@ def _compute_timestep_metrics(
         Aggregated TP, FP, FN, TN counts.
 
     """
-    n_det = len(detected_bearings_rad)
-    n_gt = len(ground_truth_bearings_rad)
+    detected_bearings = np.asarray(detected_bearings_rad, dtype=np.float64)
+    ground_truth_bearings = np.asarray(ground_truth_bearings_rad, dtype=np.float64)
+    n_det = len(detected_bearings)
+    n_gt = len(ground_truth_bearings)
 
     if n_gt == 0:
         # No targets present — every detection is a false alarm
@@ -188,7 +216,7 @@ def _compute_timestep_metrics(
         return _TimestepMetrics(tp=0, fp=0, fn=n_gt, tn=num_beam_cells - n_gt)
 
     # Pairwise circular angular distance matrix: shape (N_det, N_gt)
-    diff = detected_bearings_rad[:, np.newaxis] - ground_truth_bearings_rad[np.newaxis, :]
+    diff = detected_bearings[:, np.newaxis] - ground_truth_bearings[np.newaxis, :]
     dist_matrix = np.abs(np.arctan2(np.sin(diff), np.cos(diff)))
 
     # Greedy matching: claim closest unmatched pairs within threshold
@@ -212,10 +240,12 @@ def _compute_timestep_metrics(
     return _TimestepMetrics(tp=tp, fp=fp, fn=fn, tn=tn)
 
 
-def _safe_ratio(numerator: np.ndarray, denominator: np.ndarray, default: float) -> np.ndarray:
+def _safe_ratio(numerator: ArrayLike, denominator: ArrayLike, default: float) -> FloatArray:
     """Return ``numerator / denominator`` with a default where denominator is zero."""
-    result = np.full(np.shape(denominator), default, dtype=float)
-    np.divide(numerator, denominator, out=result, where=denominator > 0)
+    numerator_array = np.asarray(numerator, dtype=np.float64)
+    denominator_array = np.asarray(denominator, dtype=np.float64)
+    result = np.full(denominator_array.shape, default, dtype=np.float64)
+    np.divide(numerator_array, denominator_array, out=result, where=denominator_array > 0)
     return result
 
 
@@ -225,15 +255,15 @@ class SweepResult:
 
     Attributes
     ----------
-    param_values : np.ndarray
+    param_values : FloatArray
         The swept parameter values, shape ``(P,)``.
-    tp : np.ndarray
+    tp : IntArray
         Total true positives across all timesteps for each parameter value.
-    fp : np.ndarray
+    fp : IntArray
         Total false positives across all timesteps for each parameter value.
-    fn : np.ndarray
+    fn : IntArray
         Total false negatives across all timesteps for each parameter value.
-    tn : np.ndarray
+    tn : IntArray
         Total true negatives across all timesteps for each parameter value.
     label : str | None
         Human-readable name carried through from :class:`SweepSpec`, used in
@@ -241,15 +271,15 @@ class SweepResult:
 
     """
 
-    param_values: np.ndarray
-    tp: np.ndarray
-    fp: np.ndarray
-    fn: np.ndarray
-    tn: np.ndarray
+    param_values: FloatArray
+    tp: IntArray
+    fp: IntArray
+    fn: IntArray
+    tn: IntArray
     label: str | None = None
 
     @property
-    def precision(self) -> np.ndarray:
+    def precision(self) -> FloatArray:
         """Positive predictive value: TP / (TP + FP).
 
         Defaults to 1 where TP + FP = 0 (no detections issued).
@@ -258,7 +288,7 @@ class SweepResult:
         return _safe_ratio(self.tp, denom, default=1.0)
 
     @property
-    def recall(self) -> np.ndarray:
+    def recall(self) -> FloatArray:
         """Sensitivity / true positive rate: TP / (TP + FN).
 
         Defaults to 0 where TP + FN = 0 (no positives present).
@@ -267,12 +297,12 @@ class SweepResult:
         return _safe_ratio(self.tp, denom, default=0.0)
 
     @property
-    def tpr(self) -> np.ndarray:
+    def tpr(self) -> FloatArray:
         """True positive rate (alias for :attr:`recall`)."""
         return self.recall
 
     @property
-    def fpr(self) -> np.ndarray:
+    def fpr(self) -> FloatArray:
         """False positive rate: FP / (FP + TN).
 
         Defaults to 0 where FP + TN = 0.
@@ -281,7 +311,7 @@ class SweepResult:
         return _safe_ratio(self.fp, denom, default=0.0)
 
     @property
-    def f1(self) -> np.ndarray:
+    def f1(self) -> FloatArray:
         """Harmonic mean of precision and recall."""
         p, r = self.precision, self.recall
         denom = p + r
@@ -342,10 +372,10 @@ class SweepResult:
 
 
 def sweep_detection_parameter(
-    snr_map: np.ndarray,
-    sweep_specs: list[SweepSpec],
-    ground_truth_paths: list,
-    steering_azimuths_rad: np.ndarray,
+    snr_map: ArrayLike,
+    sweep_specs: Sequence[SweepSpec],
+    ground_truth_paths: Sequence[_GroundTruthPathLike],
+    steering_azimuths_rad: ArrayLike,
     association_threshold_rad: float,
     bearing_state_index: int = 0,
 ) -> list[SweepResult]:
@@ -365,18 +395,18 @@ def sweep_detection_parameter(
 
     Parameters
     ----------
-    snr_map : np.ndarray
+    snr_map : ArrayLike
         Pre-computed SNR map of shape ``(T, N_beams)`` — typically
         ``PassiveSonarDetector.snr_history`` after running a simulation.
-    sweep_specs : list[SweepSpec]
+    sweep_specs : Sequence[SweepSpec]
         One :class:`SweepSpec` per detection chain to evaluate.  Each spec
         carries its own chain, algorithm index, parameter name, sweep range,
         and optional legend label.
-    ground_truth_paths : list of GroundTruthPath
+    ground_truth_paths : Sequence[_GroundTruthPathLike]
         Stone Soup ground-truth paths whose state vectors carry bearing values —
         typically ``relative_bearing_ground_truths`` from the simulation workflow.
         The number of timesteps is inferred from ``snr_map``.
-    steering_azimuths_rad : np.ndarray
+    steering_azimuths_rad : ArrayLike
         Beam steering angles in radians, shape ``(N_beams,)``.  Maps a detection
         index back to a physical bearing.
     association_threshold_rad : float
@@ -430,7 +460,9 @@ def sweep_detection_parameter(
     >>> plot_roc_pr(results).show()
 
     """
-    num_timesteps, num_beams = snr_map.shape
+    snr_map_array = np.asarray(snr_map, dtype=np.float64)
+    steering_azimuths = np.asarray(steering_azimuths_rad, dtype=np.float64)
+    num_timesteps, num_beams = snr_map_array.shape
     gt_bearings_per_t = _bearings_from_ground_truth_paths(
         ground_truth_paths, num_timesteps, bearing_state_index
     )
@@ -438,27 +470,27 @@ def sweep_detection_parameter(
     results: list[SweepResult] = []
 
     for spec in sweep_specs:
-        param_values = np.asarray(spec.param_values, dtype=float)
+        param_values = np.asarray(spec.param_values, dtype=np.float64)
 
-        tp_arr = np.zeros(len(param_values), dtype=np.int64)
-        fp_arr = np.zeros(len(param_values), dtype=np.int64)
-        fn_arr = np.zeros(len(param_values), dtype=np.int64)
-        tn_arr = np.zeros(len(param_values), dtype=np.int64)
+        tp_arr: IntArray = np.zeros(len(param_values), dtype=np.int64)
+        fp_arr: IntArray = np.zeros(len(param_values), dtype=np.int64)
+        fn_arr: IntArray = np.zeros(len(param_values), dtype=np.int64)
+        tn_arr: IntArray = np.zeros(len(param_values), dtype=np.int64)
 
         for p_idx, p_val in enumerate(param_values):
             # Clone the chain and inject the new parameter value
-            chain_copy = copy.deepcopy(spec.detection_chain)
+            chain_copy = copy.deepcopy(list(spec.detection_chain))
             setattr(chain_copy[spec.algorithm_index], spec.param_name, float(p_val))
 
-            for t_idx, snr_vector in enumerate(snr_map):
+            for t_idx, snr_vector in enumerate(snr_map_array):
                 gt_bearings = gt_bearings_per_t[t_idx]
 
                 raw_dets = _run_detection_chain(chain_copy, snr_vector)
 
                 det_bearings = (
-                    steering_azimuths_rad[raw_dets[:, 0].astype(int)]
+                    steering_azimuths[raw_dets[:, 0].astype(int)]
                     if raw_dets.size > 0
-                    else np.empty(0)
+                    else np.empty(0, dtype=np.float64)
                 )
 
                 m = _compute_timestep_metrics(
@@ -493,16 +525,16 @@ def sweep_detection_parameter(
 
 
 def _bearings_from_ground_truth_paths(
-    ground_truth_paths: list,
+    ground_truth_paths: Sequence[_GroundTruthPathLike],
     num_timesteps: int,
     bearing_state_index: int = 0,
-) -> list[np.ndarray]:
+) -> list[FloatArray]:
     """Convert a list of Stone Soup ``GroundTruthPath`` objects to a per-timestep bearing array.
 
     Parameters
     ----------
-    ground_truth_paths : list of GroundTruthPath
-        Stone Soup ground-truth paths whose state vectors carry bearing values.
+    ground_truth_paths : Sequence[_GroundTruthPathLike]
+        Stone Soup-like ground-truth paths whose state vectors carry bearing values.
     num_timesteps : int
         Number of timesteps to extract.
     bearing_state_index : int
@@ -510,7 +542,7 @@ def _bearings_from_ground_truth_paths(
 
     Returns
     -------
-    list[np.ndarray]
+    list[FloatArray]
         Length-``num_timesteps`` list; element ``t`` is a 1-D array of bearings in radians.
 
     """

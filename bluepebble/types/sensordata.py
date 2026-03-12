@@ -1,10 +1,15 @@
 """Acoustic sensor data module."""
 
 from datetime import datetime
+from typing import Any, TypeAlias
 
 import numpy as np
+from numpy.typing import NDArray
 from stonesoup.base import Property
 from stonesoup.types.sensordata import SensorData
+
+ComplexArray: TypeAlias = NDArray[np.complexfloating[Any, Any]]
+BeamformedData: TypeAlias = NDArray[np.floating[Any]] | NDArray[np.complexfloating[Any, Any]]
 
 
 class PassiveSonarSensorData(SensorData):
@@ -15,6 +20,9 @@ class PassiveSonarSensorData(SensorData):
     map, and the timestamp of the data snapshot.
     """
 
-    raw_signals = Property(np.ndarray, doc="Raw acoustic signals from sensor array")
-    beamformed_data = Property(np.ndarray, doc="Processed beamformed output")
-    timestamp = Property(datetime, doc="Timestamp of the sensor data")
+    raw_signals: ComplexArray = Property(doc="Raw acoustic signals from sensor array")
+    beamformed_data: BeamformedData | None = Property(
+        default=None,
+        doc="Processed beamformed output",
+    )
+    timestamp: datetime = Property(doc="Timestamp of the sensor data")

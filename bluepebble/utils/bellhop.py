@@ -1,13 +1,36 @@
 """Defines Bellhop-specific utility functions."""
 
+from __future__ import annotations
+
 from pathlib import Path
+from typing import TypeAlias, TypedDict
 
 import numpy as np
+from numpy.typing import NDArray
+
+Float32Array: TypeAlias = NDArray[np.float32]
+Complex64Array: TypeAlias = NDArray[np.complex64]
+
+
+class ShadeGeometry(TypedDict):
+    """Metadata parsed from a Bellhop shade file."""
+
+    plot_type: str
+    frequencies: Float32Array
+    thetas: Float32Array
+    source_x: Float32Array
+    source_y: Float32Array
+    source_depths: Float32Array
+    receiver_depths: Float32Array
+    receiver_ranges: Float32Array
+
+
+ShadeReadResult: TypeAlias = tuple[Complex64Array, ShadeGeometry] | tuple[None, None]
 
 
 def read_shade_file(
     filename: str | Path, xs: float | None = None, ys: float | None = None
-) -> tuple[np.ndarray, dict[str, np.ndarray]]:
+) -> ShadeReadResult:
     """Read a Bellhop shade file (.shd).
 
     This function parses the binary format of a Bellhop shade file, which contains acoustic
@@ -16,16 +39,16 @@ def read_shade_file(
 
     Parameters
     ----------
-    filename  : str | Path
+    filename : str | Path
         The path to the shade file (.shd).
-    xs  : float | None
+    xs : float | None
         Specific source x-position in kilometers to extract. If None, the entire field is read.
-    ys  : float | None
+    ys : float | None
         Specific source y-position in kilometers to extract. If None, the entire field is read.
 
     Returns
     -------
-    tuple[np.ndarray, dict[str, np.ndarray]] | tuple[None, None]
+    ShadeReadResult
         A tuple ``(pressure, geometry)`` where ``pressure`` is a complex NumPy
         array containing the pressure field and ``geometry`` stores the
         associated frequencies, depths, ranges, and related dimensions.
@@ -36,7 +59,7 @@ def read_shade_file(
         with open(filename, "rb") as f:
             # --- Read Header Information ---
             # The first 4-byte integer is the record length in words.
-            record_len_bytes = np.fromfile(f, dtype=np.int32, count=1)[0] * 4
+            record_len_bytes = int(np.fromfile(f, dtype=np.int32, count=1)[0]) * 4
 
             # Record 2: Plot Type
             f.seek(1 * record_len_bytes)
@@ -45,7 +68,7 @@ def read_shade_file(
             # Record 3: Dimensions
             f.seek(2 * record_len_bytes)
             dims = np.fromfile(f, dtype=np.int32, count=7)
-            n_freq, n_theta, n_sx, n_sy, n_sd, n_rd, n_rr = dims
+            n_freq, n_theta, n_sx, n_sy, n_sd, n_rd, n_rr = (int(v) for v in dims)
 
             # Record 4: Frequencies
             f.seek(3 * record_len_bytes)
@@ -59,10 +82,10 @@ def read_shade_file(
             f.seek(5 * record_len_bytes)
             if "TL" in plot_type:  # Compressed format
                 pos_sx = np.fromfile(f, dtype=np.float32, count=2)
-                source_x = np.linspace(pos_sx[0], pos_sx[1], n_sx)
+                source_x = np.linspace(pos_sx[0], pos_sx[1], n_sx, dtype=np.float32)
                 f.seek(6 * record_len_bytes)
                 pos_sy = np.fromfile(f, dtype=np.float32, count=2)
-                source_y = np.linspace(pos_sy[0], pos_sy[1], n_sy)
+                source_y = np.linspace(pos_sy[0], pos_sy[1], n_sy, dtype=np.float32)
             else:  # Standard format
                 source_x = np.fromfile(f, dtype=np.float32, count=n_sx)
                 f.seek(6 * record_len_bytes)
@@ -99,14 +122,16 @@ def read_shade_file(
                                 + (i_sd * n_rcvrs_per_range)
                                 + i_rd
                             )
-                            f.seek(record_num * record_len_bytes)
+                            f.seek(int(record_num * record_len_bytes))
                             pressure[i_theta, i_sd, i_rd, :] = np.fromfile(
                                 f, dtype=np.complex64, count=n_rr
                             )
             else:
                 # Read a specific slice for a given source position (xs, ys)
-                idx_x = np.abs(source_x - xs * 1000).argmin()
-                idx_y = np.abs(source_y - ys * 1000).argmin()
+                source_x_array = np.asarray(source_x, dtype=np.float64)
+                source_y_array = np.asarray(source_y, dtype=np.float64)
+                idx_x = np.abs(np.subtract(source_x_array, float(xs) * 1000.0)).argmin()
+                idx_y = np.abs(np.subtract(source_y_array, float(ys) * 1000.0)).argmin()
 
                 for i_theta in range(n_theta):
                     for i_sd in range(n_sd):
@@ -127,7 +152,8 @@ def read_shade_file(
                                 + sd_offset
                                 + i_rd
                             )
-                            f.seek(record_num * record_len_bytes)
+                            file_offset = int(np.asarray(record_num * record_len_bytes).item())
+                            f.seek(file_offset)
                             pressure[i_theta, i_sd, i_rd, :] = np.fromfile(
                                 f, dtype=np.complex64, count=n_rr
                             )
@@ -135,11 +161,11 @@ def read_shade_file(
     except FileNotFoundError:
         print(f"Error: File not found at '{filename}'")
         return None, None
-    except Exception as e:
-        print(f"An error occurred while reading the file: {e}")
+    except Exception as exc:
+        print(f"An error occurred while reading the file: {exc}")
         return None, None
 
-    geometry = {
+    geometry: ShadeGeometry = {
         "plot_type": plot_type,
         "frequencies": frequencies,
         "thetas": thetas,

@@ -6,7 +6,7 @@ from .continuous import (
     ContinuousSTFTPassiveSonarArraySimulator,
 )
 from .discrete import (
-    DepreciatedDiscretePassiveSonarArraySimulator,
+    DeprecatedDiscretePassiveSonarArraySimulator,
     DiscretePassiveSonarArraySimulator,
 )
 
@@ -14,6 +14,6 @@ __all__ = [
     "PassiveSonarArraySimulatorBase",
     "ContinuousSTFTPassiveSonarArraySimulator",
     "DiscretePassiveSonarArraySimulator",
-    "DepreciatedDiscretePassiveSonarArraySimulator",
+    "DeprecatedDiscretePassiveSonarArraySimulator",
     "ContinuousFractionalDelayPassiveSonarArraySimulator",
 ]

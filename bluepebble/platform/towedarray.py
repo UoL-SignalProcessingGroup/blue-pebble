@@ -3,14 +3,30 @@
 from collections.abc import Sequence
 from dataclasses import dataclass
 from datetime import datetime
+from typing import Protocol, TypeAlias, cast
 
 import numpy as np
+from numpy.typing import NDArray
 from stonesoup.base import Base, Property
 from stonesoup.movable.movable import MovingMovable
 from stonesoup.platform.base import MultiTransitionMovingPlatform
 from stonesoup.types.array import StateVector, StateVectors
 from stonesoup.types.groundtruth import GroundTruthState
 from stonesoup.types.state import State
+
+FloatArray: TypeAlias = NDArray[np.float64]
+
+
+class _StateHistoryCarrier(Protocol):
+    """Protocol for objects exposing historical state sequences."""
+
+    states: Sequence[State]
+
+
+class _StateVectorCarrier(Protocol):
+    """Protocol for objects exposing a direct state vector."""
+
+    state_vector: StateVector
 
 
 class _FollowerModel(Base):
@@ -28,10 +44,10 @@ class _FollowerModel(Base):
 
     """
 
-    leader = Property(MovingMovable, doc="The leader movable that the next movable will follow.")
-    offset = Property(float, doc="The distance the follower should maintain from the leader.")
+    leader: MovingMovable = Property(doc="The leader movable that the next movable will follow.")
+    offset: float = Property(doc="The distance the follower should maintain from the leader.")
 
-    def function(self, state: State, **kwargs) -> StateVector:
+    def function(self, state: State, **kwargs: object) -> StateVector:
         """Calculate the new 3D position of the follower.
 
         Parameters
@@ -79,11 +95,11 @@ class _TowedArrayFollowerModel(_FollowerModel):
 
     """
 
-    array_depth_m = Property(
-        float, doc="The fixed depth at which the follower should be maintained."
+    array_depth_m: float = Property(
+        doc="The fixed depth at which the follower should be maintained."
     )
 
-    def function(self, state: State, **kwargs) -> StateVector:
+    def function(self, state: State, **kwargs: object) -> StateVector:
         """Calculate the new position in 2D while keeping the depth fixed.
 
         The horizontal offset from the leader is computed using the Pythagorean theorem from the
@@ -184,7 +200,7 @@ class PlatformState:
     array: ArrayState
 
     @property
-    def position(self):
+    def position(self) -> StateVector:
         """Return the position of the host vehicle.
 
         Returns
@@ -193,7 +209,7 @@ class PlatformState:
             The 3D position vector (x, y, z) of the host vehicle.
 
         """
-        return self.host.state.state_vector[[0, 2, 4]]
+        return StateVector(self.host.state.state_vector[[0, 2, 4]])
 
 
 class TowedArrayPlatform(MultiTransitionMovingPlatform):
@@ -227,19 +243,18 @@ class TowedArrayPlatform(MultiTransitionMovingPlatform):
 
     """
 
-    num_sensors = Property(int, doc="Number of sensors in the array")
-    cable_length_m = Property(float, doc="Length of the main tow cable in meters")
-    sensor_spacing_m = Property(float, doc="Spacing between sensors in meters")
-    array_depth_m = Property(float, doc="Depth at which the array is towed in meters")
-    velocity_mapping = Property(
-        Sequence[int],
+    num_sensors: int = Property(doc="Number of sensors in the array")
+    cable_length_m: float = Property(doc="Length of the main tow cable in meters")
+    sensor_spacing_m: float = Property(doc="Spacing between sensors in meters")
+    array_depth_m: float = Property(doc="Depth at which the array is towed in meters")
+    velocity_mapping: Sequence[int] | None = Property(
         default=None,
         doc="Indices for velocity in the state vector. If not set, defaults to "
         "position_mapping indices + 1",
     )
-    reference_sensor_idx = Property(int, default=0, doc="Index of the reference sensor")
+    reference_sensor_idx: int = Property(default=0, doc="Index of the reference sensor")
 
-    def __init__(self, *args, **kwargs):
+    def __init__(self, *args: object, **kwargs: object) -> None:
         """Initialise the TowedArrayPlatform.
 
         Parameters
@@ -262,7 +277,17 @@ class TowedArrayPlatform(MultiTransitionMovingPlatform):
         if self.states:
             self._capture_platform_state(self.states[0].timestamp)
 
-    def _initialise_sensor_array(self):
+    def _resolved_velocity_mapping(self) -> Sequence[int]:
+        """Return a guaranteed velocity mapping sequence.
+
+        Falls back to ``position_mapping + 1`` when ``velocity_mapping`` is unset.
+        """
+        velocity_mapping = self.velocity_mapping
+        if velocity_mapping is None:
+            velocity_mapping = [p + 1 for p in self.position_mapping]
+        return velocity_mapping
+
+    def _initialise_sensor_array(self) -> None:
         """Initialise the towed sensor array's geometry and follower models.
 
         This sets up the initial positions of all sensors relative to the host based on the host's
@@ -279,9 +304,10 @@ class TowedArrayPlatform(MultiTransitionMovingPlatform):
 
         """
         try:
+            velocity_mapping = self._resolved_velocity_mapping()
             host_state = self.states[0]
             host_pos_3d = host_state.state_vector[self.position_mapping]
-            host_vel_xy = host_state.state_vector[self.velocity_mapping[:2]]
+            host_vel_xy = host_state.state_vector[velocity_mapping[:2]]
         except (IndexError, AttributeError, KeyError) as e:
             raise ValueError(
                 f"Platform must have an initial state with accessible "
@@ -297,14 +323,19 @@ class TowedArrayPlatform(MultiTransitionMovingPlatform):
         towed_sensors = []
         leader_node = self.movement_controller
 
-        def get_position_from_object(obj):
+        def get_position_from_object(obj: object) -> StateVector:
             """Extract position from a generic object."""
-            if hasattr(obj, "states") and obj.states:
-                return obj.states[-1].state_vector
-            elif hasattr(obj, "state_vector"):
-                return obj.state_vector
-            else:
-                raise AttributeError(f"Object {obj} doesn't have accessible position")
+            states = getattr(obj, "states", None)
+            if isinstance(states, Sequence) and len(states) > 0:
+                history_obj = cast(_StateHistoryCarrier, obj)
+                return history_obj.states[-1].state_vector
+
+            state_vector = getattr(obj, "state_vector", None)
+            if state_vector is not None:
+                vector_obj = cast(_StateVectorCarrier, obj)
+                return vector_obj.state_vector
+
+            raise AttributeError(f"Object {obj} doesn't have accessible position")
 
         cumulative_horizontal_dist = 0.0
         for i in range(self.num_sensors):
@@ -327,7 +358,7 @@ class TowedArrayPlatform(MultiTransitionMovingPlatform):
                     f"({depth_difference}m)."
                 )
 
-            horizontal_separation = np.sqrt(offset**2 - depth_difference**2)
+            horizontal_separation = float(np.sqrt(offset**2 - depth_difference**2))
             cumulative_horizontal_dist += horizontal_separation
 
             displacement_xy = cumulative_horizontal_dist * backwards_heading_xy
@@ -356,7 +387,7 @@ class TowedArrayPlatform(MultiTransitionMovingPlatform):
 
         self.towed_sensors = towed_sensors
 
-    def _capture_platform_state(self, timestamp: datetime):
+    def _capture_platform_state(self, timestamp: datetime) -> None:
         """Capture and store the state of the entire platform at a timestamp.
 
         Parameters
@@ -372,8 +403,9 @@ class TowedArrayPlatform(MultiTransitionMovingPlatform):
             return
 
         # Calculate heading from velocity
-        host_vel_xy = host_state.state_vector[self.velocity_mapping[:2]]
-        heading_rad = np.arctan2(host_vel_xy[1], host_vel_xy[0])
+        velocity_mapping = self._resolved_velocity_mapping()
+        host_vel_xy = host_state.state_vector[velocity_mapping[:2]]
+        heading_rad = float(np.arctan2(host_vel_xy[1], host_vel_xy[0]))
 
         host_state_container = HostState(state=host_state, heading_rad=heading_rad)
 
@@ -475,14 +507,15 @@ class TowedArrayPlatform(MultiTransitionMovingPlatform):
         return all_states
 
     @property
-    def host_path(self):
+    def host_path(self) -> FloatArray | None:
         """Get the complete path of the host vehicle.
 
         Returns
         -------
-        numpy.ndarray or None
-            An array of shape (N, D) containing the position history of the host, where N is the
-            number of time steps and D is dimensions. Returns None if no states exist.
+        FloatArray | None
+            Array of shape ``(N, D)`` containing host-position history, where
+            ``N`` is the number of time steps and ``D`` is spatial dimension.
+            Returns ``None`` if no states exist.
 
         """
         if not self.states:
@@ -492,13 +525,13 @@ class TowedArrayPlatform(MultiTransitionMovingPlatform):
         )
 
     @property
-    def sensor_paths(self):
+    def sensor_paths(self) -> list[FloatArray]:
         """Get sensor position paths as a list of arrays.
 
         Returns
         -------
-        list[numpy.ndarray]
-            A list of arrays, where each array represents the position history of a single sensor.
+        list[FloatArray]
+            One array per sensor, each containing position history over time.
 
         """
         if not self.towed_sensors:
@@ -512,7 +545,7 @@ class TowedArrayPlatform(MultiTransitionMovingPlatform):
                 paths.append(np.array([]).reshape(0, len(self.position_mapping)))
         return paths
 
-    def __repr__(self):
+    def __repr__(self) -> str:
         """Return string representation of the platform.
 
         Returns

@@ -1,15 +1,60 @@
 """Discrete acoustic sensor simulators module."""
 
 import warnings
-from collections.abc import Iterator
+from collections.abc import Iterable, Iterator
 from datetime import datetime
+from typing import TYPE_CHECKING, Any, Protocol, TypeAlias, cast
 
 import numpy as np
+from numpy.typing import NDArray
 from stonesoup.base import Property
 from stonesoup.types.sensordata import SensorData
 
 from ..signal.base import Signal
 from .base import PassiveSonarArraySimulatorBase
+
+if TYPE_CHECKING:
+    from stonesoup.types.state import State
+
+Complex64Array: TypeAlias = NDArray[np.complex64]
+Complex128Array: TypeAlias = NDArray[np.complex128]
+SensorBatch: TypeAlias = tuple[datetime, set[SensorData]]
+
+
+class _StftSourceSignalModel(Protocol):
+    """Protocol for signal models exposing STFT-backed source caching."""
+
+    def compute_stft(self, source: "State") -> object:
+        """Compute and cache a source STFT."""
+        ...
+
+    def get_source_signal(self) -> NDArray[np.complexfloating[Any, Any]]:
+        """Return cached source signal."""
+        ...
+
+
+class _BaseSignalModel(Protocol):
+    """Protocol for signal models exposing direct base-signal synthesis."""
+
+    def _generate_base_signal(
+        self,
+        source: "State",
+    ) -> NDArray[np.floating[Any] | np.complexfloating[Any, Any]]:
+        """Generate base source waveform."""
+        ...
+
+
+class _SpectrumPropagationModel(Protocol):
+    """Protocol for propagation models with frequency-domain transfer support."""
+
+    def propagate_spectrum(
+        self,
+        platform: object,
+        source: "State",
+        frequencies_hz: NDArray[np.float64],
+    ) -> tuple[NDArray[np.complexfloating[Any, Any]], float]:
+        """Return per-sensor transfer functions and propagation time."""
+        ...
 
 
 class DiscretePassiveSonarArraySimulator(PassiveSonarArraySimulatorBase):
@@ -48,29 +93,79 @@ class DiscretePassiveSonarArraySimulator(PassiveSonarArraySimulatorBase):
 
     """
 
-    signal_models = Property(
-        list,
+    signal_models: list[Signal] = Property(
         doc="List of broadband signal models (one per target, or single-element list for all)",
     )
 
     def _resolve_signal_models(self, num_targets: int) -> list[Signal]:
-        """Resolve signal model mapping for targets."""
+        """Resolve one signal model per target.
+
+        Parameters
+        ----------
+        num_targets : int
+            Number of targets represented in the current scenario.
+
+        Returns
+        -------
+        list of Signal
+            Resolved signal-model list where each target has one model.
+
+        """
         return self._resolve_models(self.signal_models, num_targets, "signal models")
 
     @staticmethod
-    def _get_target_first_state(target_path):
-        """Return first state in ``target_path`` or ``None`` if empty."""
+    def _get_target_first_state(target_path: "Iterable[State]") -> "State | None":
+        """Return the first state from a target path.
+
+        Parameters
+        ----------
+        target_path : Iterable of State
+            Target state sequence.
+
+        Returns
+        -------
+        State or None
+            First state if available, else ``None`` for empty paths.
+
+        """
         try:
             return next(iter(target_path))
         except StopIteration:
             return None
 
     @staticmethod
-    def _get_broadband_source_signal(signal_model, first_state) -> np.ndarray:
-        """Return a source waveform using broadband or generic signal APIs."""
+    def _get_broadband_source_signal(
+        signal_model: Signal,
+        first_state: "State | None",
+    ) -> Complex128Array:
+        """Get a source waveform from supported signal-model interfaces.
+
+        Parameters
+        ----------
+        signal_model : Signal
+            Signal model implementing either
+            ``compute_stft/get_source_signal`` or ``_generate_base_signal``.
+        first_state : State or None
+            First target state, used to initialise lazy source generation.
+
+        Returns
+        -------
+        numpy.ndarray
+            Complex source waveform as ``complex128``.
+
+        Raises
+        ------
+        ValueError
+            If source initialisation requires state context but no state is
+            available.
+        TypeError
+            If the signal model does not expose a supported source API.
+
+        """
         if hasattr(signal_model, "compute_stft") and hasattr(signal_model, "get_source_signal"):
+            stft_signal_model = cast(_StftSourceSignalModel, signal_model)
             try:
-                source_signal = signal_model.get_source_signal()
+                source_signal = stft_signal_model.get_source_signal()
             except RuntimeError as err:
                 if first_state is None:
                     msg = (
@@ -78,18 +173,22 @@ class DiscretePassiveSonarArraySimulator(PassiveSonarArraySimulatorBase):
                         "Provide a target state or pre-compute the source signal."
                     )
                     raise ValueError(msg) from err
-                signal_model.compute_stft(first_state)
-                source_signal = signal_model.get_source_signal()
+                stft_signal_model.compute_stft(first_state)
+                source_signal = stft_signal_model.get_source_signal()
             return np.asarray(source_signal, dtype=np.complex128)
 
         if hasattr(signal_model, "_generate_base_signal"):
+            base_signal_model = cast(_BaseSignalModel, signal_model)
             if first_state is None:
                 msg = (
                     "Cannot initialize source signal for an empty target path when using "
                     "_generate_base_signal."
                 )
                 raise ValueError(msg)
-            return np.asarray(signal_model._generate_base_signal(first_state), dtype=np.complex128)
+            return np.asarray(
+                base_signal_model._generate_base_signal(first_state),
+                dtype=np.complex128,
+            )
 
         msg = (
             "Signal model must implement either compute_stft/get_source_signal "
@@ -97,14 +196,30 @@ class DiscretePassiveSonarArraySimulator(PassiveSonarArraySimulatorBase):
         )
         raise TypeError(msg)
 
-    def sensor_data_gen(self) -> Iterator[tuple[datetime, set[SensorData]]]:
-        """Generate independent broadband sensor snapshots for each timestamp."""
+    def sensor_data_gen(self) -> Iterator[SensorBatch]:
+        """Yield one independent broadband snapshot per platform timestamp.
+
+        Yields
+        ------
+        tuple of (datetime, set of SensorData)
+            Timestamp and simulated sensor-data set for that timestamp.
+
+        Raises
+        ------
+        AttributeError
+            If the configured propagation model does not implement
+            ``propagate_spectrum``.
+        ValueError
+            If signal model configuration is invalid.
+
+        """
         if not hasattr(self.propagation_model, "propagate_spectrum"):
             msg = (
                 "DiscreteBroadbandPassiveSonarArraySimulator requires propagation_model "
                 "to implement propagate_spectrum"
             )
             raise AttributeError(msg)
+        spectrum_propagation_model = cast(_SpectrumPropagationModel, self.propagation_model)
 
         all_timestamps = self._sorted_timestamps()
         ground_truth_paths = self.ground_truth_paths or []
@@ -131,7 +246,7 @@ class DiscretePassiveSonarArraySimulator(PassiveSonarArraySimulatorBase):
         step_sample_idx = np.clip(step_sample_idx, 0, total_samples)
         step_sample_idx = np.maximum.accumulate(step_sample_idx)
 
-        source_signal_by_target: list[np.ndarray] = []
+        source_signal_by_target: list[Complex64Array] = []
         for target_idx, target_path in enumerate(ground_truth_paths):
             target_signal_model = signal_models_list[target_idx]
 
@@ -192,7 +307,7 @@ class DiscretePassiveSonarArraySimulator(PassiveSonarArraySimulatorBase):
                 source_chunk = source_signal_by_target[target_idx][start_sample:end_sample]
                 source_fft = np.fft.fft(source_chunk)
 
-                H_sensors, _ = self.propagation_model.propagate_spectrum(
+                H_sensors, _ = spectrum_propagation_model.propagate_spectrum(
                     platform_state,
                     target_state,
                     frequencies_hz,
@@ -221,11 +336,11 @@ class DiscretePassiveSonarArraySimulator(PassiveSonarArraySimulatorBase):
             yield timestamp, {sensor_data}
 
 
-class DepreciatedDiscretePassiveSonarArraySimulator(PassiveSonarArraySimulatorBase):
-    """Depreciated discrete-time passive-sonar array simulator.
+class DeprecatedDiscretePassiveSonarArraySimulator(PassiveSonarArraySimulatorBase):
+    """Deprecated discrete-time passive-sonar array simulator.
 
     .. warning::
-       This class is deprecated and retained for backward compatibility only.
+       This class is deprecated and retained for backwards compatibility only.
        Prefer ``DiscretePassiveSonarArraySimulator`` for new broadband work.
 
     This simulator produces one sensor-data snapshot per platform timestamp and supports two
@@ -263,22 +378,29 @@ class DepreciatedDiscretePassiveSonarArraySimulator(PassiveSonarArraySimulatorBa
 
     """
 
-    def __init__(self, *args, **kwargs):
-        """Initialise simulator and emit a deprecation warning."""
+    def __init__(self, *args: object, **kwargs: object) -> None:
+        """Initialise simulator and emit a deprecation warning.
+
+        Parameters
+        ----------
+        *args : object
+            Positional arguments forwarded to the base simulator.
+        **kwargs : object
+            Keyword arguments forwarded to the base simulator.
+
+        """
         warnings.warn(
-            "DepreciatedDiscretePassiveSonarArraySimulator is deprecated; "
+            "DeprecatedDiscretePassiveSonarArraySimulator is deprecated; "
             "use DiscretePassiveSonarArraySimulator instead.",
             DeprecationWarning,
             stacklevel=2,
         )
         super().__init__(*args, **kwargs)
 
-    signal_models = Property(
-        list,
+    signal_models: list[Signal] = Property(
         doc="List of acoustic signal models (one per target, or single-element list for all)",
     )
-    propagation_method = Property(
-        str,
+    propagation_method: str = Property(
         default="transmission_loss",
         doc="Propagation method: 'transmission_loss' or 'spectrum'",
     )
@@ -299,7 +421,7 @@ class DepreciatedDiscretePassiveSonarArraySimulator(PassiveSonarArraySimulatorBa
         """
         return self._resolve_models(self.signal_models, num_targets, "signal models")
 
-    def sensor_data_gen(self) -> Iterator[tuple[datetime, set[SensorData]]]:
+    def sensor_data_gen(self) -> Iterator[SensorBatch]:
         """Generate sensor data for each timestamp in the platform's trajectory.
 
         This generator iterates through all unique timestamps defined in the platform's movement
@@ -307,9 +429,8 @@ class DepreciatedDiscretePassiveSonarArraySimulator(PassiveSonarArraySimulatorBa
 
         Yields
         ------
-        tuple
-            A tuple containing the timestamp and a set of ``PassiveSonarSensorData`` objects for
-            that timestamp.
+        tuple of (datetime, set of SensorData)
+            Timestamp and simulated sensor-data set for that timestep.
 
         """
         all_timestamps = self._sorted_timestamps()
@@ -319,7 +440,7 @@ class DepreciatedDiscretePassiveSonarArraySimulator(PassiveSonarArraySimulatorBa
             sensor_data = self._generate_sensor_data_at(timestamp)
             yield timestamp, {sensor_data}
 
-    def _generate_sensor_data_at(self, timestamp) -> SensorData:
+    def _generate_sensor_data_at(self, timestamp: datetime) -> SensorData:
         """Generate a single snapshot of sensor data at a specific timestamp.
 
         This method performs the core simulation steps for a single moment in time. It generates
@@ -328,8 +449,21 @@ class DepreciatedDiscretePassiveSonarArraySimulator(PassiveSonarArraySimulatorBa
 
         Parameters
         ----------
-        timestamp  : datetime
+        timestamp : datetime
             The timestamp for which to generate data.
+
+        Returns
+        -------
+        SensorData
+            Simulated passive-sonar sensor snapshot for the given timestamp.
+
+        Raises
+        ------
+        ValueError
+            If ``propagation_method`` is unsupported.
+        AttributeError
+            If ``propagation_method="spectrum"`` is selected but the
+            propagation model does not implement ``propagate_spectrum``.
 
         """
         platform = self.platform.get_platform_state_at(timestamp)
@@ -366,19 +500,24 @@ class DepreciatedDiscretePassiveSonarArraySimulator(PassiveSonarArraySimulatorBa
                         "to implement propagate_spectrum"
                     )
                     raise AttributeError(msg)
+                spectrum_propagation_model = cast(
+                    _SpectrumPropagationModel,
+                    self.propagation_model,
+                )
 
                 # Build physical frequency axis matching FFT bins.
                 sampling_rate_hz = float(target_signal_model.sampling_rate_hz)
                 frequencies = np.fft.fftfreq(num_samples, d=1.0 / sampling_rate_hz)
-                H_sensors, _ = self.propagation_model.propagate_spectrum(
+                H_sensors, _ = spectrum_propagation_model.propagate_spectrum(
                     platform,
                     target_state,
                     frequencies,
                 )
 
                 if hasattr(target_signal_model, "_generate_base_signal"):
+                    base_signal_model = cast(_BaseSignalModel, target_signal_model)
                     base_signal = np.asarray(
-                        target_signal_model._generate_base_signal(target_state),
+                        base_signal_model._generate_base_signal(target_state),
                         dtype=np.complex128,
                     )
                     if len(base_signal) < num_samples:

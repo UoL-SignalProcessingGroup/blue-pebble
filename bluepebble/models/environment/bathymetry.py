@@ -2,9 +2,16 @@
 
 from abc import ABC, abstractmethod
 from pathlib import Path
+from typing import TypeAlias
 
 import numpy as np
+from numpy.typing import ArrayLike, NDArray
 from stonesoup.base import Base, Property
+
+FloatArray: TypeAlias = NDArray[np.float64]
+IntArray: TypeAlias = NDArray[np.intp]
+Range1D: TypeAlias = tuple[float, float]
+GridResult: TypeAlias = tuple[FloatArray, FloatArray, FloatArray]
 
 
 class Bathymetry(ABC, Base):
@@ -35,24 +42,24 @@ class Bathymetry(ABC, Base):
         Implementations must override this abstract method.
 
         """
-        pass
+        ...
 
     @abstractmethod
-    def get_grid(self, x_range: tuple, y_range: tuple):
+    def get_grid(self, x_range: Range1D, y_range: Range1D) -> GridResult:
         """Get a gridded representation of the bathymetry.
 
         Parameters
         ----------
-        x_range : tuple
+        x_range : Range1D
             Tuple of (x_min, x_max) in meters.
-        y_range : tuple
+        y_range : Range1D
             Tuple of (y_min, y_max) in meters.
         resolution : float, optional
             Grid resolution in meters (defaults to ``resolution``).
 
         Returns
         -------
-        tuple
+        GridResult
             ``(x_grid, y_grid, z_grid)`` where
             - ``x_grid`` : 1D array of x coordinates
             - ``y_grid`` : 1D array of y coordinates
@@ -63,7 +70,7 @@ class Bathymetry(ABC, Base):
         Implementations must override this abstract method.
 
         """
-        pass
+        ...
 
 
 class FlatBathymetry(Bathymetry):
@@ -79,7 +86,7 @@ class FlatBathymetry(Bathymetry):
 
     depth: float = Property(default=-5000.0, doc="Constant depth of the seafloor in meters")
 
-    def __post_init__(self):
+    def __post_init__(self) -> None:
         """Validate the depth after initialization."""
         if self.depth >= 0:
             raise ValueError("Depth must be negative for Blue Pebble -z convention.")
@@ -102,21 +109,21 @@ class FlatBathymetry(Bathymetry):
         """
         return self.depth
 
-    def get_grid(self, x_range: tuple, y_range: tuple):
+    def get_grid(self, x_range: Range1D, y_range: Range1D) -> GridResult:
         """Get a gridded representation of the flat bathymetry.
 
         Parameters
         ----------
-        x_range : tuple
+        x_range : Range1D
             Tuple of (x_min, x_max) in meters.
-        y_range : tuple
+        y_range : Range1D
             Tuple of (y_min, y_max) in meters.
         resolution : float, optional
             Grid resolution in meters (defaults to ``resolution``).
 
         Returns
         -------
-        tuple
+        GridResult
             ``(x_grid, y_grid, z_grid)`` where ``z_grid`` is constant.
 
         """
@@ -173,21 +180,21 @@ class WedgeBathymetry(Bathymetry):
         depth = self.depth_at_origin + self.x_gradient * x + self.y_gradient * y
         return min(0.0, depth)  # Ensure depth is non-positive in Blue Pebble -z convention
 
-    def get_grid(self, x_range: tuple, y_range: tuple):
+    def get_grid(self, x_range: Range1D, y_range: Range1D) -> GridResult:
         """Get a gridded representation of the sloping bathymetry.
 
         Parameters
         ----------
-        x_range : tuple
+        x_range : Range1D
             Tuple of (x_min, x_max) in meters.
-        y_range : tuple
+        y_range : Range1D
             Tuple of (y_min, y_max) in meters.
         resolution : float, optional
             Grid resolution in meters (defaults to ``resolution``).
 
         Returns
         -------
-        tuple
+        GridResult
             ``(x_grid, y_grid, z_grid)`` with linearly varying depths.
 
         """
@@ -224,7 +231,7 @@ class SeamountBathymetry(Bathymetry):
 
     """
 
-    summit_position: tuple = Property(
+    summit_position: tuple[float, float, float] = Property(
         default=(25000.0, 25000.0, -1000.0),
         doc="(x, y, z) coordinates of the summit in meters",
     )
@@ -233,7 +240,7 @@ class SeamountBathymetry(Bathymetry):
         default=-5000.0, doc="Depth at the surrounding plateau in meters"
     )
 
-    def __post_init__(self):
+    def __post_init__(self) -> None:
         """Validate parameters after initialization."""
         if self.radius <= 0:
             raise ValueError("Radius must be positive.")
@@ -271,21 +278,21 @@ class SeamountBathymetry(Bathymetry):
 
         return min(0.0, depth)
 
-    def get_grid(self, x_range: tuple, y_range: tuple):
+    def get_grid(self, x_range: Range1D, y_range: Range1D) -> GridResult:
         """Get a gridded representation of the seamount bathymetry.
 
         Parameters
         ----------
-        x_range : tuple
+        x_range : Range1D
             Tuple of (x_min, x_max) in meters.
-        y_range : tuple
+        y_range : Range1D
             Tuple of (y_min, y_max) in meters.
         resolution : float, optional
             Grid resolution in meters (defaults to ``resolution``).
 
         Returns
         -------
-        tuple
+        GridResult
             ``(x_grid, y_grid, z_grid)`` with seamount topography.
 
         """
@@ -336,7 +343,7 @@ class GEBCOBathymetry(Bathymetry):
         doc="Reference longitude for local x/y conversion. Defaults to dataset midpoint.",
     )
 
-    def _load_data(self):
+    def _load_data(self) -> None:
         """Load and cache GEBCO bathymetry data."""
         path = Path(self.file_path)
         if not path.exists():
@@ -390,23 +397,30 @@ class GEBCOBathymetry(Bathymetry):
         self._z_grid_yx = np.minimum(elev_m, 0.0)
         self._is_loaded = True
 
-    def __post_init__(self):
+    def __post_init__(self) -> None:
         """Attempt eager load; get_depth/get_grid also support lazy loading."""
         self._is_loaded = False
         self._load_data()
 
-    def _ensure_loaded(self):
+    def _ensure_loaded(self) -> None:
         """Ensure cached GEBCO arrays are loaded."""
         if getattr(self, "_is_loaded", False):
             return
         self._load_data()
 
     @staticmethod
-    def _latlon_to_xy_m(lat_deg, lon_deg, lat0_deg, lon0_deg):
+    def _latlon_to_xy_m(
+        lat_deg: ArrayLike,
+        lon_deg: ArrayLike,
+        lat0_deg: float,
+        lon0_deg: float,
+    ) -> tuple[FloatArray, FloatArray]:
         """Convert geodetic coordinates to local tangent-plane x/y in meters."""
+        lat_array = np.asarray(lat_deg, dtype=float)
+        lon_array = np.asarray(lon_deg, dtype=float)
         lat0_rad = np.deg2rad(lat0_deg)
-        dlon_rad = np.deg2rad(lon_deg - lon0_deg)
-        dlat_rad = np.deg2rad(lat_deg - lat0_deg)
+        dlon_rad = np.deg2rad(lon_array - lon0_deg)
+        dlat_rad = np.deg2rad(lat_array - lat0_deg)
 
         a = 6_378_137.0
         f = 1.0 / 298.257223563
@@ -422,7 +436,7 @@ class GEBCOBathymetry(Bathymetry):
         return x, y
 
     @staticmethod
-    def _nearest_indices(old_axis: np.ndarray, new_axis: np.ndarray) -> np.ndarray:
+    def _nearest_indices(old_axis: FloatArray, new_axis: FloatArray) -> IntArray:
         """Map target coordinates to nearest indices on a monotonic source axis."""
         idx = np.searchsorted(old_axis, new_axis)
         idx = np.clip(idx, 1, len(old_axis) - 1)
@@ -438,7 +452,7 @@ class GEBCOBathymetry(Bathymetry):
         iy = int(self._nearest_indices(self._y_m, np.asarray([y], dtype=float))[0])
         return float(min(0.0, self._z_grid_yx[iy, ix]))
 
-    def get_grid(self, x_range: tuple, y_range: tuple):
+    def get_grid(self, x_range: Range1D, y_range: Range1D) -> GridResult:
         """Get a regular GEBCO bathymetry grid for the requested x/y extent."""
         self._ensure_loaded()
         x_min, x_max = x_range

@@ -1,11 +1,16 @@
 """Defines plotting utilities."""
 
+from __future__ import annotations
+
+from collections.abc import Sequence
 from datetime import datetime
+from typing import Any, Protocol, cast
 
 import cmocean
 import numpy as np
 import plotly.express as px
 import plotly.graph_objects as go
+from numpy.typing import ArrayLike
 from plotly.subplots import make_subplots
 from scipy import signal as scipy_signal
 from stonesoup.platform.base import Platform
@@ -14,6 +19,34 @@ from stonesoup.types.groundtruth import GroundTruthPath
 from stonesoup.types.track import Track
 
 from .detector.metrics import SweepResult
+
+
+class _ColormapCallable(Protocol):
+    """Protocol for callable colormaps."""
+
+    def __call__(self, values: ArrayLike) -> Any:
+        """Map normalised values in [0, 1] to RGBA rows."""
+        ...
+
+
+class _BathymetryGridProvider(Protocol):
+    """Protocol for bathymetry objects used by world plotting."""
+
+    def get_grid(
+        self,
+        x_range: tuple[float, float],
+        y_range: tuple[float, float],
+    ) -> tuple[ArrayLike, ArrayLike, ArrayLike]:
+        """Return bathymetry x/y coordinates and z grid."""
+        ...
+
+
+def _get_cmocean_topo_cmap() -> _ColormapCallable:
+    """Return the cmocean topo colormap with runtime validation."""
+    cmap = getattr(cmocean.cm, "topo", None)
+    if not callable(cmap):
+        raise AttributeError("cmocean.cm.topo colormap is unavailable")
+    return cast(_ColormapCallable, cmap)
 
 
 def _distance_axis_scale(min_val: float, max_val: float) -> tuple[float, str]:
@@ -60,7 +93,7 @@ def _range_padding_for_scale(scale: float, span: float) -> float:
     return pad_display_units / scale
 
 
-def _expand_heatmap_coords(coords: np.ndarray) -> np.ndarray:
+def _expand_heatmap_coords(coords: ArrayLike) -> np.ndarray:
     """Expand outer heatmap coordinates by half a cell width.
 
     Plotly heatmaps render against the supplied coordinate centres. Nudging the first and
@@ -77,7 +110,7 @@ def _expand_heatmap_coords(coords: np.ndarray) -> np.ndarray:
     return expanded
 
 
-def _mpl_cmap_to_plotly(cmap, n: int = 256) -> list[list[float | str]]:
+def _mpl_cmap_to_plotly(cmap: _ColormapCallable, n: int = 256) -> list[list[float | str]]:
     """Convert a Matplotlib colormap to Plotly colorscale format."""
     vals = np.linspace(0.0, 1.0, n)
     rgba = cmap(vals)
@@ -88,7 +121,7 @@ def _mpl_cmap_to_plotly(cmap, n: int = 256) -> list[list[float | str]]:
 
 
 def _two_slope_colorscale(
-    cmap,
+    cmap: _ColormapCallable,
     zmin: float,
     zmax: float,
     vcenter: float = 0.0,
@@ -122,7 +155,7 @@ def _two_slope_colorscale(
     return colorscale
 
 
-def _validate_non_empty_1d(array_like: np.ndarray, name: str) -> np.ndarray:
+def _validate_non_empty_1d(array_like: ArrayLike, name: str) -> np.ndarray:
     """Validate that input is a non-empty one-dimensional sequence."""
     array = np.asarray(array_like)
     if array.ndim != 1:
@@ -133,9 +166,9 @@ def _validate_non_empty_1d(array_like: np.ndarray, name: str) -> np.ndarray:
 
 
 def _validate_btr_shapes(
-    timesteps: np.ndarray,
-    steering_azimuths: np.ndarray,
-    data: np.ndarray | None,
+    timesteps: ArrayLike,
+    steering_azimuths: ArrayLike,
+    data: ArrayLike | None,
 ) -> tuple[np.ndarray, np.ndarray, np.ndarray | None]:
     """Validate BTR array dimensions and compatibility."""
     timesteps_array = _validate_non_empty_1d(timesteps, "timesteps")
@@ -166,7 +199,7 @@ def _validate_spectrogram_params(
     y_lim: tuple[float, float] | None,
     yaxis_format: str,
 ) -> tuple[str, tuple[float, float] | None]:
-    """Validate spectrogram parameters and normalize axis-format input."""
+    """Validate spectrogram parameters and normalise axis-format input."""
     if sr <= 0:
         raise ValueError("sr must be positive")
     if n_fft <= 0:
@@ -179,16 +212,16 @@ def _validate_spectrogram_params(
     if not isinstance(yaxis_format, str):
         raise ValueError("yaxis_format must be one of {'kHz', 'Hz'}")
 
-    normalized_format = yaxis_format.strip().lower()
-    if normalized_format == "khz":
+    normalised_format = yaxis_format.strip().lower()
+    if normalised_format == "khz":
         canonical_format = "kHz"
-    elif normalized_format == "hz":
+    elif normalised_format == "hz":
         canonical_format = "Hz"
     else:
         raise ValueError("yaxis_format must be one of {'kHz', 'Hz'}")
 
     if y_lim is None:
-        normalized_y_lim = None
+        normalised_y_lim = None
     else:
         if not isinstance(y_lim, (tuple, list, np.ndarray)) or len(y_lim) != 2:
             raise ValueError("y_lim must be a (low, high) pair")
@@ -197,13 +230,13 @@ def _validate_spectrogram_params(
             raise ValueError("y_lim values must be finite")
         if low >= high:
             raise ValueError("y_lim must satisfy low < high")
-        normalized_y_lim = (low, high)
+        normalised_y_lim = (low, high)
 
-    return canonical_format, normalized_y_lim
+    return canonical_format, normalised_y_lim
 
 
 def _normalise_plotly_figsize(figsize: tuple[float, float]) -> tuple[int, int]:
-    """Normalize a requested figure size to Plotly pixel dimensions.
+    """Normalise a requested figure size to Plotly pixel dimensions.
 
     For historical compatibility, small values are interpreted as inches and converted
     using 100 px/in. Larger values are assumed to already be pixels.
@@ -273,6 +306,11 @@ def launch_bathymetry_and_sound_speed_viewer(
         Optional Dash notebook display mode. Supported values are
         ``{"inline", "tab", "external", "jupyterlab"}``.
         If ``None`` (default), the app runs as a standard local web server.
+
+    Returns
+    -------
+    None
+        Runs the Dash application until the server is stopped.
 
     """
     if z_res_m <= 0.0:
@@ -397,7 +435,7 @@ def launch_bathymetry_and_sound_speed_viewer(
     z_bty_display_max = z_bty_max if z_bty_max > 0.0 else z_eps
 
     bathymetry_colorscale = _two_slope_colorscale(
-        cmocean.cm.topo,
+        _get_cmocean_topo_cmap(),
         z_bty_display_min,
         z_bty_display_max,
         vcenter=0.0,
@@ -576,24 +614,26 @@ def launch_bathymetry_and_sound_speed_viewer(
 
 
 def plot_world(
-    truths: list[GroundTruthPath],
+    truths: Sequence[GroundTruthPath],
     platform: Platform,
     bathymetry: object | None = None,
-    figsize: tuple[int, int] = (600, 500),
+    figsize: tuple[float, float] = (600, 500),
 ) -> go.Figure:
     """Plot the world picture of the platform and target trajectories.
 
     Parameters
     ----------
-    truths : list[GroundTruthPath]
-        A list of GroundTruthPath objects representing the trajectories of the targets.
+    truths : Sequence[GroundTruthPath]
+        Ground-truth paths representing target trajectories.
     platform : Platform
         The platform whose trajectory is to be plotted.
     bathymetry : object | None
         Optional bathymetry model implementing ``get_grid(x_range, y_range)``.
         If provided, bathymetry is rendered as a background heatmap.
-    figsize : tuple[int, int]
-        Figure dimensions in pixels. Default is ``(800, 600)``.
+    figsize : tuple[float, float]
+        Figure size. Values that look like inches (for example ``(12, 6)``) are
+        converted to pixels using 100 px/in; larger values are treated as pixels.
+        Default is ``(600, 500)``.
 
     Returns
     -------
@@ -605,7 +645,8 @@ def plot_world(
 
     fig = go.Figure()
     fig.update_layout(colorway=px.colors.qualitative.Plotly)
-    colorway = list(fig.layout.colorway or px.colors.qualitative.Plotly)
+    layout_colorway = getattr(fig.layout, "colorway", None)
+    colorway = list(layout_colorway or px.colors.qualitative.Plotly)
     group_counts = {"platform": 1, "truths": num_truths}
     added_group_titles: set[str] = set()
 
@@ -654,8 +695,9 @@ def plot_world(
     if bathymetry is not None:
         if not hasattr(bathymetry, "get_grid"):
             raise ValueError("bathymetry must provide get_grid(x_range, y_range)")
+        bathymetry_grid_provider = cast(_BathymetryGridProvider, bathymetry)
 
-        bty_x, bty_y, bty_z = bathymetry.get_grid(
+        bty_x, bty_y, bty_z = bathymetry_grid_provider.get_grid(
             x_range=(x_range_native[0], x_range_native[1]),
             y_range=(y_range_native[0], y_range_native[1]),
         )
@@ -668,7 +710,7 @@ def plot_world(
         eps = max(1e-9, 1e-6 * max(abs(zmin_raw), abs(zmax_raw), 1.0))
         zmin = zmin_raw if zmin_raw < 0.0 else -eps
         zmax = zmax_raw if zmax_raw > 0.0 else eps
-        colorscale = _two_slope_colorscale(cmocean.cm.topo, zmin, zmax, vcenter=0.0)
+        colorscale = _two_slope_colorscale(_get_cmocean_topo_cmap(), zmin, zmax, vcenter=0.0)
 
         hovertemplate = (
             "X: %{x:.2f} {unit}<br>Y: %{y:.2f} {unit}<br>Bathymetry z: %{z:.2f} m<extra></extra>"
@@ -780,16 +822,16 @@ def plot_world(
 
 
 def plot_btr(
-    timesteps: np.ndarray,
-    steering_azimuths: np.ndarray,
-    data: np.ndarray | None = None,
-    truths: list[GroundTruthPath] | None = None,
-    detections: list[Detection] | None = None,
-    tracks: list[Track] | None = None,
+    timesteps: ArrayLike,
+    steering_azimuths: ArrayLike,
+    data: ArrayLike | None = None,
+    truths: Sequence[GroundTruthPath] | None = None,
+    detections: Sequence[Detection] | None = None,
+    tracks: Sequence[Track] | None = None,
     data_type: str = "SNR (dB)",
     cmin: float | None = None,
     cmax: float | None = None,
-    figsize: tuple[int, int] = (800, 600),
+    figsize: tuple[float, float] = (800, 600),
     fig: go.Figure | None = None,
     row: int | None = None,
     col: int | None = None,
@@ -800,34 +842,32 @@ def plot_btr(
 
     Parameters
     ----------
-    data : np.ndarray | None
-        The beamformed data to be plotted (in dB) as a heatmap. If None, no data is
-        plotted.
-    timesteps : np.ndarray
-        The timesteps corresponding to the beamformed data.
-    steering_azimuths : np.ndarray
-        The steering azimuth angles corresponding to the beamformed data.
-    truths : list[GroundTruthPath] | None
-        A list of GroundTruthPath objects representing the trajectories of the targets.
-        Default is None, in which case no truth trajectories will be plotted.
-    detections : list[Detection] | None
-        A list of Detection objects representing the detections to be plotted.
-        Default is None, in which case no detections will be plotted.
-    tracks : list[Track] | None
-        A list of Track objects representing the tracks to be plotted. Default is None,
-        in which case no tracks will be plotted.
+    timesteps : ArrayLike
+        Timesteps corresponding to the first dimension of ``data``.
+    steering_azimuths : ArrayLike
+        Steering azimuth angles corresponding to the second dimension of ``data``.
+    data : ArrayLike | None
+        Beamformed data to plot as a heatmap. If ``None``, no heatmap is drawn and
+        only overlays are rendered.
+    truths : Sequence[GroundTruthPath] | None
+        Ground-truth paths representing target trajectories. Default is ``None``.
+    detections : Sequence[Detection] | None
+        Detection objects to overlay. Default is ``None``.
+    tracks : Sequence[Track] | None
+        Track objects to overlay. Default is ``None``.
     data_type : str
-        A string label for the type of data being plotted (e.g., "SNR (dB)").
-        This is used for the colorbar title. Default is "SNR (dB)".
+        Label for the plotted heatmap quantity (for example ``"SNR (dB)"``).
+        Used as the colorbar title. Default is ``"SNR (dB)"``.
     cmin : float | None
         Optional lower bound of the heatmap color scale. If ``None`` (default),
         Plotly automatically chooses the lower bound from the data.
     cmax : float | None
         Optional upper bound of the heatmap color scale. If ``None`` (default),
         Plotly automatically chooses the upper bound from the data.
-    figsize : tuple[int, int]
-        The width and height of the standalone plot in pixels. Ignored when ``fig``
-        is provided. Default is (800, 600).
+    figsize : tuple[float, float]
+        Figure size for standalone plots. Values that look like inches (for example
+        ``(12, 6)``) are converted to pixels using 100 px/in; larger values are
+        treated as pixels. Ignored when ``fig`` is provided.
     fig : go.Figure | None
         Optional target figure. Provide a subplot figure from
         :func:`plotly.subplots.make_subplots` to draw directly into a cell.
@@ -936,7 +976,8 @@ def plot_btr(
             added_legend_groups.add(group_name)
         return kwargs
 
-    colorway = list(target_fig.layout.colorway or px.colors.qualitative.Plotly)
+    target_layout_colorway = getattr(target_fig.layout, "colorway", None)
+    colorway = list(target_layout_colorway or px.colors.qualitative.Plotly)
     track_colorway = list(reversed(colorway))
 
     if data_array is not None:
@@ -1040,35 +1081,52 @@ def plot_btr(
     bearing_start = float(steering_array[0])
     bearing_end = float(steering_array[-1])
 
-    xaxis_config = dict(
-        range=[bearing_start, bearing_end],
-        tickmode="linear",
-        tick0=bearing_start,
-        dtick=bearing_span / 6.0 if bearing_span > 0 else 1.0,
-        tickangle=-45,
-        title="Bearing (°)",
-        showline=True,
-    )
-    if not using_subplot_target:
-        xaxis_config["domain"] = [0.0, 0.9]
-
     if using_subplot_target:
-        target_fig.update_xaxes(**xaxis_config, row=row, col=col)
+        target_fig.update_xaxes(
+            range=[bearing_start, bearing_end],
+            tickmode="linear",
+            tick0=bearing_start,
+            dtick=bearing_span / 6.0 if bearing_span > 0 else 1.0,
+            tickangle=-45,
+            title="Bearing (°)",
+            showline=True,
+            row=row,
+            col=col,
+        )
     else:
-        target_fig.update_xaxes(**xaxis_config)
+        target_fig.update_xaxes(
+            range=[bearing_start, bearing_end],
+            tickmode="linear",
+            tick0=bearing_start,
+            dtick=bearing_span / 6.0 if bearing_span > 0 else 1.0,
+            tickangle=-45,
+            title="Bearing (°)",
+            showline=True,
+            domain=[0.0, 0.9],
+        )
 
-    yaxis_config = dict(
-        # Set explicit descending bounds to keep a consistent BTR orientation.
-        range=[np.max(timesteps_array), np.min(timesteps_array)],
-        tickformat="%H:%M",
-        autorange=False,
-        title="Time (HH:MM)",
-        showline=True,
-    )
+    y_min = np.min(timesteps_array)
+    y_max = np.max(timesteps_array)
     if using_subplot_target:
-        target_fig.update_yaxes(**yaxis_config, row=row, col=col)
+        target_fig.update_yaxes(
+            # Set explicit descending bounds to keep a consistent BTR orientation.
+            range=[y_max, y_min],
+            tickformat="%H:%M",
+            autorange=False,
+            title="Time (HH:MM)",
+            showline=True,
+            row=row,
+            col=col,
+        )
     else:
-        target_fig.update_yaxes(**yaxis_config)
+        target_fig.update_yaxes(
+            # Set explicit descending bounds to keep a consistent BTR orientation.
+            range=[y_max, y_min],
+            tickformat="%H:%M",
+            autorange=False,
+            title="Time (HH:MM)",
+            showline=True,
+        )
 
     if not using_subplot_target:
         target_fig.update_layout(
@@ -1084,19 +1142,19 @@ def plot_btr(
 
 
 def plot_spectrogram(
-    signal: np.ndarray,
+    signal: ArrayLike,
     sr: int,
     n_fft: int = 4096,
     hop_length: int = 1024,
     y_lim: tuple[float, float] | None = None,
     yaxis_format: str = "kHz",
-    figsize: tuple[int, int] = (12, 6),
+    figsize: tuple[float, float] = (12, 6),
 ) -> go.Figure:
     """Generate and display a formatted spectrogram with Plotly.
 
     Parameters
     ----------
-    signal : np.ndarray
+    signal : ArrayLike
         1D array-like audio signal.
     sr : int
         Sampling rate in Hz.
@@ -1108,7 +1166,7 @@ def plot_spectrogram(
         Optional y-axis limits in Hz as ``(min, max)``.
     yaxis_format : str
         ``"kHz"`` to label y-axis in kHz or ``"Hz"`` for Hz.
-    figsize : tuple[int, int]
+    figsize : tuple[float, float]
         Figure size. Values that look like inches (for example ``(12, 6)``) are
         converted to pixels using 100 px/in; larger values are treated as pixels.
 
@@ -1132,6 +1190,7 @@ def plot_spectrogram(
     if signal.ndim > 1:
         signal = signal.flatten()
 
+    boundary: Any = None
     freqs_hz, times, zxx = scipy_signal.stft(
         signal,
         fs=sr,
@@ -1139,7 +1198,7 @@ def plot_spectrogram(
         nperseg=n_fft,
         noverlap=n_fft - hop_length,
         nfft=n_fft,
-        boundary=None,
+        boundary=boundary,
         padded=False,
         return_onesided=True,
     )
@@ -1199,20 +1258,20 @@ def plot_spectrogram(
 
 
 def plot_roc(
-    results: list[SweepResult],
+    results: Sequence[SweepResult],
     show_diagonal: bool = True,
-    figsize: tuple[int, int] = (600, 500),
+    figsize: tuple[float, float] = (600, 500),
 ) -> go.Figure:
     """Plot Receiver Operating Characteristic (ROC) curves for one or more sweep results.
 
     Parameters
     ----------
-    results : list[SweepResult]
+    results : Sequence[SweepResult]
         Sweep results produced by :func:`~bluepebble.detector.metrics.sweep_detection_parameter`.
         Each result is drawn as a separate trace using its ``label`` attribute.
     show_diagonal : bool
         If ``True`` (default), overlay the random-classifier diagonal.
-    figsize : tuple[int, int]
+    figsize : tuple[float, float]
         Figure dimensions in pixels.  Default is ``(600, 500)``.
 
     Returns
@@ -1284,17 +1343,17 @@ def plot_roc(
 
 
 def plot_pr(
-    results: list[SweepResult],
-    figsize: tuple[int, int] = (600, 500),
+    results: Sequence[SweepResult],
+    figsize: tuple[float, float] = (600, 500),
 ) -> go.Figure:
     """Plot Precision-Recall (PR) curves for one or more sweep results.
 
     Parameters
     ----------
-    results : list[SweepResult]
+    results : Sequence[SweepResult]
         Sweep results produced by :func:`~bluepebble.detector.metrics.sweep_detection_parameter`.
         Each result is drawn as a separate trace using its ``label`` attribute.
-    figsize : tuple[int, int]
+    figsize : tuple[float, float]
         Figure dimensions in pixels.  Default is ``(600, 500)``.
 
     Returns
@@ -1354,21 +1413,21 @@ def plot_pr(
 
 
 def plot_roc_pr(
-    results: list[SweepResult],
+    results: Sequence[SweepResult],
     show_diagonal: bool = True,
-    figsize: tuple[int, int] = (1100, 500),
+    figsize: tuple[float, float] = (1100, 500),
 ) -> go.Figure:
     """Plot ROC and Precision-Recall curves side-by-side for one or more sweep results.
 
     Parameters
     ----------
-    results : list[SweepResult]
+    results : Sequence[SweepResult]
         Sweep results produced by :func:`~bluepebble.detector.metrics.sweep_detection_parameter`.
         Each result is drawn as a separate trace pair (same colour in both subplots)
         using its ``label`` attribute.
     show_diagonal : bool
         If ``True`` (default), overlay the random-classifier diagonal on the ROC subplot.
-    figsize : tuple[int, int]
+    figsize : tuple[float, float]
         Figure dimensions in pixels.  Default is ``(1100, 500)``.
 
     Returns

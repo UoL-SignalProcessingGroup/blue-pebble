@@ -1,49 +1,58 @@
 """Signal processing utilities for STFT-based broadband processing."""
 
+from typing import Any, Literal, TypeAlias, cast
+
 import numpy as np
+from numpy.typing import ArrayLike, NDArray
+
+ComplexArray: TypeAlias = NDArray[np.complexfloating[Any, Any]]
+FloatArray: TypeAlias = NDArray[np.floating[Any]]
+WindowType: TypeAlias = Literal["hann", "hamming", "blackman"]
+StftResult: TypeAlias = tuple[ComplexArray, FloatArray, int, FloatArray]
+SignalArray: TypeAlias = ComplexArray | FloatArray
 
 
 def compute_stft(
-    signal: np.ndarray,
+    signal: ArrayLike,
     frame_len: int,
     hop_factor: int = 4,
-    window: str = "hann",
-) -> tuple[np.ndarray, np.ndarray, int, np.ndarray]:
+    window: WindowType = "hann",
+) -> StftResult:
     """Compute Short-Time Fourier Transform of a signal.
 
     Uses overlap-add method matching BroadbandArrayProcessor implementation.
 
     Parameters
     ----------
-    signal : np.ndarray
+    signal : ArrayLike
         Input time-domain signal (complex or real).
     frame_len : int
         STFT frame length in samples (power of 2 recommended).
     hop_factor : int, optional
         Hop size = frame_len // hop_factor (4 gives 75% overlap).
-    window : str, optional
+    window : WindowType, optional
         Window type ('hann', 'hamming', 'blackman').
 
     Returns
     -------
-    tuple[np.ndarray, np.ndarray, int, np.ndarray]
+    StftResult
         Tuple containing:
-            stft : np.ndarray
+            stft : ComplexArray
                 STFT matrix of shape (num_frames, num_freq_bins).
-            frequencies : np.ndarray
+            frequencies : FloatArray
                 Frequency array for the bins.
             hop : int
                 Hop size in samples.
-            window_array : np.ndarray
+            window_array : FloatArray
                 The window array used.
 
     """
-    signal = np.asarray(signal)
-    if signal.ndim != 1:
+    signal_array = np.asarray(signal)
+    if signal_array.ndim != 1:
         msg = "Input signal must be 1D"
         raise ValueError(msg)
 
-    has_imag = np.iscomplexobj(signal) and np.any(np.abs(np.imag(signal)) > 0.0)
+    has_imag = np.iscomplexobj(signal_array) and np.any(np.abs(np.imag(signal_array)) > 0.0)
     hop = frame_len // hop_factor
 
     # Get window
@@ -58,9 +67,9 @@ def compute_stft(
         raise ValueError(msg)
 
     # Calculate number of frames and pad signal
-    num_frames = int(np.ceil((len(signal) - frame_len) / hop)) + 1
-    pad_amount = (num_frames - 1) * hop + frame_len - len(signal)
-    signal_padded = np.concatenate([signal, np.zeros(pad_amount, dtype=signal.dtype)])
+    num_frames = int(np.ceil((len(signal_array) - frame_len) / hop)) + 1
+    pad_amount = (num_frames - 1) * hop + frame_len - len(signal_array)
+    signal_padded = np.concatenate([signal_array, np.zeros(pad_amount, dtype=signal_array.dtype)])
 
     # Compute STFT
     stft_bins = frame_len if has_imag else (frame_len // 2 + 1)
@@ -83,52 +92,55 @@ def compute_stft(
 
 
 def inverse_stft(
-    stft: np.ndarray,
+    stft: ArrayLike,
     frame_len: int,
     hop: int,
-    window: np.ndarray,
-) -> np.ndarray:
+    window: ArrayLike,
+) -> ComplexArray:
     """Reconstruct time-domain signal from STFT using overlap-add.
 
     Matches BroadbandArrayProcessor._inverse_stft() implementation.
 
     Parameters
     ----------
-    stft : np.ndarray
+    stft : ArrayLike
         STFT matrix of shape (num_frames, num_freq_bins).
     frame_len : int
         STFT frame length in samples.
     hop : int
         Hop size in samples.
-    window : np.ndarray
+    window : ArrayLike
         Window array used in forward STFT.
 
     Returns
     -------
-    np.ndarray
+    ComplexArray
         Reconstructed time-domain signal.
 
     """
-    num_frames = stft.shape[0]
+    stft_array = np.asarray(stft)
+    window_array = np.asarray(window)
+
+    num_frames = stft_array.shape[0]
     signal_len = (num_frames - 1) * hop + frame_len
     reconstructed = np.zeros(signal_len, dtype=np.complex64)
     window_sum = np.zeros(signal_len, dtype=np.float32)
 
     onesided_bins = frame_len // 2 + 1
     twosided_bins = frame_len
-    is_twosided = stft.shape[1] == twosided_bins
-    is_onesided = stft.shape[1] == onesided_bins
+    is_twosided = stft_array.shape[1] == twosided_bins
+    is_onesided = stft_array.shape[1] == onesided_bins
 
     if not (is_twosided or is_onesided):
         msg = (
-            f"Invalid STFT shape {stft.shape}. Expected num_freq_bins "
+            f"Invalid STFT shape {stft_array.shape}. Expected num_freq_bins "
             f"to be {onesided_bins} (rFFT) or {twosided_bins} (FFT)."
         )
         raise ValueError(msg)
 
     for i in range(num_frames):
         start = i * hop
-        frame_freq = stft[i, :]
+        frame_freq = stft_array[i, :]
         frame_time = (
             np.fft.ifft(frame_freq, n=frame_len)
             if is_twosided
@@ -137,8 +149,8 @@ def inverse_stft(
         frame_time = np.asarray(frame_time, dtype=np.complex64)
 
         # Apply window and accumulate
-        reconstructed[start : start + frame_len] += frame_time * window
-        window_sum[start : start + frame_len] += window**2
+        reconstructed[start : start + frame_len] += frame_time * window_array
+        window_sum[start : start + frame_len] += window_array**2
 
     # Normalize by window overlap
     # Avoid division by zero in regions with proper overlap
@@ -159,7 +171,7 @@ def inverse_stft(
     return reconstructed
 
 
-def apply_fade_in(signal: np.ndarray, fade_samples: int) -> np.ndarray:
+def apply_fade_in(signal: ArrayLike, fade_samples: int) -> SignalArray:
     """Apply smooth cosine-taper fade-in to signal arrival.
 
     Uses a raised cosine (Tukey) window for smooth signal arrival, matching the
@@ -167,29 +179,30 @@ def apply_fade_in(signal: np.ndarray, fade_samples: int) -> np.ndarray:
 
     Parameters
     ----------
-    signal : np.ndarray
+    signal : ArrayLike
         Input signal.
     fade_samples : int
         Number of samples for fade-in duration.
 
     Returns
     -------
-    np.ndarray
+    SignalArray
         Signal with fade-in applied.
 
     """
-    if fade_samples <= 0 or fade_samples >= len(signal):
-        return signal
+    signal_array = np.asarray(signal)
+    if fade_samples <= 0 or fade_samples >= len(signal_array):
+        return cast(SignalArray, signal_array)
 
     # Cosine taper: 0.5 * (1 - cos(pi * t / T))
     # This produces a smooth S-curve from 0 to 1
     fade = 0.5 * (1.0 - np.cos(np.pi * np.arange(fade_samples) / fade_samples))
-    signal_faded = signal.copy()
+    signal_faded = signal_array.copy()
     signal_faded[:fade_samples] *= fade
-    return signal_faded
+    return cast(SignalArray, signal_faded)
 
 
-def apply_fade_out(signal: np.ndarray, fade_samples: int) -> np.ndarray:
+def apply_fade_out(signal: ArrayLike, fade_samples: int) -> SignalArray:
     """Apply smooth cosine-taper fade-out to the end of a signal.
 
     Uses the same raised-cosine profile as :func:`apply_fade_in`, reversed so
@@ -197,22 +210,23 @@ def apply_fade_out(signal: np.ndarray, fade_samples: int) -> np.ndarray:
 
     Parameters
     ----------
-    signal : np.ndarray
+    signal : ArrayLike
         Input signal.
     fade_samples : int
         Number of samples for fade-out duration.
 
     Returns
     -------
-    np.ndarray
+    SignalArray
         Signal with fade-out applied.
 
     """
-    if fade_samples <= 0 or fade_samples >= len(signal):
-        return signal
+    signal_array = np.asarray(signal)
+    if fade_samples <= 0 or fade_samples >= len(signal_array):
+        return cast(SignalArray, signal_array)
 
     # Reuse the same raised-cosine taper and reverse it for a 1 -> 0 ramp.
     fade = 0.5 * (1.0 - np.cos(np.pi * np.arange(fade_samples) / fade_samples))
-    signal_faded = signal.copy()
+    signal_faded = signal_array.copy()
     signal_faded[-fade_samples:] *= fade[::-1]
-    return signal_faded
+    return cast(SignalArray, signal_faded)

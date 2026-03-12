@@ -2,51 +2,59 @@
 
 from abc import ABC, abstractmethod
 from pathlib import Path
+from typing import TypeAlias
 
 import numpy as np
+from numpy.typing import ArrayLike, NDArray
 from stonesoup.base import Base, Property
+
+FloatArray: TypeAlias = NDArray[np.float64]
+Range1D: TypeAlias = tuple[float, float]
+Grid3DResult: TypeAlias = tuple[FloatArray, FloatArray, FloatArray, FloatArray]
+DepthInput: TypeAlias = float | ArrayLike
+SpeedOutput: TypeAlias = float | FloatArray
 
 
 class SoundSpeedProfile(ABC, Base):
     """Abstract base class for sound speed profile models."""
 
     @abstractmethod
-    def calculate(self, depth: float) -> float:
+    def calculate(self, depth: DepthInput) -> SpeedOutput:
         """Calculate the sound speed at a given depth.
 
         Parameters
         ----------
-        depth : float
+        depth : DepthInput
             Depth in meters. Can be positive (oceanographic convention, measured downward from
             surface) or negative (3D coordinate system where surface == 0 and underwater is
             negative z).
 
         Returns
         -------
-        float
+        SpeedOutput
             Sound speed in m/s.
 
         """
-        pass
+        ...
 
     def get_3d_grid(
         self,
-        x_range: tuple,
-        y_range: tuple,
-        z_range: tuple,
+        x_range: Range1D,
+        y_range: Range1D,
+        z_range: Range1D,
         x_res: float = 5000.0,
         y_res: float = 5000.0,
         z_res: float = 100.0,
-    ):
+    ) -> Grid3DResult:
         """Get a 3D grid representation of the sound speed profile.
 
         Parameters
         ----------
-        x_range : tuple
+        x_range : Range1D
             Tuple of (x_min, x_max) in meters.
-        y_range : tuple
+        y_range : Range1D
             Tuple of (y_min, y_max) in meters.
-        z_range : tuple
+        z_range : Range1D
             Tuple of (z_min, z_max) in meters (negative depths).
         x_res : float, optional
             Grid resolution in x direction in meters (default 5000.0).
@@ -57,7 +65,7 @@ class SoundSpeedProfile(ABC, Base):
 
         Returns
         -------
-        tuple
+        Grid3DResult
             ``(x_grid, y_grid, z_grid, c_grid)`` where
             - ``x_grid`` : 1D array of x coordinates
             - ``y_grid`` : 1D array of y coordinates
@@ -90,37 +98,45 @@ class SoundSpeedProfile(ABC, Base):
 
         return x_grid, y_grid, z_grid, c_grid_flat
 
-    def _calc_temperature(self, depth: float) -> float:
+    def _calc_temperature(self, depth: DepthInput) -> SpeedOutput:
         """Calculate ocean temperature based on vertical variation.
 
         Parameters
         ----------
-        depth : float
+        depth : DepthInput
             Depth in meters (positive, below surface).
 
         Returns
         -------
-        float
+        SpeedOutput
             Temperature in degrees Celsius.
 
         """
-        return 10 * (1 - np.tanh((depth - 100) / 50)) + 2
+        depth_array = np.asarray(depth, dtype=float)
+        temperature = 10 * (1 - np.tanh((depth_array - 100.0) / 50.0)) + 2.0
+        if depth_array.ndim == 0:
+            return float(temperature)
+        return np.asarray(temperature, dtype=float)
 
-    def _calc_salinity(self, depth: float) -> float:
+    def _calc_salinity(self, depth: DepthInput) -> SpeedOutput:
         """Calculate ocean salinity model based on vertical variation.
 
         Parameters
         ----------
-        depth : float
+        depth : DepthInput
             Depth in meters (positive, below surface).
 
         Returns
         -------
-        float
+        SpeedOutput
             Salinity in practical salinity units (PSU).
 
         """
-        return 0.5 * (1 - np.tanh((depth - 200) / 100)) + 35
+        depth_array = np.asarray(depth, dtype=float)
+        salinity = 0.5 * (1 - np.tanh((depth_array - 200.0) / 100.0)) + 35.0
+        if depth_array.ndim == 0:
+            return float(salinity)
+        return np.asarray(salinity, dtype=float)
 
 
 class Constant(SoundSpeedProfile):
@@ -137,17 +153,17 @@ class Constant(SoundSpeedProfile):
 
     speed: float = Property(default=1500.0, doc="Constant sound speed in m/s")
 
-    def calculate(self, depth: float) -> float:
+    def calculate(self, depth: DepthInput) -> SpeedOutput:
         """Return the constant sound speed.
 
         Parameters
         ----------
-        depth : float
+        depth : DepthInput
             Depth in meters (not used in this model).
 
         Returns
         -------
-        float
+        SpeedOutput
             Sound speed in m/s.
 
         """
@@ -176,18 +192,18 @@ class Linear(SoundSpeedProfile):
         default=0.017, doc="Sound speed gradient in s^-1 (change per meter)"
     )
 
-    def calculate(self, depth: float) -> float:
+    def calculate(self, depth: DepthInput) -> SpeedOutput:
         """Calculate sound speed using a linear profile.
 
         Parameters
         ----------
-        depth : float
+        depth : DepthInput
             Depth in meters. If negative (z-coordinate), converts to positive depth below surface
             for calculation.
 
         Returns
         -------
-        float
+        SpeedOutput
             Sound speed in m/s.
 
         """
@@ -221,18 +237,18 @@ class Arctan(SoundSpeedProfile):
     )
     steepness: float = Property(default=0.005, doc="Steepness of the transition")
 
-    def calculate(self, depth: float) -> float:
+    def calculate(self, depth: DepthInput) -> SpeedOutput:
         """Calculate sound speed using the arctan profile.
 
         Parameters
         ----------
-        depth : float
+        depth : DepthInput
             Depth in meters. If negative (z-coordinate), converts to positive depth below surface
             for calculation.
 
         Returns
         -------
-        float
+        SpeedOutput
             Sound speed in m/s.
 
         """
@@ -259,18 +275,18 @@ class Munk(SoundSpeedProfile):
 
     surface_speed: float = Property(default=1500.0, doc="Speed of sound at the surface in m/s")
 
-    def calculate(self, depth: float) -> float:
+    def calculate(self, depth: DepthInput) -> SpeedOutput:
         """Calculate sound speed using the Munk equation.
 
         Parameters
         ----------
-        depth : float
+        depth : DepthInput
             Depth in meters. If negative (z-coordinate), converts to positive depth below surface
             for calculation.
 
         Returns
         -------
-        float
+        SpeedOutput
             Sound speed in m/s.
 
         """
@@ -290,18 +306,18 @@ class Mackenzie(SoundSpeedProfile):
     models for temperature and salinity as a function of depth.
     """
 
-    def calculate(self, depth: float) -> float:
+    def calculate(self, depth: DepthInput) -> SpeedOutput:
         """Calculate sound speed using the Mackenzie nine-term equation.
 
         Parameters
         ----------
-        depth : float
+        depth : DepthInput
             Depth in meters. If negative (z-coordinate), converts to positive depth below surface
             for calculation.
 
         Returns
         -------
-        float
+        SpeedOutput
             Sound speed in m/s.
 
         """
@@ -350,7 +366,7 @@ class LeroyCopernicusSoundSpeedProfile(SoundSpeedProfile):
         doc="Fallback fill value for columns with no finite Copernicus values.",
     )
 
-    def _load_data(self):
+    def _load_data(self) -> None:
         """Load Copernicus T/S fields and precompute Leroy sound speed on native grids."""
         temp_path = Path(self.temperature_file_path)
         sal_path = Path(self.salinity_file_path)
@@ -448,19 +464,19 @@ class LeroyCopernicusSoundSpeedProfile(SoundSpeedProfile):
                 )
         self._is_loaded = True
 
-    def __post_init__(self):
+    def __post_init__(self) -> None:
         """Attempt eager load; public methods also support lazy loading."""
         self._is_loaded = False
         self._load_data()
 
-    def _ensure_loaded(self):
+    def _ensure_loaded(self) -> None:
         """Ensure cached Copernicus arrays are loaded."""
         if getattr(self, "_is_loaded", False):
             return
         self._load_data()
 
     @staticmethod
-    def _to_float_with_nan(var_data):
+    def _to_float_with_nan(var_data: ArrayLike) -> FloatArray:
         arr = np.ma.array(var_data)
         arr = np.ma.filled(arr, np.nan)
         arr = np.asarray(arr, dtype=float)
@@ -469,10 +485,17 @@ class LeroyCopernicusSoundSpeedProfile(SoundSpeedProfile):
         return arr
 
     @staticmethod
-    def _latlon_to_xy_m(lat_deg, lon_deg, lat0_deg, lon0_deg):
+    def _latlon_to_xy_m(
+        lat_deg: ArrayLike,
+        lon_deg: ArrayLike,
+        lat0_deg: float,
+        lon0_deg: float,
+    ) -> tuple[FloatArray, FloatArray]:
+        lat_array = np.asarray(lat_deg, dtype=float)
+        lon_array = np.asarray(lon_deg, dtype=float)
         lat0_rad = np.deg2rad(lat0_deg)
-        dlon_rad = np.deg2rad(lon_deg - lon0_deg)
-        dlat_rad = np.deg2rad(lat_deg - lat0_deg)
+        dlon_rad = np.deg2rad(lon_array - lon0_deg)
+        dlat_rad = np.deg2rad(lat_array - lat0_deg)
 
         a = 6_378_137.0
         f = 1.0 / 298.257223563
@@ -488,29 +511,37 @@ class LeroyCopernicusSoundSpeedProfile(SoundSpeedProfile):
         return x, y
 
     @staticmethod
-    def _leroy_sound_speed(z_m, temp_zyx, sal_zyx, lat_deg):
-        z4 = z_m[:, None, None]
+    def _leroy_sound_speed(
+        z_m: ArrayLike,
+        temp_zyx: ArrayLike,
+        sal_zyx: ArrayLike,
+        lat_deg: ArrayLike,
+    ) -> FloatArray:
+        z_array = np.asarray(z_m, dtype=float)
+        temp_array = np.asarray(temp_zyx, dtype=float)
+        sal_array = np.asarray(sal_zyx, dtype=float)
+        z4 = z_array[:, None, None]
         lat4 = np.asarray(lat_deg, dtype=float)[None, :, None]
         c = (
             1402.5
-            + 5.0 * temp_zyx
-            - 5.44e-2 * temp_zyx**2
-            + 2.1e-4 * temp_zyx**3
-            + 1.33 * sal_zyx
-            - 1.23e-2 * sal_zyx * temp_zyx
-            + 8.7e-5 * sal_zyx * temp_zyx**2
+            + 5.0 * temp_array
+            - 5.44e-2 * temp_array**2
+            + 2.1e-4 * temp_array**3
+            + 1.33 * sal_array
+            - 1.23e-2 * sal_array * temp_array
+            + 8.7e-5 * sal_array * temp_array**2
             + 1.56e-2 * z4
             + 2.55e-7 * z4**2
             - 7.3e-12 * z4**3
             + 1.2e-6 * z4 * (lat4 - 45.0)
-            - 9.5e-13 * temp_zyx * z4**3
-            + 3e-7 * temp_zyx**2 * z4
-            + 1.43e-5 * sal_zyx * z4
+            - 9.5e-13 * temp_array * z4**3
+            + 3e-7 * temp_array**2 * z4
+            + 1.43e-5 * sal_array * z4
         )
         return np.asarray(c, dtype=float)
 
     @staticmethod
-    def _fill_nans_2d(arr_2d):
+    def _fill_nans_2d(arr_2d: ArrayLike) -> FloatArray:
         out = np.array(arr_2d, dtype=float, copy=True)
         ny, nx = out.shape
 
@@ -529,34 +560,65 @@ class LeroyCopernicusSoundSpeedProfile(SoundSpeedProfile):
         return out
 
     @staticmethod
-    def _interp_2d_regular(z_old_yx, x_old, y_old, x_new, y_new):
+    def _interp_2d_regular(
+        z_old_yx: ArrayLike,
+        x_old: ArrayLike,
+        y_old: ArrayLike,
+        x_new: ArrayLike,
+        y_new: ArrayLike,
+    ) -> FloatArray:
         z_old_yx = np.asarray(z_old_yx, dtype=float)
-        z_x = np.vstack([np.interp(x_new, x_old, row) for row in z_old_yx])
-        z_xy = np.vstack([np.interp(y_new, y_old, z_x[:, i]) for i in range(z_x.shape[1])]).T
+        x_old_array = np.asarray(x_old, dtype=float)
+        y_old_array = np.asarray(y_old, dtype=float)
+        x_new_array = np.asarray(x_new, dtype=float)
+        y_new_array = np.asarray(y_new, dtype=float)
+        z_x = np.vstack([np.interp(x_new_array, x_old_array, row) for row in z_old_yx])
+        z_xy = np.vstack(
+            [np.interp(y_new_array, y_old_array, z_x[:, i]) for i in range(z_x.shape[1])]
+        ).T
         return z_xy
 
     @staticmethod
-    def _interp_3d_horizontal(c_zyx, x_old, y_old, x_new, y_new):
-        nz = c_zyx.shape[0]
-        out = np.empty((nz, len(y_new), len(x_new)), dtype=float)
+    def _interp_3d_horizontal(
+        c_zyx: ArrayLike,
+        x_old: ArrayLike,
+        y_old: ArrayLike,
+        x_new: ArrayLike,
+        y_new: ArrayLike,
+    ) -> FloatArray:
+        c_array = np.asarray(c_zyx, dtype=float)
+        x_old_array = np.asarray(x_old, dtype=float)
+        y_old_array = np.asarray(y_old, dtype=float)
+        x_new_array = np.asarray(x_new, dtype=float)
+        y_new_array = np.asarray(y_new, dtype=float)
+        nz = c_array.shape[0]
+        out = np.empty((nz, len(y_new_array), len(x_new_array)), dtype=float)
         for k in range(nz):
-            layer = LeroyCopernicusSoundSpeedProfile._fill_nans_2d(c_zyx[k, :, :])
+            layer = LeroyCopernicusSoundSpeedProfile._fill_nans_2d(c_array[k, :, :])
             out[k, :, :] = LeroyCopernicusSoundSpeedProfile._interp_2d_regular(
                 layer,
-                x_old,
-                y_old,
-                x_new,
-                y_new,
+                x_old_array,
+                y_old_array,
+                x_new_array,
+                y_new_array,
             )
         return out
 
     @staticmethod
-    def _extrapolate_columns_to_depth(c_zyx, z_in, z_out, c_fill):
-        ny, nx = c_zyx.shape[1], c_zyx.shape[2]
-        out = np.full((len(z_out), ny, nx), c_fill, dtype=float)
+    def _extrapolate_columns_to_depth(
+        c_zyx: ArrayLike,
+        z_in: ArrayLike,
+        z_out: ArrayLike,
+        c_fill: float,
+    ) -> FloatArray:
+        c_array = np.asarray(c_zyx, dtype=float)
+        z_in_array = np.asarray(z_in, dtype=float)
+        z_out_array = np.asarray(z_out, dtype=float)
+        ny, nx = c_array.shape[1], c_array.shape[2]
+        out = np.full((len(z_out_array), ny, nx), c_fill, dtype=float)
         for j in range(ny):
             for i in range(nx):
-                col = c_zyx[:, j, i]
+                col = c_array[:, j, i]
                 valid = np.isfinite(col)
                 if np.sum(valid) == 0:
                     continue
@@ -564,13 +626,13 @@ class LeroyCopernicusSoundSpeedProfile(SoundSpeedProfile):
                     out[:, j, i] = col[valid][0]
                     continue
 
-                zv = z_in[valid]
+                zv = z_in_array[valid]
                 cv = col[valid]
-                out[:, j, i] = np.interp(z_out, zv, cv)
+                out[:, j, i] = np.interp(z_out_array, zv, cv)
 
-                deep = z_out > zv[-1]
+                deep = z_out_array > zv[-1]
                 slope = (cv[-1] - cv[-2]) / (zv[-1] - zv[-2])
-                out[deep, j, i] = cv[-1] + slope * (z_out[deep] - zv[-1])
+                out[deep, j, i] = cv[-1] + slope * (z_out_array[deep] - zv[-1])
 
         return out
 
@@ -587,7 +649,7 @@ class LeroyCopernicusSoundSpeedProfile(SoundSpeedProfile):
 
         return min(abs(z0), abs(z1)), max(abs(z0), abs(z1))
 
-    def calculate(self, depth: float) -> float:
+    def calculate(self, depth: DepthInput) -> SpeedOutput:
         """Calculate representative sound speed at ``depth`` using a domain-mean profile."""
         self._ensure_loaded()
         depth_arr = np.asarray(depth, dtype=float)
@@ -600,13 +662,13 @@ class LeroyCopernicusSoundSpeedProfile(SoundSpeedProfile):
 
     def get_3d_grid(
         self,
-        x_range: tuple,
-        y_range: tuple,
-        z_range: tuple,
+        x_range: Range1D,
+        y_range: Range1D,
+        z_range: Range1D,
         x_res: float = 5000.0,
         y_res: float = 5000.0,
         z_res: float = 100.0,
-    ):
+    ) -> Grid3DResult:
         """Get a regular SSP cube resampled from Copernicus data for RTRS."""
         self._ensure_loaded()
         x_min, x_max = x_range

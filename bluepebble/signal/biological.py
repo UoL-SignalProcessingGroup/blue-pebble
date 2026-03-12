@@ -1,6 +1,10 @@
 """Models for biological acoustic signals."""
 
+from collections.abc import Mapping
+from typing import TYPE_CHECKING, TypeAlias, TypedDict
+
 import numpy as np
+from numpy.typing import ArrayLike, NDArray
 from scipy import interpolate, signal
 from scipy.stats import levy_stable
 from stonesoup.base import Property
@@ -8,6 +12,71 @@ from stonesoup.base import Property
 from ..models.environment.sound_speed_profile import SoundSpeedProfile
 from .base import Signal
 from .effects import Effect
+
+if TYPE_CHECKING:
+    from stonesoup.types.state import State
+
+FloatArray: TypeAlias = NDArray[np.float64]
+ComplexArray: TypeAlias = NDArray[np.complex128]
+
+
+class CallEvent(TypedDict):
+    """Dictionary structure for a generated whale call event."""
+
+    start_time: float
+    duration: float
+
+    contour_freqs: list[float]
+    amplitude: float
+
+
+def _get_source_metadata(source: "State") -> Mapping[str, object]:
+    """Return validated source metadata mapping."""
+    metadata = getattr(source, "metadata", None)
+    if not isinstance(metadata, Mapping):
+        msg = "Source state metadata must be mapping-like"
+        raise ValueError(msg)
+    return metadata
+
+
+def _get_source_amplitude_upa(source: "State") -> float:
+    """Read scalar source amplitude metadata."""
+    metadata = _get_source_metadata(source)
+    if "amplitude_upa" not in metadata:
+        msg = "Source metadata missing required key: amplitude_upa"
+        raise ValueError(msg)
+    return float(metadata["amplitude_upa"])
+
+
+def _get_source_position(source: "State") -> FloatArray:
+    """Extract source position vector using metadata mapping."""
+    metadata = _get_source_metadata(source)
+    position_mapping = metadata.get("position_mapping")
+    if position_mapping is None:
+        msg = "Source metadata missing required key: position_mapping"
+        raise ValueError(msg)
+
+    mapping_array = np.asarray(position_mapping, dtype=int)
+    if mapping_array.ndim != 1 or mapping_array.size == 0:
+        msg = "Source position_mapping must be one-dimensional and non-empty"
+        raise ValueError(msg)
+
+    return np.asarray(source.state_vector[mapping_array.tolist()], dtype=float)
+
+
+def _design_butterworth_filter(
+    order: int,
+    cutoff_hz: ArrayLike | float,
+    btype: str,
+    sampling_rate_hz: float,
+) -> tuple[FloatArray, FloatArray]:
+    """Design a Butterworth filter with explicit ``None`` guard for static typing."""
+    coeffs = signal.butter(order, cutoff_hz, btype=btype, fs=sampling_rate_hz)
+    if coeffs is None:
+        msg = "scipy.signal.butter returned no filter coefficients"
+        raise RuntimeError(msg)
+    b, a = coeffs
+    return np.asarray(b, dtype=np.float64), np.asarray(a, dtype=np.float64)
 
 
 def _get_snap_rate_from_temp(temperature_celsius: float, slope: float, intercept: float) -> float:
@@ -51,48 +120,49 @@ class PointSourceSnappingShrimpSignal(Signal):
     TEMP_TO_RATE_INTERCEPT = -685.0
 
     # --- Temporal Distribution Parameters ---
-    temperature_celsius = Property(float, doc="Water temperature in Celsius.")
-    start_time_hours = Property(
-        float, default=0.0, doc="Simulation start time in hours from midnight (0-24)."
+    temperature_celsius: float = Property(doc="Water temperature in Celsius.")
+    start_time_hours: float = Property(
+        default=0.0, doc="Simulation start time in hours from midnight (0-24)."
     )
-    diurnal_amplitude = Property(
-        float, default=0.0, doc="Amplitude of diurnal snap rate modulation (0-1)."
+    diurnal_amplitude: float = Property(
+        default=0.0, doc="Amplitude of diurnal snap rate modulation (0-1)."
     )
-    diurnal_phase_hours = Property(
-        float, default=0.0, doc="Phase offset of diurnal cycle in hours."
+    diurnal_phase_hours: float = Property(
+        default=0.0, doc="Phase offset of diurnal cycle in hours."
     )
-    tidal_amplitude = Property(
-        float, default=0.0, doc="Amplitude of tidal snap rate modulation (0-1)."
+    tidal_amplitude: float = Property(
+        default=0.0, doc="Amplitude of tidal snap rate modulation (0-1)."
     )
-    tidal_phase_hours = Property(float, default=0.0, doc="Phase offset of tidal cycle in hours.")
+    tidal_phase_hours: float = Property(default=0.0, doc="Phase offset of tidal cycle in hours.")
 
     # --- Snap Amplitude Distribution Parameters ---
-    alpha = Property(
-        float,
+    alpha: float = Property(
         default=1.5,
         doc="Alpha parameter for the Symmetric Alpha-Stable distribution.",
     )
 
     # --- Individual Snap Waveform Parameters ---
-    delay_duration = Property(float, default=0.0006, doc="Pre-snap delay in seconds.")
-    onset_duration = Property(float, default=0.0001, doc="Snap onset duration in seconds.")
-    snap_duration = Property(float, default=0.0014, doc="Snap impulse duration in seconds.")
-    onset_level = Property(float, default=0.15, doc="Relative amplitude of the onset.")
-    onset_freq = Property(float, default=2500, doc="Frequency of the onset sine wave in Hz.")
-    snap_decay = Property(float, default=1000, doc="Exponential decay rate for the snap.")
-    low_cutoff_hz = Property(float, default=2000, doc="Bandpass filter low cutoff in Hz.")
-    high_cutoff_hz = Property(float, default=15000, doc="Bandpass filter high cutoff in Hz.")
+    delay_duration: float = Property(default=0.0006, doc="Pre-snap delay in seconds.")
+    onset_duration: float = Property(default=0.0001, doc="Snap onset duration in seconds.")
+    snap_duration: float = Property(default=0.0014, doc="Snap impulse duration in seconds.")
+    onset_level: float = Property(default=0.15, doc="Relative amplitude of the onset.")
+    onset_freq: float = Property(default=2500, doc="Frequency of the onset sine wave in Hz.")
+    snap_decay: float = Property(default=1000, doc="Exponential decay rate for the snap.")
+    low_cutoff_hz: float = Property(default=2000, doc="Bandpass filter low cutoff in Hz.")
+    high_cutoff_hz: float = Property(default=15000, doc="Bandpass filter high cutoff in Hz.")
 
     # --- Post-processing Effects ---
-    effects = Property(list[Effect], default=None, doc="List of effects to apply to the signal.")
+    effects: list[Effect] | None = Property(
+        default=None, doc="List of effects to apply to the signal."
+    )
 
-    def _create_snap_template(self) -> np.ndarray:
+    def _create_snap_template(self) -> FloatArray:
         """Generate the prototypical waveform for a single shrimp snap.
 
         Returns
         -------
-            np.ndarray
-                The waveform of a single shrimp snap.
+        FloatArray
+            Waveform template for a single shrimp snap.
 
         """
         delay_samps = int(self.delay_duration * self.sampling_rate_hz)
@@ -111,27 +181,27 @@ class PointSourceSnappingShrimpSignal(Signal):
         snap_impulse = snap_noise * snap_envelope
 
         raw_waveform = np.concatenate([delay, onset_wave, snap_impulse])
-        b, a = signal.butter(
-            4,
-            [self.low_cutoff_hz, self.high_cutoff_hz],
+        b, a = _design_butterworth_filter(
+            order=4,
+            cutoff_hz=[self.low_cutoff_hz, self.high_cutoff_hz],
             btype="bandpass",
-            fs=self.sampling_rate_hz,
+            sampling_rate_hz=self.sampling_rate_hz,
         )
         return signal.filtfilt(b, a, raw_waveform)
 
-    def _rate_function(self, t: np.ndarray, base_rate: float) -> np.ndarray:
+    def _rate_function(self, t: FloatArray, base_rate: float) -> FloatArray:
         """Calculate the time-varying snap rate.
 
         Parameters
         ----------
-        t : np.ndarray
+        t : FloatArray
             Time vector in seconds.
         base_rate : float
             Base snap rate in snaps per second.
 
         Returns
         -------
-        np.ndarray
+        FloatArray
             Time-varying snap rate.
 
         """
@@ -143,7 +213,7 @@ class PointSourceSnappingShrimpSignal(Signal):
         )
         return np.maximum(0, base_rate * (1 + diurnal_mod + tidal_mod))
 
-    def _generate_base_signal(self, source) -> np.ndarray:
+    def _generate_base_signal(self, source: "State") -> FloatArray:
         """Generate the base snapping shrimp signal for a single point source.
 
         This creates a 1-D time series of snapping events for the point colony. Event amplitudes
@@ -157,8 +227,8 @@ class PointSourceSnappingShrimpSignal(Signal):
 
         Returns
         -------
-        np.ndarray
-            1-D time-domain signal (float64) for the duration.
+        FloatArray
+            One-dimensional time-domain signal for the configured duration.
 
         """
         base_lambda_rate = _get_snap_rate_from_temp(
@@ -196,7 +266,8 @@ class PointSourceSnappingShrimpSignal(Signal):
         # Snap placement algorithm:
 
         # 1. Calculate all start indices
-        start_indices = ((snap_times - start_time_s) * self.sampling_rate_hz).astype(int)
+        relative_snap_times = np.subtract(np.asarray(snap_times, dtype=np.float64), start_time_s)
+        start_indices = (relative_snap_times * self.sampling_rate_hz).astype(int)
 
         # 2. Filter out snaps that would be placed out of bounds
         valid_mask = (start_indices >= 0) & (start_indices + snap_len < self.num_samples)
@@ -207,8 +278,11 @@ class PointSourceSnappingShrimpSignal(Signal):
             return signal_buffer
 
         # 3. Generate amplitudes only for valid snaps
-        scale_upa = source.metadata["amplitude_upa"]
-        amplitudes = levy_stable.rvs(self.alpha, 0, scale=scale_upa, size=num_snaps)
+        scale_upa = _get_source_amplitude_upa(source)
+        amplitudes = np.asarray(
+            levy_stable.rvs(self.alpha, 0, scale=scale_upa, size=num_snaps),
+            dtype=np.float64,
+        )
 
         # 4. Create an index array for placing snaps
         # This creates a 2D array where each row corresponds to the indices
@@ -223,7 +297,13 @@ class PointSourceSnappingShrimpSignal(Signal):
 
         return signal_buffer
 
-    def generate(self, source, sensor_delays_s, tloss_db, propagation_time_s) -> np.ndarray:
+    def generate(
+        self,
+        source: "State",
+        sensor_delays_s: ArrayLike,
+        tloss_db: ArrayLike | float,
+        propagation_time_s: float,
+    ) -> ComplexArray:
         """Generate shrimp snaps, propagate them, and apply effects.
 
         The point-source model generates a base 1-D signal, applies transmission loss and
@@ -232,20 +312,19 @@ class PointSourceSnappingShrimpSignal(Signal):
 
         Parameters
         ----------
-        source
+        source : State
             The source state object used to read metadata.
-        sensor_delays_s : np.ndarray
+        sensor_delays_s : ArrayLike
             1-D array of per-sensor delays in seconds.
-        tloss_db : float
+        tloss_db : ArrayLike | float
             Transmission loss to the array origin (dB).
         propagation_time_s : float
             Propagation time from source to origin (s).
 
         Returns
         -------
-            np.ndarray
-                Complex signal for each sensor with shape
-                `(num_sensors, num_samples)` and dtype `np.complex128`.
+        ComplexArray
+            Complex signal matrix with shape ``(num_sensors, num_samples)``.
 
         """
         # Call the base class generate method to handle propagation
@@ -273,47 +352,47 @@ class DiffuseSnappingShrimpSignal(Signal):
     TEMP_TO_RATE_INTERCEPT = -685.0
 
     # --- Diffuse Field Parameters ---
-    num_diffuse_sources = Property(
-        int, default=100, doc="Number of incoherent point sources in the diffuse field."
+    num_diffuse_sources: int = Property(
+        default=100, doc="Number of incoherent point sources in the diffuse field."
     )
-    colony_radius_m = Property(
-        float,
+    colony_radius_m: float = Property(
         default=50.0,
         doc="Radius of the circular area over which sources are distributed.",
     )
 
     # --- Temporal and Waveform Properties ---
-    temperature_celsius = Property(float, doc="Water temperature in Celsius.")
-    start_time_hours = Property(
-        float, default=0.0, doc="Simulation start time in hours from midnight (0-24)."
+    temperature_celsius: float = Property(doc="Water temperature in Celsius.")
+    start_time_hours: float = Property(
+        default=0.0, doc="Simulation start time in hours from midnight (0-24)."
     )
-    diurnal_amplitude = Property(
-        float, default=0.0, doc="Amplitude of diurnal snap rate modulation (0-1)."
+    diurnal_amplitude: float = Property(
+        default=0.0, doc="Amplitude of diurnal snap rate modulation (0-1)."
     )
-    diurnal_phase_hours = Property(
-        float, default=0.0, doc="Phase offset of diurnal cycle in hours."
+    diurnal_phase_hours: float = Property(
+        default=0.0, doc="Phase offset of diurnal cycle in hours."
     )
-    tidal_amplitude = Property(
-        float, default=0.0, doc="Amplitude of tidal snap rate modulation (0-1)."
+    tidal_amplitude: float = Property(
+        default=0.0, doc="Amplitude of tidal snap rate modulation (0-1)."
     )
-    tidal_phase_hours = Property(float, default=0.0, doc="Phase offset of tidal cycle in hours.")
-    alpha = Property(
-        float,
+    tidal_phase_hours: float = Property(default=0.0, doc="Phase offset of tidal cycle in hours.")
+    alpha: float = Property(
         default=1.5,
         doc="Alpha parameter for the Symmetric Alpha-Stable distribution.",
     )
-    delay_duration = Property(float, default=0.0006, doc="Pre-snap delay in seconds.")
-    onset_duration = Property(float, default=0.0001, doc="Snap onset duration in seconds.")
-    snap_duration = Property(float, default=0.0014, doc="Snap impulse duration in seconds.")
-    onset_level = Property(float, default=0.15, doc="Relative amplitude of the onset.")
-    onset_freq = Property(float, default=2500, doc="Frequency of the onset sine wave in Hz.")
-    snap_decay = Property(float, default=1000, doc="Exponential decay rate for the snap.")
-    low_cutoff_hz = Property(float, default=2000, doc="Bandpass filter low cutoff in Hz.")
-    high_cutoff_hz = Property(float, default=15000, doc="Bandpass filter high cutoff in Hz.")
-    ssp = Property(SoundSpeedProfile, doc="Sound speed profile object.")
-    effects = Property(list[Effect], default=None, doc="List of effects to apply to the signal.")
+    delay_duration: float = Property(default=0.0006, doc="Pre-snap delay in seconds.")
+    onset_duration: float = Property(default=0.0001, doc="Snap onset duration in seconds.")
+    snap_duration: float = Property(default=0.0014, doc="Snap impulse duration in seconds.")
+    onset_level: float = Property(default=0.15, doc="Relative amplitude of the onset.")
+    onset_freq: float = Property(default=2500, doc="Frequency of the onset sine wave in Hz.")
+    snap_decay: float = Property(default=1000, doc="Exponential decay rate for the snap.")
+    low_cutoff_hz: float = Property(default=2000, doc="Bandpass filter low cutoff in Hz.")
+    high_cutoff_hz: float = Property(default=15000, doc="Bandpass filter high cutoff in Hz.")
+    ssp: SoundSpeedProfile = Property(doc="Sound speed profile object.")
+    effects: list[Effect] | None = Property(
+        default=None, doc="List of effects to apply to the signal."
+    )
 
-    def _create_snap_template(self) -> np.ndarray:
+    def _create_snap_template(self) -> FloatArray:
         """Generate the prototypical waveform for a single shrimp snap."""
         delay_samps = int(self.delay_duration * self.sampling_rate_hz)
         onset_samps = int(self.onset_duration * self.sampling_rate_hz)
@@ -327,16 +406,30 @@ class DiffuseSnappingShrimpSignal(Signal):
         snap_envelope = np.exp(-self.snap_decay * t_snap)
         snap_impulse = snap_noise * snap_envelope
         raw_waveform = np.concatenate([delay, onset_wave, snap_impulse])
-        b, a = signal.butter(
-            4,
-            [self.low_cutoff_hz, self.high_cutoff_hz],
+        b, a = _design_butterworth_filter(
+            order=4,
+            cutoff_hz=[self.low_cutoff_hz, self.high_cutoff_hz],
             btype="bandpass",
-            fs=self.sampling_rate_hz,
+            sampling_rate_hz=self.sampling_rate_hz,
         )
         return signal.filtfilt(b, a, raw_waveform)
 
-    def _rate_function(self, t: np.ndarray, base_rate: float) -> np.ndarray:
-        """Calculate the time-varying snap rate."""
+    def _rate_function(self, t: FloatArray, base_rate: float) -> FloatArray:
+        """Calculate the time-varying snap rate.
+
+        Parameters
+        ----------
+        t : FloatArray
+            Time vector in seconds.
+        base_rate : float
+            Base snap rate.
+
+        Returns
+        -------
+        FloatArray
+            Time-varying snap rate.
+
+        """
         diurnal_mod = self.diurnal_amplitude * np.sin(
             2 * np.pi * t / (24 * 3600) + (self.diurnal_phase_hours * np.pi / 12.0)
         )
@@ -345,11 +438,25 @@ class DiffuseSnappingShrimpSignal(Signal):
         )
         return np.maximum(0, base_rate * (1 + diurnal_mod + tidal_mod))
 
-    def _generate_base_signal(self, source, lambda_rate_fraction) -> np.ndarray:
+    def _generate_base_signal(self, source: "State", lambda_rate_fraction: float) -> FloatArray:
         """Generate a sparse base signal for a single sub-source.
 
         This is used by the diffuse-field model to simulate one incoherent contributor in the
         colony.
+
+        Parameters
+        ----------
+        source : State
+            Source state object providing metadata (e.g. amplitude_upa).
+        lambda_rate_fraction : float
+            Fraction of the total snap rate to assign to this sub-source
+            (e.g. 1/num_diffuse_sources).
+
+        Returns
+        -------
+        FloatArray
+            The generated base signal.
+
         """
         base_lambda_rate = _get_snap_rate_from_temp(
             self.temperature_celsius,
@@ -379,27 +486,57 @@ class DiffuseSnappingShrimpSignal(Signal):
         if len(snap_times) == 0:
             return signal_buffer
         snap_len = len(snap_template)
-        start_indices = ((snap_times - start_time_s) * self.sampling_rate_hz).astype(int)
+        relative_snap_times = np.subtract(np.asarray(snap_times, dtype=np.float64), start_time_s)
+        start_indices = (relative_snap_times * self.sampling_rate_hz).astype(int)
         valid_mask = (start_indices >= 0) & (start_indices + snap_len < self.num_samples)
         start_indices = start_indices[valid_mask]
         num_snaps = len(start_indices)
         if num_snaps == 0:
             return signal_buffer
 
-        scale_upa = source.metadata["amplitude_upa"]
-        amplitudes = levy_stable.rvs(self.alpha, 0, scale=scale_upa, size=num_snaps)
+        scale_upa = _get_source_amplitude_upa(source)
+        amplitudes = np.asarray(
+            levy_stable.rvs(self.alpha, 0, scale=scale_upa, size=num_snaps),
+            dtype=np.float64,
+        )
 
         snap_indices = np.arange(snap_len) + start_indices[:, np.newaxis]
         scaled_snaps = snap_template[np.newaxis, :] * amplitudes[:, np.newaxis]
         np.add.at(signal_buffer, snap_indices, scaled_snaps)
         return signal_buffer
 
-    def generate(self, source, sensor_delays_s, tloss_db, propagation_time_s) -> np.ndarray:
-        """Generate a diffuse field by summing many incoherent point sources."""
-        final_signals = np.zeros((len(sensor_delays_s), self.num_samples), dtype=np.complex128)
+    def generate(
+        self,
+        source: "State",
+        sensor_delays_s: ArrayLike,
+        tloss_db: ArrayLike | float,
+        propagation_time_s: float,
+    ) -> ComplexArray:
+        """Generate a diffuse field by summing many incoherent point sources.
+
+        Parameters
+        ----------
+        source
+            The source state object used to read metadata.
+        sensor_delays_s : ArrayLike
+            1-D array of per-sensor delays in seconds.
+        tloss_db : ArrayLike | float
+            Transmission loss to the array origin (dB).
+        propagation_time_s : float
+            Propagation time from source to origin (s).
+
+        Returns
+        -------
+        ComplexArray
+            Complex signal for each sensor with shape
+            `(num_sensors, num_samples)` and dtype `np.complex128`.
+
+        """
+        sensor_delays = np.asarray(sensor_delays_s, dtype=float)
+        final_signals = np.zeros((len(sensor_delays), self.num_samples), dtype=np.complex128)
         fft_freqs_hz = np.fft.fftfreq(self.num_samples, 1 / self.sampling_rate_hz)
 
-        source_position = source.state_vector[source.metadata["position_mapping"]]
+        source_position = _get_source_position(source)
         speed_of_sound_mps = self.ssp.calculate(source_position[2])
 
         for _ in range(self.num_diffuse_sources):
@@ -420,11 +557,12 @@ class DiffuseSnappingShrimpSignal(Signal):
             perturbed_prop_time_s = propagation_time_s + time_perturbation_s
 
             # 3. Propagate this individual signal
-            amplitude_scaling = 10 ** (-tloss_db / 20.0)
+            tloss_array = np.asarray(tloss_db, dtype=float)
+            amplitude_scaling = 10 ** (-tloss_array / 20.0)
             base_signal *= amplitude_scaling
             base_signal_fft = np.fft.fft(base_signal)
 
-            total_delays_s = perturbed_prop_time_s + sensor_delays_s
+            total_delays_s = perturbed_prop_time_s + sensor_delays
             phase_shifts = np.exp(
                 -1j * 2 * np.pi * total_delays_s[:, np.newaxis] * fft_freqs_hz[np.newaxis, :]
             )
@@ -451,54 +589,50 @@ class WhaleCallSignal(Signal):
     """
 
     # --- Call Temporal Distribution Parameters ---
-    mean_call_interval_s = Property(
-        float, default=10.0, doc="Mean interval between calls in seconds."
+    mean_call_interval_s: float = Property(
+        default=10.0, doc="Mean interval between calls in seconds."
     )
-    interval_jitter_s = Property(
-        float, default=2.0, doc="Standard deviation of call interval jitter in seconds."
+    interval_jitter_s: float = Property(
+        default=2.0, doc="Standard deviation of call interval jitter in seconds."
     )
 
     # --- Harmonic Structure Parameters ---
-    min_harmonics = Property(int, default=8, doc="Minimum number of harmonics per call.")
-    max_harmonics = Property(int, default=40, doc="Maximum number of harmonics per call.")
-    harmonic_decay_db = Property(float, default=6.0, doc="Amplitude decay per harmonic in dB.")
+    min_harmonics: int = Property(default=8, doc="Minimum number of harmonics per call.")
+    max_harmonics: int = Property(default=40, doc="Maximum number of harmonics per call.")
+    harmonic_decay_db: float = Property(default=6.0, doc="Amplitude decay per harmonic in dB.")
 
     # --- Individual Call Waveform Parameters ---
-    call_duration_s = Property(float, default=2.0, doc="Duration of each call in seconds.")
-    duration_jitter_s = Property(
-        float, default=0.2, doc="Standard deviation of call duration jitter in seconds."
+    call_duration_s: float = Property(default=2.0, doc="Duration of each call in seconds.")
+    duration_jitter_s: float = Property(
+        default=0.2, doc="Standard deviation of call duration jitter in seconds."
     )
-    start_freq_hz = Property(float, default=1000, doc="Starting frequency of the call in Hz.")
-    start_freq_jitter_hz = Property(
-        float, default=100, doc="Standard deviation of starting frequency jitter in Hz."
+    start_freq_hz: float = Property(default=1000, doc="Starting frequency of the call in Hz.")
+    start_freq_jitter_hz: float = Property(
+        default=100, doc="Standard deviation of starting frequency jitter in Hz."
     )
-    end_freq_hz = Property(float, default=5000, doc="Ending frequency of the call in Hz.")
-    end_freq_jitter_hz = Property(
-        float, default=500, doc="Standard deviation of ending frequency jitter in Hz."
+    end_freq_hz: float = Property(default=5000, doc="Ending frequency of the call in Hz.")
+    end_freq_jitter_hz: float = Property(
+        default=500, doc="Standard deviation of ending frequency jitter in Hz."
     )
     # --- Dynamic Contour Parameters ---
-    num_contour_points = Property(
-        int,
+    num_contour_points: int = Property(
         default=2,
         doc="Number of points defining the frequency contour. 2 is a simple sweep.",
     )
-    contour_variability_hz = Property(
-        float,
+    contour_variability_hz: float = Property(
         default=50.0,
         doc="Max frequency change between contour points, creating variability.",
     )
-    sweep_method = Property(
-        str,
+    sweep_method: str = Property(
         default="logarithmic",
         doc=("Frequency sweep method ('linear', 'quadratic', 'logarithmic', 'hyperbolic')."),
     )
-    vibrato_rate_hz = Property(
-        float, default=0.0, doc="Speed of the vibrato in oscillations per second (Hz)."
+    vibrato_rate_hz: float = Property(
+        default=0.0, doc="Speed of the vibrato in oscillations per second (Hz)."
     )
-    vibrato_depth_hz = Property(float, default=0.0, doc="Intensity of the vibrato in Hz.")
-    low_cutoff_hz = Property(float, default=50, doc="Bandpass filter low cutoff frequency in Hz.")
-    high_cutoff_hz = Property(
-        float,
+    vibrato_depth_hz: float = Property(default=0.0, doc="Intensity of the vibrato in Hz.")
+    low_cutoff_hz: float = Property(default=50, doc="Bandpass filter low cutoff frequency in Hz.")
+    high_cutoff_hz: float = Property(
         default=1500.0,
         doc="High cutoff frequency for the bandpass filter in Hz.",
     )
@@ -508,99 +642,83 @@ class WhaleCallSignal(Signal):
     )
 
     # --- Biphonation Parameters ---
-    add_biphonation = Property(
-        bool,
+    add_biphonation: bool = Property(
         default=False,
         doc="If True, adds a second, non-harmonic voice to the call.",
     )
-    biphonic_freq_ratio = Property(
-        float,
+    biphonic_freq_ratio: float = Property(
         default=1.5,
         doc=(
             "Frequency ratio of the biphonic voice to the fundamental "
             "(e.g., 1.5 for a perfect fifth)."
         ),
     )
-    biphonic_jitter_ratio = Property(
-        float,
+    biphonic_jitter_ratio: float = Property(
         default=0.1,
         doc="Amount of random variation in the biphonic frequency ratio.",
     )
-    biphonic_amplitude_ratio = Property(
-        float,
+    biphonic_amplitude_ratio: float = Property(
         default=0.5,
         doc="Amplitude of the biphonic voice relative to the fundamental (0-1).",
     )
 
     # --- Sub-harmonic Parameters ---
-    sub_harmonic_ratios = Property(
-        list,
+    sub_harmonic_ratios: list[float] | None = Property(
         default=None,
         doc="List of frequency ratios for sub-harmonics (e.g., [0.5, 0.25]).",
     )
-    sub_harmonic_amplitude_ratio = Property(
-        float,
+    sub_harmonic_amplitude_ratio: float = Property(
         default=0.3,
         doc="Amplitude of the sub-harmonics relative to the fundamental (0-1).",
     )
 
     # --- Timbre / Texture Parameters ---
-    add_breathy_noise = Property(
-        bool,
+    add_breathy_noise: bool = Property(
         default=False,
         doc="If True, adds a 'breathy' or 'noisy' texture to the call.",
     )
-    breathy_noise_amount = Property(
-        float,
+    breathy_noise_amount: float = Property(
         default=0.1,
         doc="Mix amount of breathy noise (0-1). Higher is more noisy.",
     )
-    breathy_noise_lp_cutoff_hz = Property(
-        float,
+    breathy_noise_lp_cutoff_hz: float = Property(
         default=1500.0,
         doc="Low-pass cutoff for the breathy noise, controlling its 'color'.",
     )
 
     # --- Post Processing Parameters ---
-    effects = Property(
-        list[Effect],
+    effects: list[Effect] | None = Property(
         default=None,
         doc="List of audio effects to apply post-generation.",
     )
 
     # --- Song Structure Parameters ---
-    song_structure_enabled = Property(
-        bool,
+    song_structure_enabled: bool = Property(
         default=False,
         doc="If True, generates calls based on a defined song structure.",
     )
-    song_themes = Property(
-        list,
+    song_themes: list[list[float]] | None = Property(
         default=None,
         doc="A list of themes, where each theme is a list of frequency offsets (Hz).",
     )
-    song_phrases = Property(
-        list,
+    song_phrases: list[list[int]] | None = Property(
         default=None,
         doc="A list of phrases, where each phrase is a list of theme indices.",
     )
-    theme_base_freq_hz = Property(
-        float,
+    theme_base_freq_hz: float = Property(
         default=150.0,
         doc="The base frequency from which themes are generated.",
     )
-    theme_freq_jitter_hz = Property(
-        float,
+    theme_freq_jitter_hz: float = Property(
         default=10.0,
         doc="Jitter applied to each point in a theme's contour.",
     )
-    theme_duration_s = Property(
-        float,
+    theme_duration_s: float = Property(
         default=2.0,
         doc="The base duration for a call generated from a theme.",
     )
 
-    def _create_call_template(self, duration: float, contour_freqs: list[float]) -> np.ndarray:
+    def _create_call_template(self, duration: float, contour_freqs: list[float]) -> FloatArray:
         """Generate the prototypical waveform for a single whale call.
 
         Parameters
@@ -612,7 +730,7 @@ class WhaleCallSignal(Signal):
 
         Returns
         -------
-        np.ndarray
+        FloatArray
             The waveform of a single whale call.
 
         """
@@ -702,11 +820,11 @@ class WhaleCallSignal(Signal):
             noise = np.random.randn(len(call_template))
 
             # Create a low-pass filter for the noise to make it 'breathy'
-            b_noise, a_noise = signal.butter(
-                2,
-                self.breathy_noise_lp_cutoff_hz,
+            b_noise, a_noise = _design_butterworth_filter(
+                order=2,
+                cutoff_hz=self.breathy_noise_lp_cutoff_hz,
                 btype="low",
-                fs=self.sampling_rate_hz,
+                sampling_rate_hz=self.sampling_rate_hz,
             )
             filtered_noise = signal.filtfilt(b_noise, a_noise, noise)
 
@@ -717,30 +835,39 @@ class WhaleCallSignal(Signal):
             ) * call_template + self.breathy_noise_amount * filtered_noise
 
         # --- 6. Apply bandpass filter ---
-        b, a = signal.butter(
-            4,
-            [self.low_cutoff_hz, self.high_cutoff_hz],
-            "bandpass",
-            fs=self.sampling_rate_hz,
+        b, a = _design_butterworth_filter(
+            order=4,
+            cutoff_hz=[self.low_cutoff_hz, self.high_cutoff_hz],
+            btype="bandpass",
+            sampling_rate_hz=self.sampling_rate_hz,
         )
         filtered_call = signal.filtfilt(b, a, call_template)
 
         # --- 7. Apply amplitude envelope for natural attack/decay ---
         if self.envelope_taper_ratio > 0:
             num_samples = len(filtered_call)
-            window = signal.windows.tukey(num_samples, alpha=self.envelope_taper_ratio, sym=True)
+            window = signal.get_window(
+                ("tukey", self.envelope_taper_ratio),
+                num_samples,
+                fftbins=False,
+            )
             filtered_call *= window
 
         return filtered_call
 
-    def _generate_random_call_sequence(self, source) -> list[dict]:
+    def _generate_random_call_sequence(self, source: "State") -> list[CallEvent]:
         """Generate a sequence of random, unstructured whale calls.
+
+        Parameters
+        ----------
+        source : State
+            Source state object providing metadata (e.g. amplitude_upa).
 
         Returns
         -------
-            list[dict]
-                A list of call events, each containing start time,
-            duration, contour frequencies, and amplitude.
+        list[CallEvent]
+            A list of call events, each containing start time,
+        duration, contour frequencies, and amplitude.
 
         """
         potential_events = []
@@ -752,7 +879,7 @@ class WhaleCallSignal(Signal):
                 -self.duration_jitter_s, self.duration_jitter_s
             )
 
-            amplitude = source.metadata["amplitude_upa"]
+            amplitude = _get_source_amplitude_upa(source)
 
             # --- Generate a dynamic frequency contour ---
             num_points = max(2, self.num_contour_points)
@@ -780,14 +907,19 @@ class WhaleCallSignal(Signal):
 
         return potential_events
 
-    def _generate_structured_song_sequence(self, source) -> list[dict]:
+    def _generate_structured_song_sequence(self, source: "State") -> list[CallEvent]:
         """Generate a structured song based on themes and phrases.
+
+        Parameters
+        ----------
+        source : State
+            Source state object providing metadata (e.g. amplitude_upa).
 
         Returns
         -------
-            list[dict]
-                A list of call events, each containing start time,
-            duration, contour frequencies, and amplitude.
+        list[CallEvent]
+            A list of call events, each containing start time, duration, contour frequencies, and
+            amplitude.
 
         """
         if not self.song_themes or not self.song_phrases:
@@ -796,7 +928,7 @@ class WhaleCallSignal(Signal):
         potential_events = []
         current_time_s = np.random.uniform(0, self.mean_call_interval_s)
 
-        mean_amp = source.metadata["amplitude_upa"]
+        mean_amp = _get_source_amplitude_upa(source)
 
         for phrase in self.song_phrases:
             for theme_index in phrase:
@@ -842,16 +974,21 @@ class WhaleCallSignal(Signal):
 
         return potential_events
 
-    def _generate_call_sequence(self, source) -> list[dict]:
+    def _generate_call_sequence(self, source: "State") -> list[CallEvent]:
         """Generate a sequential sequence of whale calls from a single source.
 
         Prevents overlapping calls.
 
+        Parameters
+        ----------
+        source : State
+            Source state object providing metadata (e.g. amplitude_upa).
+
         Returns
         -------
-            list[dict]
-                A list of call events, each containing start time, duration, contour frequencies,
-                and amplitude.
+        list[CallEvent]
+            A list of call events, each containing start time, duration, contour frequencies,
+            and amplitude.
 
         """
         if self.song_structure_enabled:
@@ -879,8 +1016,20 @@ class WhaleCallSignal(Signal):
 
         return sequential_events
 
-    def _generate_base_signal(self, source) -> np.ndarray:
-        """Generate the base 1D time-domain signal for the whale calls."""
+    def _generate_base_signal(self, source: "State") -> FloatArray:
+        """Generate the base 1D time-domain signal for the whale calls.
+
+        Parameters
+        ----------
+        source : State
+            Source state object providing metadata (e.g. amplitude_upa).
+
+        Returns
+        -------
+        FloatArray
+            The generated base signal containing the whale calls.
+
+        """
         base_signal = np.zeros(self.num_samples, dtype=np.float64)
         call_events = self._generate_call_sequence(source)
 
@@ -899,8 +1048,33 @@ class WhaleCallSignal(Signal):
                 base_signal[start_sample:end_sample] += call_template * event["amplitude"]
         return base_signal
 
-    def generate(self, source, sensor_delays_s, tloss_db, propagation_time_s) -> np.ndarray:
-        """Generate whale calls, propagate them, and apply effects."""
+    def generate(
+        self,
+        source: "State",
+        sensor_delays_s: ArrayLike,
+        tloss_db: ArrayLike | float,
+        propagation_time_s: float,
+    ) -> ComplexArray:
+        """Generate whale calls, propagate them, and apply effects.
+
+        Parameters
+        ----------
+        source
+            The source state object used to read metadata.
+        sensor_delays_s : ArrayLike
+            1-D array of per-sensor delays in seconds.
+        tloss_db : ArrayLike | float
+            Transmission loss to the array origin (dB).
+        propagation_time_s : float
+            Propagation time from source to origin (s).
+
+        Returns
+        -------
+        ComplexArray
+            Complex signal for each sensor with shape
+            `(num_sensors, num_samples)` and dtype `np.complex128`.
+
+        """
         # Call the base class generate method to handle propagation
         signals = super().generate(source, sensor_delays_s, tloss_db, propagation_time_s)
 
@@ -910,4 +1084,4 @@ class WhaleCallSignal(Signal):
                 if isinstance(effect, Effect):
                     signals = effect.apply(signals, self.sampling_rate_hz)
 
-        return signals
+        return np.asarray(signals, dtype=np.complex128)

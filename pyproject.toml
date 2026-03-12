@@ -55,6 +55,7 @@ dev = [
     "pytest",
     "pytest-cov",
     "build",
+    "pyright>=1.1.408",
 ]
 docs = [
     "sphinx",
@@ -82,6 +83,62 @@ select = ["F", "E", "W", "I", "B", "D", "UP"]
 [tool.ruff.lint.per-file-ignores]
 "docs/tutorials/*" = ["E402"]
 "docs/examples/*" = ["E402"]
+
+[tool.pyright]
+venvPath = "."
+venv = ".venv"
+pythonVersion = "3.11"
+typeCheckingMode = "basic"
+include = ["bluepebble"]
+exclude = [
+    ".venv",
+    "tests",
+    "docs",
+    "external_tools",
+    "**/node_modules",
+    "**/__pycache__",
+    "**/.*",
+]
+reportUnsupportedDunderAll = "none"
+reportAttributeAccessIssue = "warning"
+reportCallIssue = "warning"
+reportOperatorIssue = "warning"
+reportGeneralTypeIssues = "warning"
+
+[[tool.pyright.executionEnvironments]]
+root = "bluepebble/detector"
+reportAssignmentType = "none"
+reportArgumentType = "none"
+
+[[tool.pyright.executionEnvironments]]
+root = "bluepebble/models"
+reportAssignmentType = "none"
+reportArgumentType = "none"
+
+[[tool.pyright.executionEnvironments]]
+root = "bluepebble/platform"
+reportAssignmentType = "none"
+reportArgumentType = "none"
+
+[[tool.pyright.executionEnvironments]]
+root = "bluepebble/signal"
+reportAssignmentType = "none"
+reportArgumentType = "none"
+
+[[tool.pyright.executionEnvironments]]
+root = "bluepebble/sigproc"
+reportAssignmentType = "none"
+reportArgumentType = "none"
+
+[[tool.pyright.executionEnvironments]]
+root = "bluepebble/simulator"
+reportAssignmentType = "none"
+reportArgumentType = "none"
+
+[[tool.pyright.executionEnvironments]]
+root = "bluepebble/types"
+reportAssignmentType = "none"
+reportArgumentType = "none"
 
 [tool.setuptools.packages.find]
 where = ["."]
