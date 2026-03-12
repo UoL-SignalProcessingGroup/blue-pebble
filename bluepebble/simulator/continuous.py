@@ -10,10 +10,9 @@ from numpy.typing import ArrayLike, NDArray
 from stonesoup.base import Property
 from stonesoup.types.sensordata import SensorData
 
+from ..signal.anthropogenic.base import BroadbandStftSignalBase
 from ..signal.utils import apply_fade_in, apply_fade_out, inverse_stft
 from .base import PassiveSonarArraySimulatorBase
-
-from ..signal.anthropogenic.base import BroadbandStftSignalBase
 
 if TYPE_CHECKING:
     from stonesoup.types.state import State
