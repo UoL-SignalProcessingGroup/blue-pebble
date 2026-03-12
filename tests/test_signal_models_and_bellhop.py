@@ -6,6 +6,7 @@ import builtins
 from pathlib import Path
 
 import numpy as np
+import pytest
 
 from .support import install_fake_stonesoup, load_module_from_repo
 
@@ -55,16 +56,18 @@ def test_white_and_coloured_noise_generate_expected_shapes(monkeypatch) -> None:
     assert np.isfinite(coloured_out).all()
 
 
-def test_reverb_invalid_configuration_returns_input(monkeypatch) -> None:
-    """Invalid reverb parameters should short-circuit and return the original signal."""
+def test_reverb_invalid_configuration_raises(monkeypatch) -> None:
+    """Invalid reverb parameters should raise ValueError."""
     install_fake_stonesoup(monkeypatch)
     effects = load_module_from_repo("bluepebble/signal/effects.py", "bluepebble.signal.effects")
 
     signal = np.ones((2, 8), dtype=np.complex128)
-    effect = effects.Reverb(duration_s=0.0, wet_dry_mix=0.3)
 
-    returned = effect.apply(signal, sampling_rate_hz=8)
-    assert returned is signal
+    with pytest.raises(ValueError, match="duration_s"):
+        effects.Reverb(duration_s=0.0, wet_dry_mix=0.3).apply(signal, sampling_rate_hz=8)
+
+    with pytest.raises(ValueError, match="wet_dry_mix"):
+        effects.Reverb(duration_s=1.0, wet_dry_mix=0.0).apply(signal, sampling_rate_hz=8)
 
 
 def test_reverb_applies_mix_with_deterministic_ir(monkeypatch) -> None:

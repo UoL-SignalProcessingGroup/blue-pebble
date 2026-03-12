@@ -282,11 +282,19 @@ class ContinuousSTFTPassiveSonarArraySimulator(PassiveSonarArraySimulatorBase):
 
         Raises
         ------
+        TypeError
+            If the propagation model does not implement ``propagate_spectrum``.
         RuntimeError
             If target STFT shapes are inconsistent across targets.
 
         """
         targets_data: list[_STFTTargetHistory] = []
+        if not hasattr(self.propagation_model, "propagate_spectrum"):
+            msg = (
+                f"{type(self.propagation_model).__name__} does not implement "
+                "'propagate_spectrum', which is required for STFT-based simulation"
+            )
+            raise TypeError(msg)
         spectrum_propagation_model = cast(_SpectrumPropagationModel, self.propagation_model)
 
         for target_idx, target_path in enumerate(ground_truth_paths):
@@ -892,6 +900,8 @@ class ContinuousFractionalDelayPassiveSonarArraySimulator(PassiveSonarArraySimul
         ValueError
             If fewer than two timesteps are available or no targets are
             configured.
+        TypeError
+            If the propagation model does not implement ``propagate_spectrum``.
         RuntimeError
             If target source-signal lengths are inconsistent.
 
@@ -934,6 +944,12 @@ class ContinuousFractionalDelayPassiveSonarArraySimulator(PassiveSonarArraySimul
         out_len = len(ref_source)
         sample_times_s = np.arange(out_len, dtype=np.float64) / fs
         receiver_accum = np.zeros((num_sensors, out_len), dtype=np.complex64)
+        if not hasattr(self.propagation_model, "propagate_spectrum"):
+            msg = (
+                f"{type(self.propagation_model).__name__} does not implement "
+                "'propagate_spectrum', which is required for STFT-based simulation"
+            )
+            raise TypeError(msg)
         spectrum_propagation_model = cast(_SpectrumPropagationModel, self.propagation_model)
 
         for target_idx, target_path in enumerate(ground_truth_paths):
