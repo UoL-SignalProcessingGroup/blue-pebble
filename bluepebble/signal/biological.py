@@ -275,7 +275,8 @@ class PointSourceSnappingShrimpSignal(Signal):
         # Snap placement algorithm:
 
         # 1. Calculate all start indices
-        start_indices = ((snap_times - start_time_s) * self.sampling_rate_hz).astype(int)
+        relative_snap_times = np.subtract(np.asarray(snap_times, dtype=np.float64), start_time_s)
+        start_indices = (relative_snap_times * self.sampling_rate_hz).astype(int)
 
         # 2. Filter out snaps that would be placed out of bounds
         valid_mask = (start_indices >= 0) & (start_indices + snap_len < self.num_samples)
@@ -502,7 +503,8 @@ class DiffuseSnappingShrimpSignal(Signal):
         if len(snap_times) == 0:
             return signal_buffer
         snap_len = len(snap_template)
-        start_indices = ((snap_times - start_time_s) * self.sampling_rate_hz).astype(int)
+        relative_snap_times = np.subtract(np.asarray(snap_times, dtype=np.float64), start_time_s)
+        start_indices = (relative_snap_times * self.sampling_rate_hz).astype(int)
         valid_mask = (start_indices >= 0) & (start_indices + snap_len < self.num_samples)
         start_indices = start_indices[valid_mask]
         num_snaps = len(start_indices)
@@ -662,6 +664,7 @@ class WhaleCallSignal(Signal):
         doc="High cutoff frequency for the bandpass filter in Hz.",
     )
     envelope_taper_ratio: float = Property(
+        float,
         default=0.25,
         doc="Ratio of the call duration to taper for a smooth amplitude envelope.",
     )

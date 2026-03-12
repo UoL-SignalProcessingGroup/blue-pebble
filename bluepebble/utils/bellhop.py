@@ -128,8 +128,10 @@ def read_shade_file(
                             )
             else:
                 # Read a specific slice for a given source position (xs, ys)
-                idx_x = np.abs(source_x - xs * 1000).argmin()
-                idx_y = np.abs(source_y - ys * 1000).argmin()
+                source_x_array = np.asarray(source_x, dtype=np.float64)
+                source_y_array = np.asarray(source_y, dtype=np.float64)
+                idx_x = np.abs(np.subtract(source_x_array, float(xs) * 1000.0)).argmin()
+                idx_y = np.abs(np.subtract(source_y_array, float(ys) * 1000.0)).argmin()
 
                 for i_theta in range(n_theta):
                     for i_sd in range(n_sd):

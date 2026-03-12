@@ -165,7 +165,7 @@ class NarrowbandSignalBase(DiscreteTimestepSignal, ABC):
         propagation_time_s: float,
         time_array_s: FloatArray,
     ) -> Complex128Array:
-        """Synthesize per-sensor tonal snapshots using vectorised broadcasting.
+        """Synthesise per-sensor tonal snapshots using vectorised broadcasting.
 
         Parameters
         ----------
@@ -204,10 +204,9 @@ class NarrowbandSignalBase(DiscreteTimestepSignal, ABC):
         freq_reshaped = frequencies_hz[np.newaxis, :, np.newaxis]
         phase_reshaped = phases_rad[np.newaxis, :, np.newaxis]
 
-        total_phase = (
-            2 * np.pi * freq_reshaped * (time_reshaped - propagation_time_s - delays_reshaped)
-            + phase_reshaped
-        )
+        time_offset = np.subtract(time_reshaped, np.float64(propagation_time_s))
+        delayed_time = np.subtract(time_offset, delays_reshaped)
+        total_phase = 2 * np.pi * freq_reshaped * delayed_time + phase_reshaped
 
         amp_reshaped = received_amplitude_upa[np.newaxis, :, np.newaxis]
         all_tonal_components = amp_reshaped * np.exp(1j * total_phase)

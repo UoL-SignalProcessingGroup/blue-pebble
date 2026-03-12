@@ -22,11 +22,8 @@ class Effect(Base, ABC):
 class Reverb(Effect):
     """Applies a simple convolutional reverb effect to the signal."""
 
-    duration_s: float = Property(
-        float, default=1.0, doc="The decay time of the reverb tail in seconds."
-    )
+    duration_s: float = Property(default=1.0, doc="The decay time of the reverb tail in seconds.")
     wet_dry_mix: float = Property(
-        float,
         default=0.3,
         doc="Mix between wet (reverb) and dry signal (0=dry, 1=wet).",
     )

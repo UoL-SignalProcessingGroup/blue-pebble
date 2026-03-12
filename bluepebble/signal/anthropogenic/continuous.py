@@ -127,17 +127,15 @@ class BroadbandSyntheticSignal(BroadbandStftSignalBase):
         float, default=-2.0, doc="Spectral shape exponent (-2=pink, 0=white)"
     )
     noise_freq_range_hz: tuple[float, float] = Property(
-        tuple, default=(20.0, 200.0), doc="Frequency range for noise (Hz)"
+        default=(20.0, 200.0), doc="Frequency range for noise (Hz)"
     )
     noise_variance: float = Property(
-        float,
         default=1.0,
         doc=(
             "Variance multiplier for generated white noise before shaping; std = sqrt(variance)."
         ),
     )
     tonal_noise_is_constant: bool = Property(
-        bool,
         default=False,
         doc=(
             "If True, reuse the same band-limited tonal noise across calls; "
@@ -145,7 +143,6 @@ class BroadbandSyntheticSignal(BroadbandStftSignalBase):
         ),
     )
     use_powerlaw_noise: bool = Property(
-        bool,
         default=False,
         doc=(
             "If True, build broadband noise deterministically from the power-law spectrum (no "
@@ -153,7 +150,6 @@ class BroadbandSyntheticSignal(BroadbandStftSignalBase):
         ),
     )
     noise_is_constant: bool = Property(
-        bool,
         default=True,
         doc="If True, use same noise realization across calls; "
         "if False, generate new noise each time",
@@ -333,24 +329,20 @@ class BroadbandRecordedSignal(BroadbandStftSignalBase):
 
     """
 
-    wav_path: str = Property(str, doc="Path to measured WAV recording")
+    wav_path: str = Property(doc="Path to measured WAV recording")
     segment_start_s: float = Property(
-        float,
         default=0.0,
         doc="Segment start time in WAV (seconds)",
     )
     segment_duration_s: float = Property(
-        float,
         default=0.0,
         doc="Segment duration in WAV (seconds); <=0 uses to end of recording",
     )
     duration_match_mode: str = Property(
-        str,
         default="tile",
         doc='Duration matching mode when audio is short: "tile" or "zero_pad"',
     )
     level_db_re_1upa: float = Property(
-        float,
         default=85.0,
         doc="Target RMS source level in dB re 1 µPa",
     )

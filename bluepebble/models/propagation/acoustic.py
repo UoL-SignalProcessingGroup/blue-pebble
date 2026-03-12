@@ -697,42 +697,49 @@ class rtrsAcousticPropagationModel(AcousticPropagationModel):
     """
 
     bathymetry: Bathymetry = Property(Bathymetry, doc="Bathymetry model")
-    step_m: float = Property(default=15.0, doc="Ray tracing step size in meters")
+    step_m: float = Property(float, default=15.0, doc="Ray tracing step size in meters")
     ssp_resolution: tuple[float, float, float] = Property(
+        tuple,
         default=(5000.0, 5000.0, 100.0),
         doc="Resolution for SSP grid (x, y, z) in meters",
     )
     azimuth_search_width: float = Property(
+        float,
         default=1.0,
         doc="Angular width in degrees to search for azimuth angles",
     )
     azimuth_resolution: float = Property(
-        default=0.5, doc="Angular resolution for azimuth search in degrees"
+        float, default=0.5, doc="Angular resolution for azimuth search in degrees"
     )
     elevation_range: tuple[float, float] = Property(
-        default=(-70.0, 70.0), doc="Min and max elevation angles in degrees"
+        tuple, default=(-70.0, 70.0), doc="Min and max elevation angles in degrees"
     )
     elevation_resolution: float = Property(
-        default=1.0, doc="Angular resolution for elevation in degrees"
+        float, default=1.0, doc="Angular resolution for elevation in degrees"
     )
     use_all_frequencies: bool = Property(
+        bool,
         default=False,
         doc="If True, run rtrs for all tonal frequencies. If False, use only the "
         "loudest frequency. Not used for propagated spectrum method.",
     )
     water_density_g_cm3: float | None = Property(
+        float,
         default=None,
         doc="Optional water density passed to rtrs bathymetry config (g/cm^3)",
     )
     bottom_model: dict[str, object] | None = Property(
+        dict,
         default=None,
         doc="Bottom boundary model dictionary for rtrs",
     )
     store_ray_paths: bool = Property(
+        bool,
         default=False,
         doc="If True, store full ray paths in rtrs output, not needed for Blue Pebble",
     )
     integration_method: str = Property(
+        str,
         default="euler",
         doc='Beam integration method for rtrs ("euler" or "rk2")',
     )

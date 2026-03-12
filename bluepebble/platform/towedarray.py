@@ -44,12 +44,8 @@ class _FollowerModel(Base):
 
     """
 
-    leader: MovingMovable = Property(
-        MovingMovable, doc="The leader movable that the next movable will follow."
-    )
-    offset: float = Property(
-        float, doc="The distance the follower should maintain from the leader."
-    )
+    leader: MovingMovable = Property(doc="The leader movable that the next movable will follow.")
+    offset: float = Property(doc="The distance the follower should maintain from the leader.")
 
     def function(self, state: State, **kwargs: object) -> StateVector:
         """Calculate the new 3D position of the follower.
@@ -100,7 +96,7 @@ class _TowedArrayFollowerModel(_FollowerModel):
     """
 
     array_depth_m: float = Property(
-        float, doc="The fixed depth at which the follower should be maintained."
+        doc="The fixed depth at which the follower should be maintained."
     )
 
     def function(self, state: State, **kwargs: object) -> StateVector:
@@ -247,17 +243,16 @@ class TowedArrayPlatform(MultiTransitionMovingPlatform):
 
     """
 
-    num_sensors: int = Property(int, doc="Number of sensors in the array")
-    cable_length_m: float = Property(float, doc="Length of the main tow cable in meters")
-    sensor_spacing_m: float = Property(float, doc="Spacing between sensors in meters")
-    array_depth_m: float = Property(float, doc="Depth at which the array is towed in meters")
+    num_sensors: int = Property(doc="Number of sensors in the array")
+    cable_length_m: float = Property(doc="Length of the main tow cable in meters")
+    sensor_spacing_m: float = Property(doc="Spacing between sensors in meters")
+    array_depth_m: float = Property(doc="Depth at which the array is towed in meters")
     velocity_mapping: Sequence[int] | None = Property(
-        Sequence[int],
         default=None,
         doc="Indices for velocity in the state vector. If not set, defaults to "
         "position_mapping indices + 1",
     )
-    reference_sensor_idx: int = Property(int, default=0, doc="Index of the reference sensor")
+    reference_sensor_idx: int = Property(default=0, doc="Index of the reference sensor")
 
     def __init__(self, *args: object, **kwargs: object) -> None:
         """Initialise the TowedArrayPlatform.

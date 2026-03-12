@@ -63,7 +63,7 @@ class ThresholdDetector(DetectionAlgorithm):
     """
 
     threshold: float = Property(
-        float, doc="The value that data points must exceed to be considered a detection"
+        doc="The value that data points must exceed to be considered a detection"
     )
 
     def detect(self, data: ArrayLike) -> DetectionArray:
@@ -126,21 +126,17 @@ class CACFARDetector(DetectionAlgorithm):
     """
 
     num_guard_cells: int = Property(
-        int,
         doc="The number of cells to ignore on each side of the Cell Under Test (CUT). "
         "These cells are ignored to prevent signal leakage from the CUT into the noise estimate",
     )
     num_training_cells: int = Property(
-        int,
         doc="The number of cells to use for noise estimation on each side of the guard cells",
     )
     threshold_factor: float = Property(
-        float,
         doc="A scaling factor (alpha) used to set the detection threshold above the estimated"
         "noise floor",
     )
     mode: str = Property(
-        str,
         default="wrap",
         doc="The convolution mode for boundary handling ('valid', 'same', or 'wrap')",
     )
@@ -234,21 +230,17 @@ class OSCFARDetector(DetectionAlgorithm):
     """
 
     num_guard_cells: int = Property(
-        int,
         doc="The number of cells to ignore on each side of the Cell Under Test (CUT).",
     )
     num_training_cells: int = Property(
-        int,
         doc="The number of cells to use for noise estimation on each side of the guard cells.",
     )
     rank: int = Property(
-        int,
         default=1,
         doc="The k-th smallest value (1-indexed) to select from the sorted "
         "training cells. Must be between 1 and (2 * num_training_cells).",
     )
     threshold_factor: float = Property(
-        float,
         default=1.0,
         doc="A scaling factor (alpha) to apply to the k-th rank value.",
     )

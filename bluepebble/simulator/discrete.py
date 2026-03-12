@@ -339,7 +339,7 @@ class DiscretePassiveSonarArraySimulator(PassiveSonarArraySimulatorBase):
             yield timestamp, {sensor_data}
 
 
-class DepreciatedDiscretePassiveSonarArraySimulator(PassiveSonarArraySimulatorBase):
+class DeprecatedDiscretePassiveSonarArraySimulator(PassiveSonarArraySimulatorBase):
     """Deprecated discrete-time passive-sonar array simulator.
 
     .. warning::
@@ -393,7 +393,7 @@ class DepreciatedDiscretePassiveSonarArraySimulator(PassiveSonarArraySimulatorBa
 
         """
         warnings.warn(
-            "DepreciatedDiscretePassiveSonarArraySimulator is deprecated; "
+            "DeprecatedDiscretePassiveSonarArraySimulator is deprecated; "
             "use DiscretePassiveSonarArraySimulator instead.",
             DeprecationWarning,
             stacklevel=2,
