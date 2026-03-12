@@ -5,7 +5,7 @@ from __future__ import annotations
 from collections.abc import Iterable, Iterator
 from dataclasses import dataclass
 from datetime import datetime
-from typing import TYPE_CHECKING, Any, TypeAlias
+from typing import TYPE_CHECKING, Any, Protocol, TypeAlias, cast
 
 import numpy as np
 from numpy.typing import ArrayLike, NDArray
@@ -25,6 +25,19 @@ Complex64Array: TypeAlias = NDArray[np.complex64]
 ComplexArray: TypeAlias = NDArray[np.complexfloating[Any, Any]]
 IntArray: TypeAlias = NDArray[np.integer[Any]]
 SensorBatch: TypeAlias = tuple[datetime, set[SensorData]]
+
+
+class _SpectrumPropagationModel(Protocol):
+    """Protocol for propagation models that expose ``propagate_spectrum``."""
+
+    def propagate_spectrum(
+        self,
+        platform: object,
+        source: State,
+        frequencies_hz: ArrayLike,
+    ) -> tuple[ComplexArray, float]:
+        """Return per-sensor transfer functions and propagation time."""
+        ...
 
 
 @dataclass
@@ -163,7 +176,11 @@ class ContinuousSTFTPassiveSonarArraySimulator(PassiveSonarArraySimulatorBase):
         return idx, alpha
 
     @staticmethod
-    def _ifft_frame(frame_spec: ComplexArray, frame_len: int, num_freq_bins: int) -> ComplexArray:
+    def _ifft_frame(
+        frame_spec: ComplexArray,
+        frame_len: int,
+        num_freq_bins: int,
+    ) -> ComplexArray | FloatArray:
         """Inverse-transform one STFT frame.
 
         Parameters
@@ -276,6 +293,7 @@ class ContinuousSTFTPassiveSonarArraySimulator(PassiveSonarArraySimulatorBase):
 
         """
         targets_data: list[_STFTTargetHistory] = []
+        spectrum_propagation_model = cast(_SpectrumPropagationModel, self.propagation_model)
 
         for target_idx, target_path in enumerate(ground_truth_paths):
             target_first_state = next(iter(target_path))
@@ -301,7 +319,7 @@ class ContinuousSTFTPassiveSonarArraySimulator(PassiveSonarArraySimulatorBase):
                 if target_state is None:
                     continue
 
-                H_sensors, prop_time_s = self.propagation_model.propagate_spectrum(
+                H_sensors, prop_time_s = spectrum_propagation_model.propagate_spectrum(
                     platform_state,
                     target_state,
                     ctx.frequencies,
@@ -379,8 +397,8 @@ class ContinuousSTFTPassiveSonarArraySimulator(PassiveSonarArraySimulatorBase):
             2j * np.pi * tau_hist[:, :, np.newaxis] * frequencies_hz[np.newaxis, np.newaxis, :]
         )
         H_residual = H_hist * phase_derotate
-        H_mag_hist = np.abs(H_residual)
-        H_phase_hist = np.unwrap(np.angle(H_residual), axis=0)
+        H_mag_hist = np.asarray(np.abs(H_residual), dtype=np.float64)
+        H_phase_hist = np.asarray(np.unwrap(np.angle(H_residual), axis=0), dtype=np.float64)
         return H_mag_hist, H_phase_hist
 
     def _interpolate_channel_from_residual_histories(
@@ -923,6 +941,7 @@ class ContinuousFractionalDelayPassiveSonarArraySimulator(PassiveSonarArraySimul
         out_len = len(ref_source)
         sample_times_s = np.arange(out_len, dtype=np.float64) / fs
         receiver_accum = np.zeros((num_sensors, out_len), dtype=np.complex64)
+        spectrum_propagation_model = cast(_SpectrumPropagationModel, self.propagation_model)
 
         for target_idx, target_path in enumerate(ground_truth_paths):
             target_signal_model = signal_models_list[target_idx]
@@ -950,7 +969,7 @@ class ContinuousFractionalDelayPassiveSonarArraySimulator(PassiveSonarArraySimul
                 if target_state is None:
                     continue
 
-                H_sensors, prop_time_s = self.propagation_model.propagate_spectrum(
+                H_sensors, prop_time_s = spectrum_propagation_model.propagate_spectrum(
                     platform_state,
                     target_state,
                     frequencies_hz,

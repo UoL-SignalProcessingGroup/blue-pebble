@@ -125,7 +125,7 @@ class PassiveSonarDetector(DetectionReader):
                 # Extract the beamformed data from the sensor data
                 beamformed_data = sensor_data.beamformed_data
 
-                if beamformed_data.size == 0:
+                if beamformed_data is None or beamformed_data.size == 0:
                     continue
 
                 if beamformer_output_type == "snr_percentile":

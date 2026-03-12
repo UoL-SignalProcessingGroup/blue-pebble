@@ -5,7 +5,7 @@ from __future__ import annotations
 import warnings
 from collections.abc import Iterable, Iterator
 from datetime import datetime
-from typing import TYPE_CHECKING, TypeAlias
+from typing import TYPE_CHECKING, Any, Protocol, TypeAlias, cast
 
 import numpy as np
 from numpy.typing import NDArray
@@ -21,6 +21,42 @@ if TYPE_CHECKING:
 Complex64Array: TypeAlias = NDArray[np.complex64]
 Complex128Array: TypeAlias = NDArray[np.complex128]
 SensorBatch: TypeAlias = tuple[datetime, set[SensorData]]
+
+
+class _StftSourceSignalModel(Protocol):
+    """Protocol for signal models exposing STFT-backed source caching."""
+
+    def compute_stft(self, source: State) -> object:
+        """Compute and cache a source STFT."""
+        ...
+
+    def get_source_signal(self) -> NDArray[np.complexfloating[Any, Any]]:
+        """Return cached source signal."""
+        ...
+
+
+class _BaseSignalModel(Protocol):
+    """Protocol for signal models exposing direct base-signal synthesis."""
+
+    def _generate_base_signal(
+        self,
+        source: State,
+    ) -> NDArray[np.floating[Any] | np.complexfloating[Any, Any]]:
+        """Generate base source waveform."""
+        ...
+
+
+class _SpectrumPropagationModel(Protocol):
+    """Protocol for propagation models with frequency-domain transfer support."""
+
+    def propagate_spectrum(
+        self,
+        platform: object,
+        source: State,
+        frequencies_hz: NDArray[np.float64],
+    ) -> tuple[NDArray[np.complexfloating[Any, Any]], float]:
+        """Return per-sensor transfer functions and propagation time."""
+        ...
 
 
 class DiscretePassiveSonarArraySimulator(PassiveSonarArraySimulatorBase):
@@ -130,8 +166,9 @@ class DiscretePassiveSonarArraySimulator(PassiveSonarArraySimulatorBase):
 
         """
         if hasattr(signal_model, "compute_stft") and hasattr(signal_model, "get_source_signal"):
+            stft_signal_model = cast(_StftSourceSignalModel, signal_model)
             try:
-                source_signal = signal_model.get_source_signal()
+                source_signal = stft_signal_model.get_source_signal()
             except RuntimeError as err:
                 if first_state is None:
                     msg = (
@@ -139,18 +176,22 @@ class DiscretePassiveSonarArraySimulator(PassiveSonarArraySimulatorBase):
                         "Provide a target state or pre-compute the source signal."
                     )
                     raise ValueError(msg) from err
-                signal_model.compute_stft(first_state)
-                source_signal = signal_model.get_source_signal()
+                stft_signal_model.compute_stft(first_state)
+                source_signal = stft_signal_model.get_source_signal()
             return np.asarray(source_signal, dtype=np.complex128)
 
         if hasattr(signal_model, "_generate_base_signal"):
+            base_signal_model = cast(_BaseSignalModel, signal_model)
             if first_state is None:
                 msg = (
                     "Cannot initialize source signal for an empty target path when using "
                     "_generate_base_signal."
                 )
                 raise ValueError(msg)
-            return np.asarray(signal_model._generate_base_signal(first_state), dtype=np.complex128)
+            return np.asarray(
+                base_signal_model._generate_base_signal(first_state),
+                dtype=np.complex128,
+            )
 
         msg = (
             "Signal model must implement either compute_stft/get_source_signal "
@@ -181,6 +222,7 @@ class DiscretePassiveSonarArraySimulator(PassiveSonarArraySimulatorBase):
                 "to implement propagate_spectrum"
             )
             raise AttributeError(msg)
+        spectrum_propagation_model = cast(_SpectrumPropagationModel, self.propagation_model)
 
         all_timestamps = self._sorted_timestamps()
         ground_truth_paths = self.ground_truth_paths or []
@@ -268,7 +310,7 @@ class DiscretePassiveSonarArraySimulator(PassiveSonarArraySimulatorBase):
                 source_chunk = source_signal_by_target[target_idx][start_sample:end_sample]
                 source_fft = np.fft.fft(source_chunk)
 
-                H_sensors, _ = self.propagation_model.propagate_spectrum(
+                H_sensors, _ = spectrum_propagation_model.propagate_spectrum(
                     platform_state,
                     target_state,
                     frequencies_hz,
@@ -463,19 +505,24 @@ class DepreciatedDiscretePassiveSonarArraySimulator(PassiveSonarArraySimulatorBa
                         "to implement propagate_spectrum"
                     )
                     raise AttributeError(msg)
+                spectrum_propagation_model = cast(
+                    _SpectrumPropagationModel,
+                    self.propagation_model,
+                )
 
                 # Build physical frequency axis matching FFT bins.
                 sampling_rate_hz = float(target_signal_model.sampling_rate_hz)
                 frequencies = np.fft.fftfreq(num_samples, d=1.0 / sampling_rate_hz)
-                H_sensors, _ = self.propagation_model.propagate_spectrum(
+                H_sensors, _ = spectrum_propagation_model.propagate_spectrum(
                     platform,
                     target_state,
                     frequencies,
                 )
 
                 if hasattr(target_signal_model, "_generate_base_signal"):
+                    base_signal_model = cast(_BaseSignalModel, target_signal_model)
                     base_signal = np.asarray(
-                        target_signal_model._generate_base_signal(target_state),
+                        base_signal_model._generate_base_signal(target_state),
                         dtype=np.complex128,
                     )
                     if len(base_signal) < num_samples:

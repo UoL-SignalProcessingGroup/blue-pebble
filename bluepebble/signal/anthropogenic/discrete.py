@@ -2,7 +2,8 @@
 
 from __future__ import annotations
 
-from typing import TYPE_CHECKING
+from datetime import datetime
+from typing import TYPE_CHECKING, TypedDict, cast
 
 import numpy as np
 from numpy.typing import ArrayLike, NDArray
@@ -12,6 +13,38 @@ from .base import Complex128Array, NarrowbandSignalBase, NarrowbandStatefulSigna
 
 if TYPE_CHECKING:
     from stonesoup.types.state import State
+
+
+class _BlendedSourceState(TypedDict):
+    """Per-source continuity state for blended narrowband synthesis."""
+
+    previous_signal: Complex128Array | None
+    last_time: datetime | None
+    cumulative_time: float
+
+
+class _OverlapAddSourceState(TypedDict):
+    """Per-source continuity state for overlap-add narrowband synthesis."""
+
+    overlap_buffer: Complex128Array | None
+    last_time: datetime | None
+    cumulative_time: float
+
+
+def _as_blended_source_state(state: dict[str, object]) -> _BlendedSourceState:
+    """Validate and narrow a generic source-state mapping for blended synthesis."""
+    previous_signal = state.get("previous_signal")
+    if previous_signal is not None and not isinstance(previous_signal, np.ndarray):
+        raise ValueError("Source state 'previous_signal' must be a NumPy array or None")
+    return cast(_BlendedSourceState, state)
+
+
+def _as_overlap_add_source_state(state: dict[str, object]) -> _OverlapAddSourceState:
+    """Validate and narrow a generic source-state mapping for overlap-add synthesis."""
+    overlap_buffer = state.get("overlap_buffer")
+    if overlap_buffer is not None and not isinstance(overlap_buffer, np.ndarray):
+        raise ValueError("Source state 'overlap_buffer' must be a NumPy array or None")
+    return cast(_OverlapAddSourceState, state)
 
 
 class NarrowbandTonalSignal(NarrowbandSignalBase):
@@ -91,14 +124,16 @@ class NarrowbandBlendedTonalSignal(NarrowbandStatefulSignalBase):
 
         """
         num_sensors = len(sensor_delays_s)
-        state = self._get_or_create_source_state(
-            source,
-            num_sensors,
-            lambda: {
-                "previous_signal": None,
-                "last_time": None,
-                "cumulative_time": 0.0,
-            },
+        state = _as_blended_source_state(
+            self._get_or_create_source_state(
+                source,
+                num_sensors,
+                lambda: {
+                    "previous_signal": None,
+                    "last_time": None,
+                    "cumulative_time": 0.0,
+                },
+            )
         )
 
         cumulative_time_s = self._update_cumulative_time_s(state, source)
@@ -117,7 +152,8 @@ class NarrowbandBlendedTonalSignal(NarrowbandStatefulSignalBase):
         )
 
         if state["previous_signal"] is not None:
-            blend_samples = int(self.num_samples * self.blend_fraction)
+            blend_fraction = float(self.blend_fraction)
+            blend_samples = int(self.num_samples * blend_fraction)
 
             if blend_samples > 0:
                 fade_out = np.cos(np.linspace(0, np.pi / 2, blend_samples)) ** 2
@@ -172,14 +208,16 @@ class NarrowbandOverlapAddTonalSignal(NarrowbandStatefulSignalBase):
 
         """
         num_sensors = len(sensor_delays_s)
-        state = self._get_or_create_source_state(
-            source,
-            num_sensors,
-            lambda: {
-                "overlap_buffer": None,
-                "last_time": None,
-                "cumulative_time": 0.0,
-            },
+        state = _as_overlap_add_source_state(
+            self._get_or_create_source_state(
+                source,
+                num_sensors,
+                lambda: {
+                    "overlap_buffer": None,
+                    "last_time": None,
+                    "cumulative_time": 0.0,
+                },
+            )
         )
 
         cumulative_time_s = self._update_cumulative_time_s(state, source)

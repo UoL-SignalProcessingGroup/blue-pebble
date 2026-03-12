@@ -229,7 +229,7 @@ class NarrowbandStatefulSignalBase(NarrowbandSignalBase, ABC):
         num_sensors: int,
     ) -> tuple[tuple[float, ...], int]:
         """Generate a hashable key for per-source state tracking."""
-        frequencies_hz = np.asarray(source.metadata["frequencies_hz"], dtype=float)
+        _, frequencies_hz, _ = self._extract_tonal_metadata(source)
         return (tuple(frequencies_hz.tolist()), int(num_sensors))
 
     def _get_or_create_source_state(
@@ -334,14 +334,16 @@ class BroadbandStftSignalBase(ContinuousTimestepSignal, ABC):
         stft, freq_normalized, hop, window = compute_stft(
             self._source_signal, self.frame_len, self.hop_factor, self.window_type
         )
+        stft = np.asarray(stft, dtype=np.complex64)
         frequencies = cast(FloatArray, freq_normalized * self.sampling_rate_hz)
+        window_float = np.asarray(window, dtype=np.float64)
 
         self._stft_cache = stft
         self._frequencies = frequencies
         self._hop = hop
-        self._window = window
+        self._window = window_float
 
-        return stft, frequencies, hop, window
+        return stft, frequencies, hop, window_float
 
     def get_stft(self) -> CachedStftResult:
         """Return cached STFT data.

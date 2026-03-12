@@ -1,8 +1,9 @@
 """Anthropogenic signal models for sensor arrays."""
 
+from collections.abc import Mapping
 from fractions import Fraction
 from pathlib import Path
-from typing import TYPE_CHECKING, TypeAlias
+from typing import TYPE_CHECKING, TypeAlias, cast
 
 import numpy as np
 from numpy.typing import ArrayLike, NDArray
@@ -17,6 +18,48 @@ if TYPE_CHECKING:
 
 FloatArray: TypeAlias = NDArray[np.float64]
 Complex128Array: TypeAlias = NDArray[np.complex128]
+
+
+def _extract_tonal_metadata(source: State) -> tuple[FloatArray, FloatArray, FloatArray]:
+    """Extract and validate tonal metadata from a source state."""
+    metadata = getattr(source, "metadata", None)
+    if metadata is None:
+        msg = "Source state must define metadata for tonal synthesis"
+        raise ValueError(msg)
+    if not isinstance(metadata, Mapping):
+        msg = "Source metadata must be mapping-like"
+        raise ValueError(msg)
+
+    required_keys = ("amplitudes_upa", "frequencies_hz", "phases_rad")
+    missing_keys = [key for key in required_keys if key not in metadata]
+    if missing_keys:
+        missing = ", ".join(missing_keys)
+        msg = f"Source metadata missing required keys: {missing}"
+        raise ValueError(msg)
+
+    amplitudes_upa = np.asarray(metadata["amplitudes_upa"], dtype=float)
+    frequencies_hz = np.asarray(metadata["frequencies_hz"], dtype=float)
+    phases_rad = np.asarray(metadata["phases_rad"], dtype=float)
+
+    if amplitudes_upa.ndim != 1 or frequencies_hz.ndim != 1 or phases_rad.ndim != 1:
+        msg = "Tonal metadata arrays must be one-dimensional"
+        raise ValueError(msg)
+
+    num_tonals = len(amplitudes_upa)
+    if len(frequencies_hz) != num_tonals or len(phases_rad) != num_tonals:
+        msg = (
+            "Source tonal metadata arrays must have matching lengths: "
+            f"len(amplitudes_upa)={len(amplitudes_upa)}, "
+            f"len(frequencies_hz)={len(frequencies_hz)}, "
+            f"len(phases_rad)={len(phases_rad)}"
+        )
+        raise ValueError(msg)
+
+    return (
+        cast(FloatArray, amplitudes_upa),
+        cast(FloatArray, frequencies_hz),
+        cast(FloatArray, phases_rad),
+    )
 
 
 class BroadbandSyntheticSignal(BroadbandStftSignalBase):
@@ -140,9 +183,11 @@ class BroadbandSyntheticSignal(BroadbandStftSignalBase):
             Complex source signal with shape ``(num_samples,)``.
 
         """
-        amplitudes_upa = source.metadata["amplitudes_upa"]
-        frequencies_hz = source.metadata["frequencies_hz"]
-        phases_rad = source.metadata["phases_rad"]
+        amplitudes_upa, frequencies_hz, phases_rad = _extract_tonal_metadata(source)
+        tonal_bandwidth_hz = float(self.tonal_bandwidth_hz)
+        noise_amplitude_upa = float(self.noise_amplitude_upa)
+        noise_spectral_exponent = float(self.noise_spectral_exponent)
+        noise_variance = float(self.noise_variance)
 
         # Initialise output signal
         signal = np.zeros(self.num_samples, dtype=np.complex128)
@@ -152,6 +197,7 @@ class BroadbandSyntheticSignal(BroadbandStftSignalBase):
             and self._tonal_realizations is not None
             and len(self._tonal_realizations) == len(frequencies_hz)
         )
+        tonal_realizations = self._tonal_realizations if tonal_cache_available else None
         tonal_cache: list[Complex128Array] = []
 
         # Generate broadband tonals (each tonal has finite bandwidth)
@@ -160,8 +206,8 @@ class BroadbandSyntheticSignal(BroadbandStftSignalBase):
         ):
             # Create narrow-band noise centered at tonal frequency
             # Bandwidth determined by tonal_bandwidth_hz
-            if tonal_cache_available:
-                base_noise = self._tonal_realizations[idx]
+            if tonal_realizations is not None:
+                base_noise = tonal_realizations[idx]
             else:
                 noise_real = np.random.randn(self.num_samples)
                 noise_imag = np.random.randn(self.num_samples)
@@ -173,7 +219,7 @@ class BroadbandSyntheticSignal(BroadbandStftSignalBase):
                 # Gaussian bandpass centered at tonal frequency
                 # Bandwidth controls the spectral width
                 # (sigma = bandwidth / 2sqrt2ln2 ~= bandwidth / 2.355)
-                sigma_hz = self.tonal_bandwidth_hz / 2.355
+                sigma_hz = tonal_bandwidth_hz / 2.355
                 bandpass_filter = np.exp(-((freq_bins - freq) ** 2) / (2 * sigma_hz**2))
                 bandpass_filter += np.exp(
                     -((freq_bins + freq) ** 2) / (2 * sigma_hz**2)
@@ -200,7 +246,7 @@ class BroadbandSyntheticSignal(BroadbandStftSignalBase):
             self._tonal_realizations = tonal_cache
 
         # Add wideband colored noise if amplitude > 0
-        if self.noise_amplitude_upa > 0:
+        if noise_amplitude_upa > 0:
             # Check cache for constant mode
             if self.noise_is_constant and self._noise_realization is not None:
                 colored_noise = self._noise_realization
@@ -210,7 +256,7 @@ class BroadbandSyntheticSignal(BroadbandStftSignalBase):
                 freq_abs[freq_abs < 1.0] = 1.0  # Avoid division by zero at DC
 
                 # Spectral envelope (power-law) and bandpass mask
-                spectral_shape = freq_abs ** (self.noise_spectral_exponent / 2.0)
+                spectral_shape = freq_abs ** (noise_spectral_exponent / 2.0)
                 freq_min, freq_max = self.noise_freq_range_hz
                 bandpass = np.where(
                     (freq_abs >= freq_min) & (freq_abs <= freq_max),
@@ -224,7 +270,7 @@ class BroadbandSyntheticSignal(BroadbandStftSignalBase):
                     colored_noise_fft = noise_filter
                 else:
                     # Stochastic: start from white noise then shape
-                    noise_std = np.sqrt(self.noise_variance)
+                    noise_std = np.sqrt(noise_variance)
                     noise_real = noise_std * np.random.randn(self.num_samples)
                     noise_imag = noise_std * np.random.randn(self.num_samples)
                     white_noise = noise_real + 1j * noise_imag
@@ -236,7 +282,7 @@ class BroadbandSyntheticSignal(BroadbandStftSignalBase):
                 # Normalise to desired RMS amplitude
                 rms = np.sqrt(np.mean(np.abs(colored_noise) ** 2))
                 if rms > 0:
-                    colored_noise = colored_noise * (self.noise_amplitude_upa / rms)
+                    colored_noise = colored_noise * (noise_amplitude_upa / rms)
 
                 # Cache for constant mode
                 if self.noise_is_constant:
@@ -328,24 +374,25 @@ class BroadbandRecordedSignal(BroadbandStftSignalBase):
             Mono waveform as one-dimensional ``float64`` samples.
 
         """
-        audio = np.asarray(audio)
-        if audio.ndim > 1:
-            audio = np.mean(audio, axis=1)
+        audio_array = np.asarray(audio)
+        if audio_array.ndim > 1:
+            audio_array = np.mean(audio_array, axis=1)
 
-        if np.issubdtype(audio.dtype, np.floating):
-            return np.asarray(audio, dtype=np.float64)
+        audio_dtype = audio_array.dtype
+        if np.issubdtype(audio_dtype, np.floating):
+            return np.asarray(audio_array, dtype=np.float64)
 
-        if np.issubdtype(audio.dtype, np.signedinteger):
-            info = np.iinfo(audio.dtype)
+        if np.issubdtype(audio_dtype, np.signedinteger):
+            info = np.iinfo(audio_dtype)
             denom = max(abs(info.min), info.max)
-            return np.asarray(audio, dtype=np.float64) / float(denom)
+            return np.asarray(audio_array, dtype=np.float64) / float(denom)
 
-        if np.issubdtype(audio.dtype, np.unsignedinteger):
-            info = np.iinfo(audio.dtype)
+        if np.issubdtype(audio_dtype, np.unsignedinteger):
+            info = np.iinfo(audio_dtype)
             midpoint = info.max / 2.0
-            return (np.asarray(audio, dtype=np.float64) - midpoint) / midpoint
+            return (np.asarray(audio_array, dtype=np.float64) - midpoint) / midpoint
 
-        return np.asarray(audio, dtype=np.float64)
+        return np.asarray(audio_array, dtype=np.float64)
 
     def _resample_to_sim_rate(
         self,

@@ -5,9 +5,10 @@ from __future__ import annotations
 import subprocess
 import tempfile
 from abc import ABC, abstractmethod
+from collections.abc import Mapping
 from pathlib import Path
 from shutil import which
-from typing import TYPE_CHECKING, Any, TypeAlias
+from typing import TYPE_CHECKING, Any, Protocol, TypeAlias, cast
 
 import numpy as np
 from numpy.typing import ArrayLike, NDArray
@@ -25,6 +26,106 @@ ComplexArray: TypeAlias = NDArray[np.complexfloating[Any, Any]]
 PropagationLoss: TypeAlias = float | FloatArray
 PropagationResult: TypeAlias = tuple[PropagationLoss, float]
 SpectrumResult: TypeAlias = tuple[ComplexArray, float]
+
+
+def _as_scalar_float(value: object, name: str) -> float:
+    """Coerce a scalar-like numeric value to ``float``.
+
+    Parameters
+    ----------
+    value : object
+        Numeric scalar or size-1 array-like value.
+    name : str
+        Human-readable parameter name for validation errors.
+
+    Returns
+    -------
+    float
+        Scalar floating-point value.
+
+    Raises
+    ------
+    ValueError
+        If ``value`` cannot be interpreted as a scalar.
+
+    """
+    array = np.asarray(value, dtype=float)
+    if array.ndim == 0:
+        return float(array)
+    if array.size == 1:
+        return float(array.reshape(-1)[0])
+    raise ValueError(f"{name} must be scalar-like")
+
+
+class _RtrsRunSimulation(Protocol):
+    """Callable protocol for ``rtrs.run_simulation``."""
+
+    def __call__(self, env_config: Mapping[str, object]) -> dict[str, Any]:
+        """Run a single rtrs simulation."""
+        ...
+
+
+def _get_source_metadata(source: State) -> Mapping[str, object]:
+    """Return validated source metadata mapping."""
+    metadata = getattr(source, "metadata", None)
+    if not isinstance(metadata, Mapping):
+        msg = "Source state metadata must be mapping-like"
+        raise ValueError(msg)
+    return metadata
+
+
+def _get_source_position(source: State) -> FloatArray:
+    """Extract source position vector using ``position_mapping`` metadata."""
+    metadata = _get_source_metadata(source)
+    position_mapping = metadata.get("position_mapping")
+    if position_mapping is None:
+        msg = "Source metadata missing required key: position_mapping"
+        raise ValueError(msg)
+
+    mapping_array = np.asarray(position_mapping, dtype=int)
+    if mapping_array.ndim != 1 or mapping_array.size == 0:
+        msg = "Source position_mapping must be one-dimensional and non-empty"
+        raise ValueError(msg)
+
+    return np.asarray(source.state_vector[mapping_array.tolist()], dtype=float)
+
+
+def _get_source_tonal_arrays(source: State) -> tuple[FloatArray, FloatArray]:
+    """Extract validated source tonal frequencies and amplitudes."""
+    metadata = _get_source_metadata(source)
+    required_keys = ("frequencies_hz", "amplitudes_upa")
+    missing_keys = [key for key in required_keys if key not in metadata]
+    if missing_keys:
+        missing = ", ".join(missing_keys)
+        msg = f"Source metadata missing required keys: {missing}"
+        raise ValueError(msg)
+
+    frequencies_hz = np.asarray(metadata["frequencies_hz"], dtype=float).reshape(-1)
+    amplitudes_upa = np.asarray(metadata["amplitudes_upa"], dtype=float).reshape(-1)
+
+    if frequencies_hz.size == 0:
+        msg = "Source frequencies_hz metadata must be non-empty"
+        raise ValueError(msg)
+    if amplitudes_upa.size != frequencies_hz.size:
+        msg = "Source frequencies_hz and amplitudes_upa metadata must have matching lengths"
+        raise ValueError(msg)
+
+    return cast(FloatArray, frequencies_hz), cast(FloatArray, amplitudes_upa)
+
+
+def _get_rtrs_run_simulation() -> _RtrsRunSimulation:
+    """Import and validate ``rtrs.run_simulation`` callable."""
+    try:
+        import rtrs  # type: ignore
+    except ImportError:
+        raise ImportError(
+            "rtrs package is not installed. Please install it to use rtrsAcousticPropagationModel."
+        ) from None
+
+    run_simulation = getattr(rtrs, "run_simulation", None)
+    if not callable(run_simulation):
+        raise AttributeError("rtrs module does not define callable run_simulation")
+    return cast(_RtrsRunSimulation, run_simulation)
 
 
 class AcousticPropagationModel(ABC, Base):
@@ -65,7 +166,7 @@ class AcousticPropagationModel(ABC, Base):
             One-dimensional array of per-sensor delays in seconds.
 
         """
-        source_position = source.state_vector[source.metadata["position_mapping"]]
+        source_position = _get_source_position(source)
         array_position = platform.array.state_vector
         array_ref_position = platform.array.ref_state_vector
 
@@ -130,14 +231,14 @@ class CylindricalAcousticPropagationModel(AcousticPropagationModel):
             - ``time`` (float): Direct-path travel time in seconds.
 
         """
-        source_position = source.state_vector[source.metadata["position_mapping"]]
+        source_position = _get_source_position(source)
         array_ref_position = platform.array.ref_state_vector
 
-        distance = np.linalg.norm(source_position - array_ref_position)
-        speed = self.ssp.calculate(array_ref_position[2])
+        distance = float(np.linalg.norm(source_position - array_ref_position))
+        speed = _as_scalar_float(self.ssp.calculate(array_ref_position[2]), "sound speed")
         time = distance / speed
-        tloss = 10 * np.log10(distance) + self.attenuation_factor * (distance / 1000)
-        return tloss, time
+        tloss = 10.0 * np.log10(distance) + self.attenuation_factor * (distance / 1000.0)
+        return float(tloss), float(time)
 
     def propagate_spectrum(
         self, platform: Platform, source: State, frequencies_hz: ArrayLike
@@ -165,7 +266,7 @@ class CylindricalAcousticPropagationModel(AcousticPropagationModel):
             the reference sensor in seconds.
 
         """
-        source_position = source.state_vector[source.metadata["position_mapping"]]
+        source_position = _get_source_position(source)
         array_position = platform.array.state_vector
         array_ref_position = platform.array.ref_state_vector
 
@@ -174,8 +275,8 @@ class CylindricalAcousticPropagationModel(AcousticPropagationModel):
 
         # Calculate reference distance and propagation time
         reference_distance = np.linalg.norm(source_position - array_ref_position)
-        speed = self.ssp.calculate(array_ref_position[2])
-        propagation_time_s = reference_distance / speed
+        speed = _as_scalar_float(self.ssp.calculate(array_ref_position[2]), "sound speed")
+        propagation_time_s = float(reference_distance / speed)
 
         # Calculate cylindrical spreading loss: TL = 10*log10(r) + alpha*r
         # where alpha is attenuation in dB/km
@@ -200,9 +301,11 @@ class CylindricalAcousticPropagationModel(AcousticPropagationModel):
 
         # Combine amplitude and phase
         # H(f) = amplitude * exp(-j*2pi*f*t)
-        H_sensors = amplitude_scaling[:, np.newaxis] * phase_shifts
+        H_sensors = np.asarray(
+            amplitude_scaling[:, np.newaxis] * phase_shifts, dtype=np.complex128
+        )
 
-        return H_sensors, propagation_time_s
+        return H_sensors, float(propagation_time_s)
 
 
 class SphericalAcousticPropagationModel(AcousticPropagationModel):
@@ -249,14 +352,14 @@ class SphericalAcousticPropagationModel(AcousticPropagationModel):
             - ``time`` (float): Direct-path travel time in seconds.
 
         """
-        source_position = source.state_vector[source.metadata["position_mapping"]]
+        source_position = _get_source_position(source)
         array_ref_position = platform.array.ref_state_vector
 
-        distance = np.linalg.norm(source_position - array_ref_position)
-        speed = self.ssp.calculate(array_ref_position[2])
+        distance = float(np.linalg.norm(source_position - array_ref_position))
+        speed = _as_scalar_float(self.ssp.calculate(array_ref_position[2]), "sound speed")
         time = distance / speed
-        tloss = 20 * np.log10(distance) + self.attenuation_factor * (distance / 1000)
-        return tloss, time
+        tloss = 20.0 * np.log10(distance) + self.attenuation_factor * (distance / 1000.0)
+        return float(tloss), float(time)
 
     def propagate_spectrum(
         self, platform: Platform, source: State, frequencies_hz: ArrayLike
@@ -284,7 +387,7 @@ class SphericalAcousticPropagationModel(AcousticPropagationModel):
             the reference sensor in seconds.
 
         """
-        source_position = source.state_vector[source.metadata["position_mapping"]]
+        source_position = _get_source_position(source)
         array_position = platform.array.state_vector
         array_ref_position = platform.array.ref_state_vector
 
@@ -296,8 +399,8 @@ class SphericalAcousticPropagationModel(AcousticPropagationModel):
 
         # Calculate reference distance and propagation time
         reference_distance = np.linalg.norm(source_position - array_ref_position)
-        speed = self.ssp.calculate(array_ref_position[2])
-        propagation_time_s = reference_distance / speed
+        speed = _as_scalar_float(self.ssp.calculate(array_ref_position[2]), "sound speed")
+        propagation_time_s = float(reference_distance / speed)
 
         # Calculate spherical spreading loss: TL = 20*log10(r) + alpha*r
         # where alpha is attenuation in dB/km
@@ -322,9 +425,11 @@ class SphericalAcousticPropagationModel(AcousticPropagationModel):
 
         # Combine amplitude and phase
         # H(f) = amplitude * exp(-j*2pi*f*t)
-        H_sensors = amplitude_scaling[:, np.newaxis] * phase_shifts
+        H_sensors = np.asarray(
+            amplitude_scaling[:, np.newaxis] * phase_shifts, dtype=np.complex128
+        )
 
-        return H_sensors, propagation_time_s
+        return H_sensors, float(propagation_time_s)
 
 
 class BellhopAcousticPropagationModel(AcousticPropagationModel):
@@ -422,19 +527,22 @@ class BellhopAcousticPropagationModel(AcousticPropagationModel):
             pressure, _ = read_shade_file(shd_path)
 
         np.seterr(divide="ignore")
-        pressure = np.squeeze(pressure)
+        pressure_array = np.asarray(pressure)
+        pressure = np.squeeze(pressure_array)
         pressure_magnitude = np.abs(pressure)
         tloss = -20 * np.log10(np.maximum(pressure_magnitude, 1e-12))
 
-        distance = np.linalg.norm(source.state_vector[[0, 2, 4]] - platform.array.ref_state_vector)
+        distance = float(
+            np.linalg.norm(source.state_vector[[0, 2, 4]] - platform.array.ref_state_vector)
+        )
         speed = float(np.asarray(self.ssp.calculate(platform.array.ref_state_vector[2])).item())
-        time = distance / speed
+        time = float(distance / speed)
 
         # Handle cases where pressure is effectively zero by returning a large finite loss.
         if np.atleast_1d(pressure_magnitude)[-1] < 1e-12:
-            return 999.0, time  # Return a large, finite loss value
+            return 999.0, float(time)  # Return a large, finite loss value
 
-        return float(np.atleast_1d(tloss)[-1]), time
+        return float(np.atleast_1d(tloss)[-1]), float(time)
 
     def _create_env_file(
         self,
@@ -484,10 +592,11 @@ class BellhopAcousticPropagationModel(AcousticPropagationModel):
         sound_speed = self.ssp.calculate(depth)
         ssp = np.column_stack((depth, sound_speed))
 
-        source_position = source.state_vector[source.metadata["position_mapping"]]
+        source_position = _get_source_position(source)
         array_ref_position = platform.array.ref_state_vector
 
-        frequency = source.metadata["frequencies_hz"][np.argmax(source.metadata["amplitudes_upa"])]
+        frequencies_hz, amplitudes_upa = _get_source_tonal_arrays(source)
+        frequency = frequencies_hz[int(np.argmax(amplitudes_upa))]
         max_range_m = np.linalg.norm(source_position - array_ref_position)
 
         # Source and receiver depths
@@ -727,15 +836,8 @@ class rtrsAcousticPropagationModel(AcousticPropagationModel):
             - ``time`` (float): Direct-path travel time in seconds.
 
         """
-        try:
-            import rtrs  # type: ignore
-        except ImportError:
-            raise ImportError(
-                "rtrs package is not installed. "
-                "Please install it to use rtrsAcousticPropagationModel."
-            ) from None
-
-        source_position = source.state_vector[list(source.metadata["position_mapping"])]
+        run_simulation = _get_rtrs_run_simulation()
+        source_position = _get_source_position(source)
         array_ref_position = platform.array.ref_state_vector
 
         # Flatten to 1D arrays for easier indexing
@@ -743,7 +845,7 @@ class rtrsAcousticPropagationModel(AcousticPropagationModel):
         array_pos = array_ref_position.flatten()
 
         # Calculate distance and dynamic parameters
-        distance = np.linalg.norm(source_pos - array_pos)
+        distance = float(np.linalg.norm(source_pos - array_pos))
         max_steps, max_range_m = self._calculate_max_steps_and_range(distance)
 
         # Calculate launch azimuths
@@ -812,13 +914,12 @@ class rtrsAcousticPropagationModel(AcousticPropagationModel):
         z_bty_flat = z_bty.flatten(order="C")
 
         # Get frequency/frequencies from source
+        source_frequencies_hz, source_amplitudes_upa = _get_source_tonal_arrays(source)
         if self.use_all_frequencies:
-            frequencies = source.metadata["frequencies_hz"].tolist()
+            frequencies = source_frequencies_hz.tolist()
         else:
             # Use only the peak frequency
-            frequency = source.metadata["frequencies_hz"][
-                np.argmax(source.metadata["amplitudes_upa"])
-            ]
+            frequency = source_frequencies_hz[int(np.argmax(source_amplitudes_upa))]
             frequencies = [float(frequency)]
 
         # Build rtrs environment configuration
@@ -864,7 +965,7 @@ class rtrsAcousticPropagationModel(AcousticPropagationModel):
             env_config["bathymetry"]["water_density_g_cm3"] = float(self.water_density_g_cm3)
 
         # Run rtrs simulation
-        result = rtrs.run_simulation(env_config)
+        result = run_simulation(env_config)
 
         # Extract pressure field
         pf = result["pressure_field"]
@@ -888,22 +989,22 @@ class rtrsAcousticPropagationModel(AcousticPropagationModel):
                 else:
                     tloss_per_freq.append(-20 * np.log10(pressure_magnitude))
 
-            tloss = np.array(tloss_per_freq)
+            tloss_out: PropagationLoss = np.asarray(tloss_per_freq, dtype=np.float64)
         else:
             # Return single TL value
             pressure_magnitude = np.abs(pressure[0, 0, 0, 0])
 
             # Handle zero pressure case
             if pressure_magnitude < 1e-12:
-                tloss = 999.0
+                tloss_out = 999.0
             else:
-                tloss = -20 * np.log10(pressure_magnitude)
+                tloss_out = float(-20 * np.log10(pressure_magnitude))
 
         # Calculate travel time
-        speed = self.ssp.calculate(array_pos[2])
-        time = distance / speed
+        speed = _as_scalar_float(self.ssp.calculate(array_pos[2]), "sound speed")
+        time = float(distance / speed)
 
-        return tloss, time
+        return tloss_out, float(time)
 
     def propagate_spectrum(
         self,
@@ -933,15 +1034,8 @@ class rtrsAcousticPropagationModel(AcousticPropagationModel):
             - ``propagation_time_s`` : Mean travel time in seconds.
 
         """
-        try:
-            import rtrs  # type: ignore
-        except ImportError:
-            raise ImportError(
-                "rtrs package is not installed. "
-                "Please install it to use rtrsAcousticPropagationModel."
-            ) from None
-
-        source_position = source.state_vector[list(source.metadata["position_mapping"])]
+        run_simulation = _get_rtrs_run_simulation()
+        source_position = _get_source_position(source)
         array_position = platform.array.state_vector
         array_ref_position = platform.array.ref_state_vector
 
@@ -950,7 +1044,7 @@ class rtrsAcousticPropagationModel(AcousticPropagationModel):
         array_ref_pos = array_ref_position.flatten()
 
         # Calculate distance and dynamic parameters
-        distance = np.linalg.norm(source_pos - array_ref_pos)
+        distance = float(np.linalg.norm(source_pos - array_ref_pos))
         max_steps, max_range_m = self._calculate_max_steps_and_range(distance)
 
         # Calculate launch angles
@@ -1041,7 +1135,7 @@ class rtrsAcousticPropagationModel(AcousticPropagationModel):
             env_config["bathymetry"]["water_density_g_cm3"] = float(self.water_density_g_cm3)
 
         # Run rtrs simulation
-        result = rtrs.run_simulation(env_config)
+        result = run_simulation(env_config)
 
         # Extract pressure field
         pf = result["pressure_field"]
@@ -1060,10 +1154,10 @@ class rtrsAcousticPropagationModel(AcousticPropagationModel):
         transfer_functions = transfer_functions.T
 
         # flip sensor order to match convention
-        transfer_functions = np.flip(transfer_functions, axis=0)
+        transfer_functions = np.asarray(np.flip(transfer_functions, axis=0), dtype=np.complex128)
 
         # Calculate mean travel time
-        speed = self.ssp.calculate(array_ref_pos[2])
-        propagation_time_s = distance / speed
+        speed = _as_scalar_float(self.ssp.calculate(array_ref_pos[2]), "sound speed")
+        propagation_time_s = float(distance / speed)
 
         return transfer_functions, propagation_time_s

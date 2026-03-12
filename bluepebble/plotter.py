@@ -4,6 +4,7 @@ from __future__ import annotations
 
 from collections.abc import Sequence
 from datetime import datetime
+from typing import Any, Protocol, cast
 
 import cmocean
 import numpy as np
@@ -18,6 +19,34 @@ from stonesoup.types.groundtruth import GroundTruthPath
 from stonesoup.types.track import Track
 
 from .detector.metrics import SweepResult
+
+
+class _ColormapCallable(Protocol):
+    """Protocol for callable colormaps."""
+
+    def __call__(self, values: ArrayLike) -> Any:
+        """Map normalised values in [0, 1] to RGBA rows."""
+        ...
+
+
+class _BathymetryGridProvider(Protocol):
+    """Protocol for bathymetry objects used by world plotting."""
+
+    def get_grid(
+        self,
+        x_range: tuple[float, float],
+        y_range: tuple[float, float],
+    ) -> tuple[ArrayLike, ArrayLike, ArrayLike]:
+        """Return bathymetry x/y coordinates and z grid."""
+        ...
+
+
+def _get_cmocean_topo_cmap() -> _ColormapCallable:
+    """Return the cmocean topo colormap with runtime validation."""
+    cmap = getattr(cmocean.cm, "topo", None)
+    if not callable(cmap):
+        raise AttributeError("cmocean.cm.topo colormap is unavailable")
+    return cast(_ColormapCallable, cmap)
 
 
 def _distance_axis_scale(min_val: float, max_val: float) -> tuple[float, str]:
@@ -81,7 +110,7 @@ def _expand_heatmap_coords(coords: ArrayLike) -> np.ndarray:
     return expanded
 
 
-def _mpl_cmap_to_plotly(cmap: object, n: int = 256) -> list[list[float | str]]:
+def _mpl_cmap_to_plotly(cmap: _ColormapCallable, n: int = 256) -> list[list[float | str]]:
     """Convert a Matplotlib colormap to Plotly colorscale format."""
     vals = np.linspace(0.0, 1.0, n)
     rgba = cmap(vals)
@@ -92,7 +121,7 @@ def _mpl_cmap_to_plotly(cmap: object, n: int = 256) -> list[list[float | str]]:
 
 
 def _two_slope_colorscale(
-    cmap: object,
+    cmap: _ColormapCallable,
     zmin: float,
     zmax: float,
     vcenter: float = 0.0,
@@ -406,7 +435,7 @@ def launch_bathymetry_and_sound_speed_viewer(
     z_bty_display_max = z_bty_max if z_bty_max > 0.0 else z_eps
 
     bathymetry_colorscale = _two_slope_colorscale(
-        cmocean.cm.topo,
+        _get_cmocean_topo_cmap(),
         z_bty_display_min,
         z_bty_display_max,
         vcenter=0.0,
@@ -616,7 +645,8 @@ def plot_world(
 
     fig = go.Figure()
     fig.update_layout(colorway=px.colors.qualitative.Plotly)
-    colorway = list(fig.layout.colorway or px.colors.qualitative.Plotly)
+    layout_colorway = getattr(fig.layout, "colorway", None)
+    colorway = list(layout_colorway or px.colors.qualitative.Plotly)
     group_counts = {"platform": 1, "truths": num_truths}
     added_group_titles: set[str] = set()
 
@@ -665,8 +695,9 @@ def plot_world(
     if bathymetry is not None:
         if not hasattr(bathymetry, "get_grid"):
             raise ValueError("bathymetry must provide get_grid(x_range, y_range)")
+        bathymetry_grid_provider = cast(_BathymetryGridProvider, bathymetry)
 
-        bty_x, bty_y, bty_z = bathymetry.get_grid(
+        bty_x, bty_y, bty_z = bathymetry_grid_provider.get_grid(
             x_range=(x_range_native[0], x_range_native[1]),
             y_range=(y_range_native[0], y_range_native[1]),
         )
@@ -679,7 +710,7 @@ def plot_world(
         eps = max(1e-9, 1e-6 * max(abs(zmin_raw), abs(zmax_raw), 1.0))
         zmin = zmin_raw if zmin_raw < 0.0 else -eps
         zmax = zmax_raw if zmax_raw > 0.0 else eps
-        colorscale = _two_slope_colorscale(cmocean.cm.topo, zmin, zmax, vcenter=0.0)
+        colorscale = _two_slope_colorscale(_get_cmocean_topo_cmap(), zmin, zmax, vcenter=0.0)
 
         hovertemplate = (
             "X: %{x:.2f} {unit}<br>Y: %{y:.2f} {unit}<br>Bathymetry z: %{z:.2f} m<extra></extra>"
@@ -945,7 +976,8 @@ def plot_btr(
             added_legend_groups.add(group_name)
         return kwargs
 
-    colorway = list(target_fig.layout.colorway or px.colors.qualitative.Plotly)
+    target_layout_colorway = getattr(target_fig.layout, "colorway", None)
+    colorway = list(target_layout_colorway or px.colors.qualitative.Plotly)
     track_colorway = list(reversed(colorway))
 
     if data_array is not None:
@@ -1049,35 +1081,52 @@ def plot_btr(
     bearing_start = float(steering_array[0])
     bearing_end = float(steering_array[-1])
 
-    xaxis_config = dict(
-        range=[bearing_start, bearing_end],
-        tickmode="linear",
-        tick0=bearing_start,
-        dtick=bearing_span / 6.0 if bearing_span > 0 else 1.0,
-        tickangle=-45,
-        title="Bearing (°)",
-        showline=True,
-    )
-    if not using_subplot_target:
-        xaxis_config["domain"] = [0.0, 0.9]
-
     if using_subplot_target:
-        target_fig.update_xaxes(**xaxis_config, row=row, col=col)
+        target_fig.update_xaxes(
+            range=[bearing_start, bearing_end],
+            tickmode="linear",
+            tick0=bearing_start,
+            dtick=bearing_span / 6.0 if bearing_span > 0 else 1.0,
+            tickangle=-45,
+            title="Bearing (°)",
+            showline=True,
+            row=row,
+            col=col,
+        )
     else:
-        target_fig.update_xaxes(**xaxis_config)
+        target_fig.update_xaxes(
+            range=[bearing_start, bearing_end],
+            tickmode="linear",
+            tick0=bearing_start,
+            dtick=bearing_span / 6.0 if bearing_span > 0 else 1.0,
+            tickangle=-45,
+            title="Bearing (°)",
+            showline=True,
+            domain=[0.0, 0.9],
+        )
 
-    yaxis_config = dict(
-        # Set explicit descending bounds to keep a consistent BTR orientation.
-        range=[np.max(timesteps_array), np.min(timesteps_array)],
-        tickformat="%H:%M",
-        autorange=False,
-        title="Time (HH:MM)",
-        showline=True,
-    )
+    y_min = np.min(timesteps_array)
+    y_max = np.max(timesteps_array)
     if using_subplot_target:
-        target_fig.update_yaxes(**yaxis_config, row=row, col=col)
+        target_fig.update_yaxes(
+            # Set explicit descending bounds to keep a consistent BTR orientation.
+            range=[y_max, y_min],
+            tickformat="%H:%M",
+            autorange=False,
+            title="Time (HH:MM)",
+            showline=True,
+            row=row,
+            col=col,
+        )
     else:
-        target_fig.update_yaxes(**yaxis_config)
+        target_fig.update_yaxes(
+            # Set explicit descending bounds to keep a consistent BTR orientation.
+            range=[y_max, y_min],
+            tickformat="%H:%M",
+            autorange=False,
+            title="Time (HH:MM)",
+            showline=True,
+        )
 
     if not using_subplot_target:
         target_fig.update_layout(
@@ -1141,6 +1190,7 @@ def plot_spectrogram(
     if signal.ndim > 1:
         signal = signal.flatten()
 
+    boundary: Any = None
     freqs_hz, times, zxx = scipy_signal.stft(
         signal,
         fs=sr,
@@ -1148,7 +1198,7 @@ def plot_spectrogram(
         nperseg=n_fft,
         noverlap=n_fft - hop_length,
         nfft=n_fft,
-        boundary=None,
+        boundary=boundary,
         padded=False,
         return_onesided=True,
     )

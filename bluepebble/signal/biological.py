@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+from collections.abc import Mapping
 from typing import TYPE_CHECKING, TypeAlias, TypedDict
 
 import numpy as np
@@ -29,6 +30,55 @@ class CallEvent(TypedDict):
 
     contour_freqs: list[float]
     amplitude: float
+
+
+def _get_source_metadata(source: State) -> Mapping[str, object]:
+    """Return validated source metadata mapping."""
+    metadata = getattr(source, "metadata", None)
+    if not isinstance(metadata, Mapping):
+        msg = "Source state metadata must be mapping-like"
+        raise ValueError(msg)
+    return metadata
+
+
+def _get_source_amplitude_upa(source: State) -> float:
+    """Read scalar source amplitude metadata."""
+    metadata = _get_source_metadata(source)
+    if "amplitude_upa" not in metadata:
+        msg = "Source metadata missing required key: amplitude_upa"
+        raise ValueError(msg)
+    return float(metadata["amplitude_upa"])
+
+
+def _get_source_position(source: State) -> FloatArray:
+    """Extract source position vector using metadata mapping."""
+    metadata = _get_source_metadata(source)
+    position_mapping = metadata.get("position_mapping")
+    if position_mapping is None:
+        msg = "Source metadata missing required key: position_mapping"
+        raise ValueError(msg)
+
+    mapping_array = np.asarray(position_mapping, dtype=int)
+    if mapping_array.ndim != 1 or mapping_array.size == 0:
+        msg = "Source position_mapping must be one-dimensional and non-empty"
+        raise ValueError(msg)
+
+    return np.asarray(source.state_vector[mapping_array.tolist()], dtype=float)
+
+
+def _design_butterworth_filter(
+    order: int,
+    cutoff_hz: ArrayLike | float,
+    btype: str,
+    sampling_rate_hz: float,
+) -> tuple[FloatArray, FloatArray]:
+    """Design a Butterworth filter with explicit ``None`` guard for static typing."""
+    coeffs = signal.butter(order, cutoff_hz, btype=btype, fs=sampling_rate_hz)
+    if coeffs is None:
+        msg = "scipy.signal.butter returned no filter coefficients"
+        raise RuntimeError(msg)
+    b, a = coeffs
+    return np.asarray(b, dtype=np.float64), np.asarray(a, dtype=np.float64)
 
 
 def _get_snap_rate_from_temp(temperature_celsius: float, slope: float, intercept: float) -> float:
@@ -140,11 +190,11 @@ class PointSourceSnappingShrimpSignal(Signal):
         snap_impulse = snap_noise * snap_envelope
 
         raw_waveform = np.concatenate([delay, onset_wave, snap_impulse])
-        b, a = signal.butter(
-            4,
-            [self.low_cutoff_hz, self.high_cutoff_hz],
+        b, a = _design_butterworth_filter(
+            order=4,
+            cutoff_hz=[self.low_cutoff_hz, self.high_cutoff_hz],
             btype="bandpass",
-            fs=self.sampling_rate_hz,
+            sampling_rate_hz=self.sampling_rate_hz,
         )
         return signal.filtfilt(b, a, raw_waveform)
 
@@ -236,8 +286,11 @@ class PointSourceSnappingShrimpSignal(Signal):
             return signal_buffer
 
         # 3. Generate amplitudes only for valid snaps
-        scale_upa = source.metadata["amplitude_upa"]
-        amplitudes = levy_stable.rvs(self.alpha, 0, scale=scale_upa, size=num_snaps)
+        scale_upa = _get_source_amplitude_upa(source)
+        amplitudes = np.asarray(
+            levy_stable.rvs(self.alpha, 0, scale=scale_upa, size=num_snaps),
+            dtype=np.float64,
+        )
 
         # 4. Create an index array for placing snaps
         # This creates a 2D array where each row corresponds to the indices
@@ -369,11 +422,11 @@ class DiffuseSnappingShrimpSignal(Signal):
         snap_envelope = np.exp(-self.snap_decay * t_snap)
         snap_impulse = snap_noise * snap_envelope
         raw_waveform = np.concatenate([delay, onset_wave, snap_impulse])
-        b, a = signal.butter(
-            4,
-            [self.low_cutoff_hz, self.high_cutoff_hz],
+        b, a = _design_butterworth_filter(
+            order=4,
+            cutoff_hz=[self.low_cutoff_hz, self.high_cutoff_hz],
             btype="bandpass",
-            fs=self.sampling_rate_hz,
+            sampling_rate_hz=self.sampling_rate_hz,
         )
         return signal.filtfilt(b, a, raw_waveform)
 
@@ -456,8 +509,11 @@ class DiffuseSnappingShrimpSignal(Signal):
         if num_snaps == 0:
             return signal_buffer
 
-        scale_upa = source.metadata["amplitude_upa"]
-        amplitudes = levy_stable.rvs(self.alpha, 0, scale=scale_upa, size=num_snaps)
+        scale_upa = _get_source_amplitude_upa(source)
+        amplitudes = np.asarray(
+            levy_stable.rvs(self.alpha, 0, scale=scale_upa, size=num_snaps),
+            dtype=np.float64,
+        )
 
         snap_indices = np.arange(snap_len) + start_indices[:, np.newaxis]
         scaled_snaps = snap_template[np.newaxis, :] * amplitudes[:, np.newaxis]
@@ -495,7 +551,7 @@ class DiffuseSnappingShrimpSignal(Signal):
         final_signals = np.zeros((len(sensor_delays), self.num_samples), dtype=np.complex128)
         fft_freqs_hz = np.fft.fftfreq(self.num_samples, 1 / self.sampling_rate_hz)
 
-        source_position = source.state_vector[source.metadata["position_mapping"]]
+        source_position = _get_source_position(source)
         speed_of_sound_mps = self.ssp.calculate(source_position[2])
 
         for _ in range(self.num_diffuse_sources):
@@ -516,7 +572,8 @@ class DiffuseSnappingShrimpSignal(Signal):
             perturbed_prop_time_s = propagation_time_s + time_perturbation_s
 
             # 3. Propagate this individual signal
-            amplitude_scaling = 10 ** (-tloss_db / 20.0)
+            tloss_array = np.asarray(tloss_db, dtype=float)
+            amplitude_scaling = 10 ** (-tloss_array / 20.0)
             base_signal *= amplitude_scaling
             base_signal_fft = np.fft.fft(base_signal)
 
@@ -804,11 +861,11 @@ class WhaleCallSignal(Signal):
             noise = np.random.randn(len(call_template))
 
             # Create a low-pass filter for the noise to make it 'breathy'
-            b_noise, a_noise = signal.butter(
-                2,
-                self.breathy_noise_lp_cutoff_hz,
+            b_noise, a_noise = _design_butterworth_filter(
+                order=2,
+                cutoff_hz=self.breathy_noise_lp_cutoff_hz,
                 btype="low",
-                fs=self.sampling_rate_hz,
+                sampling_rate_hz=self.sampling_rate_hz,
             )
             filtered_noise = signal.filtfilt(b_noise, a_noise, noise)
 
@@ -819,18 +876,22 @@ class WhaleCallSignal(Signal):
             ) * call_template + self.breathy_noise_amount * filtered_noise
 
         # --- 6. Apply bandpass filter ---
-        b, a = signal.butter(
-            4,
-            [self.low_cutoff_hz, self.high_cutoff_hz],
-            "bandpass",
-            fs=self.sampling_rate_hz,
+        b, a = _design_butterworth_filter(
+            order=4,
+            cutoff_hz=[self.low_cutoff_hz, self.high_cutoff_hz],
+            btype="bandpass",
+            sampling_rate_hz=self.sampling_rate_hz,
         )
         filtered_call = signal.filtfilt(b, a, call_template)
 
         # --- 7. Apply amplitude envelope for natural attack/decay ---
         if self.envelope_taper_ratio > 0:
             num_samples = len(filtered_call)
-            window = signal.windows.tukey(num_samples, alpha=self.envelope_taper_ratio, sym=True)
+            window = signal.get_window(
+                ("tukey", self.envelope_taper_ratio),
+                num_samples,
+                fftbins=False,
+            )
             filtered_call *= window
 
         return filtered_call
@@ -859,7 +920,7 @@ class WhaleCallSignal(Signal):
                 -self.duration_jitter_s, self.duration_jitter_s
             )
 
-            amplitude = source.metadata["amplitude_upa"]
+            amplitude = _get_source_amplitude_upa(source)
 
             # --- Generate a dynamic frequency contour ---
             num_points = max(2, self.num_contour_points)
@@ -908,7 +969,7 @@ class WhaleCallSignal(Signal):
         potential_events = []
         current_time_s = np.random.uniform(0, self.mean_call_interval_s)
 
-        mean_amp = source.metadata["amplitude_upa"]
+        mean_amp = _get_source_amplitude_upa(source)
 
         for phrase in self.song_phrases:
             for theme_index in phrase:
@@ -1064,4 +1125,4 @@ class WhaleCallSignal(Signal):
                 if isinstance(effect, Effect):
                     signals = effect.apply(signals, self.sampling_rate_hz)
 
-        return signals
+        return np.asarray(signals, dtype=np.complex128)

@@ -122,7 +122,7 @@ def read_shade_file(
                                 + (i_sd * n_rcvrs_per_range)
                                 + i_rd
                             )
-                            f.seek(record_num * record_len_bytes)
+                            f.seek(int(record_num * record_len_bytes))
                             pressure[i_theta, i_sd, i_rd, :] = np.fromfile(
                                 f, dtype=np.complex64, count=n_rr
                             )
@@ -150,7 +150,8 @@ def read_shade_file(
                                 + sd_offset
                                 + i_rd
                             )
-                            f.seek(record_num * record_len_bytes)
+                            file_offset = int(np.asarray(record_num * record_len_bytes).item())
+                            f.seek(file_offset)
                             pressure[i_theta, i_sd, i_rd, :] = np.fromfile(
                                 f, dtype=np.complex64, count=n_rr
                             )

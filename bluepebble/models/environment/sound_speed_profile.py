@@ -112,7 +112,11 @@ class SoundSpeedProfile(ABC, Base):
             Temperature in degrees Celsius.
 
         """
-        return 10 * (1 - np.tanh((depth - 100) / 50)) + 2
+        depth_array = np.asarray(depth, dtype=float)
+        temperature = 10 * (1 - np.tanh((depth_array - 100.0) / 50.0)) + 2.0
+        if depth_array.ndim == 0:
+            return float(temperature)
+        return np.asarray(temperature, dtype=float)
 
     def _calc_salinity(self, depth: DepthInput) -> SpeedOutput:
         """Calculate ocean salinity model based on vertical variation.
@@ -128,7 +132,11 @@ class SoundSpeedProfile(ABC, Base):
             Salinity in practical salinity units (PSU).
 
         """
-        return 0.5 * (1 - np.tanh((depth - 200) / 100)) + 35
+        depth_array = np.asarray(depth, dtype=float)
+        salinity = 0.5 * (1 - np.tanh((depth_array - 200.0) / 100.0)) + 35.0
+        if depth_array.ndim == 0:
+            return float(salinity)
+        return np.asarray(salinity, dtype=float)
 
 
 class Constant(SoundSpeedProfile):

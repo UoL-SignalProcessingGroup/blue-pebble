@@ -585,7 +585,7 @@ class MinimumVarianceDistortionlessResponseBeamformer(Beamformer):
         if pad > 0:
             x_array = np.pad(x_array, ((0, 0), (0, pad)), mode="constant")
 
-        window = np.hanning(nfft).astype(x_array.real.dtype)
+        window = np.hanning(nfft).astype(np.float64)
         # Make a 3D view: (M, n_frames, nfft)
         stride_t = x_array.strides[1]
         frames = np.lib.stride_tricks.as_strided(
