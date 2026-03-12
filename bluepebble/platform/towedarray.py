@@ -405,7 +405,7 @@ class TowedArrayPlatform(MultiTransitionMovingPlatform):
         # Calculate heading from velocity
         velocity_mapping = self._resolved_velocity_mapping()
         host_vel_xy = host_state.state_vector[velocity_mapping[:2]]
-        heading_rad = float(np.arctan2(host_vel_xy[1], host_vel_xy[0]))
+        heading_rad = float(np.arctan2(host_vel_xy[1, 0], host_vel_xy[0, 0]))
 
         host_state_container = HostState(state=host_state, heading_rad=heading_rad)
 
