@@ -119,9 +119,11 @@ class BroadbandSyntheticSignal(BroadbandStftSignalBase):
 
     """
 
-    tonal_bandwidth_hz = Property(default=2.0, doc="Bandwidth of each tonal component (Hz)")
-    noise_amplitude_upa = Property(default=0.0, doc="RMS amplitude of background noise (µPa)")
-    noise_spectral_exponent = Property(
+    tonal_bandwidth_hz: float = Property(default=2.0, doc="Bandwidth of each tonal component (Hz)")
+    noise_amplitude_upa: float = Property(
+        default=0.0, doc="RMS amplitude of background noise (µPa)"
+    )
+    noise_spectral_exponent: float = Property(
         default=-2.0, doc="Spectral shape exponent (-2=pink, 0=white)"
     )
     noise_freq_range_hz: tuple[float, float] = Property(

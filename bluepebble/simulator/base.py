@@ -1,7 +1,5 @@
 """Base simulator hierarchy and shared utilities for passive-sonar simulations."""
 
-from __future__ import annotations
-
 from abc import abstractmethod
 from collections.abc import Iterable, Iterator, Sequence
 from datetime import datetime
@@ -36,26 +34,21 @@ class PassiveSonarArraySimulatorBase(SensorSimulator):
 
     platform: TowedArrayPlatform = Property(doc="Towed array platform")
     propagation_model: AcousticPropagationModel = Property(
-        AcousticPropagationModel,
         doc="Acoustic propagation model",
     )
     noise_model: AmbientNoise | None = Property(
-        AmbientNoise,
         default=None,
         doc="Noise model (optional)",
     )
     beamformer: Beamformer | None = Property(
-        Beamformer,
         default=None,
         doc="Beamforming algorithm (optional)",
     )
     steering_calculator: SteeringCalculator | None = Property(
-        SteeringCalculator,
         default=None,
         doc="Steering calculator (optional)",
     )
     ground_truth_paths: list[GroundTruthPath] = Property(
-        list,
         default=None,
         doc="List of GroundTruthPath objects",
     )

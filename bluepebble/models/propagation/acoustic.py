@@ -1,7 +1,5 @@
 """Defines acoustic propagation models for simulating sound propagation."""
 
-from __future__ import annotations
-
 import subprocess
 import tempfile
 from abc import ABC, abstractmethod

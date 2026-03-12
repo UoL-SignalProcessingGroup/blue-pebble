@@ -1,7 +1,5 @@
 """Acoustic sensor data module."""
 
-from __future__ import annotations
-
 from datetime import datetime
 from typing import Any, TypeAlias
 
@@ -22,9 +20,8 @@ class PassiveSonarSensorData(SensorData):
     map, and the timestamp of the data snapshot.
     """
 
-    raw_signals: ComplexArray = Property(np.ndarray, doc="Raw acoustic signals from sensor array")
+    raw_signals: ComplexArray = Property(doc="Raw acoustic signals from sensor array")
     beamformed_data: BeamformedData | None = Property(
-        np.ndarray,
         default=None,
         doc="Processed beamformed output",
     )

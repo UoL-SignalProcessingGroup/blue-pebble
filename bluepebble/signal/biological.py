@@ -1,7 +1,5 @@
 """Models for biological acoustic signals."""
 
-from __future__ import annotations
-
 from collections.abc import Mapping
 from typing import TYPE_CHECKING, TypeAlias, TypedDict
 
@@ -139,7 +137,6 @@ class PointSourceSnappingShrimpSignal(Signal):
 
     # --- Snap Amplitude Distribution Parameters ---
     alpha: float = Property(
-        float,
         default=1.5,
         doc="Alpha parameter for the Symmetric Alpha-Stable distribution.",
     )
@@ -149,18 +146,14 @@ class PointSourceSnappingShrimpSignal(Signal):
     onset_duration: float = Property(default=0.0001, doc="Snap onset duration in seconds.")
     snap_duration: float = Property(default=0.0014, doc="Snap impulse duration in seconds.")
     onset_level: float = Property(default=0.15, doc="Relative amplitude of the onset.")
-    onset_freq: float = Property(
-        float, default=2500, doc="Frequency of the onset sine wave in Hz."
-    )
+    onset_freq: float = Property(default=2500, doc="Frequency of the onset sine wave in Hz.")
     snap_decay: float = Property(default=1000, doc="Exponential decay rate for the snap.")
     low_cutoff_hz: float = Property(default=2000, doc="Bandpass filter low cutoff in Hz.")
-    high_cutoff_hz: float = Property(
-        float, default=15000, doc="Bandpass filter high cutoff in Hz."
-    )
+    high_cutoff_hz: float = Property(default=15000, doc="Bandpass filter high cutoff in Hz.")
 
     # --- Post-processing Effects ---
     effects: list[Effect] | None = Property(
-        list[Effect], default=None, doc="List of effects to apply to the signal."
+        default=None, doc="List of effects to apply to the signal."
     )
 
     def _create_snap_template(self) -> FloatArray:
@@ -360,10 +353,9 @@ class DiffuseSnappingShrimpSignal(Signal):
 
     # --- Diffuse Field Parameters ---
     num_diffuse_sources: int = Property(
-        int, default=100, doc="Number of incoherent point sources in the diffuse field."
+        default=100, doc="Number of incoherent point sources in the diffuse field."
     )
     colony_radius_m: float = Property(
-        float,
         default=50.0,
         doc="Radius of the circular area over which sources are distributed.",
     )
@@ -371,22 +363,19 @@ class DiffuseSnappingShrimpSignal(Signal):
     # --- Temporal and Waveform Properties ---
     temperature_celsius: float = Property(doc="Water temperature in Celsius.")
     start_time_hours: float = Property(
-        float, default=0.0, doc="Simulation start time in hours from midnight (0-24)."
+        default=0.0, doc="Simulation start time in hours from midnight (0-24)."
     )
     diurnal_amplitude: float = Property(
-        float, default=0.0, doc="Amplitude of diurnal snap rate modulation (0-1)."
+        default=0.0, doc="Amplitude of diurnal snap rate modulation (0-1)."
     )
     diurnal_phase_hours: float = Property(
-        float, default=0.0, doc="Phase offset of diurnal cycle in hours."
+        default=0.0, doc="Phase offset of diurnal cycle in hours."
     )
     tidal_amplitude: float = Property(
-        float, default=0.0, doc="Amplitude of tidal snap rate modulation (0-1)."
+        default=0.0, doc="Amplitude of tidal snap rate modulation (0-1)."
     )
-    tidal_phase_hours: float = Property(
-        float, default=0.0, doc="Phase offset of tidal cycle in hours."
-    )
+    tidal_phase_hours: float = Property(default=0.0, doc="Phase offset of tidal cycle in hours.")
     alpha: float = Property(
-        float,
         default=1.5,
         doc="Alpha parameter for the Symmetric Alpha-Stable distribution.",
     )
@@ -394,17 +383,13 @@ class DiffuseSnappingShrimpSignal(Signal):
     onset_duration: float = Property(default=0.0001, doc="Snap onset duration in seconds.")
     snap_duration: float = Property(default=0.0014, doc="Snap impulse duration in seconds.")
     onset_level: float = Property(default=0.15, doc="Relative amplitude of the onset.")
-    onset_freq: float = Property(
-        float, default=2500, doc="Frequency of the onset sine wave in Hz."
-    )
+    onset_freq: float = Property(default=2500, doc="Frequency of the onset sine wave in Hz.")
     snap_decay: float = Property(default=1000, doc="Exponential decay rate for the snap.")
     low_cutoff_hz: float = Property(default=2000, doc="Bandpass filter low cutoff in Hz.")
-    high_cutoff_hz: float = Property(
-        float, default=15000, doc="Bandpass filter high cutoff in Hz."
-    )
+    high_cutoff_hz: float = Property(default=15000, doc="Bandpass filter high cutoff in Hz.")
     ssp: SoundSpeedProfile = Property(doc="Sound speed profile object.")
     effects: list[Effect] | None = Property(
-        list[Effect], default=None, doc="List of effects to apply to the signal."
+        default=None, doc="List of effects to apply to the signal."
     )
 
     def _create_snap_template(self) -> FloatArray:
@@ -605,76 +590,63 @@ class WhaleCallSignal(Signal):
 
     # --- Call Temporal Distribution Parameters ---
     mean_call_interval_s: float = Property(
-        float, default=10.0, doc="Mean interval between calls in seconds."
+        default=10.0, doc="Mean interval between calls in seconds."
     )
     interval_jitter_s: float = Property(
-        float, default=2.0, doc="Standard deviation of call interval jitter in seconds."
+        default=2.0, doc="Standard deviation of call interval jitter in seconds."
     )
 
     # --- Harmonic Structure Parameters ---
     min_harmonics: int = Property(default=8, doc="Minimum number of harmonics per call.")
     max_harmonics: int = Property(default=40, doc="Maximum number of harmonics per call.")
-    harmonic_decay_db: float = Property(
-        float, default=6.0, doc="Amplitude decay per harmonic in dB."
-    )
+    harmonic_decay_db: float = Property(default=6.0, doc="Amplitude decay per harmonic in dB.")
 
     # --- Individual Call Waveform Parameters ---
     call_duration_s: float = Property(default=2.0, doc="Duration of each call in seconds.")
     duration_jitter_s: float = Property(
-        float, default=0.2, doc="Standard deviation of call duration jitter in seconds."
+        default=0.2, doc="Standard deviation of call duration jitter in seconds."
     )
-    start_freq_hz: float = Property(
-        float, default=1000, doc="Starting frequency of the call in Hz."
-    )
+    start_freq_hz: float = Property(default=1000, doc="Starting frequency of the call in Hz.")
     start_freq_jitter_hz: float = Property(
-        float, default=100, doc="Standard deviation of starting frequency jitter in Hz."
+        default=100, doc="Standard deviation of starting frequency jitter in Hz."
     )
     end_freq_hz: float = Property(default=5000, doc="Ending frequency of the call in Hz.")
     end_freq_jitter_hz: float = Property(
-        float, default=500, doc="Standard deviation of ending frequency jitter in Hz."
+        default=500, doc="Standard deviation of ending frequency jitter in Hz."
     )
     # --- Dynamic Contour Parameters ---
     num_contour_points: int = Property(
-        int,
         default=2,
         doc="Number of points defining the frequency contour. 2 is a simple sweep.",
     )
     contour_variability_hz: float = Property(
-        float,
         default=50.0,
         doc="Max frequency change between contour points, creating variability.",
     )
     sweep_method: str = Property(
-        str,
         default="logarithmic",
         doc=("Frequency sweep method ('linear', 'quadratic', 'logarithmic', 'hyperbolic')."),
     )
     vibrato_rate_hz: float = Property(
-        float, default=0.0, doc="Speed of the vibrato in oscillations per second (Hz)."
+        default=0.0, doc="Speed of the vibrato in oscillations per second (Hz)."
     )
     vibrato_depth_hz: float = Property(default=0.0, doc="Intensity of the vibrato in Hz.")
-    low_cutoff_hz: float = Property(
-        float, default=50, doc="Bandpass filter low cutoff frequency in Hz."
-    )
+    low_cutoff_hz: float = Property(default=50, doc="Bandpass filter low cutoff frequency in Hz.")
     high_cutoff_hz: float = Property(
-        float,
         default=1500.0,
         doc="High cutoff frequency for the bandpass filter in Hz.",
     )
     envelope_taper_ratio: float = Property(
-        float,
         default=0.25,
         doc="Ratio of the call duration to taper for a smooth amplitude envelope.",
     )
 
     # --- Biphonation Parameters ---
     add_biphonation: bool = Property(
-        bool,
         default=False,
         doc="If True, adds a second, non-harmonic voice to the call.",
     )
     biphonic_freq_ratio: float = Property(
-        float,
         default=1.5,
         doc=(
             "Frequency ratio of the biphonic voice to the fundamental "
@@ -682,80 +654,66 @@ class WhaleCallSignal(Signal):
         ),
     )
     biphonic_jitter_ratio: float = Property(
-        float,
         default=0.1,
         doc="Amount of random variation in the biphonic frequency ratio.",
     )
     biphonic_amplitude_ratio: float = Property(
-        float,
         default=0.5,
         doc="Amplitude of the biphonic voice relative to the fundamental (0-1).",
     )
 
     # --- Sub-harmonic Parameters ---
     sub_harmonic_ratios: list[float] | None = Property(
-        list,
         default=None,
         doc="List of frequency ratios for sub-harmonics (e.g., [0.5, 0.25]).",
     )
     sub_harmonic_amplitude_ratio: float = Property(
-        float,
         default=0.3,
         doc="Amplitude of the sub-harmonics relative to the fundamental (0-1).",
     )
 
     # --- Timbre / Texture Parameters ---
     add_breathy_noise: bool = Property(
-        bool,
         default=False,
         doc="If True, adds a 'breathy' or 'noisy' texture to the call.",
     )
     breathy_noise_amount: float = Property(
-        float,
         default=0.1,
         doc="Mix amount of breathy noise (0-1). Higher is more noisy.",
     )
     breathy_noise_lp_cutoff_hz: float = Property(
-        float,
         default=1500.0,
         doc="Low-pass cutoff for the breathy noise, controlling its 'color'.",
     )
 
     # --- Post Processing Parameters ---
     effects: list[Effect] | None = Property(
-        list[Effect],
         default=None,
         doc="List of audio effects to apply post-generation.",
     )
 
     # --- Song Structure Parameters ---
     song_structure_enabled: bool = Property(
-        bool,
         default=False,
         doc="If True, generates calls based on a defined song structure.",
     )
     song_themes: list[list[float]] | None = Property(
-        list,
         default=None,
         doc="A list of themes, where each theme is a list of frequency offsets (Hz).",
     )
     song_phrases: list[list[int]] | None = Property(
-        list,
         default=None,
         doc="A list of phrases, where each phrase is a list of theme indices.",
     )
     theme_base_freq_hz: float = Property(
-        float,
         default=150.0,
         doc="The base frequency from which themes are generated.",
     )
     theme_freq_jitter_hz: float = Property(
-        float,
         default=10.0,
         doc="Jitter applied to each point in a theme's contour.",
     )
     theme_duration_s: float = Property(
-        float,
         default=2.0,
         doc="The base duration for a call generated from a theme.",
     )

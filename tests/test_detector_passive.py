@@ -58,6 +58,10 @@ def _install_fake_passive_dependencies(monkeypatch) -> None:
     detection_module.Detection = FakeDetection
     types_module.detection = detection_module
 
+    sensordata_module = ModuleType("stonesoup.types.sensordata")
+    sensordata_module.SensorData = type("SensorData", (), {})
+    types_module.sensordata = sensordata_module
+
     stonesoup_module.buffered_generator = buffered_generator_module
     stonesoup_module.reader = reader_module
     stonesoup_module.types = types_module
@@ -74,7 +78,19 @@ def _install_fake_passive_dependencies(monkeypatch) -> None:
     monkeypatch.setitem(sys.modules, "stonesoup.reader.base", reader_base_module)
     monkeypatch.setitem(sys.modules, "stonesoup.types", types_module)
     monkeypatch.setitem(sys.modules, "stonesoup.types.detection", detection_module)
+    monkeypatch.setitem(sys.modules, "stonesoup.types.sensordata", sensordata_module)
     monkeypatch.setitem(sys.modules, "bluepebble.detector.algorithms", algorithms_module)
+
+    # Stub bluepebble.types.sensordata so that loading passive.py does not import
+    # the real module against the fake Stone Soup environment.  Left in sys.modules
+    # via monkeypatch so it is cleaned up after the test and does not corrupt the
+    # PassiveSonarSensorData class used by other test modules.
+    bp_types_module = ModuleType("bluepebble.types")
+    bp_sensordata_module = ModuleType("bluepebble.types.sensordata")
+    bp_sensordata_module.PassiveSonarSensorData = type("PassiveSonarSensorData", (), {})
+    bp_types_module.sensordata = bp_sensordata_module
+    monkeypatch.setitem(sys.modules, "bluepebble.types", bp_types_module)
+    monkeypatch.setitem(sys.modules, "bluepebble.types.sensordata", bp_sensordata_module)
 
 
 def _load_passive_detector_module(monkeypatch):

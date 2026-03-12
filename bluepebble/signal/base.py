@@ -1,7 +1,5 @@
 """Base signal properties and methods for signal models."""
 
-from __future__ import annotations
-
 from abc import ABC
 from typing import TYPE_CHECKING, TypeAlias
 

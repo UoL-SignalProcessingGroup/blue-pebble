@@ -1,7 +1,5 @@
 """Continuous acoustic sensor simulators module."""
 
-from __future__ import annotations
-
 from collections.abc import Iterable, Iterator
 from dataclasses import dataclass
 from datetime import datetime
@@ -99,18 +97,15 @@ class ContinuousSTFTPassiveSonarArraySimulator(PassiveSonarArraySimulatorBase):
     """
 
     signal_models: list[BroadbandStftSignalBase] = Property(
-        list,
         doc="List of broadband signal models (one per target, or single-element list for all)",
     )
     mode: str = Property(
-        str,
         default="stft_interp",
         doc="Synthesis mode: stft_interp, wola_interp, or cola",
     )
     fade_in_ms: float = Property(default=100.0, doc="Fade-in duration at arrival (ms)")
     fade_out_ms: float = Property(default=100.0, doc="Fade-out duration at end (ms)")
     norm_floor_ratio: float = Property(
-        float,
         default=1e-3,
         doc=(
             "Relative floor (fraction of max overlap weight) below which COLA/WOLA "
@@ -842,7 +837,6 @@ class ContinuousFractionalDelayPassiveSonarArraySimulator(PassiveSonarArraySimul
     """
 
     signal_models: list[BroadbandStftSignalBase] = Property(
-        list,
         doc="List of broadband signal models (one per target, or single-element list for all)",
     )
     fade_in_ms: float = Property(default=100.0, doc="Fade-in duration at arrival (ms)")

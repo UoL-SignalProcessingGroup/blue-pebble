@@ -1,7 +1,5 @@
 """Beamforming algorithms for processing signals from an array of sensors."""
 
-from __future__ import annotations
-
 from abc import ABC, abstractmethod
 from typing import TYPE_CHECKING, Literal, TypeAlias
 
@@ -63,17 +61,14 @@ class DelayAndSumBeamformer(Beamformer):
     """
 
     sampling_rate_hz: float = Property(
-        float,
         doc="The sampling frequency of the sensor signals, in Hz",
     )
     shading: FloatArray | None = Property(
-        np.ndarray,
         default=None,
         doc="An array of shading weights applied to each sensor. If None, uniform weights are "
         "used.",
     )
     domain: DomainType = Property(
-        str,
         default="time",
         doc="Beamforming domain: 'time', 'frequency', or 'broadband_power'.",
     )
@@ -500,7 +495,6 @@ class MinimumVarianceDistortionlessResponseBeamformer(Beamformer):
     """
 
     sampling_rate_hz: float = Property(
-        float,
         doc="The sampling frequency of the sensor signals, in Hz",
     )
     nfft: int = Property(default=500, doc="STFT window size (samples)")
@@ -716,11 +710,9 @@ class SteeringCalculator(Base):
     """Compute steering delays for a horizontal sensor array."""
 
     ssp: SoundSpeedProfile = Property(
-        SoundSpeedProfile,
         doc="Sound speed profile for calculating delays",
     )
     steering_azimuths_rad: FloatArray = Property(
-        np.ndarray,
         doc="Azimuth angles for steering, in radians",
     )
 

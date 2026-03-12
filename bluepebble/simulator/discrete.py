@@ -1,7 +1,5 @@
 """Discrete acoustic sensor simulators module."""
 
-from __future__ import annotations
-
 import warnings
 from collections.abc import Iterable, Iterator
 from datetime import datetime
@@ -96,7 +94,6 @@ class DiscretePassiveSonarArraySimulator(PassiveSonarArraySimulatorBase):
     """
 
     signal_models: list[Signal] = Property(
-        list,
         doc="List of broadband signal models (one per target, or single-element list for all)",
     )
 
@@ -401,11 +398,9 @@ class DeprecatedDiscretePassiveSonarArraySimulator(PassiveSonarArraySimulatorBas
         super().__init__(*args, **kwargs)
 
     signal_models: list[Signal] = Property(
-        list,
         doc="List of acoustic signal models (one per target, or single-element list for all)",
     )
     propagation_method: str = Property(
-        str,
         default="transmission_loss",
         doc="Propagation method: 'transmission_loss' or 'spectrum'",
     )

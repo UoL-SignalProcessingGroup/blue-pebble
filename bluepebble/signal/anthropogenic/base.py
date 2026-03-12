@@ -1,7 +1,5 @@
 """Shared abstractions for anthropogenic signal models."""
 
-from __future__ import annotations
-
 from abc import ABC, abstractmethod
 from collections.abc import Callable, Mapping, MutableMapping
 from datetime import datetime

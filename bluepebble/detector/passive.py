@@ -1,10 +1,8 @@
 """Defines a passive sonar detector that processes beamformed sensor data."""
 
-from __future__ import annotations
-
 from collections.abc import Generator, Iterable
 from datetime import datetime
-from typing import TYPE_CHECKING, TypeAlias
+from typing import TypeAlias
 
 import numpy as np
 from numpy.typing import ArrayLike, NDArray
@@ -14,9 +12,8 @@ from stonesoup.reader.base import DetectionReader
 from stonesoup.types.detection import Detection
 from tqdm import tqdm
 
-if TYPE_CHECKING:
-    from ..types.sensordata import PassiveSonarSensorData
-    from .algorithms import DetectionAlgorithm
+from ..types.sensordata import PassiveSonarSensorData
+from .algorithms import DetectionAlgorithm
 
 FloatArray: TypeAlias = NDArray[np.float64]
 DetectionArray: TypeAlias = NDArray[np.float64]
@@ -50,7 +47,7 @@ class PassiveSonarDetector(DetectionReader):
         doc="A list of detection algorithms to apply sequentially.",
     )
     sensor_data_gen: Generator[SensorDataStep, None, None] = Property(
-        doc="Generator that yields PassiveSonarSensorData objects"
+        doc="Generator that yields PassiveSonarSensorData objects",
     )
     steering_azimuths_rad: FloatArray = Property(
         doc="Array of steering azimuth angles in radians.",
