@@ -19,7 +19,6 @@ FloatArray: TypeAlias = NDArray[np.float64]
 Complex128Array: TypeAlias = NDArray[np.complex128]
 
 
-
 class BroadbandSyntheticSignal(BroadbandStftSignalBase):
     """Generates ship signals with broadband tonals and coloured noise.
 
@@ -119,12 +118,12 @@ class BroadbandSyntheticSignal(BroadbandStftSignalBase):
         self._noise_realization: Complex128Array | None = None
         self._tonal_realizations: list[Complex128Array] | None = None
 
-    def _generate_source_signal(self, source: "State") -> Complex128Array:
+    def _generate_base_signal(self, source: "State") -> Complex128Array:
         """Generate the complete source signal with broadband tonals and noise.
 
         This method creates:
         1. Broadband tonals using band-limited white noise modulated by tonal frequencies
-        2. Wideband colored noise for background machinery/cavitation sounds
+        2. Wideband coloured noise for background machinery/cavitation sounds
 
         Parameters
         ----------
@@ -428,7 +427,7 @@ class BroadbandRecordedSignal(BroadbandStftSignalBase):
             return signal
         return signal * (target_rms_upa / current_rms)
 
-    def _generate_source_signal(self, source: "State") -> Complex128Array:
+    def _generate_base_signal(self, source: "State") -> Complex128Array:
         """Generate full-duration source signal from measured WAV data.
 
         Parameters

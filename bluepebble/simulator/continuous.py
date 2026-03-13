@@ -3,7 +3,7 @@
 from collections.abc import Iterable, Iterator
 from dataclasses import dataclass
 from datetime import datetime
-from typing import TYPE_CHECKING, Any, Protocol, TypeAlias, cast
+from typing import TYPE_CHECKING, Any, Protocol, TypeAlias, cast, runtime_checkable
 
 import numpy as np
 from numpy.typing import ArrayLike, NDArray
@@ -24,8 +24,15 @@ IntArray: TypeAlias = NDArray[np.integer[Any]]
 SensorBatch: TypeAlias = tuple[datetime, set[SensorData]]
 
 
+@runtime_checkable
 class _SpectrumPropagationModel(Protocol):
-    """Protocol for propagation models that expose ``propagate_spectrum``."""
+    """Protocol for propagation models that expose ``propagate_spectrum``.
+
+    .. note::
+        Prefer constructing propagation models as :class:`SpectrumPropagationModel`
+        subclasses. This protocol exists for duck-typed usage in tests and custom
+        integrations where subclassing is not practical.
+    """
 
     def propagate_spectrum(
         self,
@@ -289,7 +296,7 @@ class ContinuousSTFTPassiveSonarArraySimulator(PassiveSonarArraySimulatorBase):
 
         """
         targets_data: list[_STFTTargetHistory] = []
-        if not hasattr(self.propagation_model, "propagate_spectrum"):
+        if not isinstance(self.propagation_model, _SpectrumPropagationModel):
             msg = (
                 f"{type(self.propagation_model).__name__} does not implement "
                 "'propagate_spectrum', which is required for STFT-based simulation"
@@ -944,7 +951,7 @@ class ContinuousFractionalDelayPassiveSonarArraySimulator(PassiveSonarArraySimul
         out_len = len(ref_source)
         sample_times_s = np.arange(out_len, dtype=np.float64) / fs
         receiver_accum = np.zeros((num_sensors, out_len), dtype=np.complex64)
-        if not hasattr(self.propagation_model, "propagate_spectrum"):
+        if not isinstance(self.propagation_model, _SpectrumPropagationModel):
             msg = (
                 f"{type(self.propagation_model).__name__} does not implement "
                 "'propagate_spectrum', which is required for STFT-based simulation"

@@ -185,7 +185,43 @@ class AcousticPropagationModel(ABC, Base):
         return np.asarray(delays, dtype=float)
 
 
-class CylindricalAcousticPropagationModel(AcousticPropagationModel):
+class SpectrumPropagationModel(ABC):
+    """Mixin ABC for propagation models that support frequency-domain transfer functions.
+
+    Inherit from this alongside :class:`AcousticPropagationModel` to declare that a model
+    implements :meth:`propagate_spectrum`.  Simulators use ``isinstance`` against this class
+    to discover the capability at construction time rather than relying on ``hasattr``.
+    """
+
+    @abstractmethod
+    def propagate_spectrum(
+        self,
+        platform: "Platform",
+        source: "State",
+        frequencies_hz: ArrayLike,
+    ) -> SpectrumResult:
+        """Return per-sensor complex transfer functions and propagation time.
+
+        Parameters
+        ----------
+        platform : Platform
+            Platform state providing sensor array geometry.
+        source : State
+            Source state providing position and metadata.
+        frequencies_hz : ArrayLike
+            Frequency axis in Hz matching the desired FFT bins.
+
+        Returns
+        -------
+        SpectrumResult
+            Tuple ``(H_sensors, propagation_time_s)`` where ``H_sensors`` has
+            shape ``(num_sensors, num_frequencies)``.
+
+        """
+        ...
+
+
+class CylindricalAcousticPropagationModel(AcousticPropagationModel, SpectrumPropagationModel):
     """A simple acoustic model based on cylindrical spreading and absorption loss.
 
     This model provides a basic estimate of transmission loss without the computational overhead of
@@ -304,7 +340,7 @@ class CylindricalAcousticPropagationModel(AcousticPropagationModel):
         return H_sensors, float(propagation_time_s)
 
 
-class SphericalAcousticPropagationModel(AcousticPropagationModel):
+class SphericalAcousticPropagationModel(AcousticPropagationModel, SpectrumPropagationModel):
     """A simple acoustic model based on spherical spreading and absorption loss.
 
     This model provides a basic estimate of transmission loss without the computational overhead of
@@ -651,7 +687,7 @@ class BellhopAcousticPropagationModel(AcousticPropagationModel):
         pass
 
 
-class rtrsAcousticPropagationModel(AcousticPropagationModel):
+class rtrsAcousticPropagationModel(AcousticPropagationModel, SpectrumPropagationModel):
     """Representation of an rtrs acoustic propagation model.
 
     Uses the rtrs Python bindings for 3D ray-tracing with support for 3D SSP and 2D bathymetry.

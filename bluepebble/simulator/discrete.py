@@ -3,7 +3,7 @@
 import warnings
 from collections.abc import Iterable, Iterator
 from datetime import datetime
-from typing import TYPE_CHECKING, Any, Protocol, TypeAlias, cast
+from typing import TYPE_CHECKING, Any, Protocol, TypeAlias, cast, runtime_checkable
 
 import numpy as np
 from numpy.typing import NDArray
@@ -21,6 +21,7 @@ Complex128Array: TypeAlias = NDArray[np.complex128]
 SensorBatch: TypeAlias = tuple[datetime, set[SensorData]]
 
 
+@runtime_checkable
 class _StftSourceSignalModel(Protocol):
     """Protocol for signal models exposing STFT-backed source caching."""
 
@@ -33,6 +34,7 @@ class _StftSourceSignalModel(Protocol):
         ...
 
 
+@runtime_checkable
 class _BaseSignalModel(Protocol):
     """Protocol for signal models exposing direct base-signal synthesis."""
 
@@ -44,8 +46,15 @@ class _BaseSignalModel(Protocol):
         ...
 
 
+@runtime_checkable
 class _SpectrumPropagationModel(Protocol):
-    """Protocol for propagation models with frequency-domain transfer support."""
+    """Protocol for propagation models with frequency-domain transfer support.
+
+    .. note::
+        Prefer constructing propagation models as :class:`SpectrumPropagationModel`
+        subclasses. This protocol exists for duck-typed usage in tests and custom
+        integrations where subclassing is not practical.
+    """
 
     def propagate_spectrum(
         self,
@@ -162,7 +171,7 @@ class DiscretePassiveSonarArraySimulator(PassiveSonarArraySimulatorBase):
             If the signal model does not expose a supported source API.
 
         """
-        if hasattr(signal_model, "compute_stft") and hasattr(signal_model, "get_source_signal"):
+        if isinstance(signal_model, _StftSourceSignalModel):
             stft_signal_model = cast(_StftSourceSignalModel, signal_model)
             try:
                 source_signal = stft_signal_model.get_source_signal()
@@ -177,7 +186,7 @@ class DiscretePassiveSonarArraySimulator(PassiveSonarArraySimulatorBase):
                 source_signal = stft_signal_model.get_source_signal()
             return np.asarray(source_signal, dtype=np.complex128)
 
-        if hasattr(signal_model, "_generate_base_signal"):
+        if isinstance(signal_model, _BaseSignalModel):
             base_signal_model = cast(_BaseSignalModel, signal_model)
             if first_state is None:
                 msg = (
@@ -213,10 +222,10 @@ class DiscretePassiveSonarArraySimulator(PassiveSonarArraySimulatorBase):
             If signal model configuration is invalid.
 
         """
-        if not hasattr(self.propagation_model, "propagate_spectrum"):
+        if not isinstance(self.propagation_model, _SpectrumPropagationModel):
             msg = (
-                "DiscreteBroadbandPassiveSonarArraySimulator requires propagation_model "
-                "to implement propagate_spectrum"
+                f"{type(self.propagation_model).__name__} does not implement "
+                "propagate_spectrum; use a SpectrumPropagationModel subclass"
             )
             raise AttributeError(msg)
         spectrum_propagation_model = cast(_SpectrumPropagationModel, self.propagation_model)
@@ -494,15 +503,15 @@ class DeprecatedDiscretePassiveSonarArraySimulator(PassiveSonarArraySimulatorBas
             target_signal_model = signal_models_list[target_idx]
 
             if method == "spectrum":
-                if not hasattr(self.propagation_model, "propagate_spectrum"):
+                if not isinstance(self.propagation_model, _SpectrumPropagationModel):
                     msg = (
-                        "propagation_method='spectrum' requires propagation_model "
-                        "to implement propagate_spectrum"
+                        f"propagation_method='spectrum' requires propagation_model "
+                        f"to implement propagate_spectrum; "
+                        f"got {type(self.propagation_model).__name__}"
                     )
                     raise AttributeError(msg)
                 spectrum_propagation_model = cast(
-                    _SpectrumPropagationModel,
-                    self.propagation_model,
+                    _SpectrumPropagationModel, self.propagation_model
                 )
 
                 # Build physical frequency axis matching FFT bins.
@@ -514,7 +523,7 @@ class DeprecatedDiscretePassiveSonarArraySimulator(PassiveSonarArraySimulatorBas
                     frequencies,
                 )
 
-                if hasattr(target_signal_model, "_generate_base_signal"):
+                if isinstance(target_signal_model, _BaseSignalModel):
                     base_signal_model = cast(_BaseSignalModel, target_signal_model)
                     base_signal = np.asarray(
                         base_signal_model._generate_base_signal(target_state),

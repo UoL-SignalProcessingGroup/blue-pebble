@@ -313,7 +313,7 @@ def test_broadband_stft_base_caches_and_resets(monkeypatch) -> None:
             super().__init__(**kwargs)
             self.calls = 0
 
-        def _generate_source_signal(self, source) -> np.ndarray:
+        def _generate_base_signal(self, source) -> np.ndarray:
             _ = source
             self.calls += 1
             return np.ones(self.num_samples, dtype=np.float64)
@@ -345,7 +345,7 @@ def test_broadband_stft_base_generate_always_raises(monkeypatch) -> None:
     anthropogenic_base, _, _, _ = _load_anthropogenic_modules(monkeypatch)
 
     class DummyBroadbandModel(anthropogenic_base.BroadbandStftSignalBase):
-        def _generate_source_signal(self, source) -> np.ndarray:
+        def _generate_base_signal(self, source) -> np.ndarray:
             _ = source
             return np.ones(self.num_samples, dtype=np.float64)
 

@@ -307,7 +307,7 @@ class BroadbandStftSignalBase(ContinuousTimestepSignal, ABC):
         self._source_signal: ComplexArray | None = None
 
     @abstractmethod
-    def _generate_source_signal(self, source: "State") -> ComplexArray:
+    def _generate_base_signal(self, source: "State") -> ComplexArray:
         """Generate full-duration source waveform for STFT processing."""
 
     def compute_stft(self, source: "State") -> CachedStftResult:
@@ -332,7 +332,7 @@ class BroadbandStftSignalBase(ContinuousTimestepSignal, ABC):
                 cast(FloatArray, self._window),
             )
 
-        self._source_signal = self._generate_source_signal(source)
+        self._source_signal = self._generate_base_signal(source)
 
         stft, freq_normalized, hop, window = compute_stft(
             self._source_signal, self.frame_len, self.hop_factor, self.window_type
