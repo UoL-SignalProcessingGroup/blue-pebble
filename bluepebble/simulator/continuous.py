@@ -898,7 +898,9 @@ class ContinuousFractionalDelayPassiveSonarArraySimulator(PassiveSonarArraySimul
 
         ground_truth_paths = self.ground_truth_paths or []
         if len(ground_truth_paths) == 0:
-            msg = "BroadbandExactDelayPassiveSonarArraySimulator requires at least one target"
+            msg = (
+                "ContinuousFractionalDelayPassiveSonarArraySimulator requires at least one target"
+            )
             raise ValueError(msg)
 
         signal_models_list = self._resolve_models(
