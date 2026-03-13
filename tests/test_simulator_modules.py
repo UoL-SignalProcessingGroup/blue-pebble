@@ -812,6 +812,15 @@ def test_continuous_build_target_histories_and_modes_cover_wola_and_cola(monkeyp
             )
             return stft, np.array([0.0, 0.5, 1.0]), 2, np.ones(4, dtype=np.float32)
 
+        def stft_geometry(self):
+            return (
+                3,
+                np.array([0.0, 0.5, 1.0], dtype=np.float64),
+                2,
+                np.ones(4, dtype=np.float64),
+                2,
+            )
+
     class BadShapeModel(GoodModel):
         def compute_stft(self, state):
             _ = state
@@ -833,7 +842,7 @@ def test_continuous_build_target_histories_and_modes_cover_wola_and_cola(monkeyp
         propagation_model=propagation_stub,
         signal_models=[GoodModel()],
     )
-    ctx = simulator._build_common_context([t0, t1], [GoodModel()], first_state=path_a.states[0])
+    ctx = simulator._build_common_context([t0, t1], [GoodModel()])
     with pytest.raises(RuntimeError, match="must share the same shape"):
         simulator._build_target_histories(ctx, [path_a, path_b], [GoodModel(), BadShapeModel()])
 
@@ -886,6 +895,10 @@ def test_fractional_delay_simulator_covers_errors_fallback_and_outputs(monkeypat
         def __init__(self, source_signal: np.ndarray):
             self._source_signal = source_signal
 
+        @property
+        def num_samples(self) -> int:
+            return len(self._source_signal)
+
         def get_source_waveform(self, state):
             _ = state
             return self._source_signal
@@ -912,8 +925,9 @@ def test_fractional_delay_simulator_covers_errors_fallback_and_outputs(monkeypat
         signal_models=[ToggleSourceModel(np.array([1.0, 2.0], dtype=np.complex64))],
         ground_truth_paths=[],
     )
-    with pytest.raises(ValueError, match="requires at least one target"):
-        list(no_target_sim.sensor_data_gen())
+    # Zero targets should produce noise-only output without raising.
+    no_target_batches = list(no_target_sim.sensor_data_gen())
+    assert len(no_target_batches) == 2
 
     path_a = _FakePath(states=[_FakeState(t0), _FakeState(t1)])
     path_b = _FakePath(states=[_FakeState(t0), _FakeState(t1)])
@@ -1043,6 +1057,7 @@ def test_continuous_stft_interp_pads_sensor_lengths_and_fractional_paths_without
     class SimpleSource:
         sampling_rate_hz = 2.0
         frame_len = 4
+        num_samples = 4
 
         def get_source_waveform(self, state):
             _ = state

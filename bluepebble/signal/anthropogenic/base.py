@@ -393,6 +393,24 @@ class BroadbandStftSignalBase(ContinuousTimestepSignal, ABC):
 
         return self._source_signal
 
+    def get_source_waveform(self, source: "State") -> ComplexArray:
+        """Return the cached source waveform, computing it on first call.
+
+        Parameters
+        ----------
+        source : State
+            Source state used to generate the waveform if not yet cached.
+
+        Returns
+        -------
+        ComplexArray
+            Full-duration source waveform.
+
+        """
+        if self._source_signal is None:
+            self.compute_stft(source)
+        return cast(ComplexArray, self._source_signal)
+
     def generate(
         self,
         source: "State",
@@ -418,6 +436,26 @@ class BroadbandStftSignalBase(ContinuousTimestepSignal, ABC):
             "ContinuousPassiveSonarArraySimulator."
         )
         raise NotImplementedError(msg)
+
+    def stft_geometry(self) -> tuple[int, FloatArray, int, FloatArray, int]:
+        """Return STFT geometry derived purely from signal model properties.
+
+        Returns
+        -------
+        tuple of (int, FloatArray, int, FloatArray, int)
+            ``(num_freq_bins, frequencies_hz, hop, window, num_frames)``.
+            No source State is required.
+
+        """
+        stft, freq_normalized, hop, window = compute_stft(
+            np.zeros(self.num_samples, dtype=np.complex64),
+            self.frame_len,
+            self.hop_factor,
+            self.window_type,
+        )
+        num_frames, num_freq_bins = stft.shape
+        freqs = np.asarray(freq_normalized * self.sampling_rate_hz, dtype=np.float64)
+        return num_freq_bins, freqs, int(hop), np.asarray(window, dtype=np.float64), num_frames
 
     def reset(self) -> None:
         """Clear cached STFT and source-signal state."""

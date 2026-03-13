@@ -92,6 +92,7 @@ def _load_acoustic_module(monkeypatch):
     return SimpleNamespace(
         PassiveSonarArraySimulator=discrete.DiscretePassiveSonarArraySimulator,
         BroadbandPassiveSonarArraySimulator=continuous.ContinuousSTFTPassiveSonarArraySimulator,
+        FractionalDelayPassiveSonarArraySimulator=continuous.ContinuousFractionalDelayPassiveSonarArraySimulator,
     )
 
 
@@ -167,6 +168,7 @@ class FakeBroadbandSignalModel:
 
     sampling_rate_hz = 1000.0
     frame_len = 4
+    num_samples = 8
 
     def compute_stft(self, state):
         """Return a tiny deterministic STFT and metadata."""
@@ -176,6 +178,10 @@ class FakeBroadbandSignalModel:
             2,
             np.ones(4, dtype=np.float32),
         )
+
+    def stft_geometry(self):
+        """Return STFT geometry without a source state."""
+        return (2, np.array([100.0, 200.0], dtype=np.float64), 2, np.ones(4, dtype=np.float64), 2)
 
     def get_source_signal(self):
         """Return a small fixed-length source signal."""
@@ -196,6 +202,10 @@ class TinyBroadbandSignalModel:
             2,
             np.ones(2, dtype=np.float32),
         )
+
+    def stft_geometry(self):
+        """Return STFT geometry without a source state."""
+        return (1, np.array([100.0], dtype=np.float64), 2, np.ones(2, dtype=np.float64), 1)
 
     def get_source_signal(self):
         """Return a minimal source signal."""
@@ -457,25 +467,67 @@ def test_broadband_requires_at_least_two_timesteps(monkeypatch) -> None:
         list(simulator.sensor_data_gen())
 
 
-def test_broadband_requires_at_least_one_target(monkeypatch) -> None:
-    """Broadband processing should reject empty target lists early."""
+def test_stft_simulator_zero_targets_emits_noise_only(monkeypatch) -> None:
+    """STFT simulator with no targets should yield noise-only snapshots without error."""
     acoustic = _load_acoustic_module(monkeypatch)
     t0 = datetime(2026, 1, 1, 12, 0, 0)
     t1 = t0 + timedelta(seconds=1)
-    platform = FakePlatform([t0, t1], num_sensors=1)
+    platform = FakePlatform([t0, t1], num_sensors=2)
+
+    class ConstantNoise:
+        def generate(self, num_sensors, num_samples=None):
+            return np.ones((num_sensors, num_samples or 1), dtype=np.complex64) * 5.0
 
     simulator = acoustic.BroadbandPassiveSonarArraySimulator(
         platform=platform,
         propagation_model=SimpleNamespace(),
-        signal_models=[SimpleNamespace()],
-        noise_model=None,
+        signal_models=[FakeBroadbandSignalModel()],
+        noise_model=ConstantNoise(),
         beamformer=None,
         steering_calculator=None,
         ground_truth_paths=[],
+        fade_in_ms=0.0,
     )
 
-    with pytest.raises(ValueError, match="requires at least one target"):
-        list(simulator.sensor_data_gen())
+    generated = list(simulator.sensor_data_gen())
+
+    assert [ts for ts, _ in generated] == [t0, t1]
+    assert all(len(sensor_data_set) == 1 for _, sensor_data_set in generated)
+    for _, sensor_data_set in generated:
+        data = next(iter(sensor_data_set))
+        assert np.all(data.raw_signals == 5.0)
+
+
+def test_fractional_delay_simulator_zero_targets_emits_noise_only(monkeypatch) -> None:
+    """Fractional-delay simulator with no targets should yield noise-only snapshots."""
+    acoustic = _load_acoustic_module(monkeypatch)
+    t0 = datetime(2026, 1, 1, 12, 0, 0)
+    t1 = t0 + timedelta(seconds=1)
+    platform = FakePlatform([t0, t1], num_sensors=2)
+
+    class ConstantNoise:
+        def generate(self, num_sensors, num_samples=None):
+            return np.ones((num_sensors, num_samples or 1), dtype=np.complex64) * 7.0
+
+    simulator = acoustic.FractionalDelayPassiveSonarArraySimulator(
+        platform=platform,
+        propagation_model=SimpleNamespace(),
+        signal_models=[FakeBroadbandSignalModel()],
+        noise_model=ConstantNoise(),
+        beamformer=None,
+        steering_calculator=None,
+        ground_truth_paths=[],
+        fade_in_ms=0.0,
+        fade_out_ms=0.0,
+    )
+
+    generated = list(simulator.sensor_data_gen())
+
+    assert [ts for ts, _ in generated] == [t0, t1]
+    assert all(len(sensor_data_set) == 1 for _, sensor_data_set in generated)
+    for _, sensor_data_set in generated:
+        data = next(iter(sensor_data_set))
+        assert np.all(data.raw_signals == 7.0)
 
 
 def test_broadband_rejects_mismatched_signal_model_count(monkeypatch) -> None:
