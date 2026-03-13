@@ -45,6 +45,27 @@ class Signal(Base, ABC):
         """
         return int(self.duration_s * self.sampling_rate_hz)
 
+    def get_source_waveform(self, source: "State") -> ComplexArray:
+        """Return the full-duration source waveform for this signal model.
+
+        The default implementation delegates to :meth:`_generate_base_signal`.
+        Subclasses that cache the waveform (e.g. ``BroadbandStftSignalBase``)
+        override this to compute it on first call and return the cached result
+        on subsequent calls.
+
+        Parameters
+        ----------
+        source : State
+            Source state passed to the underlying waveform generator.
+
+        Returns
+        -------
+        ComplexArray
+            Full-duration source waveform as ``complex128``.
+
+        """
+        return np.asarray(self._generate_base_signal(source), dtype=np.complex128)  # type: ignore[attr-defined]
+
     def generate(
         self,
         source: "State",

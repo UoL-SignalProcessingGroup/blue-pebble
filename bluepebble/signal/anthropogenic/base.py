@@ -161,6 +161,35 @@ class NarrowbandSignalBase(DiscreteTimestepSignal, ABC):
             np.arange(sample_count, dtype=float) / self.sampling_rate_hz + float(start_time_s),
         )
 
+    def _generate_base_signal(self, source: "State") -> Complex128Array:
+        """Generate the full-duration source waveform at zero delay and unit TL.
+
+        This implements the interface required by :class:`~bluepebble.signal.base.Signal`
+        so that narrowband signal models are compatible with
+        :class:`~bluepebble.simulator.DiscretePassiveSonarArraySimulator`.
+
+        Parameters
+        ----------
+        source : State
+            Source state with tonal metadata.
+
+        Returns
+        -------
+        Complex128Array
+            1-D complex waveform of length ``num_samples``.
+
+        """
+        time_array_s = self._build_time_array()
+        amplitudes_upa, frequencies_hz, phases_rad = self._extract_tonal_metadata(source)
+
+        freq_col = frequencies_hz[:, np.newaxis]
+        phase_col = phases_rad[:, np.newaxis]
+        amp_col = amplitudes_upa[:, np.newaxis]
+        time_row = time_array_s[np.newaxis, :]
+
+        components = amp_col * np.exp(1j * (2 * np.pi * freq_col * time_row + phase_col))
+        return cast(Complex128Array, np.sum(components, axis=0))
+
     def _synthesise_sensor_signals(
         self,
         received_amplitude_upa: FloatArray,
