@@ -162,7 +162,6 @@ class PassiveSonarArraySimulatorBase(SensorSimulator):
         self,
         num_sensors: int,
         num_samples: int,
-        sampling_rate_hz: float | None = None,
     ) -> ComplexArray | None:
         """Generate and shape noise for a sensor snapshot.
 
@@ -172,8 +171,6 @@ class PassiveSonarArraySimulatorBase(SensorSimulator):
             Number of sensor channels.
         num_samples : int
             Required number of samples per channel.
-        sampling_rate_hz : float or None, optional
-            Sampling rate used to set temporary noise-model duration for snapshot generation.
 
         Returns
         -------
@@ -185,16 +182,7 @@ class PassiveSonarArraySimulatorBase(SensorSimulator):
         if not self.noise_model:
             return None
 
-        original_duration = None
-        if sampling_rate_hz is not None and hasattr(self.noise_model, "duration_s"):
-            original_duration = self.noise_model.duration_s
-            self.noise_model.duration_s = num_samples / sampling_rate_hz
-
-        try:
-            noise = self.noise_model.generate(num_sensors)
-        finally:
-            if original_duration is not None:
-                self.noise_model.duration_s = original_duration
+        noise = self.noise_model.generate(num_sensors, num_samples=num_samples)
 
         if noise.shape[1] > num_samples:
             return noise[:, :num_samples]

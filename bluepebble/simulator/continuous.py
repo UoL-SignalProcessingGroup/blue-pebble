@@ -784,7 +784,6 @@ class ContinuousSTFTPassiveSonarArraySimulator(PassiveSonarArraySimulatorBase):
             noise = self._generate_noise(
                 num_sensors=ctx.num_sensors,
                 num_samples=sensor_signals.shape[1],
-                sampling_rate_hz=ctx.fs,
             )
             if noise is not None:
                 sensor_signals += noise
@@ -1023,7 +1022,6 @@ class ContinuousFractionalDelayPassiveSonarArraySimulator(PassiveSonarArraySimul
             noise = self._generate_noise(
                 num_sensors=num_sensors,
                 num_samples=sensor_signals.shape[1],
-                sampling_rate_hz=fs,
             )
             if noise is not None:
                 sensor_signals += noise

@@ -184,8 +184,8 @@ def test_base_ground_truth_paths_default_is_not_shared(monkeypatch) -> None:
     assert simulator_c.ground_truth_paths == ["path-c"]
 
 
-def test_base_generate_noise_handles_shapes_and_duration_restore(monkeypatch) -> None:
-    """Noise generation should truncate/pad outputs and restore temporary duration overrides."""
+def test_base_generate_noise_handles_shapes(monkeypatch) -> None:
+    """Noise generation should pass num_samples to generate() and truncate/pad outputs."""
     _base, discrete, _continuous = _load_simulator_modules(monkeypatch)
     simulator = discrete.DiscretePassiveSonarArraySimulator()
 
@@ -193,44 +193,37 @@ def test_base_generate_noise_handles_shapes_and_duration_restore(monkeypatch) ->
 
     class LongNoise:
         def __init__(self):
-            self.duration_s = 9.0
             self.seen = []
 
-        def generate(self, num_sensors):
-            self.seen.append(self.duration_s)
+        def generate(self, num_sensors, num_samples=None):
+            self.seen.append(num_samples)
             return np.ones((num_sensors, 5), dtype=np.complex64)
 
     long_noise = LongNoise()
     simulator.noise_model = long_noise
-    truncated = simulator._generate_noise(num_sensors=2, num_samples=3, sampling_rate_hz=1000.0)
-    assert long_noise.duration_s == pytest.approx(9.0)
-    assert long_noise.seen == [pytest.approx(0.003)]
+    truncated = simulator._generate_noise(num_sensors=2, num_samples=3)
+    assert long_noise.seen == [3]
     assert truncated.shape == (2, 3)
 
     class ShortNoise:
-        def generate(self, num_sensors):
+        def generate(self, num_sensors, num_samples=None):
             return np.full((num_sensors, 1), 5.0, dtype=np.complex64)
 
     simulator.noise_model = ShortNoise()
-    padded = simulator._generate_noise(num_sensors=2, num_samples=3, sampling_rate_hz=1000.0)
+    padded = simulator._generate_noise(num_sensors=2, num_samples=3)
     np.testing.assert_array_equal(
         padded,
         np.array([[5.0, 0.0, 0.0], [5.0, 0.0, 0.0]], dtype=np.complex64),
     )
 
     class FailingNoise:
-        def __init__(self):
-            self.duration_s = 4.0
-
-        def generate(self, num_sensors):
+        def generate(self, num_sensors, num_samples=None):
             _ = num_sensors
             raise RuntimeError("boom")
 
-    failing_noise = FailingNoise()
-    simulator.noise_model = failing_noise
+    simulator.noise_model = FailingNoise()
     with pytest.raises(RuntimeError, match="boom"):
-        simulator._generate_noise(num_sensors=1, num_samples=2, sampling_rate_hz=1000.0)
-    assert failing_noise.duration_s == pytest.approx(4.0)
+        simulator._generate_noise(num_sensors=1, num_samples=2)
 
 
 def test_base_beamform_if_configured_and_make_sensor_data(monkeypatch) -> None:
@@ -691,7 +684,7 @@ def test_deprecated_discrete_generate_sensor_data_validates_and_covers_modes(mon
             return np.array([[1.0 + 0.0j, 2.0 + 0.0j]], dtype=np.complex128)
 
     class Noise:
-        def generate(self, num_sensors):
+        def generate(self, num_sensors, num_samples=None):
             return np.array([[10.0 + 0.0j, 10.0 + 0.0j]], dtype=np.complex128)
 
     class Steering:
@@ -962,7 +955,7 @@ def test_fractional_delay_simulator_covers_errors_fallback_and_outputs(monkeypat
     )
 
     class Noise:
-        def generate(self, num_sensors):
+        def generate(self, num_sensors, num_samples=None):
             return np.ones((num_sensors, 2), dtype=np.complex64)
 
     class Steering:

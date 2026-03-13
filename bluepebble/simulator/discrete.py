@@ -261,7 +261,6 @@ class DiscretePassiveSonarArraySimulator(PassiveSonarArraySimulatorBase):
             noise = self._generate_noise(
                 num_sensors=num_sensors,
                 num_samples=num_samples_snapshot,
-                sampling_rate_hz=sampling_rate_hz,
             )
             if noise is not None:
                 sensor_signals += noise

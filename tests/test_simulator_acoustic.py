@@ -228,7 +228,7 @@ def test_passive_generate_sensor_data_combines_targets_noise_and_beamforming(mon
             return self._generate_base_signal(source)
 
     class FakeNoiseModel:
-        def generate(self, num_sensors):
+        def generate(self, num_sensors, num_samples=None):
             assert num_sensors == 2
             return np.ones((2, 3), dtype=np.complex128)
 
@@ -520,8 +520,8 @@ def test_broadband_rejects_mismatched_signal_model_count(monkeypatch) -> None:
         list(simulator.sensor_data_gen())
 
 
-def test_broadband_truncates_long_noise_and_restores_duration(monkeypatch) -> None:
-    """Noise longer than a timestep slice should be truncated and duration restored afterwards."""
+def test_broadband_truncates_long_noise(monkeypatch) -> None:
+    """Noise longer than a timestep slice should be truncated to the snapshot length."""
     acoustic = _load_acoustic_module(monkeypatch)
     _install_fake_signal_utils(monkeypatch, reconstructed_signal=np.array([1, 2, 3, 4, 5]))
     t0 = datetime(2026, 1, 1, 12, 0, 0)
@@ -538,13 +538,11 @@ def test_broadband_truncates_long_noise_and_restores_duration(monkeypatch) -> No
 
     class LongNoiseModel:
         def __init__(self):
-            self.duration_s = 9.0
-            self.seen_durations = []
+            self.seen_num_samples = []
 
-        def generate(self, num_sensors):
-            self.seen_durations.append(self.duration_s)
-            actual_samples = int(round(self.duration_s * 1000.0))
-            return np.full((num_sensors, actual_samples + 1), 10.0, dtype=np.complex64)
+        def generate(self, num_sensors, num_samples=None):
+            self.seen_num_samples.append(num_samples)
+            return np.full((num_sensors, (num_samples or 1) + 1), 10.0, dtype=np.complex64)
 
     noise_model = LongNoiseModel()
     simulator = acoustic.BroadbandPassiveSonarArraySimulator(
@@ -560,8 +558,7 @@ def test_broadband_truncates_long_noise_and_restores_duration(monkeypatch) -> No
 
     generated = list(simulator.sensor_data_gen())
 
-    assert noise_model.duration_s == pytest.approx(9.0)
-    assert noise_model.seen_durations == [pytest.approx(0.002), pytest.approx(0.003)]
+    assert noise_model.seen_num_samples == [2, 3]
     first_data = next(iter(generated[0][1]))
     second_data = next(iter(generated[1][1]))
     np.testing.assert_array_equal(
@@ -593,12 +590,8 @@ def test_broadband_pads_short_noise_and_beamforms_real_part(monkeypatch) -> None
             return np.array([0.0], dtype=float)
 
     class ShortNoiseModel:
-        def __init__(self):
-            self.duration_s = 5.0
-
-        def generate(self, num_sensors):
-            actual_samples = int(round(self.duration_s * 1000.0))
-            short_samples = max(actual_samples - 1, 1)
+        def generate(self, num_sensors, num_samples=None):
+            short_samples = max((num_samples or 1) - 1, 1)
             return np.full((num_sensors, short_samples), 10.0, dtype=np.complex64)
 
     class FakeSteeringCalculator:
