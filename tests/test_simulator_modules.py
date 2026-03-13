@@ -712,7 +712,7 @@ def test_deprecated_discrete_generate_sensor_data_validates_and_covers_modes(mon
         sampling_rate_hz = 2.0
         num_samples = 4
 
-        def _generate_base_signal(self, state):
+        def get_source_waveform(self, state):
             _ = state
             return np.array([1.0 + 0.0j, 2.0 + 0.0j], dtype=np.complex128)
 
@@ -736,7 +736,7 @@ def test_deprecated_discrete_generate_sensor_data_validates_and_covers_modes(mon
     assert spectrum_base_data.raw_signals.shape == (1, 4)
 
     class SpectrumLongSignal(SpectrumBaseSignal):
-        def _generate_base_signal(self, state):
+        def get_source_waveform(self, state):
             _ = state
             return np.array([1.0, 2.0, 3.0, 4.0, 9.0], dtype=np.complex128)
 
@@ -752,7 +752,7 @@ def test_deprecated_discrete_generate_sensor_data_validates_and_covers_modes(mon
     assert spectrum_long_data.raw_signals.shape == (1, 4)
 
     class SpectrumExactSignal(SpectrumBaseSignal):
-        def _generate_base_signal(self, state):
+        def get_source_waveform(self, state):
             _ = state
             return np.array([1.0, 2.0, 3.0, 4.0], dtype=np.complex128)
 

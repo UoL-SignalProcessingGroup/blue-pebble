@@ -22,31 +22,6 @@ SensorBatch: TypeAlias = tuple[datetime, set[SensorData]]
 
 
 @runtime_checkable
-class _StftSourceSignalModel(Protocol):
-    """Protocol for signal models exposing STFT-backed source caching."""
-
-    def compute_stft(self, source: "State") -> object:
-        """Compute and cache a source STFT."""
-        ...
-
-    def get_source_signal(self) -> NDArray[np.complexfloating[Any, Any]]:
-        """Return cached source signal."""
-        ...
-
-
-@runtime_checkable
-class _BaseSignalModel(Protocol):
-    """Protocol for signal models exposing direct base-signal synthesis."""
-
-    def _generate_base_signal(
-        self,
-        source: "State",
-    ) -> NDArray[np.floating[Any] | np.complexfloating[Any, Any]]:
-        """Generate base source waveform."""
-        ...
-
-
-@runtime_checkable
 class _SpectrumPropagationModel(Protocol):
     """Protocol for propagation models with frequency-domain transfer support.
 
@@ -77,8 +52,7 @@ class DiscretePassiveSonarArraySimulator(PassiveSonarArraySimulatorBase):
     Processing stages
     -----------------
     1. Resolve one signal model per target (or broadcast a single shared model).
-    2. Build one full source waveform per target via
-       ``compute_stft/get_source_signal`` or ``_generate_base_signal``.
+    2. Build one full source waveform per target via ``get_source_waveform``.
     3. Partition source waveforms into timestamp-aligned chunks using platform
        time spacing and sampling rate.
     4. For each timestamp, evaluate ``H(f)`` from ``propagate_spectrum`` at the
@@ -152,8 +126,8 @@ class DiscretePassiveSonarArraySimulator(PassiveSonarArraySimulatorBase):
         Parameters
         ----------
         signal_model : Signal
-            Signal model implementing either
-            ``compute_stft/get_source_signal`` or ``_generate_base_signal``.
+            Signal model whose ``get_source_waveform`` returns the full-duration
+            source waveform.
         first_state : State or None
             First target state, used to initialise lazy source generation.
 
@@ -165,45 +139,16 @@ class DiscretePassiveSonarArraySimulator(PassiveSonarArraySimulatorBase):
         Raises
         ------
         ValueError
-            If source initialisation requires state context but no state is
-            available.
-        TypeError
-            If the signal model does not expose a supported source API.
+            If no target state is available to initialise the source waveform.
 
         """
-        if isinstance(signal_model, _StftSourceSignalModel):
-            stft_signal_model = cast(_StftSourceSignalModel, signal_model)
-            try:
-                source_signal = stft_signal_model.get_source_signal()
-            except RuntimeError as err:
-                if first_state is None:
-                    msg = (
-                        "Cannot initialize broadband source signal for an empty target path. "
-                        "Provide a target state or pre-compute the source signal."
-                    )
-                    raise ValueError(msg) from err
-                stft_signal_model.compute_stft(first_state)
-                source_signal = stft_signal_model.get_source_signal()
-            return np.asarray(source_signal, dtype=np.complex128)
-
-        if isinstance(signal_model, _BaseSignalModel):
-            base_signal_model = cast(_BaseSignalModel, signal_model)
-            if first_state is None:
-                msg = (
-                    "Cannot initialize source signal for an empty target path when using "
-                    "_generate_base_signal."
-                )
-                raise ValueError(msg)
-            return np.asarray(
-                base_signal_model._generate_base_signal(first_state),
-                dtype=np.complex128,
+        if first_state is None:
+            msg = (
+                "Cannot initialise broadband source signal for an empty target path. "
+                "Provide a target state or pre-compute the source signal."
             )
-
-        msg = (
-            "Signal model must implement either compute_stft/get_source_signal "
-            "or _generate_base_signal."
-        )
-        raise TypeError(msg)
+            raise ValueError(msg)
+        return np.asarray(signal_model.get_source_waveform(first_state), dtype=np.complex128)
 
     def sensor_data_gen(self) -> Iterator[SensorBatch]:
         """Yield one independent broadband snapshot per platform timestamp.
@@ -531,10 +476,9 @@ class DeprecatedDiscretePassiveSonarArraySimulator(PassiveSonarArraySimulatorBas
                     frequencies,
                 )
 
-                if isinstance(target_signal_model, _BaseSignalModel):
-                    base_signal_model = cast(_BaseSignalModel, target_signal_model)
+                if hasattr(target_signal_model, "get_source_waveform"):
                     base_signal = np.asarray(
-                        base_signal_model._generate_base_signal(target_state),
+                        target_signal_model.get_source_waveform(target_state),
                         dtype=np.complex128,
                     )
                     if len(base_signal) < num_samples:
