@@ -284,7 +284,11 @@ class ContinuousSTFTPassiveSonarArraySimulator(PassiveSonarArraySimulatorBase):
         spectrum_propagation_model = cast(SpectrumPropagationModel, self.propagation_model)
 
         for target_idx, target_path in enumerate(ground_truth_paths):
-            target_first_state = next(iter(target_path))
+            try:
+                target_first_state = next(iter(target_path))
+            except StopIteration:
+                msg = f"ground_truth_paths[{target_idx}] has no states"
+                raise ValueError(msg) from None
             target_signal_model = signal_models_list[target_idx]
             target_source_stft, _, _, _ = target_signal_model.compute_stft(target_first_state)
 
@@ -759,7 +763,11 @@ class ContinuousSTFTPassiveSonarArraySimulator(PassiveSonarArraySimulatorBase):
             "signal models",
         )
 
-        first_state = next(iter(ground_truth_paths[0]))
+        try:
+            first_state = next(iter(ground_truth_paths[0]))
+        except StopIteration:
+            msg = "ground_truth_paths[0] has no states"
+            raise ValueError(msg) from None
         ctx = self._build_common_context(all_timestamps, signal_models_list, first_state)
         targets_data = self._build_target_histories(ctx, ground_truth_paths, signal_models_list)
 
@@ -909,7 +917,11 @@ class ContinuousFractionalDelayPassiveSonarArraySimulator(PassiveSonarArraySimul
             "signal models",
         )
 
-        first_state = next(iter(ground_truth_paths[0]))
+        try:
+            first_state = next(iter(ground_truth_paths[0]))
+        except StopIteration:
+            msg = "ground_truth_paths[0] has no states"
+            raise ValueError(msg) from None
         fs = float(signal_models_list[0].sampling_rate_hz)
         num_sensors = int(self.platform.num_sensors)
 
@@ -937,7 +949,11 @@ class ContinuousFractionalDelayPassiveSonarArraySimulator(PassiveSonarArraySimul
 
         for target_idx, target_path in enumerate(ground_truth_paths):
             target_signal_model = signal_models_list[target_idx]
-            target_first_state = next(iter(target_path))
+            try:
+                target_first_state = next(iter(target_path))
+            except StopIteration:
+                msg = f"ground_truth_paths[{target_idx}] has no states"
+                raise ValueError(msg) from None
 
             source_signal = target_signal_model.get_source_waveform(target_first_state)
 
