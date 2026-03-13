@@ -22,6 +22,7 @@ def _install_fake_acoustic_dependencies(monkeypatch) -> None:
     """Install minimal Blue Pebble dependency modules for importing ``acoustic.py``."""
     propagation_module = ModuleType("bluepebble.models.propagation")
     propagation_module.AcousticPropagationModel = type("AcousticPropagationModel", (), {})
+    propagation_module.SpectrumPropagationModel = type("SpectrumPropagationModel", (), {})
 
     platform_module = ModuleType("bluepebble.platform")
     platform_module.TowedArrayPlatform = type("TowedArrayPlatform", (), {})
@@ -65,6 +66,11 @@ def _install_fake_acoustic_dependencies(monkeypatch) -> None:
     monkeypatch.setitem(sys.modules, "bluepebble.signal.base", signal_base_module)
     monkeypatch.setitem(sys.modules, "bluepebble.signal.utils", signal_utils_module)
     monkeypatch.setitem(sys.modules, "bluepebble.sigproc.beamformer", beamformer_module)
+
+
+def _spectrum_propagation_base():
+    """Return the fake SpectrumPropagationModel base registered for the current test."""
+    return sys.modules["bluepebble.models.propagation"].SpectrumPropagationModel
 
 
 def _load_acoustic_module(monkeypatch):
@@ -202,7 +208,7 @@ def test_passive_generate_sensor_data_combines_targets_noise_and_beamforming(mon
     timestamp = datetime(2026, 1, 1, 12, 0, 0)
     platform = FakePlatform([timestamp], num_sensors=2)
 
-    class FakePropagationModel:
+    class FakePropagationModel(_spectrum_propagation_base()):
         def propagate_spectrum(self, platform_state, target_state, frequencies):
             _ = platform_state, target_state, frequencies
             return np.array(
@@ -268,7 +274,7 @@ def test_passive_sensor_data_gen_yields_sorted_unique_timestamps(monkeypatch) ->
     t1 = t0 + timedelta(seconds=1)
     platform = FakePlatform([t1, t0, t1], num_sensors=1)
 
-    class FakePropagationModel:
+    class FakePropagationModel(_spectrum_propagation_base()):
         def propagate_spectrum(self, platform_state, target_state, frequencies):
             _ = platform_state, target_state, frequencies
             return np.ones((1, 1), dtype=np.complex128), 0.0
@@ -328,7 +334,7 @@ def test_passive_sensor_data_gen_raises_when_platform_has_no_states(monkeypatch)
     )
     platform = FakePlatform([], num_sensors=2)
 
-    class FakePropagationModel:
+    class FakePropagationModel(_spectrum_propagation_base()):
         def propagate_spectrum(self, platform_state, target_state, frequencies):
             raise AssertionError("should not be reached")
 
@@ -372,14 +378,13 @@ def test_passive_generate_sensor_data_uses_zero_signal_when_target_absent(monkey
         def calculate(self, platform_state):
             return np.array([0.0, 0.0])
 
+    class FakePropagationModel(_spectrum_propagation_base()):
+        def propagate_spectrum(self, platform_state, target_state, frequencies):
+            return np.ones((2, len(frequencies)), dtype=np.complex128), 0.0
+
     simulator = acoustic.PassiveSonarArraySimulator(
         platform=platform,
-        propagation_model=SimpleNamespace(
-            propagate_spectrum=lambda platform_state, target_state, frequencies: (
-                np.ones((2, len(frequencies)), dtype=np.complex128),
-                0.0,
-            )
-        ),
+        propagation_model=FakePropagationModel(),
         signal_models=[FakeSignalModel()],
         noise_model=None,
         beamformer=FakeBeamformer(),
@@ -408,14 +413,13 @@ def test_passive_sensor_data_gen_emits_zero_snapshots_when_no_targets(monkeypatc
         sampling_rate_hz = 1.0
         num_samples = 1
 
+    class FakePropagationModel(_spectrum_propagation_base()):
+        def propagate_spectrum(self, platform_state, target_state, frequencies):
+            return np.ones((1, len(frequencies)), dtype=np.complex128), 0.0
+
     simulator = acoustic.PassiveSonarArraySimulator(
         platform=platform,
-        propagation_model=SimpleNamespace(
-            propagate_spectrum=lambda platform_state, target_state, frequencies: (
-                np.ones((1, len(frequencies)), dtype=np.complex128),
-                0.0,
-            )
-        ),
+        propagation_model=FakePropagationModel(),
         signal_models=[FakeSignalModel()],
         noise_model=None,
         beamformer=None,
@@ -525,7 +529,7 @@ def test_broadband_truncates_long_noise_and_restores_duration(monkeypatch) -> No
     platform = FakePlatform([t0, t1], num_sensors=1)
     path = FakePath(states=[FakeState(timestamp=t0), FakeState(timestamp=t1)])
 
-    class FakePropagationModel:
+    class FakePropagationModel(_spectrum_propagation_base()):
         def propagate_spectrum(self, platform_state, target_state, frequencies):
             return np.ones((1, len(frequencies)), dtype=np.complex64), 0.0
 
@@ -581,7 +585,7 @@ def test_broadband_pads_short_noise_and_beamforms_real_part(monkeypatch) -> None
     platform = FakePlatform([t0, t1], num_sensors=1)
     path = FakePath(states=[FakeState(timestamp=t0), FakeState(timestamp=t1)])
 
-    class FakePropagationModel:
+    class FakePropagationModel(_spectrum_propagation_base()):
         def propagate_spectrum(self, platform_state, target_state, frequencies):
             return np.ones((1, len(frequencies)), dtype=np.complex64), 0.0
 
@@ -671,7 +675,7 @@ def test_broadband_sums_multiple_targets_with_shared_signal_model(monkeypatch) -
         ]
     )
 
-    class FakePropagationModel:
+    class FakePropagationModel(_spectrum_propagation_base()):
         def propagate_spectrum(self, platform_state, target_state, frequencies):
             gain = float(target_state.state_vector[0])
             return np.full((1, len(frequencies)), gain, dtype=np.complex64), 0.0
@@ -713,7 +717,7 @@ def test_broadband_handles_target_missing_at_a_timestep(monkeypatch) -> None:
     platform = FakePlatform([t0, t1], num_sensors=1)
     path = FakePath(states=[FakeState(timestamp=t0, state_vector=np.array([1.0]))])
 
-    class FakePropagationModel:
+    class FakePropagationModel(_spectrum_propagation_base()):
         def propagate_spectrum(self, platform_state, target_state, frequencies):
             return np.ones((1, len(frequencies)), dtype=np.complex64), 0.0
 
@@ -758,7 +762,7 @@ def test_broadband_beamformer_receives_sensors_in_native_array_order(monkeypatch
     platform = FakePlatform([t0, t1], num_sensors=2)
     path = FakePath(states=[FakeState(timestamp=t0), FakeState(timestamp=t1)])
 
-    class FakePropagationModel:
+    class FakePropagationModel(_spectrum_propagation_base()):
         def propagate_spectrum(self, platform_state, target_state, frequencies):
             return np.array([[1.0], [2.0]], dtype=np.complex64), 0.0
 

@@ -3,13 +3,14 @@
 from collections.abc import Iterable, Iterator
 from dataclasses import dataclass
 from datetime import datetime
-from typing import TYPE_CHECKING, Any, Protocol, TypeAlias, cast, runtime_checkable
+from typing import TYPE_CHECKING, Any, TypeAlias, cast
 
 import numpy as np
 from numpy.typing import ArrayLike, NDArray
 from stonesoup.base import Property
 from stonesoup.types.sensordata import SensorData
 
+from ..models.propagation import SpectrumPropagationModel
 from ..signal.anthropogenic.base import BroadbandStftSignalBase
 from ..signal.utils import apply_fade_in, apply_fade_out, inverse_stft
 from .base import PassiveSonarArraySimulatorBase
@@ -22,26 +23,6 @@ Complex64Array: TypeAlias = NDArray[np.complex64]
 ComplexArray: TypeAlias = NDArray[np.complexfloating[Any, Any]]
 IntArray: TypeAlias = NDArray[np.integer[Any]]
 SensorBatch: TypeAlias = tuple[datetime, set[SensorData]]
-
-
-@runtime_checkable
-class _SpectrumPropagationModel(Protocol):
-    """Protocol for propagation models that expose ``propagate_spectrum``.
-
-    .. note::
-        Prefer constructing propagation models as :class:`SpectrumPropagationModel`
-        subclasses. This protocol exists for duck-typed usage in tests and custom
-        integrations where subclassing is not practical.
-    """
-
-    def propagate_spectrum(
-        self,
-        platform: object,
-        source: "State",
-        frequencies_hz: ArrayLike,
-    ) -> tuple[ComplexArray, float]:
-        """Return per-sensor transfer functions and propagation time."""
-        ...
 
 
 @dataclass
@@ -296,13 +277,13 @@ class ContinuousSTFTPassiveSonarArraySimulator(PassiveSonarArraySimulatorBase):
 
         """
         targets_data: list[_STFTTargetHistory] = []
-        if not isinstance(self.propagation_model, _SpectrumPropagationModel):
+        if not isinstance(self.propagation_model, SpectrumPropagationModel):
             msg = (
                 f"{type(self.propagation_model).__name__} does not implement "
                 "'propagate_spectrum', which is required for STFT-based simulation"
             )
             raise TypeError(msg)
-        spectrum_propagation_model = cast(_SpectrumPropagationModel, self.propagation_model)
+        spectrum_propagation_model = cast(SpectrumPropagationModel, self.propagation_model)
 
         for target_idx, target_path in enumerate(ground_truth_paths):
             target_first_state = next(iter(target_path))
@@ -942,32 +923,24 @@ class ContinuousFractionalDelayPassiveSonarArraySimulator(PassiveSonarArraySimul
         )
         n_steps = len(step_times_s)
 
-        try:
-            ref_source = signal_models_list[0].get_source_signal()
-        except RuntimeError:
-            signal_models_list[0].compute_stft(first_state)
-            ref_source = signal_models_list[0].get_source_signal()
+        ref_source = signal_models_list[0].get_source_waveform(first_state)
 
         out_len = len(ref_source)
         sample_times_s = np.arange(out_len, dtype=np.float64) / fs
         receiver_accum = np.zeros((num_sensors, out_len), dtype=np.complex64)
-        if not isinstance(self.propagation_model, _SpectrumPropagationModel):
+        if not isinstance(self.propagation_model, SpectrumPropagationModel):
             msg = (
                 f"{type(self.propagation_model).__name__} does not implement "
                 "'propagate_spectrum', which is required for STFT-based simulation"
             )
             raise TypeError(msg)
-        spectrum_propagation_model = cast(_SpectrumPropagationModel, self.propagation_model)
+        spectrum_propagation_model = cast(SpectrumPropagationModel, self.propagation_model)
 
         for target_idx, target_path in enumerate(ground_truth_paths):
             target_signal_model = signal_models_list[target_idx]
             target_first_state = next(iter(target_path))
 
-            try:
-                source_signal = target_signal_model.get_source_signal()
-            except RuntimeError:
-                target_signal_model.compute_stft(target_first_state)
-                source_signal = target_signal_model.get_source_signal()
+            source_signal = target_signal_model.get_source_waveform(target_first_state)
 
             if len(source_signal) != out_len:
                 msg = (

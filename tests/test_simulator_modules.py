@@ -22,6 +22,7 @@ def _install_fake_simulator_dependencies(monkeypatch) -> None:
     """Install lightweight dependency modules required by simulator imports."""
     propagation_module = ModuleType("bluepebble.models.propagation")
     propagation_module.AcousticPropagationModel = type("AcousticPropagationModel", (), {})
+    propagation_module.SpectrumPropagationModel = type("SpectrumPropagationModel", (), {})
 
     platform_module = ModuleType("bluepebble.platform")
     platform_module.TowedArrayPlatform = type("TowedArrayPlatform", (), {})
@@ -69,6 +70,22 @@ def _install_fake_simulator_dependencies(monkeypatch) -> None:
     monkeypatch.setitem(sys.modules, "bluepebble.signal.base", signal_base_module)
     monkeypatch.setitem(sys.modules, "bluepebble.signal.utils", signal_utils_module)
     monkeypatch.setitem(sys.modules, "bluepebble.sigproc.beamformer", beamformer_module)
+
+
+def _spectrum_propagation_base():
+    """Return the fake SpectrumPropagationModel base registered for the current test."""
+    return sys.modules["bluepebble.models.propagation"].SpectrumPropagationModel
+
+
+def _prop_model(propagate_fn=None, **extras):
+    """Build a SpectrumPropagationModel subclass wrapping callables for use in tests."""
+    base = _spectrum_propagation_base()
+    methods: dict = {}
+    if propagate_fn is not None:
+        methods["propagate_spectrum"] = lambda self, *a, _fn=propagate_fn, **kw: _fn(*a, **kw)
+    for name, fn in extras.items():
+        methods[name] = lambda self, *a, _fn=fn, **kw: _fn(*a, **kw)
+    return type("PropModel", (base,), methods)()
 
 
 def _load_simulator_modules(monkeypatch):
@@ -305,8 +322,8 @@ def test_discrete_sensor_data_gen_validates_inputs_and_clamps_empty_chunks(monke
 
     simulator = discrete.DiscretePassiveSonarArraySimulator(
         platform=_FakePlatform([timestamp], num_sensors=1),
-        propagation_model=SimpleNamespace(
-            propagate_spectrum=lambda platform_state, target_state, frequencies: (
+        propagation_model=_prop_model(
+            lambda platform_state, target_state, frequencies: (
                 np.ones((1, len(frequencies)), dtype=np.complex64),
                 0.0,
             )
@@ -333,8 +350,8 @@ def test_discrete_sensor_data_gen_validates_inputs_and_clamps_empty_chunks(monke
 
     simulator = discrete.DiscretePassiveSonarArraySimulator(
         platform=_FakePlatform([timestamp, t1], num_sensors=1),
-        propagation_model=SimpleNamespace(
-            propagate_spectrum=lambda platform_state, target_state, frequencies: (
+        propagation_model=_prop_model(
+            lambda platform_state, target_state, frequencies: (
                 np.ones((1, len(frequencies)), dtype=np.complex64),
                 0.0,
             )
@@ -355,8 +372,8 @@ def test_discrete_sensor_data_gen_validates_model_consistency(monkeypatch) -> No
     path_a = _FakePath(states=[_FakeState(timestamp)])
     path_b = _FakePath(states=[_FakeState(timestamp)])
 
-    propagation = SimpleNamespace(
-        propagate_spectrum=lambda platform_state, target_state, frequencies: (
+    propagation = _prop_model(
+        lambda platform_state, target_state, frequencies: (
             np.ones((1, len(frequencies)), dtype=np.complex64),
             0.0,
         )
@@ -437,8 +454,8 @@ def test_discrete_sensor_data_gen_pads_truncates_and_skips_absent_targets(monkey
 
     simulator = discrete.DiscretePassiveSonarArraySimulator(
         platform=platform,
-        propagation_model=SimpleNamespace(
-            propagate_spectrum=lambda platform_state, target_state, frequencies: (
+        propagation_model=_prop_model(
+            lambda platform_state, target_state, frequencies: (
                 np.ones((1, len(frequencies)), dtype=np.complex64),
                 0.0,
             )
@@ -641,8 +658,8 @@ def test_deprecated_discrete_generate_sensor_data_validates_and_covers_modes(mon
     with pytest.raises(AttributeError, match="requires propagation_model"):
         simulator._generate_sensor_data_at(timestamp)
 
-    propagation = SimpleNamespace(
-        propagate_spectrum=lambda platform_state, target_state, frequencies: (
+    propagation = _prop_model(
+        lambda platform_state, target_state, frequencies: (
             np.ones((1, len(frequencies)), dtype=np.complex128),
             0.0,
         ),
@@ -716,8 +733,8 @@ def test_deprecated_discrete_generate_sensor_data_validates_and_covers_modes(mon
             _ = state
             return np.array([1.0 + 0.0j, 2.0 + 0.0j], dtype=np.complex128)
 
-    propagation_spectrum = SimpleNamespace(
-        propagate_spectrum=lambda platform_state, target_state, frequencies: (
+    propagation_spectrum = _prop_model(
+        lambda platform_state, target_state, frequencies: (
             np.ones((1, len(frequencies)), dtype=np.complex128),
             0.0,
         ),
@@ -811,8 +828,8 @@ def test_continuous_build_target_histories_and_modes_cover_wola_and_cola(monkeyp
     path_a = _FakePath(states=[_FakeState(t0), _FakeState(t1)])
     path_b = _FakePath(states=[_FakeState(t0), _FakeState(t1)])
 
-    propagation_stub = SimpleNamespace(
-        propagate_spectrum=lambda platform_state, target_state, freqs: (
+    propagation_stub = _prop_model(
+        lambda platform_state, target_state, freqs: (
             np.ones((1, len(freqs)), dtype=np.complex64),
             0.0,
         ),
@@ -827,8 +844,8 @@ def test_continuous_build_target_histories_and_modes_cover_wola_and_cola(monkeyp
     with pytest.raises(RuntimeError, match="must share the same shape"):
         simulator._build_target_histories(ctx, [path_a, path_b], [GoodModel(), BadShapeModel()])
 
-    propagation = SimpleNamespace(
-        propagate_spectrum=lambda platform_state, target_state, freqs: (
+    propagation = _prop_model(
+        lambda platform_state, target_state, freqs: (
             np.ones((1, len(freqs)), dtype=np.complex64),
             0.0,
         ),
@@ -909,8 +926,8 @@ def test_fractional_delay_simulator_covers_errors_fallback_and_outputs(monkeypat
     path_b = _FakePath(states=[_FakeState(t0), _FakeState(t1)])
     mismatch_sim = continuous.ContinuousFractionalDelayPassiveSonarArraySimulator(
         platform=_FakePlatform([t0, t1], num_sensors=1),
-        propagation_model=SimpleNamespace(
-            propagate_spectrum=lambda platform_state, target_state, freqs: (
+        propagation_model=_prop_model(
+            lambda platform_state, target_state, freqs: (
                 np.ones((1, len(freqs)), dtype=np.complex64),
                 0.0,
             ),
@@ -959,8 +976,8 @@ def test_fractional_delay_simulator_covers_errors_fallback_and_outputs(monkeypat
 
     success_sim = continuous.ContinuousFractionalDelayPassiveSonarArraySimulator(
         platform=_FakePlatform([t0, t1], num_sensors=1),
-        propagation_model=SimpleNamespace(
-            propagate_spectrum=lambda platform_state, target_state, freqs: (
+        propagation_model=_prop_model(
+            lambda platform_state, target_state, freqs: (
                 np.ones((1, len(freqs)), dtype=np.complex64),
                 0.0,
             ),
@@ -1049,8 +1066,8 @@ def test_continuous_stft_interp_pads_sensor_lengths_and_fractional_paths_without
 
     frac = continuous.ContinuousFractionalDelayPassiveSonarArraySimulator(
         platform=_FakePlatform([t0, t1], num_sensors=1),
-        propagation_model=SimpleNamespace(
-            propagate_spectrum=lambda platform_state, target_state, freqs: (
+        propagation_model=_prop_model(
+            lambda platform_state, target_state, freqs: (
                 np.ones((1, len(freqs)), dtype=np.complex64),
                 0.0,
             ),

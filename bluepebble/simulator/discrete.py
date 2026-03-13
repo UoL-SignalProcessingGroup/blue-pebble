@@ -3,13 +3,14 @@
 import warnings
 from collections.abc import Iterable, Iterator
 from datetime import datetime
-from typing import TYPE_CHECKING, Any, Protocol, TypeAlias, cast, runtime_checkable
+from typing import TYPE_CHECKING, TypeAlias, cast
 
 import numpy as np
 from numpy.typing import NDArray
 from stonesoup.base import Property
 from stonesoup.types.sensordata import SensorData
 
+from ..models.propagation import SpectrumPropagationModel
 from ..signal.base import Signal
 from .base import PassiveSonarArraySimulatorBase
 
@@ -19,26 +20,6 @@ if TYPE_CHECKING:
 Complex64Array: TypeAlias = NDArray[np.complex64]
 Complex128Array: TypeAlias = NDArray[np.complex128]
 SensorBatch: TypeAlias = tuple[datetime, set[SensorData]]
-
-
-@runtime_checkable
-class _SpectrumPropagationModel(Protocol):
-    """Protocol for propagation models with frequency-domain transfer support.
-
-    .. note::
-        Prefer constructing propagation models as :class:`SpectrumPropagationModel`
-        subclasses. This protocol exists for duck-typed usage in tests and custom
-        integrations where subclassing is not practical.
-    """
-
-    def propagate_spectrum(
-        self,
-        platform: object,
-        source: "State",
-        frequencies_hz: NDArray[np.float64],
-    ) -> tuple[NDArray[np.complexfloating[Any, Any]], float]:
-        """Return per-sensor transfer functions and propagation time."""
-        ...
 
 
 class DiscretePassiveSonarArraySimulator(PassiveSonarArraySimulatorBase):
@@ -167,13 +148,13 @@ class DiscretePassiveSonarArraySimulator(PassiveSonarArraySimulatorBase):
             If signal model configuration is invalid.
 
         """
-        if not isinstance(self.propagation_model, _SpectrumPropagationModel):
+        if not isinstance(self.propagation_model, SpectrumPropagationModel):
             msg = (
                 f"{type(self.propagation_model).__name__} does not implement "
                 "propagate_spectrum; use a SpectrumPropagationModel subclass"
             )
             raise AttributeError(msg)
-        spectrum_propagation_model = cast(_SpectrumPropagationModel, self.propagation_model)
+        spectrum_propagation_model = cast(SpectrumPropagationModel, self.propagation_model)
 
         all_timestamps = self._sorted_timestamps()
 
@@ -456,16 +437,14 @@ class DeprecatedDiscretePassiveSonarArraySimulator(PassiveSonarArraySimulatorBas
             target_signal_model = signal_models_list[target_idx]
 
             if method == "spectrum":
-                if not isinstance(self.propagation_model, _SpectrumPropagationModel):
+                if not isinstance(self.propagation_model, SpectrumPropagationModel):
                     msg = (
                         f"propagation_method='spectrum' requires propagation_model "
                         f"to implement propagate_spectrum; "
                         f"got {type(self.propagation_model).__name__}"
                     )
                     raise AttributeError(msg)
-                spectrum_propagation_model = cast(
-                    _SpectrumPropagationModel, self.propagation_model
-                )
+                spectrum_propagation_model = cast(SpectrumPropagationModel, self.propagation_model)
 
                 # Build physical frequency axis matching FFT bins.
                 sampling_rate_hz = float(target_signal_model.sampling_rate_hz)
