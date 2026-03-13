@@ -8,12 +8,11 @@ from typing import TYPE_CHECKING, Any, TypeAlias, cast
 import numpy as np
 from numpy.typing import ArrayLike, NDArray
 from stonesoup.base import Property
-from stonesoup.types.sensordata import SensorData
 
 from ..models.propagation import SpectrumPropagationModel
 from ..signal.anthropogenic.base import BroadbandStftSignalBase
 from ..signal.utils import apply_fade_in, apply_fade_out, inverse_stft
-from .base import PassiveSonarArraySimulatorBase
+from .base import PassiveSonarArraySimulatorBase, SensorBatch
 
 if TYPE_CHECKING:
     from stonesoup.types.state import State
@@ -22,7 +21,6 @@ FloatArray: TypeAlias = NDArray[np.float64]
 Complex64Array: TypeAlias = NDArray[np.complex64]
 ComplexArray: TypeAlias = NDArray[np.complexfloating[Any, Any]]
 IntArray: TypeAlias = NDArray[np.integer[Any]]
-SensorBatch: TypeAlias = tuple[datetime, set[SensorData]]
 
 
 @dataclass
@@ -734,7 +732,7 @@ class ContinuousSTFTPassiveSonarArraySimulator(PassiveSonarArraySimulatorBase):
 
         Yields
         ------
-        tuple of (datetime, set of SensorData)
+        tuple of (datetime, set of PassiveSonarSensorData)
             Timestamp and simulated sensor-data set for that timestep.
 
         Raises
@@ -879,7 +877,7 @@ class ContinuousFractionalDelayPassiveSonarArraySimulator(PassiveSonarArraySimul
 
         Yields
         ------
-        tuple of (datetime, set of SensorData)
+        tuple of (datetime, set of PassiveSonarSensorData)
             Timestamp and simulated sensor-data set for that timestep.
 
         Raises

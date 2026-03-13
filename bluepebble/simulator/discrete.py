@@ -8,18 +8,17 @@ from typing import TYPE_CHECKING, TypeAlias, cast
 import numpy as np
 from numpy.typing import NDArray
 from stonesoup.base import Property
-from stonesoup.types.sensordata import SensorData
 
 from ..models.propagation import SpectrumPropagationModel
 from ..signal.base import Signal
-from .base import PassiveSonarArraySimulatorBase
+from ..types.sensordata import PassiveSonarSensorData
+from .base import PassiveSonarArraySimulatorBase, SensorBatch
 
 if TYPE_CHECKING:
     from stonesoup.types.state import State
 
 Complex64Array: TypeAlias = NDArray[np.complex64]
 Complex128Array: TypeAlias = NDArray[np.complex128]
-SensorBatch: TypeAlias = tuple[datetime, set[SensorData]]
 
 
 class DiscretePassiveSonarArraySimulator(PassiveSonarArraySimulatorBase):
@@ -136,7 +135,7 @@ class DiscretePassiveSonarArraySimulator(PassiveSonarArraySimulatorBase):
 
         Yields
         ------
-        tuple of (datetime, set of SensorData)
+        tuple of (datetime, set of PassiveSonarSensorData)
             Timestamp and simulated sensor-data set for that timestamp.
 
         Raises
@@ -371,7 +370,7 @@ class DeprecatedDiscretePassiveSonarArraySimulator(PassiveSonarArraySimulatorBas
 
         Yields
         ------
-        tuple of (datetime, set of SensorData)
+        tuple of (datetime, set of PassiveSonarSensorData)
             Timestamp and simulated sensor-data set for that timestep.
 
         """
@@ -382,7 +381,7 @@ class DeprecatedDiscretePassiveSonarArraySimulator(PassiveSonarArraySimulatorBas
             sensor_data = self._generate_sensor_data_at(timestamp)
             yield timestamp, {sensor_data}
 
-    def _generate_sensor_data_at(self, timestamp: datetime) -> SensorData:
+    def _generate_sensor_data_at(self, timestamp: datetime) -> PassiveSonarSensorData:
         """Generate a single snapshot of sensor data at a specific timestamp.
 
         This method performs the core simulation steps for a single moment in time. It generates
@@ -396,7 +395,7 @@ class DeprecatedDiscretePassiveSonarArraySimulator(PassiveSonarArraySimulatorBas
 
         Returns
         -------
-        SensorData
+        PassiveSonarSensorData
             Simulated passive-sonar sensor snapshot for the given timestamp.
 
         Raises
