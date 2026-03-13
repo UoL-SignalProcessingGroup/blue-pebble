@@ -44,6 +44,12 @@ def _install_fake_simulator_dependencies(monkeypatch) -> None:
         stft.shape[0], dtype=np.complex64
     )
 
+    anthropogenic_package = ModuleType("bluepebble.signal.anthropogenic")
+    anthropogenic_package.__path__ = []
+    anthropogenic_base_module = ModuleType("bluepebble.signal.anthropogenic.base")
+    anthropogenic_base_module.BroadbandStftSignalBase = type("BroadbandStftSignalBase", (), {})
+    signal_package.anthropogenic = anthropogenic_package
+
     signal_package.ambient = ambient_module
     signal_package.base = signal_base_module
     signal_package.utils = signal_utils_module
@@ -56,6 +62,10 @@ def _install_fake_simulator_dependencies(monkeypatch) -> None:
     monkeypatch.setitem(sys.modules, "bluepebble.platform", platform_module)
     monkeypatch.setitem(sys.modules, "bluepebble.signal", signal_package)
     monkeypatch.setitem(sys.modules, "bluepebble.signal.ambient", ambient_module)
+    monkeypatch.setitem(sys.modules, "bluepebble.signal.anthropogenic", anthropogenic_package)
+    monkeypatch.setitem(
+        sys.modules, "bluepebble.signal.anthropogenic.base", anthropogenic_base_module
+    )
     monkeypatch.setitem(sys.modules, "bluepebble.signal.base", signal_base_module)
     monkeypatch.setitem(sys.modules, "bluepebble.signal.utils", signal_utils_module)
     monkeypatch.setitem(sys.modules, "bluepebble.sigproc.beamformer", beamformer_module)
@@ -256,51 +266,22 @@ def test_discrete_source_signal_resolution_and_validation_errors(monkeypatch) ->
     """Discrete simulator source-resolution helper should raise clear errors on invalid inputs."""
     _base, discrete, _continuous = _load_simulator_modules(monkeypatch)
 
-    class RuntimeSignalModel:
-        def __init__(self):
-            self.calls = 0
-            self.stft_calls = 0
-
-        def get_source_signal(self):
-            self.calls += 1
-            if self.calls == 1:
-                raise RuntimeError("not ready")
+    class WaveformSignalModel:
+        def get_source_waveform(self, state):
+            _ = state
             return np.array([1.0, 2.0], dtype=np.float32)
 
-        def compute_stft(self, state):
-            _ = state
-            self.stft_calls += 1
-
     with pytest.raises(ValueError, match="empty target path"):
         discrete.DiscretePassiveSonarArraySimulator._get_broadband_source_signal(
-            RuntimeSignalModel(),
+            WaveformSignalModel(),
             first_state=None,
         )
 
-    runtime_model = RuntimeSignalModel()
     signal = discrete.DiscretePassiveSonarArraySimulator._get_broadband_source_signal(
-        runtime_model,
+        WaveformSignalModel(),
         first_state=SimpleNamespace(),
     )
-    assert runtime_model.stft_calls == 1
     np.testing.assert_array_equal(signal, np.array([1.0 + 0.0j, 2.0 + 0.0j]))
-
-    class BaseSignalModel:
-        def _generate_base_signal(self, state):
-            _ = state
-            return np.array([3.0, 4.0], dtype=np.float32)
-
-    with pytest.raises(ValueError, match="empty target path"):
-        discrete.DiscretePassiveSonarArraySimulator._get_broadband_source_signal(
-            BaseSignalModel(),
-            first_state=None,
-        )
-
-    with pytest.raises(TypeError, match="must implement either"):
-        discrete.DiscretePassiveSonarArraySimulator._get_broadband_source_signal(
-            object(),
-            first_state=SimpleNamespace(),
-        )
 
     assert (
         discrete.DiscretePassiveSonarArraySimulator._get_target_first_state(_FakePath(states=[]))
@@ -347,6 +328,9 @@ def test_discrete_sensor_data_gen_validates_inputs_and_clamps_empty_chunks(monke
             _ = state
             return np.array([2.0 + 0.0j], dtype=np.complex64)
 
+        def get_source_waveform(self, source):
+            return self._generate_base_signal(source)
+
     simulator = discrete.DiscretePassiveSonarArraySimulator(
         platform=_FakePlatform([timestamp, t1], num_sensors=1),
         propagation_model=SimpleNamespace(
@@ -385,6 +369,9 @@ def test_discrete_sensor_data_gen_validates_model_consistency(monkeypatch) -> No
         def _generate_base_signal(self, state):
             _ = state
             return np.ones(4, dtype=np.complex64)
+
+        def get_source_waveform(self, source):
+            return self._generate_base_signal(source)
 
     class SignalBadSamples(SignalA):
         num_samples = 3
@@ -439,6 +426,9 @@ def test_discrete_sensor_data_gen_pads_truncates_and_skips_absent_targets(monkey
         def _generate_base_signal(self, state):
             _ = state
             return np.array([1.0, 0.0], dtype=np.complex64)
+
+        def get_source_waveform(self, source):
+            return self._generate_base_signal(source)
 
     class LongSignal(ShortSignal):
         def _generate_base_signal(self, state):
@@ -883,21 +873,15 @@ def test_fractional_delay_simulator_covers_errors_fallback_and_outputs(monkeypat
         sampling_rate_hz = 2.0
         frame_len = 4
 
-        def __init__(self, source_signal: np.ndarray, raise_calls: set[int]):
+        def __init__(self, source_signal: np.ndarray):
             self._source_signal = source_signal
-            self._raise_calls = set(raise_calls)
-            self._calls = 0
-            self.stft_calls = 0
 
-        def get_source_signal(self):
-            self._calls += 1
-            if self._calls in self._raise_calls:
-                raise RuntimeError("not ready")
+        def get_source_waveform(self, state):
+            _ = state
             return self._source_signal
 
         def compute_stft(self, state):
             _ = state
-            self.stft_calls += 1
             return (
                 np.ones((2, 3), dtype=np.complex64),
                 np.array([0.0, 0.5, 1.0]),
@@ -907,7 +891,7 @@ def test_fractional_delay_simulator_covers_errors_fallback_and_outputs(monkeypat
 
     short_sim = continuous.ContinuousFractionalDelayPassiveSonarArraySimulator(
         platform=_FakePlatform([t0], num_sensors=1),
-        signal_models=[ToggleSourceModel(np.array([1.0, 2.0], dtype=np.complex64), set())],
+        signal_models=[ToggleSourceModel(np.array([1.0, 2.0], dtype=np.complex64))],
         ground_truth_paths=[_FakePath(states=[_FakeState(t0)])],
     )
     with pytest.raises(ValueError, match="Need at least 2 timesteps"):
@@ -915,7 +899,7 @@ def test_fractional_delay_simulator_covers_errors_fallback_and_outputs(monkeypat
 
     no_target_sim = continuous.ContinuousFractionalDelayPassiveSonarArraySimulator(
         platform=_FakePlatform([t0, t1], num_sensors=1),
-        signal_models=[ToggleSourceModel(np.array([1.0, 2.0], dtype=np.complex64), set())],
+        signal_models=[ToggleSourceModel(np.array([1.0, 2.0], dtype=np.complex64))],
         ground_truth_paths=[],
     )
     with pytest.raises(ValueError, match="requires at least one target"):
@@ -933,8 +917,8 @@ def test_fractional_delay_simulator_covers_errors_fallback_and_outputs(monkeypat
             compute_sensor_delays=lambda platform_state, target_state: np.array([0.0]),
         ),
         signal_models=[
-            ToggleSourceModel(np.array([1.0, 2.0, 3.0, 4.0], dtype=np.complex64), set()),
-            ToggleSourceModel(np.array([1.0, 2.0, 3.0], dtype=np.complex64), set()),
+            ToggleSourceModel(np.array([1.0, 2.0, 3.0, 4.0], dtype=np.complex64)),
+            ToggleSourceModel(np.array([1.0, 2.0, 3.0], dtype=np.complex64)),
         ],
         ground_truth_paths=[path_a, path_b],
     )
@@ -958,7 +942,6 @@ def test_fractional_delay_simulator_covers_errors_fallback_and_outputs(monkeypat
 
     model = ToggleSourceModel(
         np.array([1.0 + 0.0j, 2.0 + 0.0j, 3.0 + 0.0j, 4.0 + 0.0j], dtype=np.complex64),
-        raise_calls={1, 3},
     )
 
     class Noise:
@@ -993,7 +976,6 @@ def test_fractional_delay_simulator_covers_errors_fallback_and_outputs(monkeypat
     )
     generated = list(success_sim.sensor_data_gen())
     assert [ts for ts, _ in generated] == [t0, t1]
-    assert model.stft_calls >= 2
     assert fade_calls["in"] >= 1
     assert fade_calls["out"] >= 1
     assert all(np.isfinite(next(iter(payload)).raw_signals).all() for _, payload in generated)
@@ -1052,7 +1034,8 @@ def test_continuous_stft_interp_pads_sensor_lengths_and_fractional_paths_without
         sampling_rate_hz = 2.0
         frame_len = 4
 
-        def get_source_signal(self):
+        def get_source_waveform(self, state):
+            _ = state
             return np.array([1.0, 2.0, 3.0, 4.0], dtype=np.complex64)
 
         def compute_stft(self, state):

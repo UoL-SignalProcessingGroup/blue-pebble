@@ -48,10 +48,20 @@ def _install_fake_acoustic_dependencies(monkeypatch) -> None:
     beamformer_module.Beamformer = type("Beamformer", (), {})
     beamformer_module.SteeringCalculator = type("SteeringCalculator", (), {})
 
+    anthropogenic_package = ModuleType("bluepebble.signal.anthropogenic")
+    anthropogenic_package.__path__ = []
+    anthropogenic_base_module = ModuleType("bluepebble.signal.anthropogenic.base")
+    anthropogenic_base_module.BroadbandStftSignalBase = type("BroadbandStftSignalBase", (), {})
+    signal_package.anthropogenic = anthropogenic_package
+
     monkeypatch.setitem(sys.modules, "bluepebble.models.propagation", propagation_module)
     monkeypatch.setitem(sys.modules, "bluepebble.platform", platform_module)
     monkeypatch.setitem(sys.modules, "bluepebble.signal", signal_package)
     monkeypatch.setitem(sys.modules, "bluepebble.signal.ambient", ambient_module)
+    monkeypatch.setitem(sys.modules, "bluepebble.signal.anthropogenic", anthropogenic_package)
+    monkeypatch.setitem(
+        sys.modules, "bluepebble.signal.anthropogenic.base", anthropogenic_base_module
+    )
     monkeypatch.setitem(sys.modules, "bluepebble.signal.base", signal_base_module)
     monkeypatch.setitem(sys.modules, "bluepebble.signal.utils", signal_utils_module)
     monkeypatch.setitem(sys.modules, "bluepebble.sigproc.beamformer", beamformer_module)
@@ -208,6 +218,9 @@ def test_passive_generate_sensor_data_combines_targets_noise_and_beamforming(mon
             _ = target_state
             return np.array([1.0, 2.0, 3.0], dtype=np.complex128)
 
+        def get_source_waveform(self, source):
+            return self._generate_base_signal(source)
+
     class FakeNoiseModel:
         def generate(self, num_sensors):
             assert num_sensors == 2
@@ -267,6 +280,9 @@ def test_passive_sensor_data_gen_yields_sorted_unique_timestamps(monkeypatch) ->
         def _generate_base_signal(self, target_state):
             _ = target_state
             return np.array([1.0], dtype=np.complex128)
+
+        def get_source_waveform(self, source):
+            return self._generate_base_signal(source)
 
     class FakeBeamformer:
         def beamform(self, sensor_signals, steering_delays_s):
@@ -344,6 +360,9 @@ def test_passive_generate_sensor_data_uses_zero_signal_when_target_absent(monkey
         def _generate_base_signal(self, target_state):
             _ = target_state
             return np.array([1.0, 2.0, 3.0, 4.0], dtype=np.complex128)
+
+        def get_source_waveform(self, source):
+            return self._generate_base_signal(source)
 
     class FakeBeamformer:
         def beamform(self, sensor_signals, steering_delays_s):
