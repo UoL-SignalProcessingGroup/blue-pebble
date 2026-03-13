@@ -37,7 +37,7 @@ from bluepebble.models.propagation import (
 )
 from bluepebble.platform import TowedArrayPlatform
 from bluepebble.plotter import plot_spectrogram, plot_world
-from bluepebble.signal.anthropogenic import BroadbandRecordedSignal, BroadbandSyntheticSignal
+from bluepebble.signal.anthropogenic import RecordedSignal, SyntheticSignal
 from bluepebble.simulator import (
     ContinuousFractionalDelayPassiveSonarArraySimulator,
     ContinuousSTFTPassiveSonarArraySimulator,
@@ -183,7 +183,7 @@ fig_world.show()
 # ## Source Signal Models
 
 # %%
-synthetic_signal_model = BroadbandSyntheticSignal(
+synthetic_signal_model = SyntheticSignal(
     duration_s=SIGNAL_PARAMS["duration_s"],
     sampling_rate_hz=SIGNAL_PARAMS["sampling_rate_hz"],
     frame_len=SIGNAL_PARAMS["frame_len"],
@@ -200,7 +200,7 @@ wav_name = "SanctSound_CI05_03_largeship_20190925T135956Z.wav"
 data_dir = Path(__file__).resolve().parent / "measured_data"
 measured_wav_path = data_dir / wav_name
 
-measured_signal_model = BroadbandRecordedSignal(
+measured_signal_model = RecordedSignal(
     duration_s=SIGNAL_PARAMS["duration_s"],
     sampling_rate_hz=SIGNAL_PARAMS["sampling_rate_hz"],
     frame_len=SIGNAL_PARAMS["frame_len"],

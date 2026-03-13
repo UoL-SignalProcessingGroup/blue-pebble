@@ -52,7 +52,7 @@ def _install_fake_acoustic_dependencies(monkeypatch) -> None:
     anthropogenic_package = ModuleType("bluepebble.signal.anthropogenic")
     anthropogenic_package.__path__ = []
     anthropogenic_base_module = ModuleType("bluepebble.signal.anthropogenic.base")
-    anthropogenic_base_module.BroadbandStftSignalBase = type("BroadbandStftSignalBase", (), {})
+    anthropogenic_base_module.AnthropogenicSignalBase = type("AnthropogenicSignalBase", (), {})
     signal_package.anthropogenic = anthropogenic_package
 
     monkeypatch.setitem(sys.modules, "bluepebble.models.propagation", propagation_module)

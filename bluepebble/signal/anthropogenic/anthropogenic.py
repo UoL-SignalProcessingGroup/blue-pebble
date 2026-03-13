@@ -1,8 +1,9 @@
 """Anthropogenic signal models for sensor arrays."""
 
+from collections.abc import Mapping
 from fractions import Fraction
 from pathlib import Path
-from typing import TYPE_CHECKING, TypeAlias
+from typing import TYPE_CHECKING, TypeAlias, cast
 
 import numpy as np
 from numpy.typing import ArrayLike, NDArray
@@ -10,7 +11,7 @@ from scipy import signal as scipy_signal
 from scipy.io import wavfile
 from stonesoup.base import Property
 
-from .base import BroadbandStftSignalBase, _extract_tonal_metadata
+from .base import AnthropogenicSignalBase
 
 if TYPE_CHECKING:
     from stonesoup.types.state import State
@@ -19,7 +20,68 @@ FloatArray: TypeAlias = NDArray[np.float64]
 Complex128Array: TypeAlias = NDArray[np.complex128]
 
 
-class BroadbandSyntheticSignal(BroadbandStftSignalBase):
+def _extract_tonal_metadata(
+    source: "State",
+) -> tuple[FloatArray, FloatArray, FloatArray]:
+    """Extract and validate tonal metadata from a source state.
+
+    Parameters
+    ----------
+    source : State
+        Source state exposing metadata containing tonal parameters.
+
+    Returns
+    -------
+    tuple[FloatArray, FloatArray, FloatArray]
+        Tuple of ``(amplitudes_upa, frequencies_hz, phases_rad)``.
+
+    Raises
+    ------
+    ValueError
+        If metadata is missing, malformed, or arrays are shape-incompatible.
+
+    """
+    metadata = getattr(source, "metadata", None)
+    if metadata is None:
+        msg = "Source state must define metadata for tonal synthesis"
+        raise ValueError(msg)
+    if not isinstance(metadata, Mapping):
+        msg = "Source metadata must be mapping-like"
+        raise ValueError(msg)
+
+    required_keys = ("amplitudes_upa", "frequencies_hz", "phases_rad")
+    missing_keys = [key for key in required_keys if key not in metadata]
+    if missing_keys:
+        missing = ", ".join(missing_keys)
+        msg = f"Source metadata missing required keys: {missing}"
+        raise ValueError(msg)
+
+    amplitudes_upa = np.asarray(metadata["amplitudes_upa"], dtype=float)
+    frequencies_hz = np.asarray(metadata["frequencies_hz"], dtype=float)
+    phases_rad = np.asarray(metadata["phases_rad"], dtype=float)
+
+    if amplitudes_upa.ndim != 1 or frequencies_hz.ndim != 1 or phases_rad.ndim != 1:
+        msg = "Tonal metadata arrays must be one-dimensional"
+        raise ValueError(msg)
+
+    num_tonals = len(amplitudes_upa)
+    if len(frequencies_hz) != num_tonals or len(phases_rad) != num_tonals:
+        msg = (
+            "Source tonal metadata arrays must have matching lengths: "
+            f"len(amplitudes_upa)={len(amplitudes_upa)}, "
+            f"len(frequencies_hz)={len(frequencies_hz)}, "
+            f"len(phases_rad)={len(phases_rad)}"
+        )
+        raise ValueError(msg)
+
+    return (
+        cast(FloatArray, amplitudes_upa),
+        cast(FloatArray, frequencies_hz),
+        cast(FloatArray, phases_rad),
+    )
+
+
+class SyntheticSignal(AnthropogenicSignalBase):
     """Generates ship signals with broadband tonals and coloured noise.
 
     This signal model combines:
@@ -63,7 +125,7 @@ class BroadbandSyntheticSignal(BroadbandStftSignalBase):
     --------
     Merchant vessel with propeller tonals and machinery noise:
 
-    >>> signal_model = BroadbandSyntheticSignal(
+    >>> signal_model = SyntheticSignal(
     ...     duration_s=60.0,
     ...     sampling_rate_hz=500.0,
     ...     frame_len=500,
@@ -255,7 +317,7 @@ class BroadbandSyntheticSignal(BroadbandStftSignalBase):
         self._tonal_realizations = None
 
 
-class BroadbandRecordedSignal(BroadbandStftSignalBase):
+class RecordedSignal(AnthropogenicSignalBase):
     """Generates broadband source signals from measured WAV recordings.
 
     This signal model loads a measured waveform from disk, resamples it to the

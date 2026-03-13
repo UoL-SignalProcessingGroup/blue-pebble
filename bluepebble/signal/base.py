@@ -49,7 +49,7 @@ class Signal(Base, ABC):
         """Return the full-duration source waveform for this signal model.
 
         The default implementation delegates to :meth:`_generate_base_signal`.
-        Subclasses that cache the waveform (e.g. ``BroadbandStftSignalBase``)
+        Subclasses that cache the waveform (e.g. ``AnthropogenicSignalBase``)
         override this to compute it on first call and return the cached result
         on subsequent calls.
 
