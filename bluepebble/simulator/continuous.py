@@ -3,16 +3,16 @@
 from collections.abc import Iterable, Iterator
 from dataclasses import dataclass
 from datetime import datetime
-from typing import TYPE_CHECKING, Any, Protocol, TypeAlias, cast
+from typing import TYPE_CHECKING, Any, TypeAlias, cast
 
 import numpy as np
 from numpy.typing import ArrayLike, NDArray
 from stonesoup.base import Property
-from stonesoup.types.sensordata import SensorData
 
+from ..models.propagation import SpectrumPropagationModel
 from ..signal.anthropogenic.base import BroadbandStftSignalBase
 from ..signal.utils import apply_fade_in, apply_fade_out, inverse_stft
-from .base import PassiveSonarArraySimulatorBase
+from .base import PassiveSonarArraySimulatorBase, SensorBatch
 
 if TYPE_CHECKING:
     from stonesoup.types.state import State
@@ -21,20 +21,6 @@ FloatArray: TypeAlias = NDArray[np.float64]
 Complex64Array: TypeAlias = NDArray[np.complex64]
 ComplexArray: TypeAlias = NDArray[np.complexfloating[Any, Any]]
 IntArray: TypeAlias = NDArray[np.integer[Any]]
-SensorBatch: TypeAlias = tuple[datetime, set[SensorData]]
-
-
-class _SpectrumPropagationModel(Protocol):
-    """Protocol for propagation models that expose ``propagate_spectrum``."""
-
-    def propagate_spectrum(
-        self,
-        platform: object,
-        source: "State",
-        frequencies_hz: ArrayLike,
-    ) -> tuple[ComplexArray, float]:
-        """Return per-sensor transfer functions and propagation time."""
-        ...
 
 
 @dataclass
@@ -214,7 +200,6 @@ class ContinuousSTFTPassiveSonarArraySimulator(PassiveSonarArraySimulatorBase):
         self,
         all_timestamps: list[datetime],
         signal_models_list: "list[BroadbandStftSignalBase]",
-        first_state: "State",
     ) -> _STFTCommonContext:
         """Build shared STFT metadata for synthesis.
 
@@ -223,9 +208,8 @@ class ContinuousSTFTPassiveSonarArraySimulator(PassiveSonarArraySimulatorBase):
         all_timestamps : list of datetime
             Simulation timestamps used as propagation knots.
         signal_models_list : list
-            Resolved list of signal models.
-        first_state : State
-            First target state used to initialise the reference STFT.
+            Resolved list of signal models; only ``signal_models_list[0]`` is
+            used to derive geometry.
 
         Returns
         -------
@@ -233,10 +217,10 @@ class ContinuousSTFTPassiveSonarArraySimulator(PassiveSonarArraySimulatorBase):
             Shared context containing timing, STFT geometry, and array metadata.
 
         """
-        ref_stft, frequencies, hop, window = signal_models_list[0].compute_stft(first_state)
-        num_frames, num_freq_bins = ref_stft.shape
-        frame_len = int(signal_models_list[0].frame_len)
-        fs = float(signal_models_list[0].sampling_rate_hz)
+        ref_model = signal_models_list[0]
+        num_freq_bins, frequencies, hop, window, num_frames = ref_model.stft_geometry()
+        frame_len = int(ref_model.frame_len)
+        fs = float(ref_model.sampling_rate_hz)
         num_sensors = int(self.platform.num_sensors)
 
         t0 = all_timestamps[0]
@@ -289,20 +273,35 @@ class ContinuousSTFTPassiveSonarArraySimulator(PassiveSonarArraySimulatorBase):
 
         """
         targets_data: list[_STFTTargetHistory] = []
-        if not hasattr(self.propagation_model, "propagate_spectrum"):
+        if not ground_truth_paths:
+            return targets_data
+
+        if not isinstance(self.propagation_model, SpectrumPropagationModel):
             msg = (
                 f"{type(self.propagation_model).__name__} does not implement "
                 "'propagate_spectrum', which is required for STFT-based simulation"
             )
             raise TypeError(msg)
-        spectrum_propagation_model = cast(_SpectrumPropagationModel, self.propagation_model)
+        spectrum_propagation_model = cast(SpectrumPropagationModel, self.propagation_model)
 
         for target_idx, target_path in enumerate(ground_truth_paths):
-            target_first_state = next(iter(target_path))
+            try:
+                target_first_state = next(iter(target_path))
+            except StopIteration:
+                msg = f"ground_truth_paths[{target_idx}] has no states"
+                raise ValueError(msg) from None
             target_signal_model = signal_models_list[target_idx]
-            target_source_stft, _, _, _ = target_signal_model.compute_stft(target_first_state)
+            target_source_stft, target_freqs_hz, _, _ = target_signal_model.compute_stft(
+                target_first_state
+            )
 
-            if target_source_stft.shape != (ctx.num_frames, ctx.num_freq_bins):
+            if target_idx == 0:
+                # Reconcile ctx geometry with the actual STFT shape and frequencies.
+                # stft_geometry() cannot know whether the source is real or complex
+                # (which determines rfft vs. fft bin count), so we correct here.
+                ctx.num_frames, ctx.num_freq_bins = target_source_stft.shape
+                ctx.frequencies = np.asarray(target_freqs_hz, dtype=np.float64)
+            elif target_source_stft.shape != (ctx.num_frames, ctx.num_freq_bins):
                 msg = (
                     "All target source STFTs must share the same shape. "
                     f"Expected {(ctx.num_frames, ctx.num_freq_bins)}, "
@@ -746,14 +745,14 @@ class ContinuousSTFTPassiveSonarArraySimulator(PassiveSonarArraySimulatorBase):
 
         Yields
         ------
-        tuple of (datetime, set of SensorData)
+        tuple of (datetime, set of PassiveSonarSensorData)
             Timestamp and simulated sensor-data set for that timestep.
 
         Raises
         ------
         ValueError
-            If fewer than two timesteps are available, no targets are provided,
-            or the synthesis mode is unsupported.
+            If fewer than two timesteps are available or the synthesis mode is
+            unsupported.
 
         """
         selected_mode = self._validate_mode()
@@ -763,18 +762,13 @@ class ContinuousSTFTPassiveSonarArraySimulator(PassiveSonarArraySimulatorBase):
             raise ValueError(msg)
 
         ground_truth_paths = self.ground_truth_paths or []
-        if len(ground_truth_paths) == 0:
-            msg = "ContinuousSTFTPassiveSonarArraySimulator requires at least one target"
-            raise ValueError(msg)
-
+        ref_signal_model = self.signal_models[0]
         signal_models_list = self._resolve_models(
             self.signal_models,
             len(ground_truth_paths),
             "signal models",
         )
-
-        first_state = next(iter(ground_truth_paths[0]))
-        ctx = self._build_common_context(all_timestamps, signal_models_list, first_state)
+        ctx = self._build_common_context(all_timestamps, [ref_signal_model])
         targets_data = self._build_target_histories(ctx, ground_truth_paths, signal_models_list)
 
         if selected_mode == "stft_interp":
@@ -796,7 +790,6 @@ class ContinuousSTFTPassiveSonarArraySimulator(PassiveSonarArraySimulatorBase):
             noise = self._generate_noise(
                 num_sensors=ctx.num_sensors,
                 num_samples=sensor_signals.shape[1],
-                sampling_rate_hz=ctx.fs,
             )
             if noise is not None:
                 sensor_signals += noise
@@ -892,16 +885,16 @@ class ContinuousFractionalDelayPassiveSonarArraySimulator(PassiveSonarArraySimul
 
         Yields
         ------
-        tuple of (datetime, set of SensorData)
+        tuple of (datetime, set of PassiveSonarSensorData)
             Timestamp and simulated sensor-data set for that timestep.
 
         Raises
         ------
         ValueError
-            If fewer than two timesteps are available or no targets are
-            configured.
+            If fewer than two timesteps are available.
         TypeError
-            If the propagation model does not implement ``propagate_spectrum``.
+            If targets are present and the propagation model does not implement
+            ``propagate_spectrum``.
         RuntimeError
             If target source-signal lengths are inconsistent.
 
@@ -912,21 +905,16 @@ class ContinuousFractionalDelayPassiveSonarArraySimulator(PassiveSonarArraySimul
             raise ValueError(msg)
 
         ground_truth_paths = self.ground_truth_paths or []
-        if len(ground_truth_paths) == 0:
-            msg = "BroadbandExactDelayPassiveSonarArraySimulator requires at least one target"
-            raise ValueError(msg)
-
+        ref_signal_model = self.signal_models[0]
         signal_models_list = self._resolve_models(
             self.signal_models,
             len(ground_truth_paths),
             "signal models",
         )
-
-        first_state = next(iter(ground_truth_paths[0]))
-        fs = float(signal_models_list[0].sampling_rate_hz)
+        fs = float(ref_signal_model.sampling_rate_hz)
         num_sensors = int(self.platform.num_sensors)
 
-        frame_len = int(signal_models_list[0].frame_len)
+        frame_len = int(ref_signal_model.frame_len)
         frequencies_hz = np.fft.rfftfreq(frame_len, d=1.0 / fs)
 
         t0 = all_timestamps[0]
@@ -935,32 +923,28 @@ class ContinuousFractionalDelayPassiveSonarArraySimulator(PassiveSonarArraySimul
         )
         n_steps = len(step_times_s)
 
-        try:
-            ref_source = signal_models_list[0].get_source_signal()
-        except RuntimeError:
-            signal_models_list[0].compute_stft(first_state)
-            ref_source = signal_models_list[0].get_source_signal()
-
-        out_len = len(ref_source)
+        out_len = ref_signal_model.num_samples
         sample_times_s = np.arange(out_len, dtype=np.float64) / fs
         receiver_accum = np.zeros((num_sensors, out_len), dtype=np.complex64)
-        if not hasattr(self.propagation_model, "propagate_spectrum"):
-            msg = (
-                f"{type(self.propagation_model).__name__} does not implement "
-                "'propagate_spectrum', which is required for STFT-based simulation"
-            )
-            raise TypeError(msg)
-        spectrum_propagation_model = cast(_SpectrumPropagationModel, self.propagation_model)
+
+        if ground_truth_paths:
+            if not isinstance(self.propagation_model, SpectrumPropagationModel):
+                msg = (
+                    f"{type(self.propagation_model).__name__} does not implement "
+                    "'propagate_spectrum', which is required for STFT-based simulation"
+                )
+                raise TypeError(msg)
+            spectrum_propagation_model = cast(SpectrumPropagationModel, self.propagation_model)
 
         for target_idx, target_path in enumerate(ground_truth_paths):
             target_signal_model = signal_models_list[target_idx]
-            target_first_state = next(iter(target_path))
-
             try:
-                source_signal = target_signal_model.get_source_signal()
-            except RuntimeError:
-                target_signal_model.compute_stft(target_first_state)
-                source_signal = target_signal_model.get_source_signal()
+                target_first_state = next(iter(target_path))
+            except StopIteration:
+                msg = f"ground_truth_paths[{target_idx}] has no states"
+                raise ValueError(msg) from None
+
+            source_signal = target_signal_model.get_source_waveform(target_first_state)
 
             if len(source_signal) != out_len:
                 msg = (
@@ -1043,7 +1027,6 @@ class ContinuousFractionalDelayPassiveSonarArraySimulator(PassiveSonarArraySimul
             noise = self._generate_noise(
                 num_sensors=num_sensors,
                 num_samples=sensor_signals.shape[1],
-                sampling_rate_hz=fs,
             )
             if noise is not None:
                 sensor_signals += noise

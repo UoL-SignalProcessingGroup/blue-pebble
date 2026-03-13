@@ -43,13 +43,17 @@ class AmbientNoise(Base):
         """
         return int(self.duration_s * self.sampling_rate_hz)
 
-    def _generate_unit_white_noise(self, num_sensors: int) -> ComplexArray:
+    def _generate_unit_white_noise(
+        self, num_sensors: int, num_samples: int | None = None
+    ) -> ComplexArray:
         """Generate standard complex white noise with unit power.
 
         Parameters
         ----------
         num_sensors : int
             The number of sensors in the array.
+        num_samples : int or None, optional
+            Number of samples to generate. Defaults to ``self.num_samples``.
 
         Returns
         -------
@@ -58,21 +62,23 @@ class AmbientNoise(Base):
             power.
 
         """
+        n = num_samples if num_samples is not None else self.num_samples
         # Generate real and imaginary parts from a standard normal distribution
         # and scale by 1/sqrt(2) to ensure the total power is 1.
-        return (
-            np.random.randn(num_sensors, self.num_samples)
-            + 1j * np.random.randn(num_sensors, self.num_samples)
-        ) / np.sqrt(2)
+        return (np.random.randn(num_sensors, n) + 1j * np.random.randn(num_sensors, n)) / np.sqrt(
+            2
+        )
 
     @abstractmethod
-    def generate(self, num_sensors: int = 1) -> ComplexArray:
+    def generate(self, num_sensors: int = 1, num_samples: int | None = None) -> ComplexArray:
         """Generate a noise array. This must be implemented by subclasses.
 
         Parameters
         ----------
         num_sensors : int, optional
             The number of sensors in the array. Defaults to 1.
+        num_samples : int or None, optional
+            Number of samples to generate. Defaults to ``self.num_samples`` when ``None``.
 
         Returns
         -------
@@ -96,13 +102,15 @@ class WhiteNoise(AmbientNoise):
 
     """
 
-    def generate(self, num_sensors: int = 1) -> ComplexArray:
+    def generate(self, num_sensors: int = 1, num_samples: int | None = None) -> ComplexArray:
         """Generate a complex white Gaussian noise array.
 
         Parameters
         ----------
         num_sensors : int, optional
             The number of sensors in the array. Defaults to 1.
+        num_samples : int or None, optional
+            Number of samples to generate. Defaults to ``self.num_samples`` when ``None``.
 
         Returns
         -------
@@ -110,10 +118,7 @@ class WhiteNoise(AmbientNoise):
             Complex white-noise matrix of shape ``(num_sensors, num_samples)``.
 
         """
-        # Generate the base noise with unit power
-        white_noise = self._generate_unit_white_noise(num_sensors)
-
-        # Scale the unit-power noise to the target amplitude
+        white_noise = self._generate_unit_white_noise(num_sensors, num_samples)
         return self.amplitude_upa * white_noise
 
 
@@ -141,13 +146,15 @@ class ColouredNoise(AmbientNoise):
         "red/brownian noise)."
     )
 
-    def generate(self, num_sensors: int = 1) -> ComplexArray:
+    def generate(self, num_sensors: int = 1, num_samples: int | None = None) -> ComplexArray:
         """Generate a complex coloured noise array.
 
         Parameters
         ----------
         num_sensors : int, optional
             The number of sensors in the array. Defaults to 1.
+        num_samples : int or None, optional
+            Number of samples to generate. Defaults to ``self.num_samples`` when ``None``.
 
         Returns
         -------
@@ -156,11 +163,12 @@ class ColouredNoise(AmbientNoise):
             normalised to the specified amplitude.
 
         """
+        n = num_samples if num_samples is not None else self.num_samples
         # 1. Generate the base white noise with a flat spectrum
-        white_noise = self._generate_unit_white_noise(num_sensors)
+        white_noise = self._generate_unit_white_noise(num_sensors, n)
 
         # 2. Get the corresponding frequencies for the FFT
-        freqs = np.fft.fftfreq(self.num_samples)
+        freqs = np.fft.fftfreq(n)
 
         # 3. Create a frequency-domain filter based on the spectral exponent
         with np.errstate(divide="ignore"):

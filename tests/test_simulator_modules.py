@@ -22,6 +22,7 @@ def _install_fake_simulator_dependencies(monkeypatch) -> None:
     """Install lightweight dependency modules required by simulator imports."""
     propagation_module = ModuleType("bluepebble.models.propagation")
     propagation_module.AcousticPropagationModel = type("AcousticPropagationModel", (), {})
+    propagation_module.SpectrumPropagationModel = type("SpectrumPropagationModel", (), {})
 
     platform_module = ModuleType("bluepebble.platform")
     platform_module.TowedArrayPlatform = type("TowedArrayPlatform", (), {})
@@ -44,6 +45,12 @@ def _install_fake_simulator_dependencies(monkeypatch) -> None:
         stft.shape[0], dtype=np.complex64
     )
 
+    anthropogenic_package = ModuleType("bluepebble.signal.anthropogenic")
+    anthropogenic_package.__path__ = []
+    anthropogenic_base_module = ModuleType("bluepebble.signal.anthropogenic.base")
+    anthropogenic_base_module.BroadbandStftSignalBase = type("BroadbandStftSignalBase", (), {})
+    signal_package.anthropogenic = anthropogenic_package
+
     signal_package.ambient = ambient_module
     signal_package.base = signal_base_module
     signal_package.utils = signal_utils_module
@@ -56,9 +63,29 @@ def _install_fake_simulator_dependencies(monkeypatch) -> None:
     monkeypatch.setitem(sys.modules, "bluepebble.platform", platform_module)
     monkeypatch.setitem(sys.modules, "bluepebble.signal", signal_package)
     monkeypatch.setitem(sys.modules, "bluepebble.signal.ambient", ambient_module)
+    monkeypatch.setitem(sys.modules, "bluepebble.signal.anthropogenic", anthropogenic_package)
+    monkeypatch.setitem(
+        sys.modules, "bluepebble.signal.anthropogenic.base", anthropogenic_base_module
+    )
     monkeypatch.setitem(sys.modules, "bluepebble.signal.base", signal_base_module)
     monkeypatch.setitem(sys.modules, "bluepebble.signal.utils", signal_utils_module)
     monkeypatch.setitem(sys.modules, "bluepebble.sigproc.beamformer", beamformer_module)
+
+
+def _spectrum_propagation_base():
+    """Return the fake SpectrumPropagationModel base registered for the current test."""
+    return sys.modules["bluepebble.models.propagation"].SpectrumPropagationModel
+
+
+def _prop_model(propagate_fn=None, **extras):
+    """Build a SpectrumPropagationModel subclass wrapping callables for use in tests."""
+    base = _spectrum_propagation_base()
+    methods: dict = {}
+    if propagate_fn is not None:
+        methods["propagate_spectrum"] = lambda self, *a, _fn=propagate_fn, **kw: _fn(*a, **kw)
+    for name, fn in extras.items():
+        methods[name] = lambda self, *a, _fn=fn, **kw: _fn(*a, **kw)
+    return type("PropModel", (base,), methods)()
 
 
 def _load_simulator_modules(monkeypatch):
@@ -157,8 +184,8 @@ def test_base_ground_truth_paths_default_is_not_shared(monkeypatch) -> None:
     assert simulator_c.ground_truth_paths == ["path-c"]
 
 
-def test_base_generate_noise_handles_shapes_and_duration_restore(monkeypatch) -> None:
-    """Noise generation should truncate/pad outputs and restore temporary duration overrides."""
+def test_base_generate_noise_handles_shapes(monkeypatch) -> None:
+    """Noise generation should pass num_samples to generate() and truncate/pad outputs."""
     _base, discrete, _continuous = _load_simulator_modules(monkeypatch)
     simulator = discrete.DiscretePassiveSonarArraySimulator()
 
@@ -166,44 +193,37 @@ def test_base_generate_noise_handles_shapes_and_duration_restore(monkeypatch) ->
 
     class LongNoise:
         def __init__(self):
-            self.duration_s = 9.0
             self.seen = []
 
-        def generate(self, num_sensors):
-            self.seen.append(self.duration_s)
+        def generate(self, num_sensors, num_samples=None):
+            self.seen.append(num_samples)
             return np.ones((num_sensors, 5), dtype=np.complex64)
 
     long_noise = LongNoise()
     simulator.noise_model = long_noise
-    truncated = simulator._generate_noise(num_sensors=2, num_samples=3, sampling_rate_hz=1000.0)
-    assert long_noise.duration_s == pytest.approx(9.0)
-    assert long_noise.seen == [pytest.approx(0.003)]
+    truncated = simulator._generate_noise(num_sensors=2, num_samples=3)
+    assert long_noise.seen == [3]
     assert truncated.shape == (2, 3)
 
     class ShortNoise:
-        def generate(self, num_sensors):
+        def generate(self, num_sensors, num_samples=None):
             return np.full((num_sensors, 1), 5.0, dtype=np.complex64)
 
     simulator.noise_model = ShortNoise()
-    padded = simulator._generate_noise(num_sensors=2, num_samples=3, sampling_rate_hz=1000.0)
+    padded = simulator._generate_noise(num_sensors=2, num_samples=3)
     np.testing.assert_array_equal(
         padded,
         np.array([[5.0, 0.0, 0.0], [5.0, 0.0, 0.0]], dtype=np.complex64),
     )
 
     class FailingNoise:
-        def __init__(self):
-            self.duration_s = 4.0
-
-        def generate(self, num_sensors):
+        def generate(self, num_sensors, num_samples=None):
             _ = num_sensors
             raise RuntimeError("boom")
 
-    failing_noise = FailingNoise()
-    simulator.noise_model = failing_noise
+    simulator.noise_model = FailingNoise()
     with pytest.raises(RuntimeError, match="boom"):
-        simulator._generate_noise(num_sensors=1, num_samples=2, sampling_rate_hz=1000.0)
-    assert failing_noise.duration_s == pytest.approx(4.0)
+        simulator._generate_noise(num_sensors=1, num_samples=2)
 
 
 def test_base_beamform_if_configured_and_make_sensor_data(monkeypatch) -> None:
@@ -256,51 +276,22 @@ def test_discrete_source_signal_resolution_and_validation_errors(monkeypatch) ->
     """Discrete simulator source-resolution helper should raise clear errors on invalid inputs."""
     _base, discrete, _continuous = _load_simulator_modules(monkeypatch)
 
-    class RuntimeSignalModel:
-        def __init__(self):
-            self.calls = 0
-            self.stft_calls = 0
-
-        def get_source_signal(self):
-            self.calls += 1
-            if self.calls == 1:
-                raise RuntimeError("not ready")
+    class WaveformSignalModel:
+        def get_source_waveform(self, state):
+            _ = state
             return np.array([1.0, 2.0], dtype=np.float32)
 
-        def compute_stft(self, state):
-            _ = state
-            self.stft_calls += 1
-
     with pytest.raises(ValueError, match="empty target path"):
         discrete.DiscretePassiveSonarArraySimulator._get_broadband_source_signal(
-            RuntimeSignalModel(),
+            WaveformSignalModel(),
             first_state=None,
         )
 
-    runtime_model = RuntimeSignalModel()
     signal = discrete.DiscretePassiveSonarArraySimulator._get_broadband_source_signal(
-        runtime_model,
+        WaveformSignalModel(),
         first_state=SimpleNamespace(),
     )
-    assert runtime_model.stft_calls == 1
     np.testing.assert_array_equal(signal, np.array([1.0 + 0.0j, 2.0 + 0.0j]))
-
-    class BaseSignalModel:
-        def _generate_base_signal(self, state):
-            _ = state
-            return np.array([3.0, 4.0], dtype=np.float32)
-
-    with pytest.raises(ValueError, match="empty target path"):
-        discrete.DiscretePassiveSonarArraySimulator._get_broadband_source_signal(
-            BaseSignalModel(),
-            first_state=None,
-        )
-
-    with pytest.raises(TypeError, match="must implement either"):
-        discrete.DiscretePassiveSonarArraySimulator._get_broadband_source_signal(
-            object(),
-            first_state=SimpleNamespace(),
-        )
 
     assert (
         discrete.DiscretePassiveSonarArraySimulator._get_target_first_state(_FakePath(states=[]))
@@ -324,8 +315,8 @@ def test_discrete_sensor_data_gen_validates_inputs_and_clamps_empty_chunks(monke
 
     simulator = discrete.DiscretePassiveSonarArraySimulator(
         platform=_FakePlatform([timestamp], num_sensors=1),
-        propagation_model=SimpleNamespace(
-            propagate_spectrum=lambda platform_state, target_state, frequencies: (
+        propagation_model=_prop_model(
+            lambda platform_state, target_state, frequencies: (
                 np.ones((1, len(frequencies)), dtype=np.complex64),
                 0.0,
             )
@@ -347,10 +338,13 @@ def test_discrete_sensor_data_gen_validates_inputs_and_clamps_empty_chunks(monke
             _ = state
             return np.array([2.0 + 0.0j], dtype=np.complex64)
 
+        def get_source_waveform(self, source):
+            return self._generate_base_signal(source)
+
     simulator = discrete.DiscretePassiveSonarArraySimulator(
         platform=_FakePlatform([timestamp, t1], num_sensors=1),
-        propagation_model=SimpleNamespace(
-            propagate_spectrum=lambda platform_state, target_state, frequencies: (
+        propagation_model=_prop_model(
+            lambda platform_state, target_state, frequencies: (
                 np.ones((1, len(frequencies)), dtype=np.complex64),
                 0.0,
             )
@@ -371,8 +365,8 @@ def test_discrete_sensor_data_gen_validates_model_consistency(monkeypatch) -> No
     path_a = _FakePath(states=[_FakeState(timestamp)])
     path_b = _FakePath(states=[_FakeState(timestamp)])
 
-    propagation = SimpleNamespace(
-        propagate_spectrum=lambda platform_state, target_state, frequencies: (
+    propagation = _prop_model(
+        lambda platform_state, target_state, frequencies: (
             np.ones((1, len(frequencies)), dtype=np.complex64),
             0.0,
         )
@@ -385,6 +379,9 @@ def test_discrete_sensor_data_gen_validates_model_consistency(monkeypatch) -> No
         def _generate_base_signal(self, state):
             _ = state
             return np.ones(4, dtype=np.complex64)
+
+        def get_source_waveform(self, source):
+            return self._generate_base_signal(source)
 
     class SignalBadSamples(SignalA):
         num_samples = 3
@@ -440,6 +437,9 @@ def test_discrete_sensor_data_gen_pads_truncates_and_skips_absent_targets(monkey
             _ = state
             return np.array([1.0, 0.0], dtype=np.complex64)
 
+        def get_source_waveform(self, source):
+            return self._generate_base_signal(source)
+
     class LongSignal(ShortSignal):
         def _generate_base_signal(self, state):
             _ = state
@@ -447,8 +447,8 @@ def test_discrete_sensor_data_gen_pads_truncates_and_skips_absent_targets(monkey
 
     simulator = discrete.DiscretePassiveSonarArraySimulator(
         platform=platform,
-        propagation_model=SimpleNamespace(
-            propagate_spectrum=lambda platform_state, target_state, frequencies: (
+        propagation_model=_prop_model(
+            lambda platform_state, target_state, frequencies: (
                 np.ones((1, len(frequencies)), dtype=np.complex64),
                 0.0,
             )
@@ -593,206 +593,6 @@ def test_continuous_fade_and_slice_helpers_and_fractional_resample(monkeypatch) 
     )
 
 
-def test_deprecated_discrete_simulator_warns_and_yields(monkeypatch) -> None:
-    """Deprecated discrete simulator should warn and yield one payload per timestamp."""
-    _base, discrete, _continuous = _load_simulator_modules(monkeypatch)
-    t0 = datetime(2026, 1, 1, 12, 0, 0)
-    t1 = t0 + timedelta(seconds=1)
-
-    with pytest.warns(DeprecationWarning, match="deprecated"):
-        simulator = discrete.DeprecatedDiscretePassiveSonarArraySimulator(
-            platform=_FakePlatform([t1, t0], num_sensors=1)
-        )
-
-    marker = object()
-    monkeypatch.setattr(simulator, "_generate_sensor_data_at", lambda timestamp: marker)
-    generated = list(simulator.sensor_data_gen())
-    assert [ts for ts, _ in generated] == [t0, t1]
-    assert all(data_set == {marker} for _, data_set in generated)
-
-
-def test_deprecated_discrete_generate_sensor_data_validates_and_covers_modes(monkeypatch) -> None:
-    """Deprecated generator should validate method names and support spectrum/TL branches."""
-    _base, discrete, _continuous = _load_simulator_modules(monkeypatch)
-    timestamp = datetime(2026, 1, 1, 12, 0, 0)
-    platform = _FakePlatform([timestamp], num_sensors=1)
-    path = _FakePath(states=[_FakeState(timestamp, state_vector=np.array([0.0]))])
-
-    class FallbackSignalModel:
-        sampling_rate_hz = 2.0
-        num_samples = 2
-
-        def generate(self, target_state, sensor_delays_s, tloss_db, prop_time_s):
-            _ = target_state
-            assert tloss_db == pytest.approx(3.0)
-            assert prop_time_s == pytest.approx(0.5)
-            np.testing.assert_array_equal(sensor_delays_s, np.array([0.0]))
-            return np.array([[7.0 + 0.0j, 8.0 + 0.0j]], dtype=np.complex128)
-
-    with pytest.warns(DeprecationWarning, match="deprecated"):
-        simulator = discrete.DeprecatedDiscretePassiveSonarArraySimulator(
-            platform=platform,
-            propagation_model=SimpleNamespace(),
-            signal_models=[FallbackSignalModel()],
-            ground_truth_paths=[path],
-            propagation_method="not-a-mode",
-        )
-    with pytest.raises(ValueError, match="Unsupported propagation_method"):
-        simulator._generate_sensor_data_at(timestamp)
-
-    with pytest.warns(DeprecationWarning, match="deprecated"):
-        simulator = discrete.DeprecatedDiscretePassiveSonarArraySimulator(
-            platform=platform,
-            propagation_model=SimpleNamespace(),
-            signal_models=[FallbackSignalModel()],
-            ground_truth_paths=[path],
-            propagation_method="spectrum",
-        )
-    with pytest.raises(AttributeError, match="requires propagation_model"):
-        simulator._generate_sensor_data_at(timestamp)
-
-    propagation = SimpleNamespace(
-        propagate_spectrum=lambda platform_state, target_state, frequencies: (
-            np.ones((1, len(frequencies)), dtype=np.complex128),
-            0.0,
-        ),
-        propagate=lambda platform_state, target_state: (3.0, 0.5),
-        compute_sensor_delays=lambda platform_state, target_state: np.array([0.0]),
-    )
-    with pytest.warns(DeprecationWarning, match="deprecated"):
-        simulator = discrete.DeprecatedDiscretePassiveSonarArraySimulator(
-            platform=platform,
-            propagation_model=propagation,
-            signal_models=[FallbackSignalModel()],
-            ground_truth_paths=[path],
-            propagation_method="spectrum",
-        )
-    spectrum_data = simulator._generate_sensor_data_at(timestamp)
-    np.testing.assert_array_equal(
-        spectrum_data.raw_signals,
-        np.array([[7.0 + 0.0j, 8.0 + 0.0j]], dtype=np.complex128),
-    )
-
-    class TlSignalModel:
-        num_samples = 2
-
-        def generate(self, target_state, sensor_delays_s, tloss_db, prop_time_s):
-            _ = target_state
-            assert tloss_db == pytest.approx(9.0)
-            assert prop_time_s == pytest.approx(0.25)
-            np.testing.assert_array_equal(sensor_delays_s, np.array([0.0]))
-            return np.array([[1.0 + 0.0j, 2.0 + 0.0j]], dtype=np.complex128)
-
-    class Noise:
-        def generate(self, num_sensors):
-            return np.array([[10.0 + 0.0j, 10.0 + 0.0j]], dtype=np.complex128)
-
-    class Steering:
-        def calculate(self, platform_state):
-            return np.array([0.0])
-
-    class Beamformer:
-        def beamform(self, sensor_signals, steering_delays_s):
-            _ = steering_delays_s
-            return sensor_signals.copy()
-
-    propagation_tl = SimpleNamespace(
-        propagate=lambda platform_state, target_state: (9.0, 0.25),
-        compute_sensor_delays=lambda platform_state, target_state: np.array([0.0]),
-    )
-    with pytest.warns(DeprecationWarning, match="deprecated"):
-        simulator = discrete.DeprecatedDiscretePassiveSonarArraySimulator(
-            platform=platform,
-            propagation_model=propagation_tl,
-            signal_models=[TlSignalModel()],
-            noise_model=Noise(),
-            beamformer=Beamformer(),
-            steering_calculator=Steering(),
-            ground_truth_paths=[path],
-            propagation_method="transmission_loss",
-        )
-    tl_data = simulator._generate_sensor_data_at(timestamp)
-    np.testing.assert_array_equal(
-        tl_data.raw_signals,
-        np.array([[11.0 + 0.0j, 12.0 + 0.0j]], dtype=np.complex128),
-    )
-    np.testing.assert_array_equal(tl_data.beamformed_data, tl_data.raw_signals)
-
-    class SpectrumBaseSignal:
-        sampling_rate_hz = 2.0
-        num_samples = 4
-
-        def _generate_base_signal(self, state):
-            _ = state
-            return np.array([1.0 + 0.0j, 2.0 + 0.0j], dtype=np.complex128)
-
-    propagation_spectrum = SimpleNamespace(
-        propagate_spectrum=lambda platform_state, target_state, frequencies: (
-            np.ones((1, len(frequencies)), dtype=np.complex128),
-            0.0,
-        ),
-        propagate=lambda platform_state, target_state: (0.0, 0.0),
-        compute_sensor_delays=lambda platform_state, target_state: np.array([0.0]),
-    )
-    with pytest.warns(DeprecationWarning, match="deprecated"):
-        simulator = discrete.DeprecatedDiscretePassiveSonarArraySimulator(
-            platform=platform,
-            propagation_model=propagation_spectrum,
-            signal_models=[SpectrumBaseSignal()],
-            ground_truth_paths=[path],
-            propagation_method="spectrum",
-        )
-    spectrum_base_data = simulator._generate_sensor_data_at(timestamp)
-    assert spectrum_base_data.raw_signals.shape == (1, 4)
-
-    class SpectrumLongSignal(SpectrumBaseSignal):
-        def _generate_base_signal(self, state):
-            _ = state
-            return np.array([1.0, 2.0, 3.0, 4.0, 9.0], dtype=np.complex128)
-
-    with pytest.warns(DeprecationWarning, match="deprecated"):
-        simulator = discrete.DeprecatedDiscretePassiveSonarArraySimulator(
-            platform=platform,
-            propagation_model=propagation_spectrum,
-            signal_models=[SpectrumLongSignal()],
-            ground_truth_paths=[path],
-            propagation_method="spectrum",
-        )
-    spectrum_long_data = simulator._generate_sensor_data_at(timestamp)
-    assert spectrum_long_data.raw_signals.shape == (1, 4)
-
-    class SpectrumExactSignal(SpectrumBaseSignal):
-        def _generate_base_signal(self, state):
-            _ = state
-            return np.array([1.0, 2.0, 3.0, 4.0], dtype=np.complex128)
-
-    with pytest.warns(DeprecationWarning, match="deprecated"):
-        simulator = discrete.DeprecatedDiscretePassiveSonarArraySimulator(
-            platform=platform,
-            propagation_model=propagation_spectrum,
-            signal_models=[SpectrumExactSignal()],
-            ground_truth_paths=[path],
-            propagation_method="spectrum",
-        )
-    spectrum_exact_data = simulator._generate_sensor_data_at(timestamp)
-    assert spectrum_exact_data.raw_signals.shape == (1, 4)
-
-    missing_path = _FakePath(states=[_FakeState(timestamp + timedelta(seconds=1))])
-    with pytest.warns(DeprecationWarning, match="deprecated"):
-        simulator = discrete.DeprecatedDiscretePassiveSonarArraySimulator(
-            platform=platform,
-            propagation_model=propagation_tl,
-            signal_models=[TlSignalModel()],
-            ground_truth_paths=[missing_path],
-            propagation_method="transmission_loss",
-        )
-    missing_target_data = simulator._generate_sensor_data_at(timestamp)
-    np.testing.assert_array_equal(
-        missing_target_data.raw_signals,
-        np.zeros((1, 2), dtype=np.complex128),
-    )
-
-
 def test_continuous_build_target_histories_and_modes_cover_wola_and_cola(monkeypatch) -> None:
     """Continuous simulator should validate STFT shape and run both WOLA/COLA synthesis modes."""
     _base, _discrete, continuous = _load_simulator_modules(monkeypatch)
@@ -812,6 +612,15 @@ def test_continuous_build_target_histories_and_modes_cover_wola_and_cola(monkeyp
             )
             return stft, np.array([0.0, 0.5, 1.0]), 2, np.ones(4, dtype=np.float32)
 
+        def stft_geometry(self):
+            return (
+                3,
+                np.array([0.0, 0.5, 1.0], dtype=np.float64),
+                2,
+                np.ones(4, dtype=np.float64),
+                2,
+            )
+
     class BadShapeModel(GoodModel):
         def compute_stft(self, state):
             _ = state
@@ -821,8 +630,8 @@ def test_continuous_build_target_histories_and_modes_cover_wola_and_cola(monkeyp
     path_a = _FakePath(states=[_FakeState(t0), _FakeState(t1)])
     path_b = _FakePath(states=[_FakeState(t0), _FakeState(t1)])
 
-    propagation_stub = SimpleNamespace(
-        propagate_spectrum=lambda platform_state, target_state, freqs: (
+    propagation_stub = _prop_model(
+        lambda platform_state, target_state, freqs: (
             np.ones((1, len(freqs)), dtype=np.complex64),
             0.0,
         ),
@@ -833,12 +642,12 @@ def test_continuous_build_target_histories_and_modes_cover_wola_and_cola(monkeyp
         propagation_model=propagation_stub,
         signal_models=[GoodModel()],
     )
-    ctx = simulator._build_common_context([t0, t1], [GoodModel()], first_state=path_a.states[0])
+    ctx = simulator._build_common_context([t0, t1], [GoodModel()])
     with pytest.raises(RuntimeError, match="must share the same shape"):
         simulator._build_target_histories(ctx, [path_a, path_b], [GoodModel(), BadShapeModel()])
 
-    propagation = SimpleNamespace(
-        propagate_spectrum=lambda platform_state, target_state, freqs: (
+    propagation = _prop_model(
+        lambda platform_state, target_state, freqs: (
             np.ones((1, len(freqs)), dtype=np.complex64),
             0.0,
         ),
@@ -883,21 +692,19 @@ def test_fractional_delay_simulator_covers_errors_fallback_and_outputs(monkeypat
         sampling_rate_hz = 2.0
         frame_len = 4
 
-        def __init__(self, source_signal: np.ndarray, raise_calls: set[int]):
+        def __init__(self, source_signal: np.ndarray):
             self._source_signal = source_signal
-            self._raise_calls = set(raise_calls)
-            self._calls = 0
-            self.stft_calls = 0
 
-        def get_source_signal(self):
-            self._calls += 1
-            if self._calls in self._raise_calls:
-                raise RuntimeError("not ready")
+        @property
+        def num_samples(self) -> int:
+            return len(self._source_signal)
+
+        def get_source_waveform(self, state):
+            _ = state
             return self._source_signal
 
         def compute_stft(self, state):
             _ = state
-            self.stft_calls += 1
             return (
                 np.ones((2, 3), dtype=np.complex64),
                 np.array([0.0, 0.5, 1.0]),
@@ -907,7 +714,7 @@ def test_fractional_delay_simulator_covers_errors_fallback_and_outputs(monkeypat
 
     short_sim = continuous.ContinuousFractionalDelayPassiveSonarArraySimulator(
         platform=_FakePlatform([t0], num_sensors=1),
-        signal_models=[ToggleSourceModel(np.array([1.0, 2.0], dtype=np.complex64), set())],
+        signal_models=[ToggleSourceModel(np.array([1.0, 2.0], dtype=np.complex64))],
         ground_truth_paths=[_FakePath(states=[_FakeState(t0)])],
     )
     with pytest.raises(ValueError, match="Need at least 2 timesteps"):
@@ -915,26 +722,27 @@ def test_fractional_delay_simulator_covers_errors_fallback_and_outputs(monkeypat
 
     no_target_sim = continuous.ContinuousFractionalDelayPassiveSonarArraySimulator(
         platform=_FakePlatform([t0, t1], num_sensors=1),
-        signal_models=[ToggleSourceModel(np.array([1.0, 2.0], dtype=np.complex64), set())],
+        signal_models=[ToggleSourceModel(np.array([1.0, 2.0], dtype=np.complex64))],
         ground_truth_paths=[],
     )
-    with pytest.raises(ValueError, match="requires at least one target"):
-        list(no_target_sim.sensor_data_gen())
+    # Zero targets should produce noise-only output without raising.
+    no_target_batches = list(no_target_sim.sensor_data_gen())
+    assert len(no_target_batches) == 2
 
     path_a = _FakePath(states=[_FakeState(t0), _FakeState(t1)])
     path_b = _FakePath(states=[_FakeState(t0), _FakeState(t1)])
     mismatch_sim = continuous.ContinuousFractionalDelayPassiveSonarArraySimulator(
         platform=_FakePlatform([t0, t1], num_sensors=1),
-        propagation_model=SimpleNamespace(
-            propagate_spectrum=lambda platform_state, target_state, freqs: (
+        propagation_model=_prop_model(
+            lambda platform_state, target_state, freqs: (
                 np.ones((1, len(freqs)), dtype=np.complex64),
                 0.0,
             ),
             compute_sensor_delays=lambda platform_state, target_state: np.array([0.0]),
         ),
         signal_models=[
-            ToggleSourceModel(np.array([1.0, 2.0, 3.0, 4.0], dtype=np.complex64), set()),
-            ToggleSourceModel(np.array([1.0, 2.0, 3.0], dtype=np.complex64), set()),
+            ToggleSourceModel(np.array([1.0, 2.0, 3.0, 4.0], dtype=np.complex64)),
+            ToggleSourceModel(np.array([1.0, 2.0, 3.0], dtype=np.complex64)),
         ],
         ground_truth_paths=[path_a, path_b],
     )
@@ -958,11 +766,10 @@ def test_fractional_delay_simulator_covers_errors_fallback_and_outputs(monkeypat
 
     model = ToggleSourceModel(
         np.array([1.0 + 0.0j, 2.0 + 0.0j, 3.0 + 0.0j, 4.0 + 0.0j], dtype=np.complex64),
-        raise_calls={1, 3},
     )
 
     class Noise:
-        def generate(self, num_sensors):
+        def generate(self, num_sensors, num_samples=None):
             return np.ones((num_sensors, 2), dtype=np.complex64)
 
     class Steering:
@@ -976,8 +783,8 @@ def test_fractional_delay_simulator_covers_errors_fallback_and_outputs(monkeypat
 
     success_sim = continuous.ContinuousFractionalDelayPassiveSonarArraySimulator(
         platform=_FakePlatform([t0, t1], num_sensors=1),
-        propagation_model=SimpleNamespace(
-            propagate_spectrum=lambda platform_state, target_state, freqs: (
+        propagation_model=_prop_model(
+            lambda platform_state, target_state, freqs: (
                 np.ones((1, len(freqs)), dtype=np.complex64),
                 0.0,
             ),
@@ -993,7 +800,6 @@ def test_fractional_delay_simulator_covers_errors_fallback_and_outputs(monkeypat
     )
     generated = list(success_sim.sensor_data_gen())
     assert [ts for ts, _ in generated] == [t0, t1]
-    assert model.stft_calls >= 2
     assert fade_calls["in"] >= 1
     assert fade_calls["out"] >= 1
     assert all(np.isfinite(next(iter(payload)).raw_signals).all() for _, payload in generated)
@@ -1051,8 +857,10 @@ def test_continuous_stft_interp_pads_sensor_lengths_and_fractional_paths_without
     class SimpleSource:
         sampling_rate_hz = 2.0
         frame_len = 4
+        num_samples = 4
 
-        def get_source_signal(self):
+        def get_source_waveform(self, state):
+            _ = state
             return np.array([1.0, 2.0, 3.0, 4.0], dtype=np.complex64)
 
         def compute_stft(self, state):
@@ -1066,8 +874,8 @@ def test_continuous_stft_interp_pads_sensor_lengths_and_fractional_paths_without
 
     frac = continuous.ContinuousFractionalDelayPassiveSonarArraySimulator(
         platform=_FakePlatform([t0, t1], num_sensors=1),
-        propagation_model=SimpleNamespace(
-            propagate_spectrum=lambda platform_state, target_state, freqs: (
+        propagation_model=_prop_model(
+            lambda platform_state, target_state, freqs: (
                 np.ones((1, len(freqs)), dtype=np.complex64),
                 0.0,
             ),

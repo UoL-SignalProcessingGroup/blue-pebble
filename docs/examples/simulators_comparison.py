@@ -222,7 +222,7 @@ measured_signal_model = BroadbandRecordedSignal(
 ssp = Constant(speed=1500.0)
 bathymetry = FlatBathymetry(depth=-100.0)
 
-prop_model_to_use = "cylin"
+prop_model_to_use = "rtrs"
 
 if prop_model_to_use == "rtrs":
     prop_model = rtrsAcousticPropagationModel(
@@ -256,17 +256,8 @@ else:
 # ## Source Spectrograms
 
 # %%
-try:
-    source_signal_synthetic = synthetic_signal_model.get_source_signal()
-except RuntimeError:
-    synthetic_signal_model.compute_stft(target_states[0])
-    source_signal_synthetic = synthetic_signal_model.get_source_signal()
-
-try:
-    source_signal_measured = measured_signal_model.get_source_signal()
-except RuntimeError:
-    measured_signal_model.compute_stft(target_states[0])
-    source_signal_measured = measured_signal_model.get_source_signal()
+source_signal_synthetic = synthetic_signal_model.get_source_waveform(target_states[0])
+source_signal_measured = measured_signal_model.get_source_waveform(target_states[0])
 
 synthetic_source_real = np.real(source_signal_synthetic)
 measured_source_real = np.real(source_signal_measured)

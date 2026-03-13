@@ -161,6 +161,35 @@ class NarrowbandSignalBase(DiscreteTimestepSignal, ABC):
             np.arange(sample_count, dtype=float) / self.sampling_rate_hz + float(start_time_s),
         )
 
+    def _generate_base_signal(self, source: "State") -> Complex128Array:
+        """Generate the full-duration source waveform at zero delay and unit TL.
+
+        This implements the interface required by :class:`~bluepebble.signal.base.Signal`
+        so that narrowband signal models are compatible with
+        :class:`~bluepebble.simulator.DiscretePassiveSonarArraySimulator`.
+
+        Parameters
+        ----------
+        source : State
+            Source state with tonal metadata.
+
+        Returns
+        -------
+        Complex128Array
+            1-D complex waveform of length ``num_samples``.
+
+        """
+        time_array_s = self._build_time_array()
+        amplitudes_upa, frequencies_hz, phases_rad = self._extract_tonal_metadata(source)
+
+        freq_col = frequencies_hz[:, np.newaxis]
+        phase_col = phases_rad[:, np.newaxis]
+        amp_col = amplitudes_upa[:, np.newaxis]
+        time_row = time_array_s[np.newaxis, :]
+
+        components = amp_col * np.exp(1j * (2 * np.pi * freq_col * time_row + phase_col))
+        return cast(Complex128Array, np.sum(components, axis=0))
+
     def _synthesise_sensor_signals(
         self,
         received_amplitude_upa: FloatArray,
@@ -307,7 +336,7 @@ class BroadbandStftSignalBase(ContinuousTimestepSignal, ABC):
         self._source_signal: ComplexArray | None = None
 
     @abstractmethod
-    def _generate_source_signal(self, source: "State") -> ComplexArray:
+    def _generate_base_signal(self, source: "State") -> ComplexArray:
         """Generate full-duration source waveform for STFT processing."""
 
     def compute_stft(self, source: "State") -> CachedStftResult:
@@ -332,7 +361,7 @@ class BroadbandStftSignalBase(ContinuousTimestepSignal, ABC):
                 cast(FloatArray, self._window),
             )
 
-        self._source_signal = self._generate_source_signal(source)
+        self._source_signal = self._generate_base_signal(source)
 
         stft, freq_normalized, hop, window = compute_stft(
             self._source_signal, self.frame_len, self.hop_factor, self.window_type
@@ -393,6 +422,24 @@ class BroadbandStftSignalBase(ContinuousTimestepSignal, ABC):
 
         return self._source_signal
 
+    def get_source_waveform(self, source: "State") -> ComplexArray:
+        """Return the cached source waveform, computing it on first call.
+
+        Parameters
+        ----------
+        source : State
+            Source state used to generate the waveform if not yet cached.
+
+        Returns
+        -------
+        ComplexArray
+            Full-duration source waveform.
+
+        """
+        if self._source_signal is None:
+            self.compute_stft(source)
+        return cast(ComplexArray, self._source_signal)
+
     def generate(
         self,
         source: "State",
@@ -418,6 +465,26 @@ class BroadbandStftSignalBase(ContinuousTimestepSignal, ABC):
             "ContinuousPassiveSonarArraySimulator."
         )
         raise NotImplementedError(msg)
+
+    def stft_geometry(self) -> tuple[int, FloatArray, int, FloatArray, int]:
+        """Return STFT geometry derived purely from signal model properties.
+
+        Returns
+        -------
+        tuple of (int, FloatArray, int, FloatArray, int)
+            ``(num_freq_bins, frequencies_hz, hop, window, num_frames)``.
+            No source State is required.
+
+        """
+        stft, freq_normalized, hop, window = compute_stft(
+            np.zeros(self.num_samples, dtype=np.complex64),
+            self.frame_len,
+            self.hop_factor,
+            self.window_type,
+        )
+        num_frames, num_freq_bins = stft.shape
+        freqs = np.asarray(freq_normalized * self.sampling_rate_hz, dtype=np.float64)
+        return num_freq_bins, freqs, int(hop), np.asarray(window, dtype=np.float64), num_frames
 
     def reset(self) -> None:
         """Clear cached STFT and source-signal state."""
