@@ -231,6 +231,14 @@ class DiscretePassiveSonarArraySimulator(PassiveSonarArraySimulatorBase):
         spectrum_propagation_model = cast(_SpectrumPropagationModel, self.propagation_model)
 
         all_timestamps = self._sorted_timestamps()
+
+        if not all_timestamps:
+            msg = (
+                "platform has no movement states; call platform.move() before running the "
+                "simulator"
+            )
+            raise ValueError(msg)
+
         ground_truth_paths = self.ground_truth_paths or []
         signal_models_list = self._resolve_signal_models(len(ground_truth_paths))
 

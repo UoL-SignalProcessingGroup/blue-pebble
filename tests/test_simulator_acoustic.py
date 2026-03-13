@@ -298,6 +298,38 @@ def test_passive_sensor_data_gen_yields_sorted_unique_timestamps(monkeypatch) ->
     assert all(len(sensor_data_set) == 1 for _, sensor_data_set in generated)
 
 
+def test_passive_sensor_data_gen_raises_when_platform_has_no_states(monkeypatch) -> None:
+    """sensor_data_gen should raise ValueError when the platform has no movement states."""
+    install_fake_stonesoup(monkeypatch)
+    install_fake_stonesoup_simulator_modules(monkeypatch)
+    install_repo_package(monkeypatch, "bluepebble", "bluepebble")
+    install_repo_package(monkeypatch, "bluepebble.simulator", "bluepebble/simulator")
+    install_repo_package(monkeypatch, "bluepebble.types", "bluepebble/types")
+    _install_fake_acoustic_dependencies(monkeypatch)
+    discrete = load_package_module_from_repo(
+        "bluepebble/simulator/discrete.py",
+        "bluepebble.simulator.discrete",
+    )
+    platform = FakePlatform([], num_sensors=2)
+
+    class FakePropagationModel:
+        def propagate_spectrum(self, platform_state, target_state, frequencies):
+            raise AssertionError("should not be reached")
+
+    simulator = discrete.DiscretePassiveSonarArraySimulator(
+        platform=platform,
+        propagation_model=FakePropagationModel(),
+        signal_models=[],
+        noise_model=None,
+        beamformer=None,
+        steering_calculator=None,
+        ground_truth_paths=[],
+    )
+
+    with pytest.raises(ValueError, match="platform has no movement states"):
+        list(simulator.sensor_data_gen())
+
+
 def test_passive_generate_sensor_data_uses_zero_signal_when_target_absent(monkeypatch) -> None:
     """A timestep with no matching target state should still produce zero-filled sensor data."""
     acoustic = _load_acoustic_module(monkeypatch)
