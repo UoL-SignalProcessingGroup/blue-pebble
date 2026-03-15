@@ -11,7 +11,7 @@ from scipy import signal as scipy_signal
 from scipy.io import wavfile
 from stonesoup.base import Property
 
-from .base import ComplexArray, Signal, _get_source_metadata
+from .base import ComplexArray, _get_source_metadata, _SignalBase
 from .utils import compute_stft
 
 if TYPE_CHECKING:
@@ -78,7 +78,7 @@ def _extract_tonal_metadata(
     )
 
 
-class AnthropogenicSignal(Signal, ABC):
+class AnthropogenicSignal(_SignalBase, ABC):
     """Base class for STFT-first anthropogenic signal models.
 
     Lifecycle
@@ -230,32 +230,6 @@ class AnthropogenicSignal(Signal, ABC):
         if self._source_signal is None:
             self.compute_stft(source)
         return cast(ComplexArray, self._source_signal)
-
-    def generate(
-        self,
-        source: "State",
-        sensor_delays_s: ArrayLike,
-        tloss_db: ArrayLike | float,
-        propagation_time_s: float,
-    ) -> ComplexArray:
-        """Reject per-timestep generation for STFT-first models.
-
-        Anthropogenic models are designed for frequency-domain
-        processing via :meth:`compute_stft`.
-
-        Raises
-        ------
-        NotImplementedError
-            Always raised for this base implementation.
-
-        """
-        _ = source, sensor_delays_s, tloss_db, propagation_time_s
-        msg = (
-            f"{type(self).__name__} does not support per-timestep generation. "
-            "Use compute_stft() and process in frequency domain via "
-            "ContinuousPassiveSonarArraySimulator."
-        )
-        raise NotImplementedError(msg)
 
     def stft_geometry(self) -> tuple[int, FloatArray, int, FloatArray, int]:
         """Return STFT geometry derived purely from signal model properties.

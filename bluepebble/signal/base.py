@@ -40,13 +40,14 @@ def _get_source_metadata(source: "State") -> Mapping[str, object]:
     return metadata
 
 
-class Signal(Base, ABC):
-    """Signal base class.
+class _SignalBase(Base, ABC):
+    """Shared sampling properties for all signal and noise models.
 
-    This class provides a common interface for all signal types. It includes a
-    ``generate`` method that handles attenuation and phase shifting for array
-    propagation, and delegates waveform creation to subclass-specific
-    ``_generate_base_signal`` implementations.
+    Provides ``duration_s``, ``sampling_rate_hz``, and the derived
+    ``num_samples`` property.  Both :class:`Signal` (per-timestep path) and
+    :class:`~bluepebble.signal.anthropogenic.AnthropogenicSignal` (STFT-first
+    path) inherit from this class so that they share a common parameter
+    contract without one being a subtype of the other.
 
     Parameters
     ----------
@@ -72,13 +73,25 @@ class Signal(Base, ABC):
         """
         return int(self.duration_s * self.sampling_rate_hz)
 
+
+class Signal(_SignalBase, ABC):
+    """Per-timestep signal base class.
+
+    Provides a ``generate`` method that handles attenuation and phase shifting
+    for array propagation and delegates waveform creation to subclass-specific
+    ``_generate_base_signal`` implementations.
+
+    For STFT-first (continuous) signal models see
+    :class:`~bluepebble.signal.anthropogenic.AnthropogenicSignal`, which shares
+    the same ``duration_s`` / ``sampling_rate_hz`` contract via
+    :class:`_SignalBase` but does not implement ``generate``.
+
+    """
+
     def get_source_waveform(self, source: "State") -> ComplexArray:
         """Return the full-duration source waveform for this signal model.
 
-        The default implementation delegates to :meth:`_generate_base_signal`.
-        Subclasses that cache the waveform (e.g. ``AnthropogenicSignalBase``)
-        override this to compute it on first call and return the cached result
-        on subsequent calls.
+        Delegates to :meth:`_generate_base_signal`.
 
         Parameters
         ----------

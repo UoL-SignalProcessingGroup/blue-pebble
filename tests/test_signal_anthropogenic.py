@@ -83,21 +83,6 @@ def test_anthropogenic_base_caches_and_resets(monkeypatch) -> None:
     assert model.calls == 2
 
 
-def test_anthropogenic_base_generate_always_raises(monkeypatch) -> None:
-    """AnthropogenicSignal should reject per-timestep generation API usage."""
-    anthropogenic_base, _, _ = _load_anthropogenic_modules(monkeypatch)
-
-    class DummyModel(anthropogenic_base.AnthropogenicSignal):
-        def _generate_base_signal(self, source) -> np.ndarray:
-            _ = source
-            return np.ones(self.num_samples, dtype=np.float64)
-
-    model = DummyModel(duration_s=1.0, sampling_rate_hz=16)
-
-    with pytest.raises(NotImplementedError, match="does not support per-timestep generation"):
-        model.generate(SimpleNamespace(), np.array([0.0]), 0.0, 0.0)
-
-
 def test_synthetic_signal_compute_stft_contract(monkeypatch) -> None:
     """SyntheticSignal should expose STFT outputs and cache source signal."""
     _, anthropogenic_models, _ = _load_anthropogenic_modules(monkeypatch)
