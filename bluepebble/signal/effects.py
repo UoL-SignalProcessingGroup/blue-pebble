@@ -1,13 +1,11 @@
 """Signal post-processing effects."""
 
 from abc import ABC, abstractmethod
-from typing import Any, TypeAlias
 
 import numpy as np
-from numpy.typing import NDArray
 from stonesoup.base import Base, Property
 
-ComplexArray: TypeAlias = NDArray[np.complexfloating[Any, Any]]
+from .base import ComplexArray
 
 
 class Effect(Base, ABC):

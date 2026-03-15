@@ -66,6 +66,60 @@ class Signal(Base, ABC):
         """
         return np.asarray(self._generate_base_signal(source), dtype=np.complex128)  # type: ignore[attr-defined]
 
+    def _apply_propagation(
+        self,
+        base_signal: ComplexArray,
+        sensor_delays_s: NDArray[np.float64],
+        tloss_db: ArrayLike | float,
+        propagation_time_s: float,
+    ) -> ComplexArray:
+        """Apply transmission loss and per-sensor phase delays to a base signal.
+
+        Parameters
+        ----------
+        base_signal : ComplexArray
+            1-D complex source waveform with length ``num_samples``.
+        sensor_delays_s : NDArray[np.float64]
+            1-D array of per-sensor relative delays in seconds.
+        tloss_db : ArrayLike | float
+            Transmission loss in dB. Either a scalar applied uniformly across all
+            frequencies, or a 1-D array of length ``num_samples`` for
+            frequency-dependent loss.
+        propagation_time_s : float
+            Propagation time from the source to the array origin in seconds.
+
+        Returns
+        -------
+        ComplexArray
+            Complex signal matrix with shape ``(num_sensors, num_samples)``.
+
+        """
+        num_samples = len(base_signal)
+        signal_fft = np.fft.fft(base_signal)
+
+        tloss = np.asarray(tloss_db, dtype=float)
+        if tloss.ndim == 0:
+            signal_fft = signal_fft * (10.0 ** (-float(tloss) / 20.0))
+        elif tloss.ndim == 1:
+            if len(tloss) != num_samples:
+                msg = (
+                    "tloss_db array must have length equal to num_samples when "
+                    "frequency-dependent loss is provided"
+                )
+                raise ValueError(msg)
+            signal_fft = signal_fft * (10.0 ** (-tloss / 20.0))
+        else:
+            msg = "tloss_db must be scalar-like or one-dimensional"
+            raise ValueError(msg)
+
+        fft_freqs_hz = np.fft.fftfreq(num_samples, d=1.0 / self.sampling_rate_hz)
+        total_delays_s = float(propagation_time_s) + sensor_delays_s
+        phase_shifts = np.exp(
+            -1j * 2.0 * np.pi * total_delays_s[:, np.newaxis] * fft_freqs_hz[np.newaxis, :]
+        )
+        signals_fft: ComplexArray = signal_fft[np.newaxis, :] * phase_shifts
+        return np.fft.ifft(signals_fft, axis=1).astype(np.complex128)
+
     def generate(
         self,
         source: "State",
@@ -118,34 +172,4 @@ class Signal(Base, ABC):
         elif len(base_signal) > self.num_samples:
             base_signal = base_signal[: self.num_samples]
 
-        signal_fft = np.fft.fft(base_signal)
-        tloss = np.asarray(tloss_db, dtype=float)
-        if tloss.ndim == 0:
-            signal_fft = signal_fft * (10.0 ** (-float(tloss) / 20.0))
-        elif tloss.ndim == 1:
-            if len(tloss) != self.num_samples:
-                msg = (
-                    "tloss_db array must have length equal to num_samples when "
-                    "frequency-dependent loss is provided"
-                )
-                raise ValueError(msg)
-            signal_fft = signal_fft * (10.0 ** (-tloss / 20.0))
-        else:
-            msg = "tloss_db must be scalar-like or one-dimensional"
-            raise ValueError(msg)
-
-        fft_freqs_hz = np.fft.fftfreq(self.num_samples, d=1.0 / self.sampling_rate_hz)
-        total_delays_s = float(propagation_time_s) + sensor_delays
-        phase_shifts = np.exp(
-            -1j * 2.0 * np.pi * total_delays_s[:, np.newaxis] * fft_freqs_hz[np.newaxis, :]
-        )
-        signals_fft: ComplexArray = signal_fft[np.newaxis, :] * phase_shifts
-        return np.fft.ifft(signals_fft, axis=1).astype(np.complex128)
-
-
-class DiscreteTimestepSignal(Signal):
-    """Discrete timestep signal class."""
-
-
-class ContinuousTimestepSignal(Signal):
-    """Continuous timestep signal class."""
+        return self._apply_propagation(base_signal, sensor_delays, tloss_db, propagation_time_s)

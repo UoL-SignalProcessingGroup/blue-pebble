@@ -10,14 +10,13 @@ from scipy.stats import levy_stable
 from stonesoup.base import Property
 
 from ..models.environment.sound_speed_profile import SoundSpeedProfile
-from .base import Signal
+from .base import ComplexArray, Signal
 from .effects import Effect
 
 if TYPE_CHECKING:
     from stonesoup.types.state import State
 
 FloatArray: TypeAlias = NDArray[np.float64]
-ComplexArray: TypeAlias = NDArray[np.complex128]
 
 
 class CallEvent(TypedDict):
@@ -534,7 +533,6 @@ class DiffuseSnappingShrimpSignal(Signal):
         """
         sensor_delays = np.asarray(sensor_delays_s, dtype=float)
         final_signals = np.zeros((len(sensor_delays), self.num_samples), dtype=np.complex128)
-        fft_freqs_hz = np.fft.fftfreq(self.num_samples, 1 / self.sampling_rate_hz)
 
         source_position = _get_source_position(source)
         speed_of_sound_mps = self.ssp.calculate(source_position[2])
@@ -549,28 +547,13 @@ class DiffuseSnappingShrimpSignal(Signal):
             # location inside the colony. Sample uniformly inside a circle to
             # avoid clustering at the center.
             r = self.colony_radius_m * np.sqrt(np.random.uniform(0.0, 1.0))
-            # theta = np.random.uniform(0.0, 2.0 * np.pi)  # not used
-            # radial offset (m) used as a simple proxy for additional path
-            # length; for diffuse ambient this approximation is sufficient.
-            radial_offset_m = r
-            time_perturbation_s = radial_offset_m / speed_of_sound_mps
+            time_perturbation_s = r / speed_of_sound_mps
             perturbed_prop_time_s = propagation_time_s + time_perturbation_s
 
-            # 3. Propagate this individual signal
-            tloss_array = np.asarray(tloss_db, dtype=float)
-            amplitude_scaling = 10 ** (-tloss_array / 20.0)
-            base_signal *= amplitude_scaling
-            base_signal_fft = np.fft.fft(base_signal)
-
-            total_delays_s = perturbed_prop_time_s + sensor_delays
-            phase_shifts = np.exp(
-                -1j * 2 * np.pi * total_delays_s[:, np.newaxis] * fft_freqs_hz[np.newaxis, :]
+            # 3. Propagate this individual signal and add to the final field
+            final_signals += self._apply_propagation(
+                base_signal, sensor_delays, tloss_db, perturbed_prop_time_s
             )
-            signals_fft = base_signal_fft[np.newaxis, :] * phase_shifts
-            sub_source_signals = np.fft.ifft(signals_fft, axis=1)
-
-            # 4. Add to the final signal field
-            final_signals += sub_source_signals
 
         # 5. Apply post-processing effects if any are specified
         if self.effects:

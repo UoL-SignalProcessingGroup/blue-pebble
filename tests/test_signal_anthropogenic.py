@@ -21,28 +21,15 @@ def _load_anthropogenic_modules(monkeypatch):
     install_fake_stonesoup(monkeypatch)
     install_repo_package(monkeypatch, "bluepebble", "bluepebble")
     install_repo_package(monkeypatch, "bluepebble.signal", "bluepebble/signal")
-    install_repo_package(
-        monkeypatch,
-        "bluepebble.signal.anthropogenic",
-        "bluepebble/signal/anthropogenic",
-    )
 
     load_package_module_from_repo("bluepebble/signal/base.py", "bluepebble.signal.base")
     load_package_module_from_repo("bluepebble/signal/utils.py", "bluepebble.signal.utils")
-    anthropogenic_base = load_package_module_from_repo(
-        "bluepebble/signal/anthropogenic/base.py",
-        "bluepebble.signal.anthropogenic.base",
-    )
-    anthropogenic_models = load_package_module_from_repo(
-        "bluepebble/signal/anthropogenic/anthropogenic.py",
-        "bluepebble.signal.anthropogenic.anthropogenic",
-    )
-    anthropogenic_api = load_package_module_from_repo(
-        "bluepebble/signal/anthropogenic/__init__.py",
+    anthropogenic = load_package_module_from_repo(
+        "bluepebble/signal/anthropogenic.py",
         "bluepebble.signal.anthropogenic",
     )
 
-    return anthropogenic_base, anthropogenic_models, anthropogenic_api
+    return anthropogenic, anthropogenic, anthropogenic
 
 
 def _write_pcm_wav(path: Path, fs_hz: int, samples: np.ndarray) -> None:
@@ -58,10 +45,10 @@ def _write_pcm_wav(path: Path, fs_hz: int, samples: np.ndarray) -> None:
 
 
 def test_anthropogenic_base_caches_and_resets(monkeypatch) -> None:
-    """AnthropogenicSignalBase should cache STFT generation and clear on reset."""
+    """AnthropogenicSignal should cache STFT generation and clear on reset."""
     anthropogenic_base, _, _ = _load_anthropogenic_modules(monkeypatch)
 
-    class DummyModel(anthropogenic_base.AnthropogenicSignalBase):
+    class DummyModel(anthropogenic_base.AnthropogenicSignal):
         def __init__(self, **kwargs):
             super().__init__(**kwargs)
             self.calls = 0
@@ -94,10 +81,10 @@ def test_anthropogenic_base_caches_and_resets(monkeypatch) -> None:
 
 
 def test_anthropogenic_base_generate_always_raises(monkeypatch) -> None:
-    """AnthropogenicSignalBase should reject per-timestep generation API usage."""
+    """AnthropogenicSignal should reject per-timestep generation API usage."""
     anthropogenic_base, _, _ = _load_anthropogenic_modules(monkeypatch)
 
-    class DummyModel(anthropogenic_base.AnthropogenicSignalBase):
+    class DummyModel(anthropogenic_base.AnthropogenicSignal):
         def _generate_base_signal(self, source) -> np.ndarray:
             _ = source
             return np.ones(self.num_samples, dtype=np.float64)
@@ -236,7 +223,7 @@ def test_anthropogenic_public_api_exports(monkeypatch) -> None:
     _, _, anthropogenic_api = _load_anthropogenic_modules(monkeypatch)
 
     expected_exports = {
-        "AnthropogenicSignalBase",
+        "AnthropogenicSignal",
         "SyntheticSignal",
         "RecordedSignal",
     }

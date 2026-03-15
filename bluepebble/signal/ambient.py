@@ -1,13 +1,11 @@
 """Statistical ambient noise models for sensor arrays."""
 
 from abc import abstractmethod
-from typing import Any, TypeAlias
 
 import numpy as np
-from numpy.typing import NDArray
 from stonesoup.base import Base, Property
 
-ComplexArray: TypeAlias = NDArray[np.complexfloating[Any, Any]]
+from .base import ComplexArray
 
 
 class AmbientNoise(Base):
