@@ -1,7 +1,6 @@
 """Anthropogenic signal models for sensor arrays."""
 
 from abc import ABC, abstractmethod
-from collections.abc import Mapping
 from fractions import Fraction
 from pathlib import Path
 from typing import TYPE_CHECKING, TypeAlias, cast
@@ -12,7 +11,7 @@ from scipy import signal as scipy_signal
 from scipy.io import wavfile
 from stonesoup.base import Property
 
-from .base import ComplexArray, Signal
+from .base import ComplexArray, Signal, _get_source_metadata
 from .utils import compute_stft
 
 if TYPE_CHECKING:
@@ -45,13 +44,7 @@ def _extract_tonal_metadata(
         If metadata is missing, malformed, or arrays are shape-incompatible.
 
     """
-    metadata = getattr(source, "metadata", None)
-    if metadata is None:
-        msg = "Source state must define metadata for tonal synthesis"
-        raise ValueError(msg)
-    if not isinstance(metadata, Mapping):
-        msg = "Source metadata must be mapping-like"
-        raise ValueError(msg)
+    metadata = _get_source_metadata(source)
 
     required_keys = ("amplitudes_upa", "frequencies_hz", "phases_rad")
     missing_keys = [key for key in required_keys if key not in metadata]

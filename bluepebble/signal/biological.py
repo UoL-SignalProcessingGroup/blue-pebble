@@ -1,6 +1,5 @@
 """Models for biological acoustic signals."""
 
-from collections.abc import Mapping
 from typing import TYPE_CHECKING, TypeAlias, TypedDict
 
 import numpy as np
@@ -10,7 +9,7 @@ from scipy.stats import levy_stable
 from stonesoup.base import Property
 
 from ..models.environment.sound_speed_profile import SoundSpeedProfile
-from .base import ComplexArray, Signal
+from .base import ComplexArray, Signal, _get_source_metadata
 from .effects import Effect
 
 if TYPE_CHECKING:
@@ -27,15 +26,6 @@ class CallEvent(TypedDict):
 
     contour_freqs: list[float]
     amplitude: float
-
-
-def _get_source_metadata(source: "State") -> Mapping[str, object]:
-    """Return validated source metadata mapping."""
-    metadata = getattr(source, "metadata", None)
-    if not isinstance(metadata, Mapping):
-        msg = "Source state metadata must be mapping-like"
-        raise ValueError(msg)
-    return metadata
 
 
 def _get_source_amplitude_upa(source: "State") -> float:

@@ -1,6 +1,7 @@
 """Base signal properties and methods for signal models."""
 
 from abc import ABC
+from collections.abc import Mapping
 from typing import TYPE_CHECKING, TypeAlias
 
 import numpy as np
@@ -11,6 +12,32 @@ if TYPE_CHECKING:
     from stonesoup.types.state import State
 
 ComplexArray: TypeAlias = NDArray[np.complex128]
+
+
+def _get_source_metadata(source: "State") -> Mapping[str, object]:
+    """Validate and return the metadata mapping from a source state.
+
+    Parameters
+    ----------
+    source : State
+        Source state exposing a ``metadata`` attribute.
+
+    Returns
+    -------
+    Mapping[str, object]
+        The validated metadata mapping.
+
+    Raises
+    ------
+    ValueError
+        If ``metadata`` is absent or not mapping-like.
+
+    """
+    metadata = getattr(source, "metadata", None)
+    if not isinstance(metadata, Mapping):
+        msg = "Source state metadata must be mapping-like"
+        raise ValueError(msg)
+    return metadata
 
 
 class Signal(Base, ABC):
