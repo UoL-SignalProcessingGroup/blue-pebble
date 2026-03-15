@@ -40,7 +40,7 @@ def _get_source_metadata(source: "State") -> Mapping[str, object]:
     return metadata
 
 
-class _SignalBase(Base, ABC):
+class Signal(Base, ABC):
     """Shared sampling properties for all signal and noise models.
 
     Provides ``duration_s``, ``sampling_rate_hz``, and the derived
@@ -72,21 +72,6 @@ class _SignalBase(Base, ABC):
 
         """
         return int(self.duration_s * self.sampling_rate_hz)
-
-
-class Signal(_SignalBase, ABC):
-    """Per-timestep signal base class.
-
-    Provides a ``generate`` method that handles attenuation and phase shifting
-    for array propagation and delegates waveform creation to subclass-specific
-    ``_generate_base_signal`` implementations.
-
-    For STFT-first (continuous) signal models see
-    :class:`~bluepebble.signal.anthropogenic.AnthropogenicSignal`, which shares
-    the same ``duration_s`` / ``sampling_rate_hz`` contract via
-    :class:`_SignalBase` but does not implement ``generate``.
-
-    """
 
     def get_source_waveform(self, source: "State") -> ComplexArray:
         """Return the full-duration source waveform for this signal model.

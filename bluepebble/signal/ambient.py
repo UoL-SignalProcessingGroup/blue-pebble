@@ -3,12 +3,12 @@
 from abc import abstractmethod
 
 import numpy as np
-from stonesoup.base import Base, Property
+from stonesoup.base import Property
 
-from .base import ComplexArray
+from .base import ComplexArray, Signal
 
 
-class AmbientNoise(Base):
+class AmbientNoise(Signal):
     """Abstract base class for ambient noise models.
 
     These models generate non-propagating background noise that is present across the entire sensor
@@ -26,8 +26,6 @@ class AmbientNoise(Base):
     """
 
     amplitude_upa: float = Property(doc="The noise amplitude (e.g., in µPa)")
-    duration_s: float = Property(doc="Duration of the signal in seconds")
-    sampling_rate_hz: int = Property(doc="Sampling rate in Hertz")
 
     @property
     def num_samples(self) -> int:
