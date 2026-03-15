@@ -66,18 +66,21 @@ def test_anthropogenic_base_caches_and_resets(monkeypatch) -> None:
     )
 
     source = SimpleNamespace()
-    stft_1, frequencies_1, hop_1, window_1 = model.compute_stft(source)
-    stft_2, frequencies_2, hop_2, window_2 = model.compute_stft(source)
+    stft, frequencies, hop, window = model.compute_stft(source)
 
     assert model.calls == 1
-    assert stft_1 is stft_2
-    np.testing.assert_array_equal(frequencies_1, frequencies_2)
-    assert hop_1 == hop_2 == 4
-    np.testing.assert_array_equal(window_1, window_2)
+    assert stft.shape[1] == 5  # frame_len // 2 + 1 frequency bins
+    assert hop == 4
+
+    with pytest.raises(RuntimeError, match="reset\\(\\)"):
+        model.compute_stft(source)
 
     model.reset()
     with pytest.raises(RuntimeError, match="STFT not computed yet"):
         model.get_stft()
+
+    model.compute_stft(source)
+    assert model.calls == 2
 
 
 def test_anthropogenic_base_generate_always_raises(monkeypatch) -> None:

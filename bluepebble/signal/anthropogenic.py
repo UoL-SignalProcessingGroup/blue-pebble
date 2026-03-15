@@ -79,7 +79,27 @@ def _extract_tonal_metadata(
 
 
 class AnthropogenicSignal(Signal, ABC):
-    """Base class for STFT-first anthropogenic signal models."""
+    """Base class for STFT-first anthropogenic signal models.
+
+    Lifecycle
+    ---------
+    These models generate their full-duration source waveform once and cache it
+    as an STFT matrix for frequency-domain propagation by
+    :class:`~bluepebble.simulator.continuous.ContinuousPassiveSonarArraySimulator`.
+
+    The expected call sequence for a single simulation run is:
+
+    1. Call :meth:`compute_stft` once with the source state to build and cache
+       the STFT.
+    2. Pass the model to the simulator, which reads the cached STFT via
+       :meth:`get_stft` for each frame.
+
+    To reuse the same model instance across multiple simulation runs (e.g. with
+    a different source state or after changing signal parameters), call
+    :meth:`reset` before the next :meth:`compute_stft` call.  Calling
+    :meth:`compute_stft` a second time without resetting raises
+    :exc:`RuntimeError`.
+    """
 
     frame_len: int = Property(default=1024, doc="STFT frame length in samples")
     hop_factor: int = Property(
@@ -104,6 +124,10 @@ class AnthropogenicSignal(Signal, ABC):
     def compute_stft(self, source: "State") -> CachedStftResult:
         """Compute and cache STFT outputs for the source signal.
 
+        This method may only be called once per simulation run.  If the cache
+        is already populated, :exc:`RuntimeError` is raised — call
+        :meth:`reset` first to clear it before recomputing.
+
         Parameters
         ----------
         source : State
@@ -114,14 +138,19 @@ class AnthropogenicSignal(Signal, ABC):
         CachedStftResult
             Cached STFT tuple ``(stft, frequencies_hz, hop_samples, window)``.
 
+        Raises
+        ------
+        RuntimeError
+            If :meth:`compute_stft` has already been called on this instance.
+            Call :meth:`reset` to clear the cache before recomputing.
+
         """
         if self._stft_cache is not None:
-            return (
-                self._stft_cache,
-                cast(FloatArray, self._frequencies),
-                cast(int, self._hop),
-                cast(FloatArray, self._window),
+            msg = (
+                f"{type(self).__name__}.compute_stft() has already been called. "
+                "Call reset() first to clear the cache before recomputing."
             )
+            raise RuntimeError(msg)
 
         self._source_signal = self._generate_base_signal(source)
 
@@ -249,7 +278,16 @@ class AnthropogenicSignal(Signal, ABC):
         return num_freq_bins, freqs, int(hop), np.asarray(window, dtype=np.float64), num_frames
 
     def reset(self) -> None:
-        """Clear cached STFT and source-signal state."""
+        """Clear the cached STFT and source-signal state.
+
+        Call this before reusing a signal model instance across multiple
+        simulation runs, or after changing signal parameters, so that the next
+        call to :meth:`compute_stft` generates a fresh waveform and STFT.
+
+        Subclasses that maintain additional caches (e.g. noise realisations in
+        :class:`SyntheticSignal`) override this method and call ``super().reset()``
+        to ensure all state is cleared.
+        """
         self._stft_cache = None
         self._frequencies = None
         self._hop = None
