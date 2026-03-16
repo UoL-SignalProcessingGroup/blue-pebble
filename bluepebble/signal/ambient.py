@@ -166,13 +166,20 @@ class ColouredNoise(AmbientNoise):
         # 2. Get the corresponding frequencies for the FFT
         freqs = np.fft.fftfreq(n)
 
-        # 3. Create a frequency-domain filter based on the spectral exponent
-        with np.errstate(divide="ignore"):
-            # The filter exponent is half the power exponent because we are filtering amplitude,
-            # not power (Power ∝ Amplitude^2).
+        # 3. Create a frequency-domain filter based on the spectral exponent.
+        #    The filter exponent is half the power exponent because we are filtering amplitude,
+        #    not power (Power ∝ Amplitude^2).
+        #    np.errstate suppresses the RuntimeWarning from 0.0 ** negative_exponent at the DC
+        #    bin; the resulting inf/nan is corrected in the next step.
+        with np.errstate(divide="ignore", invalid="ignore"):
             filter_gain = np.abs(freqs) ** (self.spectral_exponent / 2.0)
 
-        # Avoid division by zero at the DC component (frequency = 0)
+        # The DC bin (f=0) evaluates to 0^(alpha/2), which is 0 for positive alpha and inf/nan
+        # for negative alpha. Either way the power-law shape is undefined at DC. We set the DC
+        # gain to 1 so the bin passes through unattenuated — a pragmatic convention that avoids
+        # a singularity. The consequence is that the DC component of the output is not shaped
+        # by spectral_exponent and will retain the amplitude of the underlying white noise after
+        # normalisation. This is generally negligible for acoustic signals.
         filter_gain[freqs == 0] = 1
 
         # 4. Apply the filter by multiplying in the frequency domain
