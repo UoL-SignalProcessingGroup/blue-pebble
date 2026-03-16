@@ -45,7 +45,7 @@ class Signal(Base):
     ``Signal`` is the public unified root of the signal hierarchy.  All
     concrete signal types — :class:`~bluepebble.signal.biological.Biological`,
     :class:`~bluepebble.signal.anthropogenic.Anthropogenic`, and
-    :class:`~bluepebble.signal.ambient.Ambient` — inherit from it as siblings.
+    :class:`~bluepebble.signal.random.RandomSignal` — inherit from it as siblings.
 
     This class carries only the shared ``duration_s`` / ``sampling_rate_hz``
     parameter contract and the derived ``num_samples`` property.  Each branch

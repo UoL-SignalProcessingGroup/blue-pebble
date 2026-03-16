@@ -70,7 +70,7 @@ def test_signal_generate_applies_tloss_and_sensor_delay_phase(monkeypatch) -> No
 def test_white_and_coloured_noise_generate_expected_shapes(monkeypatch) -> None:
     """Ambient noise generators should return correctly shaped complex arrays."""
     install_fake_stonesoup(monkeypatch)
-    ambient = load_module_from_repo("bluepebble/signal/ambient.py", "bluepebble.signal.ambient")
+    ambient = load_module_from_repo("bluepebble/signal/random.py", "bluepebble.signal.random")
 
     white = ambient.WhiteNoise(amplitude_upa=2.0, duration_s=0.25, sampling_rate_hz=16)
     white_out = white.generate(num_sensors=3)
@@ -137,7 +137,7 @@ def test_synthetic_signal_seed_gives_reproducible_output(monkeypatch) -> None:
 def test_ambient_noise_seed_gives_reproducible_output(monkeypatch) -> None:
     """Same seed should produce identical noise realisations; different seeds should not."""
     install_fake_stonesoup(monkeypatch)
-    ambient = load_module_from_repo("bluepebble/signal/ambient.py", "bluepebble.signal.ambient")
+    ambient = load_module_from_repo("bluepebble/signal/random.py", "bluepebble.signal.random")
 
     a = ambient.WhiteNoise(amplitude_upa=1.0, duration_s=0.5, sampling_rate_hz=16, seed=42)
     b = ambient.WhiteNoise(amplitude_upa=1.0, duration_s=0.5, sampling_rate_hz=16, seed=42)
