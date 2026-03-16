@@ -22,10 +22,24 @@ class AmbientNoise(Signal):
         Duration of the signal in seconds.
     sampling_rate_hz : int
         Sampling rate in Hertz.
+    seed : int or None, optional
+        Seed for the random number generator. When ``None`` (default), the RNG
+        is seeded non-deterministically. Provide an integer for reproducible
+        noise realisations across runs.
 
     """
 
     amplitude_upa: float = Property(doc="The noise amplitude (e.g., in µPa)")
+    seed: int | None = Property(
+        default=None,
+        doc="Seed for the random number generator. ``None`` gives non-deterministic output; "
+        "an integer makes noise realisations reproducible across runs.",
+    )
+
+    def __init__(self, *args, **kwargs) -> None:
+        """Initialise and seed the random number generator."""
+        super().__init__(*args, **kwargs)
+        self._rng = np.random.default_rng(self.seed)
 
     @property
     def num_samples(self) -> int:
@@ -61,9 +75,10 @@ class AmbientNoise(Signal):
         n = num_samples if num_samples is not None else self.num_samples
         # Generate real and imaginary parts from a standard normal distribution
         # and scale by 1/sqrt(2) to ensure the total power is 1.
-        return (np.random.randn(num_sensors, n) + 1j * np.random.randn(num_sensors, n)) / np.sqrt(
-            2
-        )
+        return (
+            self._rng.standard_normal((num_sensors, n))
+            + 1j * self._rng.standard_normal((num_sensors, n))
+        ) / np.sqrt(2)
 
     @abstractmethod
     def generate(self, num_sensors: int = 1, num_samples: int | None = None) -> ComplexArray:

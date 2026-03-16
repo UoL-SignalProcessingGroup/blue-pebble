@@ -56,6 +56,19 @@ def test_white_and_coloured_noise_generate_expected_shapes(monkeypatch) -> None:
     assert np.isfinite(coloured_out).all()
 
 
+def test_ambient_noise_seed_gives_reproducible_output(monkeypatch) -> None:
+    """Same seed should produce identical noise realisations; different seeds should not."""
+    install_fake_stonesoup(monkeypatch)
+    ambient = load_module_from_repo("bluepebble/signal/ambient.py", "bluepebble.signal.ambient")
+
+    a = ambient.WhiteNoise(amplitude_upa=1.0, duration_s=0.5, sampling_rate_hz=16, seed=42)
+    b = ambient.WhiteNoise(amplitude_upa=1.0, duration_s=0.5, sampling_rate_hz=16, seed=42)
+    c = ambient.WhiteNoise(amplitude_upa=1.0, duration_s=0.5, sampling_rate_hz=16, seed=99)
+
+    np.testing.assert_array_equal(a.generate(num_sensors=2), b.generate(num_sensors=2))
+    assert not np.array_equal(a.generate(num_sensors=2), c.generate(num_sensors=2))
+
+
 def test_reverb_invalid_configuration_raises(monkeypatch) -> None:
     """Invalid reverb parameters should raise ValueError."""
     install_fake_stonesoup(monkeypatch)
