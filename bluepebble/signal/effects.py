@@ -25,6 +25,12 @@ class Reverb(Effect):
         default=0.3,
         doc="Mix between wet (reverb) and dry signal (0=dry, 1=wet).",
     )
+    seed: int | None = Property(
+        default=None,
+        doc="Seed for the impulse-response RNG. ``None`` gives a different reverb tail on every "
+        "call; an integer produces the same tail for the same ``duration_s`` and "
+        "``sampling_rate_hz`` across calls and runs.",
+    )
 
     def apply(self, signals: ComplexArray, sampling_rate_hz: int) -> ComplexArray:
         """Apply a simple convolutional reverb effect to the signal.
@@ -45,21 +51,24 @@ class Reverb(Effect):
         Raises
         ------
         ValueError
-            If ``duration_s`` is not positive or ``wet_dry_mix`` is not in ``(0, 1]``.
+            If ``duration_s`` is not positive or ``wet_dry_mix`` is not in ``[0, 1]``.
 
         """
         if self.duration_s <= 0:
             msg = f"duration_s must be positive, got {self.duration_s}"
             raise ValueError(msg)
-        if not 0 < self.wet_dry_mix <= 1:
-            msg = f"wet_dry_mix must be in (0, 1], got {self.wet_dry_mix}"
+        if not 0 <= self.wet_dry_mix <= 1:
+            msg = f"wet_dry_mix must be in [0, 1], got {self.wet_dry_mix}"
             raise ValueError(msg)
 
-        # Generate a synthetic Impulse Response (IR) for the reverb effect
+        # Generate a synthetic Impulse Response (IR) for the reverb effect.
+        # Re-create the RNG from seed each call so the same seed always produces the same IR,
+        # regardless of how many times apply() has been called previously.
+        rng = np.random.default_rng(self.seed)
         ir_samples = int(self.duration_s * sampling_rate_hz)
         time = np.arange(ir_samples) / sampling_rate_hz
         decay = np.exp(-5.0 * time / self.duration_s)  # Exponential decay
-        ir = decay * np.random.randn(ir_samples)  # White noise modulated by decay
+        ir = decay * rng.standard_normal(ir_samples)  # White noise modulated by decay
         ir_max = np.max(np.abs(ir))
         if ir_max > 0:
             ir /= ir_max  # Normalise the IR

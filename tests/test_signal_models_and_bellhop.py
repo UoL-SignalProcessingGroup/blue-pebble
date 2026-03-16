@@ -56,6 +56,51 @@ def test_white_and_coloured_noise_generate_expected_shapes(monkeypatch) -> None:
     assert np.isfinite(coloured_out).all()
 
 
+def test_synthetic_signal_seed_gives_reproducible_output(monkeypatch) -> None:
+    """Same seed should produce identical SyntheticSignal waveforms across instances."""
+    install_fake_stonesoup(monkeypatch)
+    from .support import install_repo_package, load_package_module_from_repo
+
+    install_repo_package(monkeypatch, "bluepebble", "bluepebble")
+    install_repo_package(monkeypatch, "bluepebble.signal", "bluepebble/signal")
+    load_package_module_from_repo("bluepebble/signal/base.py", "bluepebble.signal.base")
+    load_package_module_from_repo("bluepebble/signal/utils.py", "bluepebble.signal.utils")
+    anthropogenic = load_package_module_from_repo(
+        "bluepebble/signal/anthropogenic.py", "bluepebble.signal.anthropogenic"
+    )
+
+    from types import SimpleNamespace
+
+    source = SimpleNamespace(
+        metadata={
+            "amplitudes_upa": np.array([1.0]),
+            "frequencies_hz": np.array([4.0]),
+            "phases_rad": np.array([0.0]),
+        }
+    )
+
+    def _make(seed):
+        return anthropogenic.SyntheticSignal(
+            duration_s=0.5,
+            sampling_rate_hz=32,
+            frame_len=16,
+            hop_factor=4,
+            noise_amplitude_upa=1.0,
+            seed=seed,
+        )
+
+    a = _make(42)
+    b = _make(42)
+    c = _make(99)
+
+    a.compute_stft(source)
+    b.compute_stft(source)
+    c.compute_stft(source)
+
+    np.testing.assert_array_equal(a.get_source_signal(), b.get_source_signal())
+    assert not np.allclose(a.get_source_signal(), c.get_source_signal())
+
+
 def test_ambient_noise_seed_gives_reproducible_output(monkeypatch) -> None:
     """Same seed should produce identical noise realisations; different seeds should not."""
     install_fake_stonesoup(monkeypatch)
@@ -80,7 +125,7 @@ def test_reverb_invalid_configuration_raises(monkeypatch) -> None:
         effects.Reverb(duration_s=0.0, wet_dry_mix=0.3).apply(signal, sampling_rate_hz=8)
 
     with pytest.raises(ValueError, match="wet_dry_mix"):
-        effects.Reverb(duration_s=1.0, wet_dry_mix=0.0).apply(signal, sampling_rate_hz=8)
+        effects.Reverb(duration_s=1.0, wet_dry_mix=-0.1).apply(signal, sampling_rate_hz=8)
 
 
 def test_reverb_applies_mix_with_deterministic_ir(monkeypatch) -> None:
@@ -88,16 +133,43 @@ def test_reverb_applies_mix_with_deterministic_ir(monkeypatch) -> None:
     install_fake_stonesoup(monkeypatch)
     effects = load_module_from_repo("bluepebble/signal/effects.py", "bluepebble.signal.effects")
 
-    monkeypatch.setattr(effects.np.random, "randn", lambda n: np.ones(n, dtype=float))
-
     signal = np.vstack([np.arange(8, dtype=float), np.arange(8, dtype=float)]).astype(
         np.complex128
     )
-    effect = effects.Reverb(duration_s=0.25, wet_dry_mix=0.5)
+    effect = effects.Reverb(duration_s=0.25, wet_dry_mix=0.5, seed=42)
     reverbed = effect.apply(signal, sampling_rate_hz=8)
 
     assert reverbed.shape == signal.shape
     assert not np.allclose(reverbed, signal)
+
+
+def test_reverb_seed_gives_reproducible_ir(monkeypatch) -> None:
+    """Same seed should produce identical reverb output; seed=None should be non-deterministic."""
+    install_fake_stonesoup(monkeypatch)
+    effects = load_module_from_repo("bluepebble/signal/effects.py", "bluepebble.signal.effects")
+
+    signal = np.ones((1, 8), dtype=np.complex128)
+
+    effect = effects.Reverb(duration_s=0.25, wet_dry_mix=0.5, seed=7)
+    out_a = effect.apply(signal, sampling_rate_hz=8)
+    out_b = effect.apply(signal, sampling_rate_hz=8)
+    np.testing.assert_array_equal(out_a, out_b)
+
+    effect_other = effects.Reverb(duration_s=0.25, wet_dry_mix=0.5, seed=99)
+    out_c = effect_other.apply(signal, sampling_rate_hz=8)
+    assert not np.allclose(out_a, out_c)
+
+
+def test_reverb_wet_dry_mix_zero_is_passthrough(monkeypatch) -> None:
+    """wet_dry_mix=0 should return the dry signal unchanged."""
+    install_fake_stonesoup(monkeypatch)
+    effects = load_module_from_repo("bluepebble/signal/effects.py", "bluepebble.signal.effects")
+
+    signal = np.ones((2, 8), dtype=np.complex128)
+    reverbed = effects.Reverb(duration_s=0.25, wet_dry_mix=0.0, seed=1).apply(
+        signal, sampling_rate_hz=8
+    )
+    np.testing.assert_array_equal(reverbed, signal)
 
 
 class _FakeShadeFile:

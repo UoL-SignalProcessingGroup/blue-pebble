@@ -328,6 +328,9 @@ class SyntheticSignal(AnthropogenicSignal):
     noise_is_constant : bool, optional
         If True, use same noise realization for all signal generations (constant scalar over time).
         If False, generate new random noise each time. Default is True.
+    seed : int or None, optional
+        Seed for the random number generator. ``None`` (default) gives non-deterministic output;
+        an integer makes noise realisations reproducible across runs.
 
     Examples
     --------
@@ -381,10 +384,16 @@ class SyntheticSignal(AnthropogenicSignal):
         doc="If True, use same noise realization across calls; "
         "if False, generate new noise each time",
     )
+    seed: int | None = Property(
+        default=None,
+        doc="Seed for the random number generator. ``None`` gives non-deterministic output; "
+        "an integer makes noise realisations reproducible across runs.",
+    )
 
     def __init__(self, *args: object, **kwargs: object) -> None:
         """Initialise realistic ship signal generator."""
         super().__init__(*args, **kwargs)
+        self._rng = np.random.default_rng(self.seed)
         self._noise_realization: ComplexArray | None = None
         self._tonal_realizations: list[ComplexArray] | None = None
 
@@ -432,9 +441,10 @@ class SyntheticSignal(AnthropogenicSignal):
             if tonal_realizations is not None:
                 base_noise = tonal_realizations[idx]
             else:
-                noise_real = np.random.randn(self.num_samples)
-                noise_imag = np.random.randn(self.num_samples)
-                noise = noise_real + 1j * noise_imag
+                noise = (
+                    self._rng.standard_normal(self.num_samples)
+                    + 1j * self._rng.standard_normal(self.num_samples)
+                )
 
                 # Bandpass filter: Create filter in frequency domain
                 freq_bins = np.fft.fftfreq(self.num_samples, 1 / self.sampling_rate_hz)
@@ -494,9 +504,10 @@ class SyntheticSignal(AnthropogenicSignal):
                 else:
                     # Stochastic: start from white noise then shape
                     noise_std = np.sqrt(noise_variance)
-                    noise_real = noise_std * np.random.randn(self.num_samples)
-                    noise_imag = noise_std * np.random.randn(self.num_samples)
-                    white_noise = noise_real + 1j * noise_imag
+                    white_noise = noise_std * (
+                        self._rng.standard_normal(self.num_samples)
+                        + 1j * self._rng.standard_normal(self.num_samples)
+                    )
                     white_noise_fft = np.fft.fft(white_noise)
                     colored_noise_fft = white_noise_fft * noise_filter
 
