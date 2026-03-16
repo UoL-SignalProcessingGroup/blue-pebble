@@ -77,12 +77,13 @@ def test_generate_pads_short_base_signal(monkeypatch) -> None:
 
     model = ShortSignal(duration_s=0.5, sampling_rate_hz=8)
 
-    output = model.generate(
-        source=None,
-        sensor_delays_s=np.array([0.0]),
-        tloss_db=0.0,
-        propagation_time_s=0.0,
-    )
+    with pytest.warns(UserWarning, match="zero-padding"):
+        output = model.generate(
+            source=None,
+            sensor_delays_s=np.array([0.0]),
+            tloss_db=0.0,
+            propagation_time_s=0.0,
+        )
 
     assert output.shape == (1, 4)
     np.testing.assert_allclose(
@@ -106,12 +107,13 @@ def test_generate_truncates_long_base_signal(monkeypatch) -> None:
 
     model = LongSignal(duration_s=0.5, sampling_rate_hz=8)
 
-    output = model.generate(
-        source=None,
-        sensor_delays_s=np.array([0.0]),
-        tloss_db=0.0,
-        propagation_time_s=0.0,
-    )
+    with pytest.warns(UserWarning, match="truncating"):
+        output = model.generate(
+            source=None,
+            sensor_delays_s=np.array([0.0]),
+            tloss_db=0.0,
+            propagation_time_s=0.0,
+        )
 
     assert output.shape == (1, 4)
     np.testing.assert_allclose(

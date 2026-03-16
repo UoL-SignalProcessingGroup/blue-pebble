@@ -1,5 +1,6 @@
 """Base signal properties and methods for signal models."""
 
+import warnings
 from abc import ABC
 from collections.abc import Mapping
 from typing import TYPE_CHECKING, TypeAlias
@@ -144,10 +145,20 @@ class Signal(_SignalBase, ABC):
 
         if len(base_signal) < self.num_samples:
             pad_width = self.num_samples - len(base_signal)
+            warnings.warn(
+                f"{type(self).__name__}._generate_base_signal() returned {len(base_signal)} "
+                f"samples but num_samples={self.num_samples}; zero-padding the remainder.",
+                stacklevel=3,
+            )
             base_signal = np.concatenate(
                 [base_signal, np.zeros(pad_width, dtype=np.complex128)],
             )
         elif len(base_signal) > self.num_samples:
+            warnings.warn(
+                f"{type(self).__name__}._generate_base_signal() returned {len(base_signal)} "
+                f"samples but num_samples={self.num_samples}; truncating the excess.",
+                stacklevel=3,
+            )
             base_signal = base_signal[: self.num_samples]
 
         return base_signal
