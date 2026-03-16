@@ -111,6 +111,84 @@ def test_synthetic_signal_compute_stft_contract(monkeypatch) -> None:
     assert model.get_source_signal().shape == (16,)
 
 
+def test_synthetic_signal_rejects_non_positive_tonal_bandwidth(monkeypatch) -> None:
+    """SyntheticSignal should reject non-positive tonal bandwidth."""
+    _, anthropogenic_models, _ = _load_anthropogenic_modules(monkeypatch)
+
+    with pytest.raises(ValueError, match="tonal_bandwidth_hz must be finite and > 0"):
+        anthropogenic_models.SyntheticSignal(
+            duration_s=1.0,
+            sampling_rate_hz=16,
+            frame_len=8,
+            hop_factor=2,
+            tonal_bandwidth_hz=0.0,
+        )
+
+
+def test_synthetic_signal_rejects_negative_noise_variance(monkeypatch) -> None:
+    """SyntheticSignal should reject negative noise variance."""
+    _, anthropogenic_models, _ = _load_anthropogenic_modules(monkeypatch)
+
+    with pytest.raises(ValueError, match="noise_variance must be finite and >= 0"):
+        anthropogenic_models.SyntheticSignal(
+            duration_s=1.0,
+            sampling_rate_hz=16,
+            frame_len=8,
+            hop_factor=2,
+            noise_variance=-1.0,
+        )
+
+
+def test_synthetic_signal_rejects_invalid_tonal_bandwidth_after_init(monkeypatch) -> None:
+    """Generation should fail if tonal bandwidth becomes invalid after init."""
+    _, anthropogenic_models, _ = _load_anthropogenic_modules(monkeypatch)
+
+    source = SimpleNamespace(
+        metadata={
+            "amplitudes_upa": np.array([1.0]),
+            "frequencies_hz": np.array([4.0]),
+            "phases_rad": np.array([0.0]),
+        }
+    )
+    model = anthropogenic_models.SyntheticSignal(
+        duration_s=1.0,
+        sampling_rate_hz=16,
+        frame_len=8,
+        hop_factor=2,
+        tonal_bandwidth_hz=2.0,
+        noise_amplitude_upa=0.0,
+    )
+    model.tonal_bandwidth_hz = 0.0
+
+    with pytest.raises(ValueError, match="tonal_bandwidth_hz must be finite and > 0"):
+        model.compute_stft(source)
+
+
+def test_synthetic_signal_rejects_invalid_noise_variance_after_init(monkeypatch) -> None:
+    """Generation should fail if noise variance becomes invalid after init."""
+    _, anthropogenic_models, _ = _load_anthropogenic_modules(monkeypatch)
+
+    source = SimpleNamespace(
+        metadata={
+            "amplitudes_upa": np.array([1.0]),
+            "frequencies_hz": np.array([4.0]),
+            "phases_rad": np.array([0.0]),
+        }
+    )
+    model = anthropogenic_models.SyntheticSignal(
+        duration_s=1.0,
+        sampling_rate_hz=16,
+        frame_len=8,
+        hop_factor=2,
+        noise_amplitude_upa=1.0,
+        noise_variance=1.0,
+    )
+    model.noise_variance = -1.0
+
+    with pytest.raises(ValueError, match="noise_variance must be finite and >= 0"):
+        model.compute_stft(source)
+
+
 def test_recorded_signal_compute_stft_contract(monkeypatch, tmp_path: Path) -> None:
     """RecordedSignal should compute STFT from WAV input."""
     _, anthropogenic_models, _ = _load_anthropogenic_modules(monkeypatch)

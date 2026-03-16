@@ -311,8 +311,8 @@ class SyntheticSignal(AnthropogenicSignal):
     noise_amplitude_upa : float, optional
         RMS amplitude of background noise in µPa. Set to 0.0 to disable noise. Default is 0.0.
     noise_spectral_exponent : float, optional
-        Spectral shape exponent for coloured noise. -2.0 is pink noise (1/f), -1.0 is flicker, 0.0
-        is white. Default is -2.0.
+        Spectral shape exponent for coloured noise. -1.0 is pink noise (1/f), -2.0 is
+        red/brownian noise (1/f^2), and 0.0 is white. Default is -1.0.
     noise_freq_range_hz : tuple, optional
         Tuple of (min_freq, max_freq) for noise generation. Default is (20.0, 200.0), covering
         typical machinery noise ranges.
@@ -343,7 +343,7 @@ class SyntheticSignal(AnthropogenicSignal):
     ...     hop_factor=4,
     ...     tonal_bandwidth_hz=3.0,  # Broader tonals
     ...     noise_amplitude_upa=10**(50/20),  # 50 dB re 1 µPa background
-    ...     noise_spectral_exponent=-2.0,  # Pink noise
+    ...     noise_spectral_exponent=-1.0,  # Pink noise
     ...     noise_freq_range_hz=(30.0, 150.0)
     ... )
 
@@ -354,7 +354,8 @@ class SyntheticSignal(AnthropogenicSignal):
         default=0.0, doc="RMS amplitude of background noise (µPa)"
     )
     noise_spectral_exponent: float = Property(
-        default=-2.0, doc="Spectral shape exponent (-2=pink, 0=white)"
+        default=-1.0,
+        doc="Spectral shape exponent (-1=pink, -2=red/brownian, 0=white)",
     )
     noise_freq_range_hz: tuple[float, float] = Property(
         default=(20.0, 200.0), doc="Frequency range for noise (Hz)"
@@ -393,13 +394,31 @@ class SyntheticSignal(AnthropogenicSignal):
     def __init__(self, *args: object, **kwargs: object) -> None:
         """Initialise realistic ship signal generator."""
         super().__init__(*args, **kwargs)
+        self._validate_tonal_bandwidth(self.tonal_bandwidth_hz)
+        self._validate_noise_variance(self.noise_variance)
         self._rng = np.random.default_rng(self.seed)
         self._noise_realization: ComplexArray | None = None
         self._tonal_realizations: list[ComplexArray] | None = None
 
-    def _generate_band_limited_tonal(
-        self, freq_hz: float, bandwidth_hz: float
-    ) -> ComplexArray:
+    @staticmethod
+    def _validate_tonal_bandwidth(bandwidth_hz: float) -> float:
+        """Validate and return tonal bandwidth in Hz."""
+        bandwidth = float(bandwidth_hz)
+        if not np.isfinite(bandwidth) or bandwidth <= 0.0:
+            msg = "tonal_bandwidth_hz must be finite and > 0"
+            raise ValueError(msg)
+        return bandwidth
+
+    @staticmethod
+    def _validate_noise_variance(noise_variance: float) -> float:
+        """Validate and return white-noise variance multiplier."""
+        variance = float(noise_variance)
+        if not np.isfinite(variance) or variance < 0.0:
+            msg = "noise_variance must be finite and >= 0"
+            raise ValueError(msg)
+        return variance
+
+    def _generate_band_limited_tonal(self, freq_hz: float, bandwidth_hz: float) -> ComplexArray:
         """Generate a unit-RMS band-limited noise component centred on ``freq_hz``.
 
         Generates complex white noise, applies a symmetric Gaussian bandpass filter
@@ -418,15 +437,15 @@ class SyntheticSignal(AnthropogenicSignal):
             Unit-RMS band-limited complex noise of length ``num_samples``.
 
         """
-        noise = (
-            self._rng.standard_normal(self.num_samples)
-            + 1j * self._rng.standard_normal(self.num_samples)
+        noise = self._rng.standard_normal(self.num_samples) + 1j * self._rng.standard_normal(
+            self.num_samples
         )
         freq_bins = np.fft.fftfreq(self.num_samples, 1 / self.sampling_rate_hz)
+        bandwidth = self._validate_tonal_bandwidth(bandwidth_hz)
 
         # Symmetric Gaussian bandpass (positive and negative frequencies).
         # sigma = bandwidth / (2 * sqrt(2 * ln(2))) ≈ bandwidth / 2.355
-        sigma_hz = bandwidth_hz / 2.355
+        sigma_hz = bandwidth / 2.355
         bandpass_filter = np.exp(-((freq_bins - freq_hz) ** 2) / (2 * sigma_hz**2))
         bandpass_filter += np.exp(-((freq_bins + freq_hz) ** 2) / (2 * sigma_hz**2))
 
@@ -517,7 +536,7 @@ class SyntheticSignal(AnthropogenicSignal):
         if self.use_powerlaw_noise:
             colored_noise_fft = noise_filter
         else:
-            noise_std = np.sqrt(float(self.noise_variance))
+            noise_std = np.sqrt(self._validate_noise_variance(self.noise_variance))
             white_noise = noise_std * (
                 self._rng.standard_normal(self.num_samples)
                 + 1j * self._rng.standard_normal(self.num_samples)
