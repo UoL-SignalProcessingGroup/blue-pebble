@@ -397,12 +397,145 @@ class SyntheticSignal(AnthropogenicSignal):
         self._noise_realization: ComplexArray | None = None
         self._tonal_realizations: list[ComplexArray] | None = None
 
-    def _generate_base_signal(self, source: "State") -> ComplexArray:
-        """Generate the complete source signal with broadband tonals and noise.
+    def _generate_band_limited_tonal(
+        self, freq_hz: float, bandwidth_hz: float
+    ) -> ComplexArray:
+        """Generate a unit-RMS band-limited noise component centred on ``freq_hz``.
 
-        This method creates:
-        1. Broadband tonals using band-limited white noise modulated by tonal frequencies
-        2. Wideband coloured noise for background machinery/cavitation sounds
+        Generates complex white noise, applies a symmetric Gaussian bandpass filter
+        in the frequency domain, and normalises the result to unit RMS.
+
+        Parameters
+        ----------
+        freq_hz : float
+            Centre frequency of the tonal in Hz.
+        bandwidth_hz : float
+            -3 dB bandwidth of the Gaussian bandpass filter in Hz.
+
+        Returns
+        -------
+        ComplexArray
+            Unit-RMS band-limited complex noise of length ``num_samples``.
+
+        """
+        noise = (
+            self._rng.standard_normal(self.num_samples)
+            + 1j * self._rng.standard_normal(self.num_samples)
+        )
+        freq_bins = np.fft.fftfreq(self.num_samples, 1 / self.sampling_rate_hz)
+
+        # Symmetric Gaussian bandpass (positive and negative frequencies).
+        # sigma = bandwidth / (2 * sqrt(2 * ln(2))) ≈ bandwidth / 2.355
+        sigma_hz = bandwidth_hz / 2.355
+        bandpass_filter = np.exp(-((freq_bins - freq_hz) ** 2) / (2 * sigma_hz**2))
+        bandpass_filter += np.exp(-((freq_bins + freq_hz) ** 2) / (2 * sigma_hz**2))
+
+        filtered = np.fft.ifft(np.fft.fft(noise) * bandpass_filter)
+        rms = np.sqrt(np.mean(np.abs(filtered) ** 2))
+        return cast(ComplexArray, filtered if rms == 0 else filtered / rms)
+
+    def _generate_tonal_signal(
+        self,
+        frequencies_hz: "FloatArray",
+        amplitudes_upa: "FloatArray",
+        phases_rad: "FloatArray",
+    ) -> ComplexArray:
+        """Build the combined tonal signal, using the tonal noise cache when available.
+
+        Parameters
+        ----------
+        frequencies_hz : FloatArray
+            Centre frequencies of the tonals in Hz.
+        amplitudes_upa : FloatArray
+            Amplitude of each tonal in µPa.
+        phases_rad : FloatArray
+            Phase offset of each tonal in radians.
+
+        Returns
+        -------
+        ComplexArray
+            Combined tonal signal of length ``num_samples``.
+
+        """
+        cache_valid = (
+            self.tonal_noise_is_constant
+            and self._tonal_realizations is not None
+            and len(self._tonal_realizations) == len(frequencies_hz)
+        )
+        cached = self._tonal_realizations if cache_valid else None
+        new_cache: list[ComplexArray] = []
+
+        signal = np.zeros(self.num_samples, dtype=np.complex128)
+        for idx, (freq, amp, phase) in enumerate(
+            zip(frequencies_hz, amplitudes_upa, phases_rad, strict=False)
+        ):
+            base_noise = (
+                cached[idx]
+                if cached is not None
+                else self._generate_band_limited_tonal(freq, float(self.tonal_bandwidth_hz))
+            )
+            if self.tonal_noise_is_constant and cached is None:
+                new_cache.append(base_noise)
+            signal += amp * base_noise * np.exp(1j * phase)
+
+        if self.tonal_noise_is_constant and cached is None:
+            self._tonal_realizations = new_cache
+
+        return cast(ComplexArray, signal)
+
+    def _generate_coloured_noise(self, amplitude_upa: float) -> ComplexArray:
+        """Generate wideband coloured noise scaled to ``amplitude_upa``.
+
+        Builds a power-law spectral envelope with a bandpass mask, then either
+        uses it deterministically (``use_powerlaw_noise=True``) or shapes
+        stochastic white noise with it.  The result is RMS-normalised and
+        scaled.  The realisation is cached when ``noise_is_constant=True``.
+
+        Parameters
+        ----------
+        amplitude_upa : float
+            Target RMS amplitude of the output noise in µPa.
+
+        Returns
+        -------
+        ComplexArray
+            Coloured noise of length ``num_samples``.
+
+        """
+        if self.noise_is_constant and self._noise_realization is not None:
+            return self._noise_realization
+
+        freq_bins = np.fft.fftfreq(self.num_samples, 1 / self.sampling_rate_hz)
+        freq_abs = np.abs(freq_bins)
+        freq_abs[freq_abs < 1.0] = 1.0  # avoid division by zero at DC
+
+        spectral_shape = freq_abs ** (float(self.noise_spectral_exponent) / 2.0)
+        freq_min, freq_max = self.noise_freq_range_hz
+        bandpass = np.where((freq_abs >= freq_min) & (freq_abs <= freq_max), 1.0, 0.0)
+        noise_filter = spectral_shape * bandpass
+
+        if self.use_powerlaw_noise:
+            colored_noise_fft = noise_filter
+        else:
+            noise_std = np.sqrt(float(self.noise_variance))
+            white_noise = noise_std * (
+                self._rng.standard_normal(self.num_samples)
+                + 1j * self._rng.standard_normal(self.num_samples)
+            )
+            colored_noise_fft = np.fft.fft(white_noise) * noise_filter
+
+        colored_noise = np.fft.ifft(colored_noise_fft)
+        rms = np.sqrt(np.mean(np.abs(colored_noise) ** 2))
+        if rms > 0:
+            colored_noise = colored_noise * (amplitude_upa / rms)
+
+        result = cast(ComplexArray, colored_noise)
+        if self.noise_is_constant:
+            self._noise_realization = result.copy()
+        return result
+
+    def _generate_base_signal(self, source: "State") -> ComplexArray:
+        """Generate the complete source signal with broadband tonals and coloured noise.
 
         Parameters
         ----------
@@ -416,113 +549,13 @@ class SyntheticSignal(AnthropogenicSignal):
 
         """
         amplitudes_upa, frequencies_hz, phases_rad = _extract_tonal_metadata(source)
-        tonal_bandwidth_hz = float(self.tonal_bandwidth_hz)
+        signal = self._generate_tonal_signal(frequencies_hz, amplitudes_upa, phases_rad)
+
         noise_amplitude_upa = float(self.noise_amplitude_upa)
-        noise_spectral_exponent = float(self.noise_spectral_exponent)
-        noise_variance = float(self.noise_variance)
-
-        # Initialise output signal
-        signal = np.zeros(self.num_samples, dtype=np.complex128)
-
-        tonal_cache_available = (
-            self.tonal_noise_is_constant
-            and self._tonal_realizations is not None
-            and len(self._tonal_realizations) == len(frequencies_hz)
-        )
-        tonal_realizations = self._tonal_realizations if tonal_cache_available else None
-        tonal_cache: list[ComplexArray] = []
-
-        # Generate broadband tonals (each tonal has finite bandwidth)
-        for idx, (freq, amp, phase) in enumerate(
-            zip(frequencies_hz, amplitudes_upa, phases_rad, strict=False)
-        ):
-            # Create narrow-band noise centered at tonal frequency
-            # Bandwidth determined by tonal_bandwidth_hz
-            if tonal_realizations is not None:
-                base_noise = tonal_realizations[idx]
-            else:
-                noise = (
-                    self._rng.standard_normal(self.num_samples)
-                    + 1j * self._rng.standard_normal(self.num_samples)
-                )
-
-                # Bandpass filter: Create filter in frequency domain
-                freq_bins = np.fft.fftfreq(self.num_samples, 1 / self.sampling_rate_hz)
-
-                # Gaussian bandpass centered at tonal frequency
-                # Bandwidth controls the spectral width
-                # (sigma = bandwidth / 2sqrt2ln2 ~= bandwidth / 2.355)
-                sigma_hz = tonal_bandwidth_hz / 2.355
-                bandpass_filter = np.exp(-((freq_bins - freq) ** 2) / (2 * sigma_hz**2))
-                bandpass_filter += np.exp(
-                    -((freq_bins + freq) ** 2) / (2 * sigma_hz**2)
-                )  # Negative freq
-
-                # Apply filter in frequency domain
-                noise_fft = np.fft.fft(noise)
-                filtered_noise_fft = noise_fft * bandpass_filter
-                filtered_noise = np.fft.ifft(filtered_noise_fft)
-
-                # Normalise to unit RMS for later amplitude scaling
-                rms = np.sqrt(np.mean(np.abs(filtered_noise) ** 2))
-                base_noise = filtered_noise if rms == 0 else filtered_noise / rms
-
-                if self.tonal_noise_is_constant:
-                    tonal_cache.append(base_noise)
-
-            phase_shift = np.exp(1j * phase)
-            tonal_component = amp * base_noise * phase_shift
-
-            signal += tonal_component
-
-        if self.tonal_noise_is_constant and not tonal_cache_available:
-            self._tonal_realizations = tonal_cache
-
-        # Add wideband colored noise if amplitude > 0
         if noise_amplitude_upa > 0:
-            # Check cache for constant mode
-            if self.noise_is_constant and self._noise_realization is not None:
-                colored_noise = self._noise_realization
-            else:
-                freq_bins = np.fft.fftfreq(self.num_samples, 1 / self.sampling_rate_hz)
-                freq_abs = np.abs(freq_bins)
-                freq_abs[freq_abs < 1.0] = 1.0  # Avoid division by zero at DC
-
-                # Spectral envelope (power-law) and bandpass mask
-                spectral_shape = freq_abs ** (noise_spectral_exponent / 2.0)
-                freq_min, freq_max = self.noise_freq_range_hz
-                bandpass = np.where(
-                    (freq_abs >= freq_min) & (freq_abs <= freq_max),
-                    1.0,
-                    0.0,
-                )
-                noise_filter = spectral_shape * bandpass
-
-                if self.use_powerlaw_noise:
-                    # Deterministic: use the magnitude spectrum directly
-                    colored_noise_fft = noise_filter
-                else:
-                    # Stochastic: start from white noise then shape
-                    noise_std = np.sqrt(noise_variance)
-                    white_noise = noise_std * (
-                        self._rng.standard_normal(self.num_samples)
-                        + 1j * self._rng.standard_normal(self.num_samples)
-                    )
-                    white_noise_fft = np.fft.fft(white_noise)
-                    colored_noise_fft = white_noise_fft * noise_filter
-
-                colored_noise = np.fft.ifft(colored_noise_fft)
-
-                # Normalise to desired RMS amplitude
-                rms = np.sqrt(np.mean(np.abs(colored_noise) ** 2))
-                if rms > 0:
-                    colored_noise = colored_noise * (noise_amplitude_upa / rms)
-
-                # Cache for constant mode
-                if self.noise_is_constant:
-                    self._noise_realization = colored_noise.copy()
-
-            signal += colored_noise
+            signal = cast(
+                ComplexArray, signal + self._generate_coloured_noise(noise_amplitude_upa)
+            )
 
         return signal
 
