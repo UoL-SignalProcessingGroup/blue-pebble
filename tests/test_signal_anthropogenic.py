@@ -206,6 +206,78 @@ def test_recorded_signal_to_float_mono_accepts_array_like(monkeypatch) -> None:
     np.testing.assert_allclose(mono, np.array([1.0, 5.0], dtype=np.float64))
 
 
+def test_get_source_waveform_warns_on_different_source(monkeypatch) -> None:
+    """get_source_waveform should warn when called with a different source object."""
+    anthropogenic_base, _, _ = _load_anthropogenic_modules(monkeypatch)
+
+    class DummyModel(anthropogenic_base.AnthropogenicSignal):
+        def _generate_base_signal(self, source) -> np.ndarray:
+            _ = source
+            return np.ones(self.num_samples, dtype=np.float64)
+
+    model = DummyModel(
+        duration_s=1.0,
+        sampling_rate_hz=16,
+        frame_len=8,
+        hop_factor=2,
+    )
+
+    source_a = SimpleNamespace()
+    source_b = SimpleNamespace()
+    model.compute_stft(source_a)
+
+    with pytest.warns(UserWarning, match="different source state"):
+        result = model.get_source_waveform(source_b)
+
+    # Cached result is still returned unchanged
+    assert result.shape == (16,)
+
+
+def test_get_source_waveform_no_warn_same_source(monkeypatch) -> None:
+    """get_source_waveform should not warn when called with the original source."""
+    import warnings as _warnings
+
+    anthropogenic_base, _, _ = _load_anthropogenic_modules(monkeypatch)
+
+    class DummyModel(anthropogenic_base.AnthropogenicSignal):
+        def _generate_base_signal(self, source) -> np.ndarray:
+            _ = source
+            return np.ones(self.num_samples, dtype=np.float64)
+
+    model = DummyModel(
+        duration_s=1.0,
+        sampling_rate_hz=16,
+        frame_len=8,
+        hop_factor=2,
+    )
+
+    source = SimpleNamespace()
+    model.compute_stft(source)
+
+    with _warnings.catch_warnings():
+        _warnings.simplefilter("error")
+        model.get_source_waveform(source)  # must not raise
+
+
+def test_reset_before_compute_stft_is_safe(monkeypatch) -> None:
+    """reset() should be safe to call before compute_stft has ever been called."""
+    anthropogenic_base, _, _ = _load_anthropogenic_modules(monkeypatch)
+
+    class DummyModel(anthropogenic_base.AnthropogenicSignal):
+        def _generate_base_signal(self, source) -> np.ndarray:
+            return np.ones(self.num_samples, dtype=np.float64)
+
+    model = DummyModel(
+        duration_s=1.0,
+        sampling_rate_hz=16,
+        frame_len=8,
+        hop_factor=2,
+    )
+
+    # Must not raise
+    model.reset()
+
+
 def test_anthropogenic_public_api_exports(monkeypatch) -> None:
     """Anthropogenic package should expose the correct public classes."""
     _, _, anthropogenic_api = _load_anthropogenic_modules(monkeypatch)

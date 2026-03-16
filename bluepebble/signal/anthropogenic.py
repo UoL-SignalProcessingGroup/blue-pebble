@@ -1,5 +1,6 @@
 """Anthropogenic signal models for sensor arrays."""
 
+import warnings
 from abc import ABC, abstractmethod
 from fractions import Fraction
 from pathlib import Path
@@ -114,6 +115,7 @@ class AnthropogenicSignal(_SignalBase, ABC):
         self._hop: int | None = None
         self._window: FloatArray | None = None
         self._source_signal: ComplexArray | None = None
+        self._cached_source: "State | None" = None  # noqa: UP037
 
     @abstractmethod
     def _generate_base_signal(self, source: "State") -> ComplexArray:
@@ -163,6 +165,7 @@ class AnthropogenicSignal(_SignalBase, ABC):
         self._frequencies = frequencies
         self._hop = hop
         self._window = window_float
+        self._cached_source = source
 
         return stft, frequencies, hop, window_float
 
@@ -214,6 +217,12 @@ class AnthropogenicSignal(_SignalBase, ABC):
     def get_source_waveform(self, source: "State") -> ComplexArray:
         """Return the cached source waveform, computing it on first call.
 
+        If the cache is already populated but ``source`` is not the same object
+        that was passed to :meth:`compute_stft`, a :exc:`UserWarning` is raised.
+        This guards against stale-cache bugs in multi-source simulations where
+        the same model instance is accidentally reused across different targets.
+        Call :meth:`reset` then :meth:`compute_stft` to update the cache.
+
         Parameters
         ----------
         source : State
@@ -227,6 +236,15 @@ class AnthropogenicSignal(_SignalBase, ABC):
         """
         if self._source_signal is None:
             self.compute_stft(source)
+        elif source is not self._cached_source:
+            warnings.warn(
+                f"{type(self).__name__}.get_source_waveform() was called with a different "
+                "source state than the one used to build the cached STFT. "
+                "The cached result will be returned unchanged. "
+                "Call reset() then compute_stft() to recompute for the new source.",
+                UserWarning,
+                stacklevel=2,
+            )
         return cast(ComplexArray, self._source_signal)
 
     def stft_geometry(self) -> tuple[int, FloatArray, int, FloatArray, int]:
@@ -256,6 +274,9 @@ class AnthropogenicSignal(_SignalBase, ABC):
         simulation runs, or after changing signal parameters, so that the next
         call to :meth:`compute_stft` generates a fresh waveform and STFT.
 
+        This method is safe to call even if :meth:`compute_stft` has never been
+        called — it is a no-op in that case.
+
         Subclasses that maintain additional caches (e.g. noise realisations in
         :class:`SyntheticSignal`) override this method and call ``super().reset()``
         to ensure all state is cleared.
@@ -265,6 +286,7 @@ class AnthropogenicSignal(_SignalBase, ABC):
         self._hop = None
         self._window = None
         self._source_signal = None
+        self._cached_source = None
 
 
 class SyntheticSignal(AnthropogenicSignal):
