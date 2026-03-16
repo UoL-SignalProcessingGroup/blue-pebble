@@ -52,6 +52,14 @@ def compute_stft(
         msg = "Input signal must be 1D"
         raise ValueError(msg)
 
+    if len(signal_array) < frame_len:
+        msg = (
+            f"Signal length ({len(signal_array)}) is shorter than frame_len ({frame_len}). "
+            "Increase duration_s, increase sampling_rate_hz, or reduce frame_len so that "
+            "num_samples >= frame_len."
+        )
+        raise ValueError(msg)
+
     has_imag = np.iscomplexobj(signal_array) and np.any(np.abs(np.imag(signal_array)) > 0.0)
     hop = frame_len // hop_factor
 

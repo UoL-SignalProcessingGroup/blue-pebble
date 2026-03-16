@@ -10,6 +10,14 @@ from .support import load_module_from_repo
 signal_utils = load_module_from_repo("bluepebble/signal/utils.py", "bluepebble_signal_utils_test")
 
 
+def test_compute_stft_rejects_signal_shorter_than_frame_len() -> None:
+    """Signals shorter than frame_len should raise ValueError with a helpful message."""
+    short_signal = np.ones(7, dtype=np.float32)
+
+    with pytest.raises(ValueError, match="shorter than frame_len"):
+        signal_utils.compute_stft(short_signal, frame_len=8)
+
+
 def test_compute_stft_rejects_unknown_window() -> None:
     """Unsupported window names should raise a clear validation error."""
     signal = np.ones(16, dtype=np.float32)
