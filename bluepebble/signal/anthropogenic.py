@@ -11,7 +11,7 @@ from scipy import signal as scipy_signal
 from scipy.io import wavfile
 from stonesoup.base import Property
 
-from .base import ComplexArray, Signal, _get_source_metadata
+from .base import ComplexArray, _get_source_metadata, _SignalBase
 from .utils import compute_stft
 
 if TYPE_CHECKING:
@@ -19,8 +19,6 @@ if TYPE_CHECKING:
 
 FloatArray: TypeAlias = NDArray[np.float64]
 CachedStftResult: TypeAlias = tuple[NDArray[np.complex64], FloatArray, int, FloatArray]
-
-__all__ = ["AnthropogenicSignal", "SyntheticSignal", "RecordedSignal"]
 
 
 def _extract_tonal_metadata(
@@ -78,7 +76,7 @@ def _extract_tonal_metadata(
     )
 
 
-class AnthropogenicSignal(Signal, ABC):
+class AnthropogenicSignal(_SignalBase, ABC):
     """Base class for STFT-first anthropogenic signal models.
 
     Lifecycle

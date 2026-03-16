@@ -13,8 +13,6 @@ if TYPE_CHECKING:
 
 ComplexArray: TypeAlias = NDArray[np.complex128]
 
-__all__ = ["Signal"]
-
 
 def _get_source_metadata(source: "State") -> Mapping[str, object]:
     """Validate and return the metadata mapping from a source state.
@@ -42,14 +40,14 @@ def _get_source_metadata(source: "State") -> Mapping[str, object]:
     return metadata
 
 
-class Signal(Base, ABC):
-    """Shared sampling properties for all signal and noise models.
+class _SignalBase(Base, ABC):
+    """Shared sampling parameter contract for all signal and noise models.
 
     Provides ``duration_s``, ``sampling_rate_hz``, and the derived
-    ``num_samples`` property.  Both :class:`Signal` (per-timestep path) and
+    ``num_samples`` property.  :class:`Signal` (per-timestep path) and
     :class:`~bluepebble.signal.anthropogenic.AnthropogenicSignal` (STFT-first
-    path) inherit from this class so that they share a common parameter
-    contract without one being a subtype of the other.
+    path) both inherit from this class as siblings, so that they share a common
+    parameter contract without one being a subtype of the other.
 
     Parameters
     ----------
@@ -75,10 +73,23 @@ class Signal(Base, ABC):
         """
         return int(self.duration_s * self.sampling_rate_hz)
 
+
+class Signal(_SignalBase, ABC):
+    """Per-timestep signal model base class.
+
+    Extends :class:`_SignalBase` with the discrete-path interface:
+    :meth:`generate`, :meth:`get_source_waveform`, and the internal
+    :meth:`_apply_propagation` helper.  Subclasses implement
+    :meth:`_generate_base_signal` to produce a raw source waveform;
+    :meth:`generate` handles padding/truncation and frequency-domain
+    propagation automatically.
+
+    """
+
     def get_source_waveform(self, source: "State") -> ComplexArray:
         """Return the full-duration source waveform for this signal model.
 
-        Delegates to :meth:`_generate_base_signal`.
+        Delegates to :meth:`_prepare_waveform`.
 
         Parameters
         ----------
@@ -88,10 +99,58 @@ class Signal(Base, ABC):
         Returns
         -------
         ComplexArray
-            Full-duration source waveform as ``complex128``.
+            Full-duration source waveform as ``complex128``, padded or truncated
+            to exactly :attr:`num_samples`.
 
         """
-        return np.asarray(self._generate_base_signal(source), dtype=np.complex128)  # type: ignore[attr-defined]
+        return self._prepare_waveform(source)
+
+    def _prepare_waveform(self, source: "State") -> ComplexArray:
+        """Obtain, validate, and normalise the raw base signal to ``num_samples``.
+
+        Calls :meth:`_generate_base_signal`, checks that it returns a 1-D array,
+        and pads or truncates to exactly :attr:`num_samples`.
+
+        Parameters
+        ----------
+        source : State
+            Source state forwarded to :meth:`_generate_base_signal`.
+
+        Returns
+        -------
+        ComplexArray
+            1-D ``complex128`` array with length exactly ``num_samples``.
+
+        Raises
+        ------
+        NotImplementedError
+            If the subclass does not implement :meth:`_generate_base_signal`.
+        ValueError
+            If :meth:`_generate_base_signal` returns a non-1-D array.
+
+        """
+        base_generator = getattr(self, "_generate_base_signal", None)
+        if not callable(base_generator):
+            msg = (
+                f"{type(self).__name__} must implement either generate() or "
+                "_generate_base_signal(source)"
+            )
+            raise NotImplementedError(msg)
+
+        base_signal = np.asarray(base_generator(source), dtype=np.complex128)
+        if base_signal.ndim != 1:
+            msg = "_generate_base_signal(source) must return a one-dimensional array"
+            raise ValueError(msg)
+
+        if len(base_signal) < self.num_samples:
+            pad_width = self.num_samples - len(base_signal)
+            base_signal = np.concatenate(
+                [base_signal, np.zeros(pad_width, dtype=np.complex128)],
+            )
+        elif len(base_signal) > self.num_samples:
+            base_signal = base_signal[: self.num_samples]
+
+        return base_signal
 
     def _apply_propagation(
         self,
@@ -178,25 +237,5 @@ class Signal(Base, ABC):
             msg = "sensor_delays_s must be one-dimensional"
             raise ValueError(msg)
 
-        base_generator = getattr(self, "_generate_base_signal", None)
-        if not callable(base_generator):
-            msg = (
-                f"{type(self).__name__} must implement either generate() or "
-                "_generate_base_signal(source)"
-            )
-            raise NotImplementedError(msg)
-
-        base_signal = np.asarray(base_generator(source), dtype=np.complex128)
-        if base_signal.ndim != 1:
-            msg = "_generate_base_signal(source) must return a one-dimensional array"
-            raise ValueError(msg)
-
-        if len(base_signal) < self.num_samples:
-            pad_width = self.num_samples - len(base_signal)
-            base_signal = np.concatenate(
-                [base_signal, np.zeros(pad_width, dtype=np.complex128)],
-            )
-        elif len(base_signal) > self.num_samples:
-            base_signal = base_signal[: self.num_samples]
-
+        base_signal = self._prepare_waveform(source)
         return self._apply_propagation(base_signal, sensor_delays, tloss_db, propagation_time_s)

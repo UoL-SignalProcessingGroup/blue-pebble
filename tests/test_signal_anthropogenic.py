@@ -216,7 +216,5 @@ def test_anthropogenic_public_api_exports(monkeypatch) -> None:
         "RecordedSignal",
     }
 
-    assert set(anthropogenic_api.__all__) == expected_exports
-
     for export_name in expected_exports:
         assert hasattr(anthropogenic_api, export_name)

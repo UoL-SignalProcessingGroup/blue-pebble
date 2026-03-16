@@ -7,8 +7,6 @@ from stonesoup.base import Property
 
 from .base import ComplexArray, Signal
 
-__all__ = ["AmbientNoise", "WhiteNoise", "ColouredNoise"]
-
 
 class AmbientNoise(Signal):
     """Abstract base class for ambient noise models.
