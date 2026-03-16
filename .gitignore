@@ -30,3 +30,7 @@ htmlcov/
 # Operating system / editor
 .DS_Store
 .vscode/
+
+# Claude Code — local only
+CLAUDE.md
+.claude/
