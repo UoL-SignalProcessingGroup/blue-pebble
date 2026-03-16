@@ -11,6 +11,8 @@ WindowType: TypeAlias = Literal["hann", "hamming", "blackman"]
 StftResult: TypeAlias = tuple[ComplexArray, FloatArray, int, FloatArray]
 SignalArray: TypeAlias = ComplexArray | FloatArray
 
+__all__ = ["compute_stft", "inverse_stft", "apply_fade_in", "apply_fade_out"]
+
 
 def compute_stft(
     signal: ArrayLike,

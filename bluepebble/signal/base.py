@@ -13,6 +13,8 @@ if TYPE_CHECKING:
 
 ComplexArray: TypeAlias = NDArray[np.complex128]
 
+__all__ = ["Signal"]
+
 
 def _get_source_metadata(source: "State") -> Mapping[str, object]:
     """Validate and return the metadata mapping from a source state.

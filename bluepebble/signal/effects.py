@@ -7,6 +7,8 @@ from stonesoup.base import Base, Property
 
 from .base import ComplexArray
 
+__all__ = ["Effect", "Reverb"]
+
 
 class Effect(Base, ABC):
     """A base class for all signal post-processing effects."""
