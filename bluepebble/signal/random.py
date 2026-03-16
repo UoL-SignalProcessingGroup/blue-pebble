@@ -90,7 +90,7 @@ class RandomSignal(Signal, ABC):
         """
 
 
-class WhiteNoise(RandomSignal):
+class WhiteNoiseSignal(RandomSignal):
     """Generates complex white Gaussian noise with a flat power spectrum.
 
     Parameters
@@ -124,7 +124,7 @@ class WhiteNoise(RandomSignal):
         return self.amplitude_upa * white_noise
 
 
-class ColouredNoise(RandomSignal):
+class ColouredNoiseSignal(RandomSignal):
     """Generates complex coloured noise using FFT filtering.
 
     This class generates noise with a power spectral density proportional to 1/f^alpha.

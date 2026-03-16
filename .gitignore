@@ -34,3 +34,6 @@ htmlcov/
 # Claude Code — local only
 CLAUDE.md
 .claude/
+
+# Measured data
+docs/examples/measured_data

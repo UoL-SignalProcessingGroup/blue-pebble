@@ -34,9 +34,7 @@ def _load_biological(monkeypatch):
     models_mod.environment = env_mod
     monkeypatch.setitem(sys.modules, "bluepebble.models", models_mod)
     monkeypatch.setitem(sys.modules, "bluepebble.models.environment", env_mod)
-    monkeypatch.setitem(
-        sys.modules, "bluepebble.models.environment.sound_speed_profile", ssp_mod
-    )
+    monkeypatch.setitem(sys.modules, "bluepebble.models.environment.sound_speed_profile", ssp_mod)
     load_package_module_from_repo("bluepebble/signal/base.py", "bluepebble.signal.base")
     load_package_module_from_repo("bluepebble/signal/effects.py", "bluepebble.signal.effects")
     return load_package_module_from_repo(
@@ -89,7 +87,7 @@ def test_white_and_coloured_noise_generate_expected_shapes(monkeypatch) -> None:
 
 
 def test_synthetic_signal_seed_gives_reproducible_output(monkeypatch) -> None:
-    """Same seed should produce identical SyntheticAnthropogenicSignal waveforms across instances."""
+    """Same seed should produce same SyntheticAnthropogenicSignal waveforms across instances."""
     install_fake_stonesoup(monkeypatch)
     from .support import install_repo_package, load_package_module_from_repo
 

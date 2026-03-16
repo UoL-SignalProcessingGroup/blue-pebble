@@ -96,7 +96,7 @@ def _get_snap_rate_from_temp(temperature_celsius: float, slope: float, intercept
     return max(0, (slope * temperature_celsius) + intercept) / 60.0
 
 
-class Biological(Signal, ABC):
+class BiologicalSignal(Signal, ABC):
     """Abstract base class for biological marine acoustic signals.
 
     Provides the per-timestep generation interface used by
@@ -280,7 +280,7 @@ class Biological(Signal, ABC):
         return self._apply_propagation(base_signal, sensor_delays, tloss_db, propagation_time_s)
 
 
-class PointSourceSnappingShrimpSignal(Biological):
+class PointSourceSnappingShrimpSignal(BiologicalSignal):
     """Generates a point-source signal representing a colony of snapping shrimp.
 
     This model simulates the sound of a snapping shrimp colony using a non-homogeneous Poisson
@@ -514,7 +514,7 @@ class PointSourceSnappingShrimpSignal(Biological):
         return signals.astype(np.complex128)
 
 
-class DiffuseSnappingShrimpSignal(Biological):
+class DiffuseSnappingShrimpSignal(BiologicalSignal):
     """Generates a diffuse field signal representing a colony of snapping shrimp.
 
     This model simulates the sound of a snapping shrimp colony as a diffuse
@@ -740,7 +740,7 @@ class DiffuseSnappingShrimpSignal(Biological):
         return final_signals.astype(np.complex128)
 
 
-class WhaleCallSignal(Biological):
+class WhaleCallSignal(BiologicalSignal):
     """Generates a sequence of whale calls with realistic variation.
 
     This model simulates whale calls with various parameters, including temporal distribution,

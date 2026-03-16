@@ -1,33 +1,24 @@
 """Signal package public API."""
 
-from .random import RandomSignal, ColouredNoise, WhiteNoise
 from .anthropogenic import (
-    Anthropogenic,
     AnthropogenicSignal,
-    Recorded,
-    RecordedSignal,
-    Synthetic,
-    SyntheticSignal,
+    RecordedAnthropogenicSignal,
+    SyntheticAnthropogenicSignal,
 )
 from .base import Signal
-from .biological import Biological
+from .biological import BiologicalSignal
+from .random import ColouredNoiseSignal, RandomSignal, WhiteNoiseSignal
 from .utils import apply_fade_in, apply_fade_out, compute_stft, inverse_stft
 
 __all__ = [
-    # New canonical names
     "Signal",
-    "Biological",
+    "BiologicalSignal",
     "RandomSignal",
-    "WhiteNoise",
-    "ColouredNoise",
-    "Anthropogenic",
-    "Synthetic",
-    "Recorded",
-    # Deprecated aliases — remove after next release cycle
+    "WhiteNoiseSignal",
+    "ColouredNoiseSignal",
     "AnthropogenicSignal",
-    "SyntheticSignal",
-    "RecordedSignal",
-    # Utilities
+    "SyntheticAnthropogenicSignal",
+    "RecordedAnthropogenicSignal",
     "compute_stft",
     "inverse_stft",
     "apply_fade_in",

@@ -77,7 +77,7 @@ def _extract_tonal_metadata(
     )
 
 
-class Anthropogenic(Signal, ABC):
+class AnthropogenicSignal(Signal, ABC):
     """Base class for STFT-first anthropogenic signal models.
 
     Lifecycle
@@ -289,7 +289,7 @@ class Anthropogenic(Signal, ABC):
         self._cached_source = None
 
 
-class Synthetic(Anthropogenic):
+class SyntheticAnthropogenicSignal(AnthropogenicSignal):
     """Generates ship signals with broadband tonals and coloured noise.
 
     This signal model combines:
@@ -336,7 +336,7 @@ class Synthetic(Anthropogenic):
     --------
     Merchant vessel with propeller tonals and machinery noise:
 
-    >>> signal_model = SyntheticSignal(
+    >>> signal_model = SyntheticAnthropogenicSignal(
     ...     duration_s=60.0,
     ...     sampling_rate_hz=500.0,
     ...     frame_len=500,
@@ -588,7 +588,7 @@ class Synthetic(Anthropogenic):
         self._tonal_realizations = None
 
 
-class Recorded(Anthropogenic):
+class RecordedAnthropogenicSignal(AnthropogenicSignal):
     """Generates broadband source signals from measured WAV recordings.
 
     This signal model loads a measured waveform from disk, resamples it to the
@@ -806,11 +806,3 @@ class Recorded(Anthropogenic):
         waveform = self._apply_level(waveform)
 
         return np.asarray(waveform, dtype=np.complex128)
-
-
-# ---------------------------------------------------------------------------
-# Deprecated aliases — remove after next release cycle.
-# ---------------------------------------------------------------------------
-AnthropogenicSignal = Anthropogenic
-SyntheticSignal = Synthetic
-RecordedSignal = Recorded
