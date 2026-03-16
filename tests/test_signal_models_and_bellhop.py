@@ -3,13 +3,12 @@
 from __future__ import annotations
 
 import builtins
+import sys
+import types
 from pathlib import Path
 
 import numpy as np
 import pytest
-
-import sys
-import types
 
 from .support import (
     FakeBase,
@@ -46,10 +45,10 @@ def _load_biological(monkeypatch):
 
 
 def test_signal_generate_applies_tloss_and_sensor_delay_phase(monkeypatch) -> None:
-    """Biological.generate should apply attenuation and per-sensor phase delays."""
+    """BiologicalSignal.generate should apply attenuation and per-sensor phase delays."""
     bio = _load_biological(monkeypatch)
 
-    class ConstantSignal(bio.Biological):
+    class ConstantSignal(bio.BiologicalSignal):
         def _generate_base_signal(self, source) -> np.ndarray:
             return np.ones(self.num_samples, dtype=np.complex128)
 
@@ -72,12 +71,12 @@ def test_white_and_coloured_noise_generate_expected_shapes(monkeypatch) -> None:
     install_fake_stonesoup(monkeypatch)
     ambient = load_module_from_repo("bluepebble/signal/random.py", "bluepebble.signal.random")
 
-    white = ambient.WhiteNoise(amplitude_upa=2.0, duration_s=0.25, sampling_rate_hz=16)
+    white = ambient.WhiteNoiseSignal(amplitude_upa=2.0, duration_s=0.25, sampling_rate_hz=16)
     white_out = white.generate(num_sensors=3)
     assert white_out.shape == (3, 4)
     assert np.iscomplexobj(white_out)
 
-    coloured = ambient.ColouredNoise(
+    coloured = ambient.ColouredNoiseSignal(
         spectral_exponent=-1.0,
         amplitude_upa=1.5,
         duration_s=0.25,
@@ -90,7 +89,7 @@ def test_white_and_coloured_noise_generate_expected_shapes(monkeypatch) -> None:
 
 
 def test_synthetic_signal_seed_gives_reproducible_output(monkeypatch) -> None:
-    """Same seed should produce identical SyntheticSignal waveforms across instances."""
+    """Same seed should produce identical SyntheticAnthropogenicSignal waveforms across instances."""
     install_fake_stonesoup(monkeypatch)
     from .support import install_repo_package, load_package_module_from_repo
 
@@ -113,7 +112,7 @@ def test_synthetic_signal_seed_gives_reproducible_output(monkeypatch) -> None:
     )
 
     def _make(seed):
-        return anthropogenic.SyntheticSignal(
+        return anthropogenic.SyntheticAnthropogenicSignal(
             duration_s=0.5,
             sampling_rate_hz=32,
             frame_len=16,
@@ -139,9 +138,9 @@ def test_ambient_noise_seed_gives_reproducible_output(monkeypatch) -> None:
     install_fake_stonesoup(monkeypatch)
     ambient = load_module_from_repo("bluepebble/signal/random.py", "bluepebble.signal.random")
 
-    a = ambient.WhiteNoise(amplitude_upa=1.0, duration_s=0.5, sampling_rate_hz=16, seed=42)
-    b = ambient.WhiteNoise(amplitude_upa=1.0, duration_s=0.5, sampling_rate_hz=16, seed=42)
-    c = ambient.WhiteNoise(amplitude_upa=1.0, duration_s=0.5, sampling_rate_hz=16, seed=99)
+    a = ambient.WhiteNoiseSignal(amplitude_upa=1.0, duration_s=0.5, sampling_rate_hz=16, seed=42)
+    b = ambient.WhiteNoiseSignal(amplitude_upa=1.0, duration_s=0.5, sampling_rate_hz=16, seed=42)
+    c = ambient.WhiteNoiseSignal(amplitude_upa=1.0, duration_s=0.5, sampling_rate_hz=16, seed=99)
 
     np.testing.assert_array_equal(a.generate(num_sensors=2), b.generate(num_sensors=2))
     assert not np.array_equal(a.generate(num_sensors=2), c.generate(num_sensors=2))

@@ -94,7 +94,7 @@ def test_synthetic_signal_compute_stft_contract(monkeypatch) -> None:
             "phases_rad": np.array([0.0]),
         }
     )
-    model = anthropogenic_models.SyntheticSignal(
+    model = anthropogenic_models.SyntheticAnthropogenicSignal(
         duration_s=1.0,
         sampling_rate_hz=16,
         frame_len=8,
@@ -112,11 +112,11 @@ def test_synthetic_signal_compute_stft_contract(monkeypatch) -> None:
 
 
 def test_synthetic_signal_rejects_non_positive_tonal_bandwidth(monkeypatch) -> None:
-    """SyntheticSignal should reject non-positive tonal bandwidth."""
+    """SyntheticAnthropogenicSignal should reject non-positive tonal bandwidth."""
     _, anthropogenic_models, _ = _load_anthropogenic_modules(monkeypatch)
 
     with pytest.raises(ValueError, match="tonal_bandwidth_hz must be finite and > 0"):
-        anthropogenic_models.SyntheticSignal(
+        anthropogenic_models.SyntheticAnthropogenicSignal(
             duration_s=1.0,
             sampling_rate_hz=16,
             frame_len=8,
@@ -126,11 +126,11 @@ def test_synthetic_signal_rejects_non_positive_tonal_bandwidth(monkeypatch) -> N
 
 
 def test_synthetic_signal_rejects_negative_noise_variance(monkeypatch) -> None:
-    """SyntheticSignal should reject negative noise variance."""
+    """SyntheticAnthropogenicSignal should reject negative noise variance."""
     _, anthropogenic_models, _ = _load_anthropogenic_modules(monkeypatch)
 
     with pytest.raises(ValueError, match="noise_variance must be finite and >= 0"):
-        anthropogenic_models.SyntheticSignal(
+        anthropogenic_models.SyntheticAnthropogenicSignal(
             duration_s=1.0,
             sampling_rate_hz=16,
             frame_len=8,
@@ -150,7 +150,7 @@ def test_synthetic_signal_rejects_invalid_tonal_bandwidth_after_init(monkeypatch
             "phases_rad": np.array([0.0]),
         }
     )
-    model = anthropogenic_models.SyntheticSignal(
+    model = anthropogenic_models.SyntheticAnthropogenicSignal(
         duration_s=1.0,
         sampling_rate_hz=16,
         frame_len=8,
@@ -175,7 +175,7 @@ def test_synthetic_signal_rejects_invalid_noise_variance_after_init(monkeypatch)
             "phases_rad": np.array([0.0]),
         }
     )
-    model = anthropogenic_models.SyntheticSignal(
+    model = anthropogenic_models.SyntheticAnthropogenicSignal(
         duration_s=1.0,
         sampling_rate_hz=16,
         frame_len=8,
@@ -199,7 +199,7 @@ def test_recorded_signal_compute_stft_contract(monkeypatch, tmp_path: Path) -> N
     waveform = 0.5 * np.sin(2 * np.pi * 2.0 * t)
     _write_pcm_wav(wav_path, fs_hz=fs_hz, samples=waveform)
 
-    model = anthropogenic_models.RecordedSignal(
+    model = anthropogenic_models.RecordedAnthropogenicSignal(
         wav_path=str(wav_path),
         duration_s=1.0,
         sampling_rate_hz=16,
@@ -221,7 +221,7 @@ def test_recorded_signal_missing_wav_raises(monkeypatch, tmp_path: Path) -> None
     """RecordedSignal should raise for missing WAV paths."""
     _, anthropogenic_models, _ = _load_anthropogenic_modules(monkeypatch)
 
-    model = anthropogenic_models.RecordedSignal(
+    model = anthropogenic_models.RecordedAnthropogenicSignal(
         wav_path=str(tmp_path / "missing.wav"),
         duration_s=1.0,
         sampling_rate_hz=16,
@@ -240,7 +240,7 @@ def test_recorded_signal_empty_segment_raises(monkeypatch, tmp_path: Path) -> No
     wav_path = tmp_path / "short.wav"
     _write_pcm_wav(wav_path, fs_hz=16, samples=np.zeros(16, dtype=float))
 
-    model = anthropogenic_models.RecordedSignal(
+    model = anthropogenic_models.RecordedAnthropogenicSignal(
         wav_path=str(wav_path),
         duration_s=1.0,
         sampling_rate_hz=16,
@@ -261,7 +261,7 @@ def test_recorded_signal_invalid_duration_mode_raises(monkeypatch, tmp_path: Pat
     wav_path = tmp_path / "short.wav"
     _write_pcm_wav(wav_path, fs_hz=16, samples=np.zeros(4, dtype=float))
 
-    model = anthropogenic_models.RecordedSignal(
+    model = anthropogenic_models.RecordedAnthropogenicSignal(
         wav_path=str(wav_path),
         duration_s=1.0,
         sampling_rate_hz=16,
@@ -278,7 +278,7 @@ def test_recorded_signal_to_float_mono_accepts_array_like(monkeypatch) -> None:
     """Float-mono conversion should accept array-like (duck-typed) input."""
     _, anthropogenic_models, _ = _load_anthropogenic_modules(monkeypatch)
 
-    mono = anthropogenic_models.RecordedSignal._to_float_mono([[0, 2], [4, 6]])
+    mono = anthropogenic_models.RecordedAnthropogenicSignal._to_float_mono([[0, 2], [4, 6]])
 
     assert mono.dtype == np.float64
     np.testing.assert_allclose(mono, np.array([1.0, 5.0], dtype=np.float64))
@@ -362,8 +362,8 @@ def test_anthropogenic_public_api_exports(monkeypatch) -> None:
 
     expected_exports = {
         "AnthropogenicSignal",
-        "SyntheticSignal",
-        "RecordedSignal",
+        "SyntheticAnthropogenicSignal",
+        "RecordedAnthropogenicSignal",
     }
 
     for export_name in expected_exports:

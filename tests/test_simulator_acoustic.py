@@ -30,10 +30,9 @@ def _install_fake_acoustic_dependencies(monkeypatch) -> None:
     signal_package = ModuleType("bluepebble.signal")
     signal_package.__path__ = []
 
-    ambient_module = ModuleType("bluepebble.signal.ambient")
-    _AmbientStub = type("Ambient", (), {})
-    ambient_module.Ambient = _AmbientStub
-    ambient_module.AmbientNoise = _AmbientStub  # deprecated alias
+    random_module = ModuleType("bluepebble.signal.random")
+    _RandomSignalStub = type("RandomSignal", (), {})
+    random_module.RandomSignal = _RandomSignalStub
 
     signal_base_module = ModuleType("bluepebble.signal.base")
     signal_base_module.Signal = type("Signal", (), {})
@@ -46,7 +45,7 @@ def _install_fake_acoustic_dependencies(monkeypatch) -> None:
     signal_utils_module.inverse_stft = lambda stft, frame_len, hop, window: np.zeros(
         stft.shape[0], dtype=np.complex64
     )
-    signal_package.ambient = ambient_module
+    signal_package.random = random_module
     signal_package.base = signal_base_module
     signal_package.utils = signal_utils_module
 
@@ -61,13 +60,13 @@ def _install_fake_acoustic_dependencies(monkeypatch) -> None:
     signal_package.anthropogenic = anthropogenic_module
 
     biological_module = ModuleType("bluepebble.signal.biological")
-    biological_module.Biological = type("Biological", (), {})
+    biological_module.BiologicalSignal = type("BiologicalSignal", (), {})
     signal_package.biological = biological_module
 
     monkeypatch.setitem(sys.modules, "bluepebble.models.propagation", propagation_module)
     monkeypatch.setitem(sys.modules, "bluepebble.platform", platform_module)
     monkeypatch.setitem(sys.modules, "bluepebble.signal", signal_package)
-    monkeypatch.setitem(sys.modules, "bluepebble.signal.ambient", ambient_module)
+    monkeypatch.setitem(sys.modules, "bluepebble.signal.random", random_module)
     monkeypatch.setitem(sys.modules, "bluepebble.signal.anthropogenic", anthropogenic_module)
     monkeypatch.setitem(sys.modules, "bluepebble.signal.base", signal_base_module)
     monkeypatch.setitem(sys.modules, "bluepebble.signal.biological", biological_module)

@@ -16,7 +16,6 @@ from .support import (
     load_package_module_from_repo,
 )
 
-
 # ---------------------------------------------------------------------------
 # Loader helpers
 # ---------------------------------------------------------------------------
@@ -90,7 +89,7 @@ def test_generate_rejects_non_1d_sensor_delays(monkeypatch) -> None:
     """Sensor delays must be one-dimensional."""
     bio = _load_biological(monkeypatch)
 
-    class ConstantSignal(bio.Biological):
+    class ConstantSignal(bio.BiologicalSignal):
         def _generate_base_signal(self, source):
             return np.ones(self.num_samples, dtype=np.complex128)
 
@@ -109,7 +108,7 @@ def test_generate_rejects_non_1d_base_signal(monkeypatch) -> None:
     """Generated base signals must be one-dimensional arrays."""
     bio = _load_biological(monkeypatch)
 
-    class MatrixSignal(bio.Biological):
+    class MatrixSignal(bio.BiologicalSignal):
         def _generate_base_signal(self, source):
             return np.ones((2, 2), dtype=np.complex128)
 
@@ -128,7 +127,7 @@ def test_generate_pads_short_base_signal(monkeypatch) -> None:
     """Short base signals should be zero-padded to ``num_samples``."""
     bio = _load_biological(monkeypatch)
 
-    class ShortSignal(bio.Biological):
+    class ShortSignal(bio.BiologicalSignal):
         def _generate_base_signal(self, source):
             return np.array([1.0 + 1.0j, 2.0 + 2.0j], dtype=np.complex128)
 
@@ -155,7 +154,7 @@ def test_generate_truncates_long_base_signal(monkeypatch) -> None:
     """Long base signals should be truncated to ``num_samples``."""
     bio = _load_biological(monkeypatch)
 
-    class LongSignal(bio.Biological):
+    class LongSignal(bio.BiologicalSignal):
         def _generate_base_signal(self, source):
             return np.array(
                 [1.0 + 0.0j, 2.0 + 0.0j, 3.0 + 0.0j, 4.0 + 0.0j, 5.0 + 0.0j],
@@ -185,7 +184,7 @@ def test_generate_accepts_frequency_dependent_tloss_vector(monkeypatch) -> None:
     """Frequency-dependent transmission-loss arrays should be accepted when sized correctly."""
     bio = _load_biological(monkeypatch)
 
-    class ConstantSignal(bio.Biological):
+    class ConstantSignal(bio.BiologicalSignal):
         def _generate_base_signal(self, source):
             return np.array(
                 [1.0 + 0.0j, 0.5 + 0.0j, 0.0 + 0.0j, 0.0 + 0.0j], dtype=np.complex128
@@ -212,7 +211,7 @@ def test_generate_rejects_tloss_vector_length_mismatch(monkeypatch) -> None:
     """Frequency-dependent transmission-loss arrays must match ``num_samples``."""
     bio = _load_biological(monkeypatch)
 
-    class ConstantSignal(bio.Biological):
+    class ConstantSignal(bio.BiologicalSignal):
         def _generate_base_signal(self, source):
             return np.ones(self.num_samples, dtype=np.complex128)
 
@@ -231,7 +230,7 @@ def test_generate_rejects_multidimensional_tloss(monkeypatch) -> None:
     """Transmission loss must be scalar-like or one-dimensional."""
     bio = _load_biological(monkeypatch)
 
-    class ConstantSignal(bio.Biological):
+    class ConstantSignal(bio.BiologicalSignal):
         def _generate_base_signal(self, source):
             return np.ones(self.num_samples, dtype=np.complex128)
 
@@ -254,7 +253,7 @@ def test_generate_rejects_multidimensional_tloss(monkeypatch) -> None:
 def test_hierarchy_biological_is_subclass_of_signal(monkeypatch) -> None:
     """``Biological`` must be a subtype of ``Signal``."""
     bio = _load_biological(monkeypatch)
-    assert issubclass(bio.Biological, bio.Signal)
+    assert issubclass(bio.BiologicalSignal, bio.Signal)
 
 
 def test_hierarchy_signal_root_has_no_generate(monkeypatch) -> None:
@@ -266,4 +265,4 @@ def test_hierarchy_signal_root_has_no_generate(monkeypatch) -> None:
 def test_hierarchy_biological_exposes_generate(monkeypatch) -> None:
     """``Biological`` exposes the per-timestep ``generate()`` interface."""
     bio = _load_biological(monkeypatch)
-    assert hasattr(bio.Biological, "generate")
+    assert hasattr(bio.BiologicalSignal, "generate")
