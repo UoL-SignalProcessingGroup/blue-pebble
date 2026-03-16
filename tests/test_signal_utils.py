@@ -18,6 +18,25 @@ def test_compute_stft_rejects_signal_shorter_than_frame_len() -> None:
         signal_utils.compute_stft(short_signal, frame_len=8)
 
 
+def test_compute_stft_rejects_non_positive_hop_factor() -> None:
+    """hop_factor of zero or negative should raise ValueError before dividing."""
+    signal = np.ones(16, dtype=np.float32)
+
+    with pytest.raises(ValueError, match="hop_factor must be a positive integer"):
+        signal_utils.compute_stft(signal, frame_len=8, hop_factor=0)
+
+    with pytest.raises(ValueError, match="hop_factor must be a positive integer"):
+        signal_utils.compute_stft(signal, frame_len=8, hop_factor=-2)
+
+
+def test_compute_stft_rejects_hop_factor_larger_than_frame_len() -> None:
+    """hop_factor > frame_len produces hop=0 and should raise ValueError."""
+    signal = np.ones(16, dtype=np.float32)
+
+    with pytest.raises(ValueError, match="hop_factor.*larger than frame_len"):
+        signal_utils.compute_stft(signal, frame_len=8, hop_factor=16)
+
+
 def test_compute_stft_rejects_unknown_window() -> None:
     """Unsupported window names should raise a clear validation error."""
     signal = np.ones(16, dtype=np.float32)

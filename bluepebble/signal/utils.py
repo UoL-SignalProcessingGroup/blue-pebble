@@ -60,8 +60,20 @@ def compute_stft(
         )
         raise ValueError(msg)
 
-    has_imag = np.iscomplexobj(signal_array) and np.any(np.abs(np.imag(signal_array)) > 0.0)
+    if hop_factor < 1:
+        msg = f"hop_factor must be a positive integer, got {hop_factor}"
+        raise ValueError(msg)
+
     hop = frame_len // hop_factor
+    if hop < 1:
+        msg = (
+            f"hop_factor ({hop_factor}) is larger than frame_len ({frame_len}), "
+            "which produces a hop of zero samples. "
+            "Use a hop_factor <= frame_len."
+        )
+        raise ValueError(msg)
+
+    has_imag = np.iscomplexobj(signal_array) and np.any(np.abs(np.imag(signal_array)) > 0.0)
 
     # Get window
     if window == "hann":
