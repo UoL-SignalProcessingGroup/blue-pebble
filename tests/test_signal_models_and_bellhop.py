@@ -8,15 +8,48 @@ from pathlib import Path
 import numpy as np
 import pytest
 
-from .support import install_fake_stonesoup, load_module_from_repo
+import sys
+import types
+
+from .support import (
+    FakeBase,
+    install_fake_stonesoup,
+    install_repo_package,
+    load_module_from_repo,
+    load_package_module_from_repo,
+)
+
+
+def _load_biological(monkeypatch):
+    """Load ``bluepebble.signal.biological`` with lightweight stubs."""
+    install_fake_stonesoup(monkeypatch)
+    install_repo_package(monkeypatch, "bluepebble", "bluepebble")
+    install_repo_package(monkeypatch, "bluepebble.signal", "bluepebble/signal")
+    # Stub out SoundSpeedProfile (biological.py imports it for DiffuseSnappingShrimp)
+    ssp_class = type("SoundSpeedProfile", (FakeBase,), {"calculate": lambda self, d: 1500.0})
+    ssp_mod = types.ModuleType("bluepebble.models.environment.sound_speed_profile")
+    ssp_mod.SoundSpeedProfile = ssp_class
+    env_mod = types.ModuleType("bluepebble.models.environment")
+    env_mod.sound_speed_profile = ssp_mod
+    models_mod = types.ModuleType("bluepebble.models")
+    models_mod.environment = env_mod
+    monkeypatch.setitem(sys.modules, "bluepebble.models", models_mod)
+    monkeypatch.setitem(sys.modules, "bluepebble.models.environment", env_mod)
+    monkeypatch.setitem(
+        sys.modules, "bluepebble.models.environment.sound_speed_profile", ssp_mod
+    )
+    load_package_module_from_repo("bluepebble/signal/base.py", "bluepebble.signal.base")
+    load_package_module_from_repo("bluepebble/signal/effects.py", "bluepebble.signal.effects")
+    return load_package_module_from_repo(
+        "bluepebble/signal/biological.py", "bluepebble.signal.biological"
+    )
 
 
 def test_signal_generate_applies_tloss_and_sensor_delay_phase(monkeypatch) -> None:
-    """Signal generation should apply attenuation and per-sensor phase delays."""
-    install_fake_stonesoup(monkeypatch)
-    signal_base = load_module_from_repo("bluepebble/signal/base.py", "bluepebble.signal.base")
+    """Biological.generate should apply attenuation and per-sensor phase delays."""
+    bio = _load_biological(monkeypatch)
 
-    class ConstantSignal(signal_base.Signal):
+    class ConstantSignal(bio.Biological):
         def _generate_base_signal(self, source) -> np.ndarray:
             return np.ones(self.num_samples, dtype=np.complex128)
 

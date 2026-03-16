@@ -12,7 +12,7 @@ from stonesoup.simulator.base import SensorSimulator
 
 from ..models.propagation import AcousticPropagationModel
 from ..platform import TowedArrayPlatform
-from ..signal.ambient import AmbientNoise
+from ..signal.ambient import Ambient
 from ..sigproc.beamformer import Beamformer, SteeringCalculator
 from ..types.sensordata import PassiveSonarSensorData
 
@@ -36,7 +36,7 @@ class PassiveSonarArraySimulatorBase(SensorSimulator):
     propagation_model: AcousticPropagationModel = Property(
         doc="Acoustic propagation model",
     )
-    noise_model: AmbientNoise | None = Property(
+    noise_model: Ambient | None = Property(
         default=None,
         doc="Noise model (optional)",
     )

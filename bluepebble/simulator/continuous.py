@@ -10,7 +10,7 @@ from numpy.typing import ArrayLike, NDArray
 from stonesoup.base import Property
 
 from ..models.propagation import SpectrumPropagationModel
-from ..signal.anthropogenic import AnthropogenicSignal
+from ..signal.anthropogenic import Anthropogenic
 from ..signal.utils import apply_fade_in, apply_fade_out, inverse_stft
 from .base import PassiveSonarArraySimulatorBase, SensorBatch
 
@@ -81,7 +81,7 @@ class ContinuousSTFTPassiveSonarArraySimulator(PassiveSonarArraySimulatorBase):
     interference artefacts, but is good as a fast baseline.
     """
 
-    signal_models: list[AnthropogenicSignal] = Property(
+    signal_models: list[Anthropogenic] = Property(
         doc="List of broadband signal models (one per target, or single-element list for all)",
     )
     mode: str = Property(
@@ -199,7 +199,7 @@ class ContinuousSTFTPassiveSonarArraySimulator(PassiveSonarArraySimulatorBase):
     def _build_common_context(
         self,
         all_timestamps: list[datetime],
-        signal_models_list: "list[AnthropogenicSignal]",
+        signal_models_list: "list[Anthropogenic]",
     ) -> _STFTCommonContext:
         """Build shared STFT metadata for synthesis.
 
@@ -246,7 +246,7 @@ class ContinuousSTFTPassiveSonarArraySimulator(PassiveSonarArraySimulatorBase):
         self,
         ctx: _STFTCommonContext,
         ground_truth_paths: "list[Iterable[State]]",
-        signal_models_list: "list[AnthropogenicSignal]",
+        signal_models_list: "list[Anthropogenic]",
     ) -> list[_STFTTargetHistory]:
         """Build per-target source and channel histories at knot times.
 
@@ -836,7 +836,7 @@ class ContinuousFractionalDelayPassiveSonarArraySimulator(PassiveSonarArraySimul
     - Lower spectral-detail fidelity than full complex frame-wise synthesis.
     """
 
-    signal_models: list[AnthropogenicSignal] = Property(
+    signal_models: list[Anthropogenic] = Property(
         doc="List of broadband signal models (one per target, or single-element list for all)",
     )
     fade_in_ms: float = Property(default=100.0, doc="Fade-in duration at arrival (ms)")

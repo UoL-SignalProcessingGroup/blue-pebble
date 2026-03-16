@@ -1,6 +1,6 @@
 """Statistical ambient noise models for sensor arrays."""
 
-from abc import abstractmethod
+from abc import ABC, abstractmethod
 
 import numpy as np
 from stonesoup.base import Property
@@ -8,7 +8,7 @@ from stonesoup.base import Property
 from .base import ComplexArray, Signal
 
 
-class AmbientNoise(Signal):
+class Ambient(Signal, ABC):
     """Abstract base class for ambient noise models.
 
     These models generate non-propagating background noise that is present across the entire sensor
@@ -40,18 +40,6 @@ class AmbientNoise(Signal):
         """Initialise and seed the random number generator."""
         super().__init__(*args, **kwargs)
         self._rng = np.random.default_rng(self.seed)
-
-    @property
-    def num_samples(self) -> int:
-        """Calculate the number of samples based on duration and sampling rate.
-
-        Returns
-        -------
-        int
-            The number of samples in the signal snapshot.
-
-        """
-        return int(self.duration_s * self.sampling_rate_hz)
 
     def _generate_unit_white_noise(
         self, num_sensors: int, num_samples: int | None = None
@@ -99,7 +87,7 @@ class AmbientNoise(Signal):
         """
 
 
-class WhiteNoise(AmbientNoise):
+class WhiteNoise(Ambient):
     """Generates complex white Gaussian noise with a flat power spectrum.
 
     Parameters
@@ -133,7 +121,7 @@ class WhiteNoise(AmbientNoise):
         return self.amplitude_upa * white_noise
 
 
-class ColouredNoise(AmbientNoise):
+class ColouredNoise(Ambient):
     """Generates complex coloured noise using FFT filtering.
 
     This class generates noise with a power spectral density proportional to 1/f^alpha.
@@ -210,3 +198,9 @@ class ColouredNoise(AmbientNoise):
 
         # 7. Scale to the desired amplitude
         return self.amplitude_upa * normalised_coloured_noise
+
+
+# ---------------------------------------------------------------------------
+# Deprecated alias — remove after next release cycle.
+# ---------------------------------------------------------------------------
+AmbientNoise = Ambient

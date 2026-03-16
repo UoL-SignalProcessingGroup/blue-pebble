@@ -29,12 +29,17 @@ def _install_fake_acoustic_dependencies(monkeypatch) -> None:
 
     signal_package = ModuleType("bluepebble.signal")
     signal_package.__path__ = []
+
     ambient_module = ModuleType("bluepebble.signal.ambient")
-    ambient_module.AmbientNoise = type("AmbientNoise", (), {})
+    _AmbientStub = type("Ambient", (), {})
+    ambient_module.Ambient = _AmbientStub
+    ambient_module.AmbientNoise = _AmbientStub  # deprecated alias
+
     signal_base_module = ModuleType("bluepebble.signal.base")
     signal_base_module.Signal = type("Signal", (), {})
     signal_base_module.DiscreteTimestepSignal = type("DiscreteTimestepSignal", (), {})
     signal_base_module.ContinuousTimestepSignal = type("ContinuousTimestepSignal", (), {})
+
     signal_utils_module = ModuleType("bluepebble.signal.utils")
     signal_utils_module.apply_fade_in = lambda signal, fade_samples: signal
     signal_utils_module.apply_fade_out = lambda signal, fade_samples: signal
@@ -50,8 +55,14 @@ def _install_fake_acoustic_dependencies(monkeypatch) -> None:
     beamformer_module.SteeringCalculator = type("SteeringCalculator", (), {})
 
     anthropogenic_module = ModuleType("bluepebble.signal.anthropogenic")
-    anthropogenic_module.AnthropogenicSignal = type("AnthropogenicSignal", (), {})
+    _AnthropogenicStub = type("Anthropogenic", (), {})
+    anthropogenic_module.Anthropogenic = _AnthropogenicStub
+    anthropogenic_module.AnthropogenicSignal = _AnthropogenicStub  # deprecated alias
     signal_package.anthropogenic = anthropogenic_module
+
+    biological_module = ModuleType("bluepebble.signal.biological")
+    biological_module.Biological = type("Biological", (), {})
+    signal_package.biological = biological_module
 
     monkeypatch.setitem(sys.modules, "bluepebble.models.propagation", propagation_module)
     monkeypatch.setitem(sys.modules, "bluepebble.platform", platform_module)
@@ -59,6 +70,7 @@ def _install_fake_acoustic_dependencies(monkeypatch) -> None:
     monkeypatch.setitem(sys.modules, "bluepebble.signal.ambient", ambient_module)
     monkeypatch.setitem(sys.modules, "bluepebble.signal.anthropogenic", anthropogenic_module)
     monkeypatch.setitem(sys.modules, "bluepebble.signal.base", signal_base_module)
+    monkeypatch.setitem(sys.modules, "bluepebble.signal.biological", biological_module)
     monkeypatch.setitem(sys.modules, "bluepebble.signal.utils", signal_utils_module)
     monkeypatch.setitem(sys.modules, "bluepebble.sigproc.beamformer", beamformer_module)
 

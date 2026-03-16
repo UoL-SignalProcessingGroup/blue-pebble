@@ -12,7 +12,7 @@ from scipy import signal as scipy_signal
 from scipy.io import wavfile
 from stonesoup.base import Property
 
-from .base import ComplexArray, _get_source_metadata, _SignalBase
+from .base import ComplexArray, Signal, _get_source_metadata
 from .utils import compute_stft
 
 if TYPE_CHECKING:
@@ -77,7 +77,7 @@ def _extract_tonal_metadata(
     )
 
 
-class AnthropogenicSignal(_SignalBase, ABC):
+class Anthropogenic(Signal, ABC):
     """Base class for STFT-first anthropogenic signal models.
 
     Lifecycle
@@ -289,7 +289,7 @@ class AnthropogenicSignal(_SignalBase, ABC):
         self._cached_source = None
 
 
-class SyntheticSignal(AnthropogenicSignal):
+class Synthetic(Anthropogenic):
     """Generates ship signals with broadband tonals and coloured noise.
 
     This signal model combines:
@@ -588,7 +588,7 @@ class SyntheticSignal(AnthropogenicSignal):
         self._tonal_realizations = None
 
 
-class RecordedSignal(AnthropogenicSignal):
+class Recorded(Anthropogenic):
     """Generates broadband source signals from measured WAV recordings.
 
     This signal model loads a measured waveform from disk, resamples it to the
@@ -806,3 +806,11 @@ class RecordedSignal(AnthropogenicSignal):
         waveform = self._apply_level(waveform)
 
         return np.asarray(waveform, dtype=np.complex128)
+
+
+# ---------------------------------------------------------------------------
+# Deprecated aliases — remove after next release cycle.
+# ---------------------------------------------------------------------------
+AnthropogenicSignal = Anthropogenic
+SyntheticSignal = Synthetic
+RecordedSignal = Recorded

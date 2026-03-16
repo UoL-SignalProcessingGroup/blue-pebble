@@ -1,12 +1,10 @@
 """Base signal properties and methods for signal models."""
 
-import warnings
-from abc import ABC
 from collections.abc import Mapping
 from typing import TYPE_CHECKING, TypeAlias
 
 import numpy as np
-from numpy.typing import ArrayLike, NDArray
+from numpy.typing import NDArray
 from stonesoup.base import Base, Property
 
 if TYPE_CHECKING:
@@ -41,14 +39,17 @@ def _get_source_metadata(source: "State") -> Mapping[str, object]:
     return metadata
 
 
-class _SignalBase(Base, ABC):
+class Signal(Base):
     """Shared sampling parameter contract for all signal and noise models.
 
-    Provides ``duration_s``, ``sampling_rate_hz``, and the derived
-    ``num_samples`` property.  :class:`Signal` (per-timestep path) and
-    :class:`~bluepebble.signal.anthropogenic.AnthropogenicSignal` (STFT-first
-    path) both inherit from this class as siblings, so that they share a common
-    parameter contract without one being a subtype of the other.
+    ``Signal`` is the public unified root of the signal hierarchy.  All
+    concrete signal types — :class:`~bluepebble.signal.biological.Biological`,
+    :class:`~bluepebble.signal.anthropogenic.Anthropogenic`, and
+    :class:`~bluepebble.signal.ambient.Ambient` — inherit from it as siblings.
+
+    This class carries only the shared ``duration_s`` / ``sampling_rate_hz``
+    parameter contract and the derived ``num_samples`` property.  Each branch
+    defines its own generation interface independently.
 
     Parameters
     ----------
@@ -75,178 +76,8 @@ class _SignalBase(Base, ABC):
         return int(self.duration_s * self.sampling_rate_hz)
 
 
-class Signal(_SignalBase, ABC):
-    """Per-timestep signal model base class.
-
-    Extends :class:`_SignalBase` with the discrete-path interface:
-    :meth:`generate`, :meth:`get_source_waveform`, and the internal
-    :meth:`_apply_propagation` helper.  Subclasses implement
-    :meth:`_generate_base_signal` to produce a raw source waveform;
-    :meth:`generate` handles padding/truncation and frequency-domain
-    propagation automatically.
-
-    """
-
-    def get_source_waveform(self, source: "State") -> ComplexArray:
-        """Return the full-duration source waveform for this signal model.
-
-        Delegates to :meth:`_prepare_waveform`.
-
-        Parameters
-        ----------
-        source : State
-            Source state passed to the underlying waveform generator.
-
-        Returns
-        -------
-        ComplexArray
-            Full-duration source waveform as ``complex128``, padded or truncated
-            to exactly :attr:`num_samples`.
-
-        """
-        return self._prepare_waveform(source)
-
-    def _prepare_waveform(self, source: "State") -> ComplexArray:
-        """Obtain, validate, and normalise the raw base signal to ``num_samples``.
-
-        Calls :meth:`_generate_base_signal`, checks that it returns a 1-D array,
-        and pads or truncates to exactly :attr:`num_samples`.
-
-        Parameters
-        ----------
-        source : State
-            Source state forwarded to :meth:`_generate_base_signal`.
-
-        Returns
-        -------
-        ComplexArray
-            1-D ``complex128`` array with length exactly ``num_samples``.
-
-        Raises
-        ------
-        NotImplementedError
-            If the subclass does not implement :meth:`_generate_base_signal`.
-        ValueError
-            If :meth:`_generate_base_signal` returns a non-1-D array.
-
-        """
-        base_generator = getattr(self, "_generate_base_signal", None)
-        if not callable(base_generator):
-            msg = (
-                f"{type(self).__name__} must implement either generate() or "
-                "_generate_base_signal(source)"
-            )
-            raise NotImplementedError(msg)
-
-        base_signal = np.asarray(base_generator(source), dtype=np.complex128)
-        if base_signal.ndim != 1:
-            msg = "_generate_base_signal(source) must return a one-dimensional array"
-            raise ValueError(msg)
-
-        if len(base_signal) < self.num_samples:
-            pad_width = self.num_samples - len(base_signal)
-            warnings.warn(
-                f"{type(self).__name__}._generate_base_signal() returned {len(base_signal)} "
-                f"samples but num_samples={self.num_samples}; zero-padding the remainder.",
-                stacklevel=3,
-            )
-            base_signal = np.concatenate(
-                [base_signal, np.zeros(pad_width, dtype=np.complex128)],
-            )
-        elif len(base_signal) > self.num_samples:
-            warnings.warn(
-                f"{type(self).__name__}._generate_base_signal() returned {len(base_signal)} "
-                f"samples but num_samples={self.num_samples}; truncating the excess.",
-                stacklevel=3,
-            )
-            base_signal = base_signal[: self.num_samples]
-
-        return base_signal
-
-    def _apply_propagation(
-        self,
-        base_signal: ComplexArray,
-        sensor_delays_s: NDArray[np.float64],
-        tloss_db: ArrayLike | float,
-        propagation_time_s: float,
-    ) -> ComplexArray:
-        """Apply transmission loss and per-sensor phase delays to a base signal.
-
-        Parameters
-        ----------
-        base_signal : ComplexArray
-            1-D complex source waveform with length ``num_samples``.
-        sensor_delays_s : NDArray[np.float64]
-            1-D array of per-sensor relative delays in seconds.
-        tloss_db : ArrayLike | float
-            Transmission loss in dB. Either a scalar applied uniformly across all
-            frequencies, or a 1-D array of length ``num_samples`` for
-            frequency-dependent loss.
-        propagation_time_s : float
-            Propagation time from the source to the array origin in seconds.
-
-        Returns
-        -------
-        ComplexArray
-            Complex signal matrix with shape ``(num_sensors, num_samples)``.
-
-        """
-        num_samples = len(base_signal)
-        signal_fft = np.fft.fft(base_signal)
-
-        tloss = np.asarray(tloss_db, dtype=float)
-        if tloss.ndim == 0:
-            signal_fft = signal_fft * (10.0 ** (-float(tloss) / 20.0))
-        elif tloss.ndim == 1:
-            if len(tloss) != num_samples:
-                msg = (
-                    "tloss_db array must have length equal to num_samples when "
-                    "frequency-dependent loss is provided"
-                )
-                raise ValueError(msg)
-            signal_fft = signal_fft * (10.0 ** (-tloss / 20.0))
-        else:
-            msg = "tloss_db must be scalar-like or one-dimensional"
-            raise ValueError(msg)
-
-        fft_freqs_hz = np.fft.fftfreq(num_samples, d=1.0 / self.sampling_rate_hz)
-        total_delays_s = float(propagation_time_s) + sensor_delays_s
-        phase_shifts = np.exp(
-            -1j * 2.0 * np.pi * total_delays_s[:, np.newaxis] * fft_freqs_hz[np.newaxis, :]
-        )
-        signals_fft: ComplexArray = signal_fft[np.newaxis, :] * phase_shifts
-        return np.fft.ifft(signals_fft, axis=1).astype(np.complex128)
-
-    def generate(
-        self,
-        source: "State",
-        sensor_delays_s: ArrayLike,
-        tloss_db: ArrayLike | float,
-        propagation_time_s: float,
-    ) -> ComplexArray:
-        """Generate the signal, apply attenuation, and propagate it to a sensor array.
-
-        Parameters
-        ----------
-        source : State
-            The source state.
-        sensor_delays_s : ArrayLike
-            Relative time delay for each sensor in seconds.
-        tloss_db : ArrayLike | float
-            Transmission loss in dB to the array origin.
-        propagation_time_s : float
-            Propagation time from source to origin in seconds.
-
-        Returns
-        -------
-        ComplexArray
-            Complex signal matrix with shape ``(num_sensors, num_samples)``.
-
-        """
-        sensor_delays = np.asarray(sensor_delays_s, dtype=float)
-        if sensor_delays.ndim != 1:
-            msg = "sensor_delays_s must be one-dimensional"
-            raise ValueError(msg)
-
-        base_signal = self._prepare_waveform(source)
-        return self._apply_propagation(base_signal, sensor_delays, tloss_db, propagation_time_s)
+# ---------------------------------------------------------------------------
+# Private alias — preserved so that the per-timestep body can be written on
+# Biological without re-importing the root under a different name.
+# ---------------------------------------------------------------------------
+_SignalBase = Signal

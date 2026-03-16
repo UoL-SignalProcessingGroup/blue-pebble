@@ -10,7 +10,7 @@ from numpy.typing import NDArray
 from stonesoup.base import Property
 
 from ..models.propagation import SpectrumPropagationModel
-from ..signal.base import Signal
+from ..signal.biological import Biological
 from ..types.sensordata import PassiveSonarSensorData
 from .base import PassiveSonarArraySimulatorBase, SensorBatch
 
@@ -56,11 +56,11 @@ class DiscretePassiveSonarArraySimulator(PassiveSonarArraySimulatorBase):
 
     """
 
-    signal_models: list[Signal] = Property(
+    signal_models: list[Biological] = Property(
         doc="List of broadband signal models (one per target, or single-element list for all)",
     )
 
-    def _resolve_signal_models(self, num_targets: int) -> list[Signal]:
+    def _resolve_signal_models(self, num_targets: int) -> list[Biological]:
         """Resolve one signal model per target.
 
         Parameters
@@ -98,7 +98,7 @@ class DiscretePassiveSonarArraySimulator(PassiveSonarArraySimulatorBase):
 
     @staticmethod
     def _get_broadband_source_signal(
-        signal_model: Signal,
+        signal_model: Biological,
         first_state: "State | None",
     ) -> Complex128Array:
         """Get a source waveform from supported signal-model interfaces.
@@ -338,7 +338,7 @@ class DeprecatedDiscretePassiveSonarArraySimulator(PassiveSonarArraySimulatorBas
         )
         super().__init__(*args, **kwargs)
 
-    signal_models: list[Signal] = Property(
+    signal_models: list[Biological] = Property(
         doc="List of acoustic signal models (one per target, or single-element list for all)",
     )
     propagation_method: str = Property(
@@ -346,7 +346,7 @@ class DeprecatedDiscretePassiveSonarArraySimulator(PassiveSonarArraySimulatorBas
         doc="Propagation method: 'transmission_loss' or 'spectrum'",
     )
 
-    def _resolve_signal_models(self, num_targets: int) -> list[Signal]:
+    def _resolve_signal_models(self, num_targets: int) -> list[Biological]:
         """Resolve signal model mapping for targets.
 
         Parameters
