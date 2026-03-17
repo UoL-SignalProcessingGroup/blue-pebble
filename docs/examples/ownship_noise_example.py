@@ -7,7 +7,8 @@ This example compares the same passive-sonar scenario in two conditions:
 """
 
 # %% [markdown]
-# ## Simulation Parameters
+# Simulation Parameters
+# ---------------------
 #
 # This section defines reproducibility and timing for the full run:
 # random seed, simulation duration, step size, start time, and total timesteps.
@@ -31,7 +32,8 @@ total_duration_s = num_steps * time_interval.total_seconds()
 print(f"Total simulation duration: {total_duration_s} seconds")
 
 # %% [markdown]
-# ## Platform Setup and Generation
+# Platform Setup and Generation
+# -----------------------------
 #
 # Here the ownship trajectory and towed-array geometry are defined.
 #
@@ -124,7 +126,8 @@ self_noise_states = [
 self_noise_ground_truth = GroundTruthPath(self_noise_states)
 
 # %% [markdown]
-# ## Ground Truth Setup and Generation
+# Ground Truth Setup and Generation
+# ---------------------------------
 #
 # Target kinematics and source metadata are generated here.
 #
@@ -218,7 +221,8 @@ fig1 = plot_world(truths=target_ground_truths, platform=platform)
 fig1.show()
 
 # %% [markdown]
-# ## Propagation Model
+# Propagation Model
+# -----------------
 #
 # This section configures the acoustic environment used by RTRS propagation:
 # sound-speed profile, bathymetry, and angular/range sampling controls.
@@ -264,7 +268,8 @@ prop_model = rtrsAcousticPropagationModel(
 )
 
 # %% [markdown]
-# ## Signal Model
+# Signal Model
+# ------------
 #
 # Here source and ambient signals are defined.
 #
@@ -326,7 +331,8 @@ def _make_self_noise_model():
     )
 
 # %% [markdown]
-# ## Beamformer
+# Beamformer
+# ----------
 #
 # This section sets beamforming parameters (domain, shading, steering grid) and builds
 # the beamformer + steering calculator used by the simulators.
@@ -379,7 +385,8 @@ steering_calculator = SteeringCalculator(
 )
 
 # %% [markdown]
-# ## Detector Pipeline Setup
+# Detector Pipeline Setup
+# -----------------------
 #
 # Two simulators are created from the same scenario:
 #
@@ -443,7 +450,8 @@ detector_without_ownship_noise = make_detector(simulator_without_ownship_noise)
 detector_with_ownship_noise = make_detector(simulator_with_ownship_noise)
 
 # %% [markdown]
-# ## Run Detection on Simulated Data
+# Run Detection on Simulated Data
+# -------------------------------
 #
 # This cell executes both detector pipelines and stores SNR maps for each condition.
 
@@ -472,7 +480,8 @@ print(f"Total no. of detections w/o ownship noise: {len(detections_without_ownsh
 print(f"Total no. of detections w/ ownship noise: {len(detections_with_ownship_noise)}")
 
 # %% [markdown]
-# ## Results: With vs Without Ownship Noise
+# Results: With vs Without Ownship Noise
+# --------------------------------------
 #
 # The final figure compares both conditions in a 2x2 layout:
 #

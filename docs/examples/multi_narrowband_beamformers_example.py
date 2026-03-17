@@ -22,7 +22,8 @@ in the pipeline is held fixed.
 """
 
 # %% [markdown]
-# ## Simulation Parameters
+# Simulation Parameters
+# ---------------------
 #
 # This section defines reproducibility and timing for the full run: random seed,
 # simulation duration, step size, start time, and the full timestep sequence used by
@@ -48,7 +49,8 @@ total_duration_s = num_steps * time_interval.total_seconds()
 print(f"Total simulation duration: {total_duration_s} seconds")
 
 # %% [markdown]
-# ## Platform Setup and Generation
+# Platform Setup and Generation
+# -----------------------------
 #
 # Here the ownship trajectory and towed-array geometry are defined.
 #
@@ -153,7 +155,8 @@ for description in manoeuvre_descriptions:
     print(f"- {description}")
 
 # %% [markdown]
-# ## Ground Truth Setup and Generation
+# Ground Truth Setup and Generation
+# ---------------------------------
 #
 # Target kinematics and source metadata are generated here.
 #
@@ -254,7 +257,8 @@ fig_world.update_layout(title="World Picture: Target and Platform Trajectories")
 fig_world.show()
 
 # %% [markdown]
-# ## Propagation Model
+# Propagation Model
+# -----------------
 #
 # This section configures the acoustic environment used by RTRS propagation: sound-speed
 # profile, bathymetry, and angular/range sampling controls.
@@ -285,7 +289,8 @@ prop_model = rtrsAcousticPropagationModel(
 )
 
 # %% [markdown]
-# ## Signal Model
+# Signal Model
+# ------------
 #
 # Here target and ambient signals are defined.
 #
@@ -333,7 +338,8 @@ def _make_signal_models():
     return models
 
 # %% [markdown]
-# ## Beamformer
+# Beamformer
+# ----------
 #
 # This section builds the steering grid and one MVDR beamformer per narrowband
 # configuration.
@@ -374,7 +380,8 @@ for config in freq_bands:
     print(f"- {config['label']}")
 
 # %% [markdown]
-# ## Detector Pipeline Setup
+# Detector Pipeline Setup
+# -----------------------
 #
 # This section builds one simulator + detector pipeline per beamformer configuration.
 #
@@ -423,7 +430,8 @@ for beamformer, steering_calculator in zip(beamformers, steering_calculators, st
     detectors.append(make_detector(simulator, steering_azimuths_rad))
 
 # %% [markdown]
-# ## Run Detection on Simulated Data
+# Run Detection on Simulated Data
+# -------------------------------
 #
 # This cell executes all detector pipelines, stores detections and SNR maps, and prints
 # a short comparison summary for the configured bands.
@@ -457,7 +465,8 @@ for summary in comparison_summary:
     )
 
 # %% [markdown]
-# ## Per-Band BTR Inspection
+# Per-Band BTR Inspection
+# -----------------------
 #
 # These figures inspect each beamformer configuration one at a time. For each band,
 # the raw SNR field is shown first and then the same field with detections and bearing
@@ -523,7 +532,8 @@ for snr_map, detections_flat, config in zip(
     fig_btr.show()
 
 # %% [markdown]
-# ## Cross-Band Comparison
+# Cross-Band Comparison
+# ---------------------
 #
 # This comparison puts all beamformer outputs on the same colour scale so band-to-band
 # differences in concentration, smear, and target contrast are easier to judge directly.
@@ -582,7 +592,8 @@ fig_compare.update_yaxes(title_text="Time (HH:MM)", row=1, col=1)
 fig_compare.show()
 
 # %% [markdown]
-# ## Bearing-Cut Diagnostics
+# Bearing-Cut Diagnostics
+# -----------------------
 #
 # These bearing cuts inspect a single mid-scenario timestep for each band. They make it
 # easier to compare peak sharpness, truth alignment, and any extra detections that are

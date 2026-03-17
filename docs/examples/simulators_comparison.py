@@ -14,7 +14,8 @@ Removed for brevity:
 """
 
 # %% [markdown]
-# ## Setup and Reproducibility
+# Setup and Reproducibility
+# -------------------------
 
 # %%
 import os
@@ -51,7 +52,8 @@ from bluepebble.simulator import (
 np.random.seed(1999)
 
 # %% [markdown]
-# ## Simulation Parameters
+# Simulation Parameters
+# ---------------------
 
 # %%
 SIM_RATE = 2.0
@@ -70,7 +72,8 @@ print(f"Number of timesteps: {SIM_PARAMS['num_steps']}")
 print(f"Timestep interval: {SIM_PARAMS['time_interval'].total_seconds()} s")
 
 # %% [markdown]
-# ## Platform and Array Parameters
+# Platform and Array Parameters
+# -----------------------------
 
 # %%
 SHIP_PARAMS = {
@@ -92,7 +95,8 @@ ARRAY_PARAMS = {
 SENSOR_TO_ANALYZE = ARRAY_PARAMS["num_sensors"] // 2
 
 # %% [markdown]
-# ## Target Parameters
+# Target Parameters
+# -----------------
 
 # %%
 TARGET_PARAMS = {
@@ -111,7 +115,8 @@ TARGET_PARAMS = {
 }
 
 # %% [markdown]
-# ## Signal Parameters
+# Signal Parameters
+# -----------------
 
 # %%
 SIGNAL_PARAMS = {
@@ -124,7 +129,8 @@ SIGNAL_PARAMS = {
 }
 
 # %% [markdown]
-# ## Platform Generation
+# Platform Generation
+# -------------------
 
 # %%
 initial_state = GroundTruthState(SHIP_PARAMS["start_vector"], timestamp=SIM_PARAMS["start_time"])
@@ -146,7 +152,8 @@ for i in range(1, SIM_PARAMS["num_steps"]):
     platform.move(new_time)
 
 # %% [markdown]
-# ## Target Trajectory
+# Target Trajectory
+# -----------------
 
 # %%
 target_states = [
@@ -184,7 +191,8 @@ fig_world.update_layout(title="World Picture")
 fig_world.show()
 
 # %% [markdown]
-# ## Source Signal Models
+# Source Signal Models
+# --------------------
 
 # %%
 wav_name = "SanctSound_CI05_03_largeship_20190925T135956Z.wav"
@@ -225,7 +233,8 @@ synthetic_signal_model = _make_synthetic_signal_model()
 measured_signal_model = _make_measured_signal_model()
 
 # %% [markdown]
-# ## Propagation Model
+# Propagation Model
+# -----------------
 #
 # Try switching between rtrs and cyclindrical to see how the propagation model affects the
 # simulation results.
@@ -265,7 +274,8 @@ else:
     )
 
 # %% [markdown]
-# ## Source Spectrograms
+# Source Spectrograms
+# -------------------
 
 # %%
 source_signal_synthetic = synthetic_signal_model.get_source_waveform(target_states[0])
@@ -299,7 +309,8 @@ fig_meas_source_spec.update_layout(title="Spectrogram - Measured Source Signal")
 fig_meas_source_spec.show()
 
 # %% [markdown]
-# ## Simulator Comparison Table
+# Simulator Comparison Table
+# --------------------------
 #
 # Rows correspond to simulator implementations and columns correspond to source
 # types (synthetic / measured). Each cell is the received-signal spectrogram for

@@ -18,7 +18,8 @@ alter propagation paths and the relative strength of arrivals that reach the arr
 """
 
 # %% [markdown]
-# ## Simulation Parameters
+# Simulation Parameters
+# ---------------------
 #
 # This section fixes the random seed and defines one shared simulation clock for the whole
 # comparison. Keeping the timing identical across both bathymetry runs ensures that any
@@ -44,7 +45,8 @@ total_duration_s = num_steps * time_interval.total_seconds()
 print(f"Total simulation duration: {total_duration_s} seconds")
 
 # %% [markdown]
-# ## Platform Setup and Generation
+# Platform Setup and Generation
+# -----------------------------
 #
 # Here the ownship trajectory and towed-array geometry are defined once and then reused
 # throughout the example. The host follows a deterministic multi-leg path so the array
@@ -110,7 +112,8 @@ for i in range(1, num_steps):
     platform.move(new_time)
 
 # %% [markdown]
-# ## Ground Truth Setup and Generation
+# Ground Truth Setup and Generation
+# ---------------------------------
 #
 # Target kinematics and source metadata are generated here. Each target truth is
 # propagated over the full timeline, and the corresponding relative-bearing truth is
@@ -200,7 +203,8 @@ fig1 = plot_world(truths=target_ground_truths, platform=platform, figsize=(600, 
 fig1.show()
 
 # %% [markdown]
-# ## Propagation Model
+# Propagation Model
+# -----------------
 #
 # This section defines the acoustic environment used by RTRS propagation: one shared
 # sound-speed profile, two bathymetry models, and the angular and range sampling controls
@@ -265,7 +269,8 @@ seamount_prop_model = rtrsAcousticPropagationModel(
 )
 
 # %% [markdown]
-# ## Geometry View: Trajectories over Bathymetry
+# Geometry View: Trajectories over Bathymetry
+# -------------------------------------------
 #
 # These plots use `plot_world` with bathymetry overlays to show the same kinematic scene
 # against each seabed model. The trajectories do not change; only the seafloor under
@@ -375,7 +380,8 @@ fig_bathy.update_layout(
 fig_bathy.show()
 
 # %% [markdown]
-# ## Signal Model
+# Signal Model
+# ------------
 #
 # Here the source and ambient signal models are defined. Each target receives a broadband
 # ship signal model, and coloured ambient noise is added at the array.
@@ -419,7 +425,8 @@ def _make_signal_models():
     return models
 
 # %% [markdown]
-# ## Beamformer
+# Beamformer
+# ----------
 #
 # This section sets the beamforming parameters and builds the steering calculator used by
 # both simulators. The steering grid spans the full azimuth range so that any difference
@@ -473,7 +480,8 @@ steering_calculator = SteeringCalculator(
 )
 
 # %% [markdown]
-# ## Detector Pipeline Setup
+# Detector Pipeline Setup
+# -----------------------
 #
 # Two simulators are created from the same scenario:
 #
@@ -538,7 +546,8 @@ detector_flat_bathymetry = make_detector(simulator_flat_bathymetry)
 detector_seamount_bathymetry = make_detector(simulator_seamount_bathymetry)
 
 # %% [markdown]
-# ## Run Detection on Simulated Data
+# Run Detection on Simulated Data
+# -------------------------------
 #
 # This cell executes both detector pipelines and stores the resulting SNR maps and
 # detections for later plotting. At this point the example branches acoustically into
@@ -569,7 +578,8 @@ print(f"Total no. of detections (flat bathymetry): {len(detections_flat_bathymet
 print(f"Total no. of detections (seamount bathymetry): {len(detections_seamount_bathymetry)}")
 
 # %% [markdown]
-# ## Results: Flat vs Seamount Bathymetry
+# Results: Flat vs Seamount Bathymetry
+# ------------------------------------
 #
 # The final figure compares the two bathymetry conditions in a 2x2 layout:
 #

@@ -22,7 +22,8 @@ beamforming pipeline.
 """
 
 # %% [markdown]
-# ## Setup and Reproducibility
+# Setup and Reproducibility
+# -------------------------
 #
 # This section imports the shared dependencies, fixes the random seed, and defines one
 # helper used to preview each generated signal with a spectrogram.
@@ -74,7 +75,8 @@ def preview_signal(
 
 
 # %% [markdown]
-# ## Whale Call Signal
+# Whale Call Signal
+# -----------------
 #
 # This section simulates a structured humpback-style vocalisation.
 #
@@ -156,7 +158,8 @@ preview_signal(
 )
 
 # %% [markdown]
-# ## Snapping Shrimp Signal
+# Snapping Shrimp Signal
+# ----------------------
 #
 # This section models the broadband crackle associated with a snapping shrimp colony.
 #
@@ -211,7 +214,8 @@ preview_signal(
 )
 
 # %% [markdown]
-# ## Commercial Vessel Tonals
+# Commercial Vessel Tonals
+# ------------------------
 #
 # This section generates a simplified low-frequency ship signature.
 #
@@ -252,7 +256,8 @@ preview_signal(
 )
 
 # %% [markdown]
-# ## Measured Vessel Noise
+# Measured Vessel Noise
+# ---------------------
 #
 # This section loads a real recording of a commercial vessel from a WAV file. This
 # recording came from [Sanct Sounds](https://sanctsound.ioos.us/sounds.html#Vessels)
@@ -305,7 +310,8 @@ preview_signal(
 )
 
 # %% [markdown]
-# ## Ambient White Noise
+# Ambient White Noise
+# -------------------
 #
 # This section generates a simple ambient baseline.
 #
@@ -332,7 +338,8 @@ preview_signal(
 )
 
 # %% [markdown]
-# ## Composite Soundscape
+# Composite Soundscape
+# --------------------
 #
 # This final signal combines the individual components into one simple scene.
 #

@@ -24,7 +24,8 @@ choices.
 # sphinx_gallery_skip_execution = True
 
 # %% [markdown]
-# ## Simulation Parameters
+# Simulation Parameters
+# ---------------------
 #
 # This section sets only reproducibility and simulation timing:
 # random seed, start time, timestep interval, and number of steps.
@@ -46,7 +47,8 @@ total_duration_s = num_steps * time_interval.total_seconds()
 print(f"Total simulation duration: {total_duration_s} seconds")
 
 # %% [markdown]
-# ## Platform Setup and Generation
+# Platform Setup and Generation
+# -----------------------------
 #
 # This section defines the platform motion model and array geometry
 # (start state, mappings, transition model, cable length, spacing, depth, sensor count),
@@ -91,7 +93,8 @@ for i in range(1, num_steps):
     platform.move(new_time)
 
 # %% [markdown]
-# ## Ground Truth Setup and Generation
+# Ground Truth Setup and Generation
+# ---------------------------------
 #
 # Target kinematics and tonal source metadata are defined here,
 # then target states are propagated across all timesteps to build `target_ground_truth`.
@@ -144,7 +147,8 @@ for i in range(1, num_steps):
 target_ground_truth = GroundTruthPath(target_states)
 
 # %% [markdown]
-# ## Propagation Models
+# Propagation Models
+# ------------------
 #
 # This section defines the acoustic environment (`Munk` SSP and flat bathymetry depth)
 # and builds the propagation-model set used for comparison.
@@ -191,7 +195,8 @@ propagation_model_colors = {
 print(f"Enabled propagation models: {', '.join(propagation_models)}")
 
 # %% [markdown]
-# ## Signal Models
+# Signal Models
+# -------------
 #
 # This section declares the three anthropogenic source signal model classes
 # that will be instantiated and run in later cells.
@@ -210,7 +215,8 @@ signal_model_specs = [
 ]
 
 # %% [markdown]
-# ## Beamformer
+# Beamformer
+# ----------
 #
 # This section sets beamforming parameters (`sampling_rate_hz`, shading, domain,
 # steering azimuth grid) and builds the beamformer plus steering calculator.
@@ -240,7 +246,8 @@ print(f"Beamformer domain: {beamformer_domain}")
 print(f"Steering grid size: {len(steering_azimuths_rad)}")
 
 # %% [markdown]
-# ## Simulation Pipeline Setup
+# Simulation Pipeline Setup
+# -------------------------
 #
 # This section defines helper functions for signal-model reset, source generation,
 # propagated simulation at one sensor index, plotting utilities, and WAV writing.
@@ -408,7 +415,8 @@ def save_as_wav(signal: np.ndarray, output_path: Path, sr: float) -> None:
 
 
 # %% [markdown]
-# ## Run Simulation on Model Combinations
+# Run Simulation on Model Combinations
+# ------------------------------------
 #
 # This cell instantiates each signal model, runs every signal/propagation combination,
 # and stores source signals, received signals, and per-run timing.
@@ -456,7 +464,8 @@ for signal_name, timings in runtimes_s.items():
     print(f"{signal_name} -> {timing_text}")
 
 # %% [markdown]
-# ## Time-Domain and Spectrogram Comparison
+# Time-Domain and Spectrogram Comparison
+# --------------------------------------
 #
 # For each signal model, this section plots source and received signals in the time domain
 # and corresponding spectrograms for each propagation model.
@@ -470,7 +479,8 @@ for signal_name in signal_model_names:
     )
 
 # %% [markdown]
-# ## Power, Spectra, and Envelopes
+# Power, Spectra, and Envelopes
+# -----------------------------
 #
 # This section produces three diagnostics from the received signals:
 # windowed power over time, frequency spectra, and absolute pressure envelopes.
@@ -632,7 +642,8 @@ fig_envelope.update_layout(
 fig_envelope.show()
 
 # %% [markdown]
-# ## Optional WAV Export
+# Optional WAV Export
+# -------------------
 #
 # Enable `export_wav` to write source and received signals to `wavs/`.
 # When disabled, no files are written.

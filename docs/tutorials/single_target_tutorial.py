@@ -40,7 +40,8 @@ In this tutorial you will assemble the following pipeline:
 # sphinx_gallery_skip_execution = True
 
 # %% [markdown]
-# ## Simulation Timing and Reproducibility
+# Simulation Timing and Reproducibility
+# -------------------------------------
 #
 # Start by defining the timing configuration shared by every plugin component. In
 # `bluepebble`, the integration interval drives more than state propagation: it also
@@ -68,7 +69,8 @@ start_time = datetime.now().replace(hour=0, minute=0, second=0, microsecond=0)
 timesteps = np.array([start_time + i * time_interval for i in range(num_steps)], dtype=object)
 
 # %% [markdown]
-# ## Build a Stone Soup Platform with `TowedArrayPlatform`
+# Build a Stone Soup Platform with `TowedArrayPlatform`
+# -----------------------------------------------------
 #
 # The first plugin-specific object is the host platform. `TowedArrayPlatform` inherits
 # from Stone Soup's moving-platform machinery, so you still provide familiar Stone Soup
@@ -129,7 +131,8 @@ for timestamp in timesteps[1:]:
     platform.move(timestamp)
 
 # %% [markdown]
-# ## Attach Acoustic Metadata to Stone Soup Ground Truth
+# Attach Acoustic Metadata to Stone Soup Ground Truth
+# ---------------------------------------------------
 #
 # Targets remain ordinary Stone Soup `GroundTruthPath` objects. The plugin-specific
 # step is to attach acoustic source parameters to each state's `metadata` so the
@@ -192,7 +195,8 @@ target_truths = [target_truth]
 plot_world(truths=target_truths, platform=platform).show()
 
 # %% [markdown]
-# ## Choose a `bluepebble` Propagation Model
+# Choose a `bluepebble` Propagation Model
+# ---------------------------------------
 #
 # Next, configure the acoustic environment. This is where `bluepebble` begins to add
 # the underwater-propagation physics that sit outside Stone Soup's core remit.
@@ -215,7 +219,8 @@ propagation_model = CylindricalAcousticPropagationModel(
 )
 
 # %% [markdown]
-# ## Configure Source and Noise Models
+# Configure Source and Noise Models
+# ---------------------------------
 #
 # With platform motion and target truth in place, define the acoustic content that will
 # actually reach the array. This is another plugin boundary: `bluepebble` supplies
@@ -265,7 +270,8 @@ signal_model = SyntheticAnthropogenicSignal(
 )
 
 # %% [markdown]
-# ## Run the `bluepebble` Simulator, Beamformer, and Detector Chain
+# Run the `bluepebble` Simulator, Beamformer, and Detector Chain
+# --------------------------------------------------------------
 #
 # This section is the core plugin workflow. `ContinuousSTFTPassiveSonarArraySimulator`
 # brings together the platform, propagation model, source/noise models, steering
@@ -370,7 +376,8 @@ fig.update_layout(width=1200, height=700, yaxis2=dict(title=""))
 fig.show()
 
 # %% [markdown]
-# ## Feed `bluepebble` Detections into a Stone Soup Tracker
+# Feed `bluepebble` Detections into a Stone Soup Tracker
+# ------------------------------------------------------
 #
 # The final step shows the hand-off back into Stone Soup. The bearing-time record and
 # passive-sonar detections come from `bluepebble`, but the tracker itself is assembled
@@ -474,7 +481,8 @@ plot_btr(
 ).show()
 
 # %% [markdown]
-# ## Adapting This Tutorial
+# Adapting This Tutorial
+# ----------------------
 #
 # You now have the minimal single-target plugin workflow:
 #

@@ -8,7 +8,8 @@ This example runs one scenario using measured environmental inputs:
 # sphinx_gallery_skip_execution = True
 
 # %% [markdown]
-# ## Simulation Parameters
+# Simulation Parameters
+# ---------------------
 #
 # Here core parameters for the simulation are set.
 
@@ -32,7 +33,8 @@ total_duration_s = num_steps * time_interval.total_seconds()
 print(f"Total simulation duration: {total_duration_s} seconds")
 
 # %% [markdown]
-# ## Platform Setup and Generation
+# Platform Setup and Generation
+# -----------------------------
 #
 # Here the platform is set up and generated.
 
@@ -128,7 +130,8 @@ for i in range(1, num_steps):
     platform.move(new_time)
 
 # %% [markdown]
-# ## Ground Truth Setup and Generation
+# Ground Truth Setup and Generation
+# ---------------------------------
 #
 # Here the ground truth is set up and generated.
 
@@ -212,7 +215,8 @@ for target_start_vector in target_start_vectors:
     relative_bearing_ground_truths.append(GroundTruthPath(bearing_states))
 
 # %% [markdown]
-# ## Measured Environment Models (GEBCO + Copernicus)
+# Measured Environment Models (GEBCO + Copernicus)
+# ------------------------------------------------
 #
 # Load the measured environmental data and create the corresponding environment models.
 # The bathymetry for this example is from the GEBCO 2025 dataset for a region south of
@@ -295,7 +299,8 @@ prop_model = rtrsAcousticPropagationModel(
 )
 
 # %% [markdown]
-# ## Geometry View: Trajectories over Bathymetry
+# Geometry View: Trajectories over Bathymetry
+# -------------------------------------------
 #
 # These plots use `plot_world` with bathymetry overlays to show the kinematic scene
 # against the measured seabed model.
@@ -310,7 +315,8 @@ fig_world = plot_world(
 fig_world.show()
 
 # %% [markdown]
-# ## Bathymetry and Sound Speed Viewer
+# Bathymetry and Sound Speed Viewer
+# ---------------------------------
 #
 # The Dash viewer supports notebook display modes through `jupyter_mode`: `inline`,
 # `tab`, `external`, or `jupyterlab`.
@@ -340,7 +346,8 @@ else:
     )
 
 # %% [markdown]
-# ## Signal Model
+# Signal Model
+# ------------
 #
 # Here the source and ambient signal models are defined. Each target receives a broadband
 # ship signal model, and coloured ambient noise is added at the array.
@@ -382,7 +389,8 @@ for target_ground_truth in target_ground_truths:
     )
 
 # %% [markdown]
-# ## Beamformer
+# Beamformer
+# ----------
 #
 # This section sets the beamforming parameters and builds the steering calculator.
 # An MVDR beamformer is used.
@@ -436,7 +444,8 @@ steering_calculator = SteeringCalculator(
 )
 
 # %% [markdown]
-# ## Detector Pipeline Setup
+# Detector Pipeline Setup
+# -----------------------
 #
 # Set up the detector pipeline, which is a CA-CFAR detector with local maximum
 # clustering.
@@ -477,7 +486,8 @@ detector = PassiveSonarDetector(
 )
 
 # %% [markdown]
-# ## Run Detection on Simulated Data
+# Run Detection on Simulated Data
+# -------------------------------
 #
 # This cell runs the simulation and applies the detector pipeline.
 
@@ -492,7 +502,8 @@ detections = [d for _, detection_set in all_detections for d in detection_set]
 print(f"Total no. of detections: {len(detections)}")
 
 # %% [markdown]
-# ## Results
+# Results
+# -------
 #
 # Here the beamformer SNR map is shown, along with the detections overlaid on the ground
 # truth.
@@ -539,7 +550,8 @@ fig_results.update_layout(
 fig_results.show()
 
 # %% [markdown]
-# ### Acknowledgement
+# Acknowledgement
+# ~~~~~~~~~~~~~~~
 #
 # This example uses external environmental data derived from:
 #

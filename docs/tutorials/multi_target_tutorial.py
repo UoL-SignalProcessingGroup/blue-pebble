@@ -38,7 +38,8 @@ In this tutorial you will assemble the following plugin workflow:
 # sphinx_gallery_skip_execution = True
 
 # %% [markdown]
-# ## Simulation Timing and Reproducibility
+# Simulation Timing and Reproducibility
+# -------------------------------------
 #
 # As in the single-target workflow, begin by defining one shared simulation clock. In
 # `bluepebble`, the timestep is more than a plotting convenience: it controls platform
@@ -66,7 +67,8 @@ start_time = datetime.now().replace(hour=0, minute=0, second=0, microsecond=0)
 timesteps = np.array([start_time + i * time_interval for i in range(num_steps)], dtype=object)
 
 # %% [markdown]
-# ## Build a Manoeuvring `TowedArrayPlatform`
+# Build a Manoeuvring `TowedArrayPlatform`
+# ----------------------------------------
 #
 # This section shows how the plugin reuses Stone Soup motion modelling for a more
 # realistic host trajectory. The platform still starts from a Stone Soup
@@ -139,7 +141,8 @@ for timestamp in timesteps[1:]:
     platform.move(timestamp)
 
 # %% [markdown]
-# ## Create Multiple Truth Paths with Acoustic Metadata
+# Create Multiple Truth Paths with Acoustic Metadata
+# --------------------------------------------------
 #
 # The targets are built with standard Stone Soup truth objects, but each truth state
 # carries metadata describing the emitted acoustic source. This keeps the modelling
@@ -202,7 +205,8 @@ for sv in [target1_start_vector, target2_start_vector, target3_start_vector]:
 plot_world(truths=target_truths, platform=platform).show()
 
 # %% [markdown]
-# ## Configure a `bluepebble` Propagation Model
+# Configure a `bluepebble` Propagation Model
+# ------------------------------------------
 #
 # The multi-target tutorial uses a more sophisticated propagation model than the
 # single-target tutorial. This highlights an important plugin usage point: the
@@ -232,7 +236,8 @@ propagation_model = rtrsAcousticPropagationModel(
 )
 
 # %% [markdown]
-# ## Configure Shared Source and Noise Models
+# Configure Shared Source and Noise Models
+# ----------------------------------------
 #
 # Next, define the signal models that will be reused across the target set. `bluepebble`
 # lets you keep one consistent processing configuration while still simulating several
@@ -280,7 +285,8 @@ def _make_signal_model():
 signal_models = [_make_signal_model() for _ in target_truths]
 
 # %% [markdown]
-# ## Run Beamforming and Passive-Sonar Detection
+# Run Beamforming and Passive-Sonar Detection
+# -------------------------------------------
 #
 # This is the main acoustic-processing stage. `ContinuousSTFTPassiveSonarArraySimulator`
 # consumes the platform, propagation model, truth paths, source models, and steering
@@ -375,7 +381,8 @@ fig.update_layout(width=1200, height=700, yaxis2=dict(title=""))
 fig.show()
 
 # %% [markdown]
-# ## Track Multiple Bearings with Stone Soup Association
+# Track Multiple Bearings with Stone Soup Association
+# ---------------------------------------------------
 #
 # Once detections exist, the workflow hands back to Stone Soup. The `bluepebble` portion
 # of the pipeline has already converted the acoustic scene into bearing detections;
@@ -502,7 +509,8 @@ plot_btr(
 ).show()
 
 # %% [markdown]
-# ## Adapting This Tutorial
+# Adapting This Tutorial
+# ----------------------
 #
 # The multi-target plugin workflow is the same basic pattern as the single-target case,
 # but with more emphasis on separability and association:

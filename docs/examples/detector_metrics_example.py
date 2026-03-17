@@ -44,7 +44,8 @@ from bluepebble.sigproc import DelayAndSumBeamformer, SteeringCalculator
 from bluepebble.simulator import ContinuousSTFTPassiveSonarArraySimulator
 
 # %% [markdown]
-# ## Simulation Parameters
+# Simulation Parameters
+# ---------------------
 #
 # This section fixes the global timing and reproducibility settings used throughout the
 # example.
@@ -68,7 +69,8 @@ start_time = datetime.now().replace(hour=0, minute=0, second=0, microsecond=0)
 timesteps = np.array([start_time + i * time_interval for i in range(num_steps)], dtype=object)
 
 # %% [markdown]
-# ## Platform Scenario Setup
+# Platform Scenario Setup
+# -----------------------
 #
 # The platform follows a deterministic **straight-turn-straight** trajectory matching
 # the tutorial scenario.
@@ -129,7 +131,8 @@ for timestamp in timesteps[1:]:
     platform.move(timestamp)
 
 # %% [markdown]
-# ## Target Truth Generation
+# Target Truth Generation
+# -----------------------
 #
 # Three Cartesian target truth paths are created with constant-velocity dynamics.
 #
@@ -180,7 +183,8 @@ for sv in [target1_start_vector, target2_start_vector, target3_start_vector]:
     target_truths.append(GroundTruthPath(target_states))
 
 # %% [markdown]
-# ## Propagation Environment
+# Propagation Environment
+# -----------------------
 #
 # Defines the acoustic environment and propagation model used to map source signals to
 # the array:
@@ -210,7 +214,8 @@ propagation_model = rtrsAcousticPropagationModel(
 )
 
 # %% [markdown]
-# ## Signal and Ambient Noise Models
+# Signal and Ambient Noise Models
+# -------------------------------
 #
 # Constructs:
 #
@@ -255,7 +260,8 @@ def _make_signal_model():
 signal_models = [_make_signal_model() for _ in target_truths]
 
 # %% [markdown]
-# ## Beamforming and Detector Pipeline Setup
+# Beamforming and Detector Pipeline Setup
+# ---------------------------------------
 #
 # This section wires together the runtime pipeline:
 #
@@ -311,7 +317,8 @@ detector = PassiveSonarDetector(
 )
 
 # %% [markdown]
-# ## Run Detection on Simulated Data
+# Run Detection on Simulated Data
+# -------------------------------
 #
 # Executes the detector over simulator outputs and captures:
 #
@@ -332,7 +339,8 @@ detections_for_plotter = [d for _, detections in all_detections for d in detecti
 print(f"Total no. of detections: {len(detections_for_plotter)}")
 
 # %% [markdown]
-# ## Relative Bearing Ground Truth Conversion
+# Relative Bearing Ground Truth Conversion
+# ----------------------------------------
 #
 # Converts Cartesian target truths into **relative bearing truths** referenced to the
 # towed-array platform at each timestamp.
@@ -364,7 +372,8 @@ target_ground_truths = target_truths
 relative_bearing_ground_truths = relative_bearing_truths
 
 # %% [markdown]
-# ## Visualisation
+# Visualisation
+# -------------
 #
 # Inspect:
 #
@@ -384,7 +393,8 @@ plot_btr(
 ).show()
 
 # %% [markdown]
-# ## Detection Metrics Sweep (ROC and PR)
+# Detection Metrics Sweep (ROC and PR)
+# ------------------------------------
 #
 # Here multiple `SweepSpec` configurations are defined and detector parameters are swept
 # to compare operating behaviour.

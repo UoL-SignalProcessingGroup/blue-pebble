@@ -21,7 +21,8 @@ Stone Soup baseline, and prepares figures for presentation output.
 """
 
 # %% [markdown]
-# ## Imports
+# Imports
+# -------
 
 # %%
 from datetime import datetime, timedelta
@@ -63,7 +64,8 @@ from bluepebble.sigproc import (
 from bluepebble.simulator import ContinuousSTFTPassiveSonarArraySimulator
 
 # %% [markdown]
-# ## Configuration
+# Configuration
+# -------------
 
 # %%
 seed = 2000
@@ -178,7 +180,8 @@ print(
 )
 
 # %% [markdown]
-# ## Scenario Build, Simulation, and Detection
+# Scenario Build, Simulation, and Detection
+# -----------------------------------------
 
 # %%
 sim = cfg["sim"]
@@ -365,7 +368,8 @@ timesteps = [
 ]
 
 # %% [markdown]
-# ## Tracking and Stone Soup Baseline Detections
+# Tracking and Stone Soup Baseline Detections
+# -------------------------------------------
 
 # %%
 relative_bearing_ground_truth = relative_bearing_ground_truths[0]
@@ -481,7 +485,8 @@ for i, timestamp in enumerate(timesteps):
     stone_soup_detections.append((timestamp, detections_at_time))
 
 # %% [markdown]
-# ## Build Figures
+# Build Figures
+# -------------
 
 # %%
 fig = go.Figure()
@@ -833,7 +838,8 @@ tracker_fig.show()
 plugin_vs_ss_fig.show()
 
 # %% [markdown]
-# ## Export and Summary
+# Export and Summary
+# ------------------
 
 # %%
 figures = {

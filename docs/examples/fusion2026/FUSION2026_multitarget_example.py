@@ -22,7 +22,8 @@ Stone Soup baseline, and packages figures for a presentation or publication pipe
 # sphinx_gallery_skip_execution = True
 
 # %% [markdown]
-# ## Imports
+# Imports
+# -------
 
 # %%
 from datetime import datetime, timedelta
@@ -71,7 +72,8 @@ from bluepebble.sigproc import (
 from bluepebble.simulator import ContinuousSTFTPassiveSonarArraySimulator
 
 # %% [markdown]
-# ## Configuration
+# Configuration
+# -------------
 
 # %%
 seed = 12
@@ -228,7 +230,8 @@ print(
 print(f"Num targets: {len(cfg['targets'])}")
 
 # %% [markdown]
-# ## Scenario Build and Detection
+# Scenario Build and Detection
+# ----------------------------
 
 # %%
 sim = cfg["sim"]
@@ -433,7 +436,8 @@ timesteps = [
 ]
 
 # %% [markdown]
-# ## Tracking and Stone Soup Baseline
+# Tracking and Stone Soup Baseline
+# --------------------------------
 
 # %%
 transition_model = ConstantVelocity(0.000001)
@@ -621,7 +625,8 @@ for i, timestamp in enumerate(timesteps):
     stone_soup_detections.append((timestamp, detections_at_time))
 
 # %% [markdown]
-# ## Build Figures
+# Build Figures
+# -------------
 
 # %%
 num_targets = len(target_ground_truths)
@@ -1197,7 +1202,8 @@ tracker_fig.show()
 plugin_vs_ss_fig.show()
 
 # %% [markdown]
-# ## Export
+# Export
+# ------
 
 # %%
 figures = {

@@ -171,7 +171,8 @@ sensor_spacing_m = 1.0
 array_depth_m = -30.0
 
 # %% [markdown]
-# ## Platform Setup and Generation
+# Platform Setup and Generation
+# -----------------------------
 #
 # This section builds a manoeuvring `TowedArrayPlatform` and propagates it across all
 # timesteps.
@@ -217,7 +218,8 @@ for timestamp in timesteps[1:]:
     platform.move(timestamp)
 
 # %% [markdown]
-# ## Ground Truth Setup and Generation
+# Ground Truth Setup and Generation
+# ---------------------------------
 #
 # We generate `num_targets` target trajectories, each with random piecewise manoeuvres
 # and independent signal metadata.
@@ -300,7 +302,8 @@ for _ in range(num_targets):
 plot_world(truths=target_truths, platform=platform).show()
 
 # %% [markdown]
-# ## Propagation Model
+# Propagation Model
+# -----------------
 #
 # This section configures linear SSP, flat bathymetry, and RTRS propagation controls for
 # the random scenario.
@@ -320,7 +323,8 @@ propagation_model = rtrsAcousticPropagationModel(
 )
 
 # %% [markdown]
-# ## Signal Model
+# Signal Model
+# ------------
 #
 # Ambient background and per-target source signals are defined with shared STFT settings.
 #
@@ -361,7 +365,8 @@ for metadata in target_signal_metadata:
     )
 
 # %% [markdown]
-# ## Beamformer
+# Beamformer
+# ----------
 #
 # This stage runs broadband-power DAS beamforming, CA-CFAR + peak detection, and produces
 # a BTR with detection overlays.
@@ -453,7 +458,8 @@ fig.update_layout(
 fig.show()
 
 # %% [markdown]
-# ## Tracker
+# Tracker
+# -------
 #
 # Tracking is run on plugin detections using a bearing-only Kalman/JPDA setup.
 #
