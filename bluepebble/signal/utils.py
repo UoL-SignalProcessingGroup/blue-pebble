@@ -52,8 +52,28 @@ def compute_stft(
         msg = "Input signal must be 1D"
         raise ValueError(msg)
 
-    has_imag = np.iscomplexobj(signal_array) and np.any(np.abs(np.imag(signal_array)) > 0.0)
+    if len(signal_array) < frame_len:
+        msg = (
+            f"Signal length ({len(signal_array)}) is shorter than frame_len ({frame_len}). "
+            "Increase duration_s, increase sampling_rate_hz, or reduce frame_len so that "
+            "num_samples >= frame_len."
+        )
+        raise ValueError(msg)
+
+    if hop_factor < 1:
+        msg = f"hop_factor must be a positive integer, got {hop_factor}"
+        raise ValueError(msg)
+
     hop = frame_len // hop_factor
+    if hop < 1:
+        msg = (
+            f"hop_factor ({hop_factor}) is larger than frame_len ({frame_len}), "
+            "which produces a hop of zero samples. "
+            "Use a hop_factor <= frame_len."
+        )
+        raise ValueError(msg)
+
+    has_imag = np.iscomplexobj(signal_array) and np.any(np.abs(np.imag(signal_array)) > 0.0)
 
     # Get window
     if window == "hann":

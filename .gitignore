@@ -30,3 +30,10 @@ htmlcov/
 # Operating system / editor
 .DS_Store
 .vscode/
+
+# Claude Code — local only
+CLAUDE.md
+.claude/
+
+# Measured data
+docs/examples/measured_data

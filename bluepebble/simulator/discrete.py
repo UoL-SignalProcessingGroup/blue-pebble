@@ -10,7 +10,7 @@ from numpy.typing import NDArray
 from stonesoup.base import Property
 
 from ..models.propagation import SpectrumPropagationModel
-from ..signal.base import Signal
+from ..signal.biological import BiologicalSignal
 from ..types.sensordata import PassiveSonarSensorData
 from .base import PassiveSonarArraySimulatorBase, SensorBatch
 
@@ -24,7 +24,7 @@ Complex128Array: TypeAlias = NDArray[np.complex128]
 class DiscretePassiveSonarArraySimulator(PassiveSonarArraySimulatorBase):
     """Discrete broadband simulator with per-timestamp spectrum rendering.
 
-    This simulator synthesizes one independent snapshot per platform timestamp.
+    This simulator synthesises one independent snapshot per platform timestamp.
     It is intended for broadband scenarios where each timestep can be processed
     as a standalone frame, without enforcing waveform continuity across adjacent
     timestamps.
@@ -56,11 +56,11 @@ class DiscretePassiveSonarArraySimulator(PassiveSonarArraySimulatorBase):
 
     """
 
-    signal_models: list[Signal] = Property(
+    signal_models: list[BiologicalSignal] = Property(
         doc="List of broadband signal models (one per target, or single-element list for all)",
     )
 
-    def _resolve_signal_models(self, num_targets: int) -> list[Signal]:
+    def _resolve_signal_models(self, num_targets: int) -> list[BiologicalSignal]:
         """Resolve one signal model per target.
 
         Parameters
@@ -98,7 +98,7 @@ class DiscretePassiveSonarArraySimulator(PassiveSonarArraySimulatorBase):
 
     @staticmethod
     def _get_broadband_source_signal(
-        signal_model: Signal,
+        signal_model: BiologicalSignal,
         first_state: "State | None",
     ) -> Complex128Array:
         """Get a source waveform from supported signal-model interfaces.
@@ -338,7 +338,7 @@ class DeprecatedDiscretePassiveSonarArraySimulator(PassiveSonarArraySimulatorBas
         )
         super().__init__(*args, **kwargs)
 
-    signal_models: list[Signal] = Property(
+    signal_models: list[BiologicalSignal] = Property(
         doc="List of acoustic signal models (one per target, or single-element list for all)",
     )
     propagation_method: str = Property(
@@ -346,7 +346,7 @@ class DeprecatedDiscretePassiveSonarArraySimulator(PassiveSonarArraySimulatorBas
         doc="Propagation method: 'transmission_loss' or 'spectrum'",
     )
 
-    def _resolve_signal_models(self, num_targets: int) -> list[Signal]:
+    def _resolve_signal_models(self, num_targets: int) -> list[BiologicalSignal]:
         """Resolve signal model mapping for targets.
 
         Parameters

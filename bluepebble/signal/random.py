@@ -1,47 +1,48 @@
-"""Statistical ambient noise models for sensor arrays."""
+"""Stochastic signal generation models for sensor arrays."""
 
-from abc import abstractmethod
-from typing import Any, TypeAlias
+from abc import ABC, abstractmethod
 
 import numpy as np
-from numpy.typing import NDArray
-from stonesoup.base import Base, Property
+from stonesoup.base import Property
 
-ComplexArray: TypeAlias = NDArray[np.complexfloating[Any, Any]]
+from .base import ComplexArray, Signal
 
 
-class AmbientNoise(Base):
-    """Abstract base class for ambient noise models.
+class RandomSignal(Signal, ABC):
+    """Abstract base class for stochastic signal generation models.
 
-    These models generate non-propagating background noise that is present across the entire sensor
-    array.
+    These models generate random signals that can be applied either as spatially
+    distributed signals across the entire sensor array, or as part of a localized
+    source's radiated signature. The base class is agnostic to the deployment
+    mode—subclasses implement the signal generation, and the simulator determines
+    spatial distribution.
 
     Parameters
     ----------
     amplitude_upa : float
-        The noise amplitude (e.g., in µPa).
+        The signal amplitude (e.g., in µPa).
     duration_s : float
         Duration of the signal in seconds.
     sampling_rate_hz : int
         Sampling rate in Hertz.
+    seed : int or None, optional
+        Seed for the random number generator. When ``None`` (default), the RNG
+        is seeded non-deterministically. Provide an integer for reproducible
+        signal realisations across runs.
 
     """
 
-    amplitude_upa: float = Property(doc="The noise amplitude (e.g., in µPa)")
-    duration_s: float = Property(doc="Duration of the signal in seconds")
-    sampling_rate_hz: int = Property(doc="Sampling rate in Hertz")
+    amplitude_upa: float = Property(doc="The signal amplitude (e.g., in µPa)")
+    seed: int | None = Property(
+        default=None,
+        doc="Seed for the random number generator. ``None`` gives non-deterministic output; "
+        "an integer makes signal realisations reproducible across runs.",
+    )
 
-    @property
-    def num_samples(self) -> int:
-        """Calculate the number of samples based on duration and sampling rate.
-
-        Returns
-        -------
-        int
-            The number of samples in the signal snapshot.
-
-        """
-        return int(self.duration_s * self.sampling_rate_hz)
+    def __init__(self, *args, **kwargs) -> None:
+        """Initialise and seed the random number generator."""
+        super().__init__(*args, **kwargs)
+        self._rng = np.random.default_rng(self.seed)
 
     def _generate_unit_white_noise(
         self, num_sensors: int, num_samples: int | None = None
@@ -65,13 +66,14 @@ class AmbientNoise(Base):
         n = num_samples if num_samples is not None else self.num_samples
         # Generate real and imaginary parts from a standard normal distribution
         # and scale by 1/sqrt(2) to ensure the total power is 1.
-        return (np.random.randn(num_sensors, n) + 1j * np.random.randn(num_sensors, n)) / np.sqrt(
-            2
-        )
+        return (
+            self._rng.standard_normal((num_sensors, n))
+            + 1j * self._rng.standard_normal((num_sensors, n))
+        ) / np.sqrt(2)
 
     @abstractmethod
     def generate(self, num_sensors: int = 1, num_samples: int | None = None) -> ComplexArray:
-        """Generate a noise array. This must be implemented by subclasses.
+        """Generate a signal array. This must be implemented by subclasses.
 
         Parameters
         ----------
@@ -83,18 +85,18 @@ class AmbientNoise(Base):
         Returns
         -------
         ComplexArray
-            Noise matrix of shape ``(num_sensors, num_samples)``.
+            Signal matrix of shape ``(num_sensors, num_samples)``.
 
         """
 
 
-class WhiteNoise(AmbientNoise):
+class WhiteNoiseSignal(RandomSignal):
     """Generates complex white Gaussian noise with a flat power spectrum.
 
     Parameters
     ----------
     amplitude_upa : float
-        The noise amplitude (e.g., in µPa).
+        The signal amplitude (e.g., in µPa).
     duration_s : float
         Duration of the signal in seconds.
     sampling_rate_hz : int
@@ -122,7 +124,7 @@ class WhiteNoise(AmbientNoise):
         return self.amplitude_upa * white_noise
 
 
-class ColouredNoise(AmbientNoise):
+class ColouredNoiseSignal(RandomSignal):
     """Generates complex coloured noise using FFT filtering.
 
     This class generates noise with a power spectral density proportional to 1/f^alpha.
@@ -133,7 +135,7 @@ class ColouredNoise(AmbientNoise):
         The power-law exponent for the noise spectrum (e.g., -1 for pink noise, -2 for red/brownian
         noise).
     amplitude_upa : float
-        The noise amplitude (e.g., in µPa).
+        The signal amplitude (e.g., in µPa).
     duration_s : float
         Duration of the signal in seconds.
     sampling_rate_hz : int
@@ -170,13 +172,20 @@ class ColouredNoise(AmbientNoise):
         # 2. Get the corresponding frequencies for the FFT
         freqs = np.fft.fftfreq(n)
 
-        # 3. Create a frequency-domain filter based on the spectral exponent
-        with np.errstate(divide="ignore"):
-            # The filter exponent is half the power exponent because we are filtering amplitude,
-            # not power (Power ∝ Amplitude^2).
+        # 3. Create a frequency-domain filter based on the spectral exponent.
+        #    The filter exponent is half the power exponent because we are filtering amplitude,
+        #    not power (Power ∝ Amplitude^2).
+        #    np.errstate suppresses the RuntimeWarning from 0.0 ** negative_exponent at the DC
+        #    bin; the resulting inf/nan is corrected in the next step.
+        with np.errstate(divide="ignore", invalid="ignore"):
             filter_gain = np.abs(freqs) ** (self.spectral_exponent / 2.0)
 
-        # Avoid division by zero at the DC component (frequency = 0)
+        # The DC bin (f=0) evaluates to 0^(alpha/2), which is 0 for positive alpha and inf/nan
+        # for negative alpha. Either way the power-law shape is undefined at DC. We set the DC
+        # gain to 1 so the bin passes through unattenuated — a pragmatic convention that avoids
+        # a singularity. The consequence is that the DC component of the output is not shaped
+        # by spectral_exponent and will retain the amplitude of the underlying white noise after
+        # normalisation. This is generally negligible for acoustic signals.
         filter_gain[freqs == 0] = 1
 
         # 4. Apply the filter by multiplying in the frequency domain
