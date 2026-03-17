@@ -54,7 +54,7 @@ Implemented capabilities include:
 - Passive sonar simulation pipelines  
 - Native integration with Stone Soup tracking workflows  
 - Plotting utilities for bearings and Cartesian tracks  
-- Notebook-based tutorials and worked examples
+- Gallery-based tutorials and worked examples
 
 ```{toctree}
 :maxdepth: 2
@@ -62,8 +62,8 @@ Implemented capabilities include:
 
 installation
 getting_started
-../tutorials/index
-../examples/index
+auto_tutorials/index
+auto_examples/index
 api/index
 development
 testing

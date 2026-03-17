@@ -1,22 +1,23 @@
-# %% [markdown]  # noqa: D100
-# # Broadband Measured vs Synthetic Comparison Across Simulator Modes
-#
-# This example extends `bb_sig_analysis.py` by looping over multiple simulator
-# implementations and plotting a spectrogram table for each mode.
-#
-# Retained from the original workflow:
-# - Ground-truth world plot
-# - Source spectrogram plots (synthetic and measured)
-#
-# Removed for brevity:
-# - Frequency-spectrum plots
-# - Time-series plots
-# - WAV export
+"""Broadband Measured vs Synthetic Comparison Across Simulator Modes.
+
+This example extends `bb_sig_analysis.py` by looping over multiple simulator
+implementations and plotting a spectrogram table for each mode.
+
+Retained from the original workflow:
+- Ground-truth world plot
+- Source spectrogram plots (synthetic and measured)
+
+Removed for brevity:
+- Frequency-spectrum plots
+- Time-series plots
+- WAV export
+"""
 
 # %% [markdown]
 # ## Setup and Reproducibility
 
 # %%
+import os
 from datetime import datetime, timedelta
 from pathlib import Path
 
@@ -37,7 +38,10 @@ from bluepebble.models.propagation import (
 )
 from bluepebble.platform import TowedArrayPlatform
 from bluepebble.plotter import plot_spectrogram, plot_world
-from bluepebble.signal.anthropogenic import RecordedSignal, SyntheticSignal
+from bluepebble.signal.anthropogenic import (
+    RecordedAnthropogenicSignal,
+    SyntheticAnthropogenicSignal,
+)
 from bluepebble.simulator import (
     ContinuousFractionalDelayPassiveSonarArraySimulator,
     ContinuousSTFTPassiveSonarArraySimulator,
@@ -183,34 +187,42 @@ fig_world.show()
 # ## Source Signal Models
 
 # %%
-synthetic_signal_model = SyntheticSignal(
-    duration_s=SIGNAL_PARAMS["duration_s"],
-    sampling_rate_hz=SIGNAL_PARAMS["sampling_rate_hz"],
-    frame_len=SIGNAL_PARAMS["frame_len"],
-    hop_factor=SIGNAL_PARAMS["hop_factor"],
-    tonal_bandwidth_hz=TARGET_PARAMS["tonal_bandwidth_hz"],
-    noise_amplitude_upa=TARGET_PARAMS["noise_amplitude_upa"],
-    noise_spectral_exponent=TARGET_PARAMS["noise_spectral_exponent"],
-    noise_freq_range_hz=(0.0, SIGNAL_PARAMS["sampling_rate_hz"] / 2),
-    tonal_noise_is_constant=True,
-    noise_is_constant=True,
-)
-
 wav_name = "SanctSound_CI05_03_largeship_20190925T135956Z.wav"
-data_dir = Path(__file__).resolve().parent / "measured_data"
+data_dir = Path(os.getcwd()) / "measured_data"
 measured_wav_path = data_dir / wav_name
 
-measured_signal_model = RecordedSignal(
-    duration_s=SIGNAL_PARAMS["duration_s"],
-    sampling_rate_hz=SIGNAL_PARAMS["sampling_rate_hz"],
-    frame_len=SIGNAL_PARAMS["frame_len"],
-    hop_factor=SIGNAL_PARAMS["hop_factor"],
-    wav_path=str(measured_wav_path),
-    segment_start_s=0.0,
-    segment_duration_s=30.0,
-    duration_match_mode="tile",
-    level_db_re_1upa=85.0,
-)
+
+def _make_synthetic_signal_model():
+    return SyntheticAnthropogenicSignal(
+        duration_s=SIGNAL_PARAMS["duration_s"],
+        sampling_rate_hz=SIGNAL_PARAMS["sampling_rate_hz"],
+        frame_len=SIGNAL_PARAMS["frame_len"],
+        hop_factor=SIGNAL_PARAMS["hop_factor"],
+        tonal_bandwidth_hz=TARGET_PARAMS["tonal_bandwidth_hz"],
+        noise_amplitude_upa=TARGET_PARAMS["noise_amplitude_upa"],
+        noise_spectral_exponent=TARGET_PARAMS["noise_spectral_exponent"],
+        noise_freq_range_hz=(0.0, SIGNAL_PARAMS["sampling_rate_hz"] / 2),
+        tonal_noise_is_constant=True,
+        noise_is_constant=True,
+    )
+
+
+def _make_measured_signal_model():
+    return RecordedAnthropogenicSignal(
+        duration_s=SIGNAL_PARAMS["duration_s"],
+        sampling_rate_hz=SIGNAL_PARAMS["sampling_rate_hz"],
+        frame_len=SIGNAL_PARAMS["frame_len"],
+        hop_factor=SIGNAL_PARAMS["hop_factor"],
+        wav_path=str(measured_wav_path),
+        segment_start_s=0.0,
+        segment_duration_s=30.0,
+        duration_match_mode="tile",
+        level_db_re_1upa=85.0,
+    )
+
+
+synthetic_signal_model = _make_synthetic_signal_model()
+measured_signal_model = _make_measured_signal_model()
 
 # %% [markdown]
 # ## Propagation Model
@@ -375,8 +387,9 @@ comparison_results = []
 for config in SIMULATOR_CONFIGS:
     print(f"Running simulator mode: {config['label']}")
 
-    synthetic_sim = build_simulator(config, synthetic_signal_model)
-    measured_sim = build_simulator(config, measured_signal_model)
+    # Fresh model instances per config — compute_stft() is one-shot per instance.
+    synthetic_sim = build_simulator(config, _make_synthetic_signal_model())
+    measured_sim = build_simulator(config, _make_measured_signal_model())
 
     synthetic_received = run_continuous_simulation(synthetic_sim)
     measured_received = run_continuous_simulation(measured_sim)

@@ -10,17 +10,14 @@ from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[2]
 sys.path.insert(0, os.fspath(ROOT))
-
-try:
-    from nbformat.warnings import MissingIDFieldWarning
-except ImportError:  # pragma: no cover - older nbformat versions
-    MissingIDFieldWarning = None
+sys.path.insert(0, os.fspath(Path(__file__).parent))
 
 try:
     from sphinx.deprecation import RemovedInSphinx10Warning  # type: ignore[attr-defined]  # noqa: E402
 except ImportError:  # pragma: no cover - older Sphinx versions
     RemovedInSphinx10Warning = Warning
 
+from _plotly_scraper import PlotlyScraper  # noqa: E402
 from bluepebble import __version__  # noqa: E402
 
 project = "Blue Pebble"
@@ -34,7 +31,8 @@ extensions = [
     "sphinx.ext.autosummary",
     "sphinx.ext.napoleon",
     "sphinx.ext.viewcode",
-    "myst_nb",
+    "myst_parser",
+    "sphinx_gallery.gen_gallery",
 ]
 
 templates_path = ["_templates"]
@@ -43,6 +41,10 @@ exclude_patterns = [
     "Thumbs.db",
     ".DS_Store",
     "**/.ipynb_checkpoints",
+    # Exclude the raw gallery source dirs — Sphinx should only see the
+    # sphinx-gallery-generated RST output under source/auto_examples/ etc.
+    "examples",
+    "tutorials",
 ]
 
 autosummary_generate = True
@@ -63,11 +65,23 @@ myst_enable_extensions = [
     "deflist",
 ]
 
-nb_execution_mode = "off"
-suppress_warnings = [
-    "mystnb.unknown_mime_type",
-]
+
+_plotly_scraper = PlotlyScraper()
+
+sphinx_gallery_conf = {
+    "examples_dirs": ["examples", "tutorials"],
+    "gallery_dirs": ["source/auto_examples", "source/auto_tutorials"],
+    "filename_pattern": r"\.py",
+    "abort_on_example_error": False,
+    # Scripts that require external data files (GEBCO, WAV) or removed APIs
+    # are expected to fail when those resources are absent.
+    "expected_failing_examples": {
+        "examples/using_measured_data.py",
+        "examples/signal_and_propagation_comparison_example.py",
+    },
+    "image_scrapers": ("matplotlib", _plotly_scraper),
+    "reset_modules": (_plotly_scraper.reset,),
+    "plot_gallery": True,
+}
 
 warnings.filterwarnings("ignore", category=RemovedInSphinx10Warning)
-if MissingIDFieldWarning is not None:
-    warnings.filterwarnings("ignore", category=MissingIDFieldWarning)
