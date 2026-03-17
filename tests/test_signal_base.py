@@ -74,12 +74,6 @@ def test_signal_num_samples(monkeypatch) -> None:
     assert model.num_samples == 4
 
 
-def test_signal_is_public_root(monkeypatch) -> None:
-    """``Signal`` is the publicly exported root; ``_SignalBase`` is an alias for it."""
-    signal_base = _load_signal_base(monkeypatch)
-    assert signal_base._SignalBase is signal_base.Signal
-
-
 # ---------------------------------------------------------------------------
 # Biological base-class interface tests
 # ---------------------------------------------------------------------------
@@ -186,9 +180,7 @@ def test_generate_accepts_frequency_dependent_tloss_vector(monkeypatch) -> None:
 
     class ConstantSignal(bio.BiologicalSignal):
         def _generate_base_signal(self, source):
-            return np.array(
-                [1.0 + 0.0j, 0.5 + 0.0j, 0.0 + 0.0j, 0.0 + 0.0j], dtype=np.complex128
-            )
+            return np.array([1.0 + 0.0j, 0.5 + 0.0j, 0.0 + 0.0j, 0.0 + 0.0j], dtype=np.complex128)
 
     model = ConstantSignal(duration_s=0.5, sampling_rate_hz=8)
 

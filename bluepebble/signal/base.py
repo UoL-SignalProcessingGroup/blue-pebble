@@ -74,10 +74,3 @@ class Signal(Base):
 
         """
         return int(self.duration_s * self.sampling_rate_hz)
-
-
-# ---------------------------------------------------------------------------
-# Private alias — preserved so that the per-timestep body can be written on
-# Biological without re-importing the root under a different name.
-# ---------------------------------------------------------------------------
-_SignalBase = Signal
