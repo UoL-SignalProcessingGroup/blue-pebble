@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from collections.abc import Sequence
+from collections.abc import Collection, Sequence
 from datetime import datetime
 from typing import Any, Protocol, cast
 
@@ -827,7 +827,7 @@ def plot_btr(
     data: ArrayLike | None = None,
     truths: Sequence[GroundTruthPath] | None = None,
     detections: Sequence[Detection] | None = None,
-    tracks: Sequence[Track] | None = None,
+    tracks: Collection[Track] | None = None,
     data_type: str = "SNR (dB)",
     cmin: float | None = None,
     cmax: float | None = None,
@@ -853,7 +853,7 @@ def plot_btr(
         Ground-truth paths representing target trajectories. Default is ``None``.
     detections : Sequence[Detection] | None
         Detection objects to overlay. Default is ``None``.
-    tracks : Sequence[Track] | None
+    tracks : Collection[Track] | None
         Track objects to overlay. Default is ``None``.
     data_type : str
         Label for the plotted heatmap quantity (for example ``"SNR (dB)"``).

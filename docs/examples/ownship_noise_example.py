@@ -457,12 +457,12 @@ detector_with_ownship_noise = make_detector(simulator_with_ownship_noise)
 
 # %%
 all_detections_without_ownship_noise = list(
-    detector_without_ownship_noise.detections_gen(progress_bar=True, total_timesteps=num_steps)
+    detector_without_ownship_noise.detections_gen(progress_bar=False, total_timesteps=num_steps)
 )
 snr_map_without_ownship_noise = detector_without_ownship_noise.snr_history
 
 all_detections_with_ownship_noise = list(
-    detector_with_ownship_noise.detections_gen(progress_bar=True, total_timesteps=num_steps)
+    detector_with_ownship_noise.detections_gen(progress_bar=False, total_timesteps=num_steps)
 )
 snr_map_with_ownship_noise = detector_with_ownship_noise.snr_history
 

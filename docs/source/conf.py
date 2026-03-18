@@ -77,8 +77,8 @@ sphinx_gallery_conf = {
     # are expected to fail when those resources are absent.
     "expected_failing_examples": {
         "examples/using_measured_data.py",
-        "examples/signal_and_propagation_comparison_example.py",
     },
+    "ignore_pattern": r"challenging_tracking_example\.py",
     "image_scrapers": ("matplotlib", _plotly_scraper),
     "reset_modules": (_plotly_scraper.reset,),
     "plot_gallery": True,

@@ -492,7 +492,7 @@ detector = PassiveSonarDetector(
 # This cell runs the simulation and applies the detector pipeline.
 
 # %%
-all_detections = list(detector.detections_gen(progress_bar=True, total_timesteps=num_steps))
+all_detections = list(detector.detections_gen(progress_bar=False, total_timesteps=num_steps))
 snr_map = detector.snr_history
 
 timesteps = [start_time + i * time_interval for i in range(num_steps)]

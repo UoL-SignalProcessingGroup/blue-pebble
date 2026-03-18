@@ -555,12 +555,12 @@ detector_seamount_bathymetry = make_detector(simulator_seamount_bathymetry)
 
 # %%
 all_detections_flat_bathymetry = list(
-    detector_flat_bathymetry.detections_gen(progress_bar=True, total_timesteps=num_steps)
+    detector_flat_bathymetry.detections_gen(progress_bar=False, total_timesteps=num_steps)
 )
 snr_map_flat_bathymetry = detector_flat_bathymetry.snr_history
 
 all_detections_seamount_bathymetry = list(
-    detector_seamount_bathymetry.detections_gen(progress_bar=True, total_timesteps=num_steps)
+    detector_seamount_bathymetry.detections_gen(progress_bar=False, total_timesteps=num_steps)
 )
 snr_map_seamount_bathymetry = detector_seamount_bathymetry.snr_history
 

@@ -443,7 +443,7 @@ detections_flat_per_bf = []
 comparison_summary = []
 
 for detector, config in zip(detectors, freq_bands, strict=False):
-    all_detections = list(detector.detections_gen(progress_bar=True, total_timesteps=num_steps))
+    all_detections = list(detector.detections_gen(progress_bar=False, total_timesteps=num_steps))
     snr_map = detector.snr_history
     detections_flat = [d for _, detection_set in all_detections for d in detection_set]
 

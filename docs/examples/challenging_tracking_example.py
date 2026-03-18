@@ -412,7 +412,7 @@ detector = PassiveSonarDetector(
     steering_azimuths_rad=steering_azimuths_rad,
 )
 
-all_detections = list(detector.detections_gen(progress_bar=True))
+all_detections = list(detector.detections_gen(progress_bar=False))
 snr_map = detector.snr_history
 
 detections_for_plotter = [d for _, detections in all_detections for d in detections]

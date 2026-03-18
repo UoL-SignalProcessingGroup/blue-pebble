@@ -1,43 +1,45 @@
-"""Single-Target Tutorial.
-
-This tutorial shows how to use `bluepebble` as a Stone Soup plugin for a complete
-single-target passive-sonar workflow. The goal is not just to produce a result, but
-to show how `bluepebble` components fit around standard Stone Soup state, truth,
-detection, and tracking objects.
-
-## Background
-
-`bluepebble` extends Stone Soup with underwater-acoustics and passive-sonar components
-that are not part of the core tracking library. In practice, the plugin adds
-array-platform models, acoustic propagation models, source and noise signal models,
-beamforming, and passive-sonar detection utilities. Stone Soup still provides the
-state representations, motion models, data-association logic, and trackers.
-
-## Key Concepts
-
-- `TowedArrayPlatform` is the plugin entry point for representing a passive towed
-  array as a Stone Soup-compatible moving platform.
-- `GroundTruthState` and `GroundTruthPath` remain standard Stone Soup types;
-  `bluepebble` reads extra acoustic metadata from their `metadata` fields.
-- `ContinuousSTFTPassiveSonarArraySimulator` is the integration point that combines
-  platform geometry, propagation, source models, noise, steering, and beamforming
-  into beamformed data products.
-- The detection and tracking stages stay close to normal Stone Soup usage:
-  `bluepebble` produces passive-sonar detections, and Stone Soup consumes them in
-  the tracker.
-
-## What You Will Build
-
-In this tutorial you will assemble the following pipeline:
-
-- A Stone Soup `GroundTruthState` platform wrapped in
-  `bluepebble.platform.TowedArrayPlatform`
-- A single target truth path with plugin-specific acoustic metadata
-- A cylindrical acoustic propagation model and broadband signal/noise models
-- A broadband passive-sonar simulator, beamformer, and detector chain
-- A Stone Soup bearing tracker driven by `bluepebble` detections
 """
-# sphinx_gallery_skip_execution = True
+=============================================
+Single Target Passive-Sonar Tracking Tutorial
+=============================================
+"""  # noqa: D205, D212, D400, D415
+
+# %% [markdown]
+# This tutorial shows how to use `bluepebble` as a Stone Soup plugin for a complete
+# single-target passive-sonar workflow. The goal is not just to produce a result, but
+# to show how `bluepebble` components fit around standard Stone Soup state, truth,
+# detection, and tracking objects.
+#
+# Background & Key Concepts
+# -------------------------
+#
+# `bluepebble` extends Stone Soup with underwater-acoustics and passive-sonar components
+# that are not part of the core tracking library. In practice, the plugin adds
+# array-platform models, acoustic propagation models, source and noise signal models,
+# beamforming, and passive-sonar detection utilities. Stone Soup still provides the
+# state representations, motion models, data-association logic, and trackers.
+#
+# The key integration patterns to keep in mind are:
+#
+# - `TowedArrayPlatform` is the plugin entry point for representing a passive towed
+#   array as a Stone Soup-compatible moving platform.
+# - `GroundTruthState` and `GroundTruthPath` remain standard Stone Soup types;
+#   `bluepebble` reads extra acoustic metadata from their `metadata` fields.
+# - `ContinuousSTFTPassiveSonarArraySimulator` is the integration point that combines
+#   platform geometry, propagation, source models, noise, steering, and beamforming
+#   into beamformed data products.
+# - The detection and tracking stages stay close to normal Stone Soup usage:
+#   `bluepebble` produces passive-sonar detections, and Stone Soup consumes them in
+#   the tracker.
+#
+# In this tutorial you will assemble the following pipeline:
+#
+# - A Stone Soup `GroundTruthState` platform wrapped in
+#   `bluepebble.platform.TowedArrayPlatform`
+# - A single target truth path with plugin-specific acoustic metadata
+# - A cylindrical acoustic propagation model and broadband signal/noise models
+# - A broadband passive-sonar simulator, beamformer, and detector chain
+# - A Stone Soup bearing tracker driven by `bluepebble` detections
 
 # %% [markdown]
 # Simulation Timing and Reproducibility
@@ -192,7 +194,7 @@ for timestamp in timesteps[1:]:
 target_truth = GroundTruthPath(target_states)
 target_truths = [target_truth]
 
-plot_world(truths=target_truths, platform=platform).show()
+fig = plot_world(truths=target_truths, platform=platform)
 
 # %% [markdown]
 # Choose a `bluepebble` Propagation Model
@@ -201,7 +203,7 @@ plot_world(truths=target_truths, platform=platform).show()
 # Next, configure the acoustic environment. This is where `bluepebble` begins to add
 # the underwater-propagation physics that sit outside Stone Soup's core remit.
 #
-# The tutorial uses `CylindricalAcousticPropagationModel` with a simple sound-speed
+# This tutorial uses `CylindricalAcousticPropagationModel` with a simple sound-speed
 # profile and flat bathymetry. Once you provide a propagation model, the simulator can
 # use it to convert target/platform geometry into array-level acoustic observations.
 
@@ -284,7 +286,12 @@ signal_model = SyntheticAnthropogenicSignal(
 # be analysed directly or passed into Stone Soup tracking components.
 
 # %%
-from bluepebble.detector import CACFARDetector, PassiveSonarDetector, PeakDetector
+from bluepebble.detector import (
+    CACFARDetector,
+    DetectionAlgorithm,
+    PassiveSonarDetector,
+    PeakDetector,
+)
 from bluepebble.plotter import plot_btr
 from bluepebble.sigproc import (
     MinimumVarianceDistortionlessResponseBeamformer,
@@ -330,7 +337,7 @@ cfar_detector = CACFARDetector(
     num_training_cells=num_training_cells,
     threshold_factor=threshold_factor,
 )
-detection_chain = [cfar_detector]
+detection_chain: list[DetectionAlgorithm] = [cfar_detector]
 if peak_distance > 0:
     detection_chain.append(PeakDetector(distance=peak_distance))
 
@@ -340,7 +347,7 @@ detector = PassiveSonarDetector(
     steering_azimuths_rad=steering_azimuths_rad,
 )
 
-all_detections = list(detector.detections_gen(progress_bar=True))
+all_detections = list(detector.detections_gen(progress_bar=False))
 snr_map = detector.snr_history
 
 detections_for_plotter = [d for _, detections in all_detections for d in detections]
@@ -354,7 +361,7 @@ fig = make_subplots(
     rows=1, cols=2, shared_yaxes=True, subplot_titles=("SNR Map", "SNR Map with Detections")
 )
 
-plot_btr(
+_ = plot_btr(
     data=snr_map,
     timesteps=timesteps,
     steering_azimuths=np.rad2deg(steering_azimuths_rad),
@@ -362,7 +369,7 @@ plot_btr(
     row=1,
     col=1,
 )
-plot_btr(
+_ = plot_btr(
     data=snr_map,
     detections=detections_for_plotter,
     timesteps=timesteps,
@@ -372,8 +379,7 @@ plot_btr(
     col=2,
 )
 
-fig.update_layout(width=1200, height=700, yaxis2=dict(title=""))
-fig.show()
+_ = fig.update_layout(width=1200, height=700, yaxis2=dict(title=""))
 
 # %% [markdown]
 # Feed `bluepebble` Detections into a Stone Soup Tracker
@@ -464,21 +470,21 @@ kf = SingleTargetMixtureTracker(
 seed_track = Track(states=[prior_state])
 kf._track = seed_track
 
-tracks = set()
+tracks: set[Track] = set()
 
 for _, current_tracks in kf:
     for track in current_tracks:
         track[-1].state_vector[0, 0] = mod_bearing(float(track[-1].state_vector[0, 0]))
     tracks |= current_tracks
 
-plot_btr(
+fig = plot_btr(
     timesteps=timesteps,
     steering_azimuths=np.rad2deg(steering_azimuths_rad),
     truths=relative_bearing_truths,
     detections=detections_for_plotter,
     tracks=tracks,
     figsize=(700, 700),
-).show()
+)
 
 # %% [markdown]
 # Adapting This Tutorial
