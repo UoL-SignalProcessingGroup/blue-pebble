@@ -1184,7 +1184,7 @@ class rtrsAcousticPropagationModel(AcousticPropagationModel, SpectrumPropagation
 
         # Complex conjugate to match phase convention of rtrs (e^{+i\omega t}) to the
         # simulation convention (e^{-i\omega t})
-        transfer_functions = np.conj(transfer_functions)
+        transfer_functions = np.asarray(np.conj(transfer_functions), dtype=np.complex128)
 
         # Calculate mean travel time
         speed = _as_scalar_float(self.ssp.calculate(array_ref_pos[2]), "sound speed")
