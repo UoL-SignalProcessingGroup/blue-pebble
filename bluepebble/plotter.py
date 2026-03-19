@@ -245,6 +245,71 @@ def _validate_spectrogram_params(
     return canonical_format, normalised_y_lim
 
 
+def _validate_spectrogram_render_params(
+    analysis_mode: str,
+    db_reference: str,
+    z_lim: tuple[float, float] | None,
+) -> tuple[str, str, tuple[float, float] | None]:
+    """Validate spectrogram rendering options and normalise string inputs."""
+    if not isinstance(analysis_mode, str):
+        raise ValueError("analysis_mode must be one of {'stft', 'psd'}")
+    if not isinstance(db_reference, str):
+        raise ValueError("db_reference must be one of {'peak', 'absolute'}")
+
+    normalised_mode = analysis_mode.strip().lower()
+    if normalised_mode not in {"stft", "psd"}:
+        raise ValueError("analysis_mode must be one of {'stft', 'psd'}")
+
+    normalised_reference = db_reference.strip().lower()
+    if normalised_reference not in {"peak", "absolute"}:
+        raise ValueError("db_reference must be one of {'peak', 'absolute'}")
+
+    if z_lim is None:
+        normalised_z_lim = None
+    else:
+        if not isinstance(z_lim, (tuple, list, np.ndarray)) or len(z_lim) != 2:
+            raise ValueError("z_lim must be a (low, high) pair")
+        low, high = float(z_lim[0]), float(z_lim[1])
+        if not np.isfinite(low) or not np.isfinite(high):
+            raise ValueError("z_lim values must be finite")
+        if low >= high:
+            raise ValueError("z_lim must satisfy low < high")
+        normalised_z_lim = (low, high)
+
+    return normalised_mode, normalised_reference, normalised_z_lim
+
+
+def _validate_percentile_limits(
+    z_percentiles: tuple[float, float] | None,
+) -> tuple[float, float] | None:
+    """Validate percentile-based colour scaling input.
+
+    Parameters
+    ----------
+    z_percentiles : tuple[float, float] | None
+        Optional ``(low, high)`` percentile pair in [0, 100].
+
+    Returns
+    -------
+    tuple[float, float] | None
+        Normalised percentile pair when provided.
+
+    """
+    if z_percentiles is None:
+        return None
+
+    if not isinstance(z_percentiles, (tuple, list, np.ndarray)) or len(z_percentiles) != 2:
+        raise ValueError("z_percentiles must be a (low, high) pair")
+
+    low, high = float(z_percentiles[0]), float(z_percentiles[1])
+    if not np.isfinite(low) or not np.isfinite(high):
+        raise ValueError("z_percentiles values must be finite")
+    if not (0.0 <= low < high <= 100.0):
+        raise ValueError("z_percentiles must satisfy 0 <= low < high <= 100")
+
+    return low, high
+
+
 def _normalise_plotly_figsize(figsize: tuple[float, float]) -> tuple[int, int]:
     """Normalise a requested figure size to Plotly pixel dimensions.
 
@@ -1159,6 +1224,18 @@ def plot_spectrogram(
     y_lim: tuple[float, float] | None = None,
     yaxis_format: str = "kHz",
     figsize: tuple[float, float] = (12, 6),
+    fig: go.Figure | None = None,
+    row: int | None = None,
+    col: int | None = None,
+    analysis_mode: str = "stft",
+    db_reference: str = "peak",
+    z_lim: tuple[float, float] | None = None,
+    z_percentiles: tuple[float, float] | None = None,
+    showscale: bool = True,
+    colorbar_title: str = "Intensity (dB)",
+    colorscale: str = "Viridis",
+    customdata: ArrayLike | None = None,
+    hovertemplate: str | None = None,
 ) -> go.Figure:
     """Generate and display a formatted spectrogram with Plotly.
 
@@ -1179,6 +1256,37 @@ def plot_spectrogram(
     figsize : tuple[float, float]
         Figure size. Values that look like inches (for example ``(12, 6)``) are
         converted to pixels using 100 px/in; larger values are treated as pixels.
+        Ignored when ``fig`` is provided.
+    fig : go.Figure | None
+        Optional target figure. Provide a subplot figure from
+        :func:`plotly.subplots.make_subplots` to draw directly into a cell.
+        If None, a new standalone figure is created.
+    row : int | None
+        Subplot row when ``fig`` is provided.
+    col : int | None
+        Subplot column when ``fig`` is provided.
+    analysis_mode : str
+        Spectral analysis backend. Use ``"stft"`` for short-time Fourier transform
+        magnitude or ``"psd"`` for power spectral density.
+    db_reference : str
+        Decibel reference mode. ``"peak"`` computes values relative to each panel's
+        peak value. ``"absolute"`` leaves values in absolute dB units.
+    z_lim : tuple[float, float] | None
+        Optional colour scale limits in dB as ``(min, max)``.
+    z_percentiles : tuple[float, float] | None
+        Optional percentile-based colour scale limits as ``(low, high)`` in
+        [0, 100]. Used only when ``z_lim`` is ``None``.
+    showscale : bool
+        Whether to show a colour bar for this trace.
+    colorbar_title : str
+        Colour bar title text.
+    colorscale : str
+        Plotly colour scale name.
+    customdata : ArrayLike | None
+        Optional customdata to attach to the heatmap trace for use in hover templates.
+    hovertemplate : str | None
+        Optional hover template for the heatmap trace. See Plotly documentation for
+        details on hover templates and how to reference customdata.
 
     Returns
     -------
@@ -1186,6 +1294,17 @@ def plot_spectrogram(
         A Plotly figure containing the spectrogram.
 
     """
+    if fig is not None:
+        if (row is None) != (col is None):
+            raise ValueError("row and col must both be provided when fig is supplied")
+        if row is None or col is None:
+            raise ValueError("row and col must both be provided when fig is supplied")
+        if row <= 0 or col <= 0:
+            raise ValueError("row and col must be positive")
+
+    if fig is None and (row is not None or col is not None):
+        raise ValueError("row and col can only be used when fig is supplied")
+
     yaxis_format, y_lim = _validate_spectrogram_params(
         sr=sr,
         n_fft=n_fft,
@@ -1193,6 +1312,12 @@ def plot_spectrogram(
         y_lim=y_lim,
         yaxis_format=yaxis_format,
     )
+    analysis_mode, db_reference, z_lim = _validate_spectrogram_render_params(
+        analysis_mode=analysis_mode,
+        db_reference=db_reference,
+        z_lim=z_lim,
+    )
+    z_percentiles = _validate_percentile_limits(z_percentiles)
 
     signal = np.asarray(signal)
     if signal.size == 0:
@@ -1200,30 +1325,65 @@ def plot_spectrogram(
     if signal.ndim > 1:
         signal = signal.flatten()
 
-    boundary: Any = None
-    freqs_hz, times, zxx = scipy_signal.stft(
-        signal,
-        fs=sr,
-        window="hann",
-        nperseg=n_fft,
-        noverlap=n_fft - hop_length,
-        nfft=n_fft,
-        boundary=boundary,
-        padded=False,
-        return_onesided=True,
-    )
+    if analysis_mode == "stft":
+        boundary: Any = None
+        freqs_hz, times, zxx = scipy_signal.stft(
+            signal,
+            fs=sr,
+            window="hann",
+            nperseg=n_fft,
+            noverlap=n_fft - hop_length,
+            nfft=n_fft,
+            boundary=boundary,
+            padded=False,
+            return_onesided=True,
+        )
+        magnitude = np.abs(zxx)
+        amin = 1e-10
+        magnitude_db = 20.0 * np.log10(np.maximum(amin, magnitude))
+        if db_reference == "peak":
+            ref = float(np.max(magnitude))
+            if ref <= 0:
+                ref = 1.0
+            s_db = magnitude_db - 20.0 * np.log10(ref)
+        else:
+            s_db = magnitude_db
+    else:
+        # Keep PSD behaviour aligned with historical examples that use the
+        # real-valued waveform component for spectrogram generation.
+        signal_for_psd = np.real(signal)
+        freqs_hz, times, spec_power = scipy_signal.spectrogram(
+            signal_for_psd,
+            fs=sr,
+            nperseg=n_fft,
+            noverlap=n_fft - hop_length,
+            scaling="density",
+            mode="psd",
+        )
+        amin = 1e-16
+        psd_db = 10.0 * np.log10(spec_power + amin)
+        if db_reference == "peak":
+            ref = float(np.max(spec_power))
+            if ref <= 0:
+                ref = 1.0
+            s_db = psd_db - 10.0 * np.log10(ref)
+        else:
+            s_db = psd_db
 
-    magnitude = np.abs(zxx)
-    ref = np.max(magnitude)
-    if ref <= 0:
-        ref = 1.0
-    amin = 1e-10
-    # Convert to dB relative to peak magnitude while guarding against log(0).
-    s_db = 20.0 * np.log10(np.maximum(amin, magnitude)) - 20.0 * np.log10(ref)
-
-    vmax = float(np.max(s_db))
-    # Display a fixed 60 dB window to keep low-energy detail visible.
-    vmin = vmax - 60.0
+    if z_lim is None:
+        if z_percentiles is not None:
+            low_pct, high_pct = z_percentiles
+            vmin = float(np.percentile(s_db, low_pct))
+            vmax = float(np.percentile(s_db, high_pct))
+        else:
+            vmax = float(np.max(s_db))
+            if db_reference == "peak":
+                # Display a fixed 60 dB window to keep low-energy detail visible.
+                vmin = vmax - 60.0
+            else:
+                vmin = float(np.min(s_db))
+    else:
+        vmin, vmax = z_lim
 
     if yaxis_format == "kHz":
         y_values = freqs_hz / 1000.0
@@ -1234,37 +1394,66 @@ def plot_spectrogram(
         y_title = "Frequency (Hz)"
         y_range = list(y_lim) if y_lim else None
 
-    fig = go.Figure(
-        data=go.Heatmap(
-            z=s_db,
-            x=times,
-            y=y_values,
-            colorscale="Viridis",
-            zmin=vmin,
-            zmax=vmax,
-            colorbar=dict(
-                title=dict(text="Intensity (dB)"),
+    target_fig = go.Figure() if fig is None else fig
+    using_subplot_target = fig is not None
+
+    heatmap = go.Heatmap(
+        z=s_db,
+        x=times,
+        y=y_values,
+        colorscale=colorscale,
+        zmin=vmin,
+        zmax=vmax,
+        showscale=showscale,
+        colorbar=(
+            dict(
+                title=dict(text=colorbar_title, side="right"),
                 thickness=24,
                 len=1.0,
-            ),
+            )
+            if showscale
+            else None
+        ),
+        customdata=customdata,
+        hovertemplate=hovertemplate,
+    )
+    if using_subplot_target:
+        target_fig.add_trace(heatmap, row=row, col=col)
+    else:
+        target_fig.add_trace(heatmap)
+
+    x_range = [0, len(signal) / float(sr)]
+    if using_subplot_target:
+        target_fig.update_xaxes(
+            title_text="Time (s)",
+            range=x_range,
+            showgrid=False,
+            row=row,
+            col=col,
         )
-    )
+        target_fig.update_yaxes(
+            title_text=y_title,
+            range=y_range,
+            showgrid=False,
+            row=row,
+            col=col,
+        )
+    else:
+        width_px, height_px = _normalise_plotly_figsize(figsize)
+        target_fig.update_layout(width=width_px, height=height_px, template="plotly_white")
 
-    width_px, height_px = _normalise_plotly_figsize(figsize)
-    fig.update_layout(width=width_px, height=height_px, template="plotly_white")
+        target_fig.update_xaxes(
+            title_text="Time (s)",
+            range=x_range,
+            showgrid=False,
+        )
+        target_fig.update_yaxes(
+            title_text=y_title,
+            range=y_range,
+            showgrid=False,
+        )
 
-    fig.update_xaxes(
-        title_text="Time (s)",
-        range=[0, len(signal) / float(sr)],
-        showgrid=False,
-    )
-    fig.update_yaxes(
-        title_text=y_title,
-        range=y_range,
-        showgrid=False,
-    )
-
-    return fig
+    return target_fig
 
 
 def plot_roc(

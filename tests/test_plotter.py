@@ -112,6 +112,42 @@ def test_validate_spectrogram_params_normalises_and_validates_inputs(monkeypatch
         )
 
 
+def test_validate_spectrogram_render_params_checks_modes_and_limits(monkeypatch) -> None:
+    """Spectrogram rendering validation should check mode/reference and z limits."""
+    plotter = _load_plotter(monkeypatch)
+
+    mode, reference, z_lim = plotter._validate_spectrogram_render_params(
+        analysis_mode=" PSD ",
+        db_reference=" absolute ",
+        z_lim=(-50.0, 20.0),
+    )
+
+    assert mode == "psd"
+    assert reference == "absolute"
+    assert z_lim == (-50.0, 20.0)
+
+    with pytest.raises(ValueError, match="analysis_mode must be one of"):
+        plotter._validate_spectrogram_render_params(
+            analysis_mode="wavelet",
+            db_reference="peak",
+            z_lim=None,
+        )
+
+    with pytest.raises(ValueError, match="db_reference must be one of"):
+        plotter._validate_spectrogram_render_params(
+            analysis_mode="stft",
+            db_reference="linear",
+            z_lim=None,
+        )
+
+    with pytest.raises(ValueError, match="z_lim must satisfy low < high"):
+        plotter._validate_spectrogram_render_params(
+            analysis_mode="stft",
+            db_reference="peak",
+            z_lim=(1.0, 1.0),
+        )
+
+
 def test_normalise_plotly_figsize_handles_inches_and_pixels(monkeypatch) -> None:
     """Small figure sizes should be treated as inches and larger ones as pixels."""
     plotter = _load_plotter(monkeypatch)
@@ -152,6 +188,81 @@ def test_plot_spectrogram_rejects_empty_signal(monkeypatch) -> None:
 
     with pytest.raises(ValueError, match="signal is empty"):
         plotter.plot_spectrogram(signal=np.array([]), sr=48_000)
+
+
+def test_plot_spectrogram_validates_row_and_col_arguments(monkeypatch) -> None:
+    """Spectrogram plotting should reject inconsistent subplot targeting arguments."""
+    plotter = _load_plotter(monkeypatch)
+    signal = np.ones(1024)
+
+    with pytest.raises(ValueError, match="can only be used when fig is supplied"):
+        plotter.plot_spectrogram(signal=signal, sr=48_000, row=1)
+
+    with pytest.raises(ValueError, match="must both be provided when fig is supplied"):
+        plotter.plot_spectrogram(
+            signal=signal,
+            sr=48_000,
+            fig=plotter.go.Figure(),
+            row=1,
+        )
+
+    with pytest.raises(ValueError, match="row and col must be positive"):
+        plotter.plot_spectrogram(
+            signal=signal,
+            sr=48_000,
+            fig=plotter.go.Figure(),
+            row=0,
+            col=1,
+        )
+
+
+def test_plot_spectrogram_writes_into_subplot_cell(monkeypatch) -> None:
+    """Spectrogram plotting should be able to draw into a provided subplot cell."""
+    plotter = _load_plotter(monkeypatch)
+    signal = np.sin(2.0 * np.pi * 220.0 * np.arange(2048) / 48_000.0)
+    fig = plotter.make_subplots(rows=1, cols=2)
+
+    returned_fig = plotter.plot_spectrogram(
+        signal=signal,
+        sr=48_000,
+        n_fft=256,
+        hop_length=64,
+        yaxis_format="Hz",
+        fig=fig,
+        row=1,
+        col=2,
+    )
+
+    assert returned_fig is fig
+    assert len(fig.data) == 1
+    assert fig.data[0].type == "heatmap"
+    assert fig.layout.xaxis2.title.text == "Time (s)"
+    assert fig.layout.yaxis2.title.text == "Frequency (Hz)"
+
+
+def test_plot_spectrogram_supports_psd_absolute_and_colourbar_controls(monkeypatch) -> None:
+    """PSD mode should support absolute dB plotting with explicit z-limits."""
+    plotter = _load_plotter(monkeypatch)
+    signal = np.sin(2.0 * np.pi * 440.0 * np.arange(4096) / 48_000.0)
+
+    fig = plotter.plot_spectrogram(
+        signal=signal,
+        sr=48_000,
+        n_fft=512,
+        hop_length=128,
+        yaxis_format="Hz",
+        analysis_mode="psd",
+        db_reference="absolute",
+        z_lim=(-50.0, 20.0),
+        showscale=False,
+        colorbar_title="dB re 1 uPa^2/Hz",
+    )
+
+    assert len(fig.data) == 1
+    assert fig.data[0].type == "heatmap"
+    assert fig.data[0].zmin == -50.0
+    assert fig.data[0].zmax == 20.0
+    assert fig.data[0].showscale is False
 
 
 def test_plot_roc_and_pr_include_auc_in_trace_names(monkeypatch) -> None:
