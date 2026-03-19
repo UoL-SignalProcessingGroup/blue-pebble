@@ -1,47 +1,49 @@
 """
-============================================================
-Broadband Measured vs Synthetic Comparison: Simulator Modes
-============================================================
+==============================================
+Simulator Modes: Measured vs Synthetic Signals
+==============================================
 
-This example loops over multiple simulator implementations and plots a spectrogram
-table for each mode, comparing synthetic and measured source signals. It shows how
-different simulator backends affect the received signal structure at a single sensor.
+This example compares five simulator backends on a 300-second passive sonar
+scenario containing two vessels: a slow-moving tow ship carrying a 3-element
+hydrophone array and a single target approaching from approximately 1.2 km.
+Both a synthetic ship signal (tonal comb + coloured noise) and a real
+hydrophone recording (SANCTSOUND CI05) are used as sources.
 
-Simulator types compared:
+For each simulator mode the received signal at the centre array element is
+plotted as a spectrogram, giving a 5 x 2 comparison table that lets you see
+how continuous-processing artefacts differ across backends.
 
-- **STFT Interp**: STFT-domain propagation with interpolation between updates.
-- **WOLA Interp**: Weighted overlap-add reconstruction with interpolated propagation.
+Simulator modes compared:
+
+- **STFT Interp**: STFT-domain propagation with interpolation between transfer-function updates.
+- **WOLA Interp**: Weighted overlap-add reconstruction with interpolated frame-to-frame
+  propagation.
 - **COLA**: Constant overlap-add STFT processing for stable frame stitching.
 - **Fractional Delay**: Time-domain model using sub-sample delay alignment.
-- **Discrete**: Per-step discrete simulation baseline.
+- **Discrete**: Per-step discrete simulation baseline without overlap-add processing.
 """  # noqa: D205, D212, D400, D415
 
 # %%
-# Setup and Reproducibility
-# -------------------------
+# Imports
+# -------
+#
+# All relevant dependencies are defined here.
 
-# %%
-import os
 from datetime import datetime, timedelta
 from pathlib import Path
 
 import numpy as np
-import plotly.graph_objects as go
 from plotly.subplots import make_subplots
-from scipy import signal as spsignal
 from stonesoup.models.transition.linear import (
     CombinedLinearGaussianTransitionModel,
     ConstantVelocity,
 )
 from stonesoup.types.groundtruth import GroundTruthPath, GroundTruthState
 
-from bluepebble.models.environment import Constant, FlatBathymetry
-from bluepebble.models.propagation import (
-    CylindricalAcousticPropagationModel,
-    rtrsAcousticPropagationModel,
-)
+from bluepebble.models.environment import Constant
+from bluepebble.models.propagation import CylindricalAcousticPropagationModel
 from bluepebble.platform import TowedArrayPlatform
-from bluepebble.plotter import plot_world
+from bluepebble.plotter import plot_spectrogram, plot_world
 from bluepebble.signal.anthropogenic import (
     RecordedAnthropogenicSignal,
     SyntheticAnthropogenicSignal,
@@ -52,130 +54,82 @@ from bluepebble.simulator import (
     DiscretePassiveSonarArraySimulator,
 )
 
+# %%
+# Simulation Timing and Reproducibility
+# --------------------------------------
+#
+# A fixed random seed ensures the tonal phases and noise realisations are identical on every run,
+# making the spectrograms fully reproducible.
+
 np.random.seed(1999)
 
-# %%
-# Simulation Parameters
-# ---------------------
+sim_rate = 2.0
+sim_length_s = 300.0
+sim_start_time = datetime.now().replace(hour=0, minute=0, second=0, microsecond=0)
+sim_time_interval = timedelta(seconds=sim_rate)
+sim_num_steps = int(sim_length_s / sim_rate)
+
+total_duration_s = sim_num_steps * sim_time_interval.total_seconds()
 
 # %%
-SIM_RATE = 2.0
-SIM_LENGTH_S = 300.0
-SIM_PARAMS = {
-    "start_time": datetime.now().replace(hour=0, minute=0, second=0, microsecond=0),
-    "time_interval": timedelta(seconds=SIM_RATE),
-    "num_steps": int(SIM_LENGTH_S / SIM_RATE),
-}
-
-total_duration_s = SIM_PARAMS["num_steps"] * SIM_PARAMS["time_interval"].total_seconds()
-
-print("=== Broadband Simulator-Mode Comparison ===")
-print(f"Total simulation duration: {total_duration_s} s")
-print(f"Number of timesteps: {SIM_PARAMS['num_steps']}")
-print(f"Timestep interval: {SIM_PARAMS['time_interval'].total_seconds()} s")
-
-# %%
-# Platform and Array Parameters
-# -----------------------------
-
-# %%
-SHIP_PARAMS = {
-    "start_vector": np.array([0, 0, 0, 0, -10.0, 0]),
-    "position_mapping": [0, 2, 4],
-    "velocity_mapping": [1, 3, 5],
-    "transition_model": CombinedLinearGaussianTransitionModel(
-        [ConstantVelocity(0), ConstantVelocity(0), ConstantVelocity(0)]
-    ),
-}
-
-ARRAY_PARAMS = {
-    "num_sensors": 3,
-    "tow_cable_length": 10.0,
-    "sensor_spacing": 1.0,
-    "array_depth": -10.0,
-}
-
-SENSOR_TO_ANALYZE = ARRAY_PARAMS["num_sensors"] // 2
-
-# %%
-# Target Parameters
-# -----------------
-
-# %%
-TARGET_PARAMS = {
-    "start_vector": np.array([-1000, 0, 750, -5.0, -10.0, 0]),
-    "position_mapping": [0, 2, 4],
-    "velocity_mapping": [1, 3, 5],
-    "transition_model": CombinedLinearGaussianTransitionModel(
-        [ConstantVelocity(0.001), ConstantVelocity(0.001), ConstantVelocity(0)]
-    ),
-    "amplitudes_upa": 10 ** (np.array([100.0, 90.0, 100.0, 85.0]) / 20),
-    "frequencies_hz": np.array([20.0, 140.0, 200.0, 500.0]),
-    "phases_rad": np.random.uniform(0, 2 * np.pi, 4),
-    "tonal_bandwidth_hz": 10.0,
-    "noise_amplitude_upa": 10 ** (80 / 20),
-    "noise_spectral_exponent": -1.0,
-}
-
-# %%
-# Signal Parameters
-# -----------------
-
-# %%
-SIGNAL_PARAMS = {
-    "duration_s": total_duration_s,
-    "sampling_rate_hz": 3000.0,
-    "frame_len": 500,
-    "hop_factor": 4,
-    "fade_in_ms": 100.0,
-    "fade_out_ms": 100.0,
-}
-
-# %%
-# Platform Generation
+# Platform and Target
 # -------------------
+#
+# The tow ship is stationary with a 3-element hydrophone array. The array is separated by a 10 m
+# cable with 1 m sensor spacing at 10 m depth. The target vessel starts approximately 1.2 km away
+# and moves slowly from the north-west.
 
-# %%
-initial_state = GroundTruthState(SHIP_PARAMS["start_vector"], timestamp=SIM_PARAMS["start_time"])
+ship_start_vector = np.array([0, 0, 0, 0, -10.0, 0])
+ship_position_mapping = [0, 2, 4]
+ship_velocity_mapping = [1, 3, 5]
+ship_transition_model = CombinedLinearGaussianTransitionModel(
+    [ConstantVelocity(0), ConstantVelocity(0), ConstantVelocity(0)]
+)
+
+array_num_sensors = 3
+array_tow_cable_length_m = 10.0
+array_sensor_spacing_m = 1.0
+array_depth_m = -10.0
+
+sensor_to_analyse = array_num_sensors // 2
+
+initial_state = GroundTruthState(ship_start_vector, timestamp=sim_start_time)
 
 platform = TowedArrayPlatform(
     states=[initial_state],
-    position_mapping=SHIP_PARAMS["position_mapping"],
-    velocity_mapping=SHIP_PARAMS["velocity_mapping"],
-    transition_models=[SHIP_PARAMS["transition_model"]],
+    position_mapping=ship_position_mapping,
+    velocity_mapping=ship_velocity_mapping,
+    transition_models=[ship_transition_model],
     transition_times=[timedelta(seconds=total_duration_s)],
-    num_sensors=ARRAY_PARAMS["num_sensors"],
-    cable_length_m=ARRAY_PARAMS["tow_cable_length"],
-    sensor_spacing_m=ARRAY_PARAMS["sensor_spacing"],
-    array_depth_m=ARRAY_PARAMS["array_depth"],
+    num_sensors=array_num_sensors,
+    cable_length_m=array_tow_cable_length_m,
+    sensor_spacing_m=array_sensor_spacing_m,
+    array_depth_m=array_depth_m,
 )
 
-for i in range(1, SIM_PARAMS["num_steps"]):
-    new_time = SIM_PARAMS["start_time"] + i * SIM_PARAMS["time_interval"]
+for i in range(1, sim_num_steps):
+    new_time = sim_start_time + i * sim_time_interval
     platform.move(new_time)
 
-# %%
-# Target Trajectory
-# -----------------
-
-# %%
 target_states = [
     GroundTruthState(
-        TARGET_PARAMS["start_vector"],
-        timestamp=SIM_PARAMS["start_time"],
+        np.array([-1000, 0, 750, -5.0, -10.0, 0]),
+        timestamp=sim_start_time,
         metadata={
-            "amplitudes_upa": TARGET_PARAMS["amplitudes_upa"],
-            "frequencies_hz": TARGET_PARAMS["frequencies_hz"],
-            "phases_rad": TARGET_PARAMS["phases_rad"],
-            "position_mapping": TARGET_PARAMS["position_mapping"],
-            "velocity_mapping": TARGET_PARAMS["velocity_mapping"],
+            "amplitudes_upa": 10 ** (np.array([100.0, 90.0, 100.0, 85.0]) / 20),
+            "frequencies_hz": np.array([20.0, 140.0, 200.0, 500.0]),
+            "phases_rad": np.random.uniform(0, 2 * np.pi, 4),
+            "position_mapping": [0, 2, 4],
+            "velocity_mapping": [1, 3, 5],
         },
     )
 ]
 
-transition_model = TARGET_PARAMS["transition_model"]
-for i in range(1, SIM_PARAMS["num_steps"]):
-    new_time = SIM_PARAMS["start_time"] + i * SIM_PARAMS["time_interval"]
+transition_model = CombinedLinearGaussianTransitionModel(
+    [ConstantVelocity(0.001), ConstantVelocity(0.001), ConstantVelocity(0)]
+)
+for i in range(1, sim_num_steps):
+    new_time = sim_start_time + i * sim_time_interval
     time_interval = new_time - target_states[-1].timestamp
     new_state_vector = transition_model.function(
         target_states[-1], noise=False, time_interval=time_interval
@@ -193,25 +147,79 @@ fig_world = plot_world(truths=[target_ground_truth], platform=platform)
 fig_world.update_layout(title="World Picture")
 
 # %%
-# Source Signal Models
-# --------------------
+# Propagation Model
+# -----------------
+#
+# :class:`~.CylindricalAcousticPropagationModel` combines cylindrical spreading
+# (:math:`10 \log_{10} r`) with a constant absorption term. It is fast, analytical, and supports
+# ``propagate_spectrum()``, which is required by the continuous simulator backends.  Swap it for
+# :class`~.rtrsAcousticPropagationModel` if you need more realistic ray-path geometry. The rest of
+# the example is unchanged.
+
+ssp = Constant(speed=1500.0)
+prop_model = CylindricalAcousticPropagationModel(ssp=ssp, attenuation_factor=0.5)
 
 # %%
+# Source Signal Models
+# --------------------
+#
+# Two source types are compared side-by-side throughout the example:
+#
+# * **Synthetic** - a tonal comb at 20, 140, 200 and 500 Hz mixed with pink noise, representing a
+#   generic vessel signature.
+# * **Measured** - a 30-second segment from the SANCTSOUND CI05 hydrophone recording of a large
+#   ship, tiled to match the full simulation duration. The file is included in
+#   ``docs/examples/measured_data/``; the path search below works both in the gallery build (where
+#   ``__file__`` is set) and in interactive use from any working directory.
+
+sampling_rate_hz = 3000.0
+frame_len = 500
+hop_factor = 4
+fade_in_ms = 100.0
+fade_out_ms = 100.0
+tonal_bandwidth_hz = 10.0
+noise_amplitude_upa = 10 ** (80 / 20)
+noise_spectral_exponent = -1.0
+
 wav_name = "SanctSound_CI05_03_largeship_20190925T135956Z.wav"
-data_dir = Path(os.getcwd()) / "measured_data"
-measured_wav_path = data_dir / wav_name
+
+_data_dir_candidates: list[Path] = []
+if "__file__" in globals():
+    _data_dir_candidates.append(Path(__file__).resolve().parent / "measured_data")
+
+_data_dir_candidates.extend(
+    [
+        Path.cwd() / "measured_data",
+        Path.cwd() / "docs" / "examples" / "measured_data",
+    ]
+)
+
+measured_wav_path = next(
+    (
+        candidate / wav_name
+        for candidate in _data_dir_candidates
+        if (candidate / wav_name).exists()
+    ),
+    None,
+)
+
+if measured_wav_path is None:
+    raise FileNotFoundError(
+        "Measured WAV file not found. Checked: "
+        + ", ".join(str(candidate / wav_name) for candidate in _data_dir_candidates)
+    )
 
 
 def _make_synthetic_signal_model():
     return SyntheticAnthropogenicSignal(
-        duration_s=SIGNAL_PARAMS["duration_s"],
-        sampling_rate_hz=SIGNAL_PARAMS["sampling_rate_hz"],
-        frame_len=SIGNAL_PARAMS["frame_len"],
-        hop_factor=SIGNAL_PARAMS["hop_factor"],
-        tonal_bandwidth_hz=TARGET_PARAMS["tonal_bandwidth_hz"],
-        noise_amplitude_upa=TARGET_PARAMS["noise_amplitude_upa"],
-        noise_spectral_exponent=TARGET_PARAMS["noise_spectral_exponent"],
-        noise_freq_range_hz=(0.0, SIGNAL_PARAMS["sampling_rate_hz"] / 2),
+        duration_s=total_duration_s,
+        sampling_rate_hz=sampling_rate_hz,
+        frame_len=frame_len,
+        hop_factor=hop_factor,
+        tonal_bandwidth_hz=tonal_bandwidth_hz,
+        noise_amplitude_upa=noise_amplitude_upa,
+        noise_spectral_exponent=noise_spectral_exponent,
+        noise_freq_range_hz=(0.0, sampling_rate_hz / 2),
         tonal_noise_is_constant=True,
         noise_is_constant=True,
     )
@@ -219,10 +227,10 @@ def _make_synthetic_signal_model():
 
 def _make_measured_signal_model():
     return RecordedAnthropogenicSignal(
-        duration_s=SIGNAL_PARAMS["duration_s"],
-        sampling_rate_hz=SIGNAL_PARAMS["sampling_rate_hz"],
-        frame_len=SIGNAL_PARAMS["frame_len"],
-        hop_factor=SIGNAL_PARAMS["hop_factor"],
+        duration_s=total_duration_s,
+        sampling_rate_hz=sampling_rate_hz,
+        frame_len=frame_len,
+        hop_factor=hop_factor,
         wav_path=str(measured_wav_path),
         segment_start_s=0.0,
         segment_duration_s=30.0,
@@ -234,89 +242,24 @@ def _make_measured_signal_model():
 synthetic_signal_model = _make_synthetic_signal_model()
 measured_signal_model = _make_measured_signal_model()
 
-# %%
-# Propagation Model
-# -----------------
-#
-# Try switching between rtrs and cyclindrical to see how the propagation model affects the
-# simulation results.
-
-# %%
-ssp = Constant(speed=1500.0)
-bathymetry = FlatBathymetry(depth=-100.0)
-
-prop_model_to_use = "rtrs"
-
-if prop_model_to_use == "rtrs":
-    prop_model = rtrsAcousticPropagationModel(
-        ssp=ssp,
-        bathymetry=bathymetry,
-        use_all_frequencies=False,
-        step_m=15.0,
-        azimuth_search_width=10.0,
-        azimuth_resolution=2.0,
-        elevation_range=(-55.0, 55.0),
-        elevation_resolution=2.0,
-        water_density_g_cm3=1.0,
-        bottom_model={
-            "model": "elastic",
-            "compressional_speed_m_s": 1700.0,
-            "shear_speed_m_s": 400.0,
-            "density_g_cm3": 1.6,
-            "compressional_attenuation_db_per_wavelength": 0.2,
-            "shear_attenuation_db_per_wavelength": 0.3,
-        },
-        store_ray_paths=False,
-        integration_method="rk2",
-    )
-else:
-    prop_model = CylindricalAcousticPropagationModel(
-        attenuation_factor=5.0,
-        ssp=ssp,
-    )
 
 # %%
 # Source Spectrograms
 # -------------------
+#
+# Before running the full simulation, inspect the source signals in isolation. This confirms the
+# tonal structure is present in the synthetic signal and that the recorded signal has comparable
+# bandwidth. The two subplots share the same frequency axis for easy comparison.
 
-# %%
+_sr = int(sampling_rate_hz)
+_n_fft, _hop = 500, 250
+freq_hi = sampling_rate_hz / 2
+
 source_signal_synthetic = synthetic_signal_model.get_source_waveform(target_states[0])
 source_signal_measured = measured_signal_model.get_source_waveform(target_states[0])
 
 synthetic_source_real = np.real(source_signal_synthetic)
 measured_source_real = np.real(source_signal_measured)
-
-
-def _spectrogram_heatmap(sig, sr, n_fft, hop_length, show_colorbar):
-    """Compute STFT and return a Heatmap trace for use in a subplot figure."""
-    freqs, times, zxx = spsignal.stft(
-        np.real(sig),
-        fs=sr,
-        window="hann",
-        nperseg=n_fft,
-        noverlap=n_fft - hop_length,
-        nfft=n_fft,
-        boundary=None,
-        padded=False,
-        return_onesided=True,
-    )
-    mag = np.abs(zxx)
-    ref = float(np.max(mag)) if np.max(mag) > 0 else 1.0
-    s_db = 20.0 * np.log10(np.maximum(1e-10, mag)) - 20.0 * np.log10(ref)
-    return go.Heatmap(
-        x=times,
-        y=freqs,
-        z=s_db,
-        colorscale="Viridis",
-        zmin=float(np.max(s_db)) - 60.0,
-        zmax=float(np.max(s_db)),
-        showscale=show_colorbar,
-        colorbar=dict(title="Intensity (dB)") if show_colorbar else None,
-    )
-
-
-_sr = int(SIGNAL_PARAMS["sampling_rate_hz"])
-_n_fft, _hop = 500, 250
 
 fig_source_spec = make_subplots(
     rows=2,
@@ -325,47 +268,51 @@ fig_source_spec = make_subplots(
     vertical_spacing=0.10,
     subplot_titles=["Synthetic Source Signal", "Measured Source Signal"],
 )
-fig_source_spec.add_trace(
-    _spectrogram_heatmap(synthetic_source_real, _sr, _n_fft, _hop, show_colorbar=True),
-    row=1,
-    col=1,
-)
-fig_source_spec.add_trace(
-    _spectrogram_heatmap(measured_source_real, _sr, _n_fft, _hop, show_colorbar=False),
-    row=2,
-    col=1,
-)
-fig_source_spec.update_yaxes(
-    title_text="Frequency (Hz)",
-    range=[0, SIGNAL_PARAMS["sampling_rate_hz"] / 2],
-)
-fig_source_spec.update_xaxes(title_text="Time (s)", row=2, col=1)
-fig_source_spec.update_layout(
-    template="plotly_white",
-    height=700,
-    title="Source Signal Spectrograms",
+
+for row, src in enumerate((synthetic_source_real, measured_source_real), start=1):
+    fig_source_spec = plot_spectrogram(
+        signal=src,
+        row=row,
+        sr=_sr,
+        n_fft=_n_fft,
+        hop_length=_hop,
+        y_lim=(0, freq_hi),
+        yaxis_format="Hz",
+        fig=fig_source_spec,
+        col=1,
+        analysis_mode="psd",
+        db_reference="absolute",
+        z_percentiles=(5.0, 95.0),
+        colorbar_title="dB re 1 uPa^2/Hz",
+        hovertemplate=(
+            "Time: %{x:.2f} s<br>"
+            "Frequency: %{y:.1f} Hz<br>"
+            "PSD: %{z:.2f} dB re 1 uPa^2/Hz"
+            "<extra></extra>"
+        ),
+    )
+    if row > 1:
+        fig_source_spec.data[-1].showscale = False
+        fig_source_spec.data[-1].colorbar = None
+
+fig_source_spec = (
+    fig_source_spec.update_yaxes(title_text="Frequency (Hz)", range=[0, freq_hi])
+    .update_xaxes(title_text=None, row=1, col=1)
+    .update_xaxes(title_text="Time (s)", row=2, col=1)
+    .update_layout(template="plotly_white", height=700, title="Source Signal Spectrograms")
 )
 
 # %%
 # Simulator Comparison Table
 # --------------------------
 #
-# Rows correspond to simulator implementations and columns correspond to source
-# types (synthetic / measured). Each cell is the received-signal spectrogram for
-# the selected sensor.
-#
-# Simulator types used in this comparison:
-# - **STFT Interp**: STFT-domain propagation with interpolation between
-#   transfer-function updates.
-# - **WOLA Interp**: Weighted overlap-add reconstruction with interpolated
-#   frame-to-frame propagation.
-# - **COLA**: Constant overlap-add STFT processing for stable frame stitching.
-# - **Fractional Delay**: Time-domain model using sub-sample delay alignment.
-# - **Discrete**: Per-step discrete simulation baseline without continuous
-#   overlap-add processing.
+# Each row corresponds to a simulator backend; each column to a source type. All five modes should
+# reproduce the same tonal lines. Differences appear at segment boundaries (frame-stitching
+# artefacts) and in inter-frame phase continuity.  The Discrete mode processes each timestep
+# independently, so it shows the starkest inter-frame transitions, while the COLA and WOLA modes
+# are designed to minimise them.
 
-# %%
-SIMULATOR_CONFIGS = [
+sim_configs = [
     {"label": "STFT Interp", "kind": "stft", "mode": "stft_interp"},
     {"label": "WOLA Interp", "kind": "stft", "mode": "wola_interp"},
     {"label": "COLA", "kind": "stft", "mode": "cola"},
@@ -389,15 +336,15 @@ def build_simulator(config, signal_model):
     if config["kind"] == "stft":
         return ContinuousSTFTPassiveSonarArraySimulator(
             mode=config["mode"],
-            fade_in_ms=SIGNAL_PARAMS["fade_in_ms"],
-            fade_out_ms=SIGNAL_PARAMS["fade_out_ms"],
+            fade_in_ms=fade_in_ms,
+            fade_out_ms=fade_out_ms,
             **common_kwargs,
         )
 
     if config["kind"] == "fractional":
         return ContinuousFractionalDelayPassiveSonarArraySimulator(
-            fade_in_ms=SIGNAL_PARAMS["fade_in_ms"],
-            fade_out_ms=SIGNAL_PARAMS["fade_out_ms"],
+            fade_in_ms=fade_in_ms,
+            fade_out_ms=fade_out_ms,
             **common_kwargs,
         )
 
@@ -408,34 +355,18 @@ def build_simulator(config, signal_model):
 
 
 def run_continuous_simulation(simulator_obj):
-    """Run a continuous simulator and return the received signal for the selected sensor."""
+    """Run a simulator and return the received signal for the selected sensor."""
     all_sensor_signals = []
     for _, sensor_data_set in simulator_obj.sensor_data_gen():
         sensor_data = next(iter(sensor_data_set))
         all_sensor_signals.append(sensor_data.raw_signals)
 
     all_sensor_signals_array = np.concatenate(all_sensor_signals, axis=1)
-    return all_sensor_signals_array[SENSOR_TO_ANALYZE, :]
-
-
-def compute_spectrogram_db(signal_data, sampling_rate_hz, n_fft=500, hop_length=250):
-    """Compute a spectrogram and return frequencies, times, and power in dB."""
-    frequencies, times, spec_power = spsignal.spectrogram(
-        np.real(signal_data),
-        fs=sampling_rate_hz,
-        nperseg=n_fft,
-        noverlap=n_fft - hop_length,
-        scaling="density",
-        mode="psd",
-    )
-    spec_db = 10 * np.log10(spec_power + 1e-16)
-    return frequencies, times, spec_db
+    return all_sensor_signals_array[sensor_to_analyse, :]
 
 
 comparison_results = []
-for config in SIMULATOR_CONFIGS:
-    print(f"Running simulator mode: {config['label']}")
-
+for config in sim_configs:
     # Fresh model instances per config — compute_stft() is one-shot per instance.
     synthetic_sim = build_simulator(config, _make_synthetic_signal_model())
     measured_sim = build_simulator(config, _make_measured_signal_model())
@@ -451,8 +382,11 @@ for config in SIMULATOR_CONFIGS:
         }
     )
 
-
 n_rows = len(comparison_results)
+
+row_titles = [result["label"] for result in comparison_results]
+column_titles = ["Synthetic", "Measured"]
+
 fig_grid = make_subplots(
     rows=n_rows,
     cols=2,
@@ -460,54 +394,67 @@ fig_grid = make_subplots(
     shared_yaxes=False,
     vertical_spacing=0.03,
     horizontal_spacing=0.08,
-    subplot_titles=[
-        title
-        for result in comparison_results
-        for title in (
-            f"{result['label']} - Synthetic (Sensor {SENSOR_TO_ANALYZE})",
-            f"{result['label']} - Measured (Sensor {SENSOR_TO_ANALYZE})",
-        )
-    ],
+    row_titles=row_titles,
+    column_titles=column_titles,
 )
 
 for row_idx, result in enumerate(comparison_results, start=1):
     for col_idx, key in enumerate(["synthetic", "measured"], start=1):
-        f_hz, t_s, s_db = compute_spectrogram_db(
-            result[key],
-            SIGNAL_PARAMS["sampling_rate_hz"],
-            n_fft=500,
-            hop_length=250,
-        )
-
-        fig_grid.add_trace(
-            go.Heatmap(
-                x=t_s,
-                y=f_hz,
-                z=s_db,
-                colorscale="Viridis",
-                zmin=-50,
-                zmax=20,
-                showscale=(row_idx == 1 and col_idx == 2),
-                colorbar=dict(title="dB re 1 uPa^2/Hz")
-                if (row_idx == 1 and col_idx == 2)
-                else None,
+        fig_grid = plot_spectrogram(
+            signal=result[key],
+            sr=int(sampling_rate_hz),
+            n_fft=_n_fft,
+            hop_length=_hop,
+            y_lim=(0, sampling_rate_hz / 2),
+            yaxis_format="Hz",
+            fig=fig_grid,
+            row=row_idx,
+            col=col_idx,
+            analysis_mode="psd",
+            db_reference="absolute",
+            z_percentiles=(5.0, 95.0),
+            showscale=(row_idx == 1 and col_idx == 2),
+            colorbar_title="dB re 1 uPa^2/Hz",
+            hovertemplate=(
+                "Time: %{x:.2f} s<br>"
+                "Frequency: %{y:.1f} Hz<br>"
+                "PSD: %{z:.2f} dB re 1 uPa^2/Hz"
+                "<extra></extra>"
             ),
+        )
+
+        fig_grid = fig_grid.update_xaxes(
+            title_text="Time (s)" if row_idx == n_rows else None,
+            showticklabels=(row_idx == n_rows),
             row=row_idx,
             col=col_idx,
         )
-
-        fig_grid.update_yaxes(
+        fig_grid = fig_grid.update_yaxes(
             title_text="Frequency (Hz)" if col_idx == 1 else None,
-            range=[0, SIGNAL_PARAMS["sampling_rate_hz"] / 2],
+            range=[0, sampling_rate_hz / 2],
+            showticklabels=(col_idx == 1),
             row=row_idx,
             col=col_idx,
         )
-        if row_idx == n_rows:
-            fig_grid.update_xaxes(title_text="Time (s)", row=row_idx, col=col_idx)
 
-fig_grid.update_layout(
+fig_grid = fig_grid.update_layout(
     template="plotly_white",
-    height=320 * n_rows,
-    width=1200,
+    autosize=True,
+    height=int(np.clip(260 * n_rows, 700, 2200)),
     title="Received Signal Spectrogram Table by Simulator Mode",
 )
+
+# %%
+# Key Takeaways
+# -------------
+#
+# * **All five modes preserve similar broad tonal content, but differ in artefact texture and
+#   continuity**; COLA/WOLA appear smoother, while Fractional Delay/Discrete show more per-frame
+#   discontinuity.
+# * **Swap the propagation model** for :class:`~.rtrsAcousticPropagationModel` for more realistic
+#   ray-path geometry and multipath structure.
+# * **Adjust** ``array_num_sensors`` and ``sensor_to_analyse`` to explore multi-element effects
+#   such as beam steering or spatial filtering.
+# * **Remove the data dependency** by replacing :class:`~.RecordedAnthropogenicSignal` with a
+#   second :class:`~.SyntheticAnthropogenicSignal` configured with different tonal frequencies or
+#   noise colour.

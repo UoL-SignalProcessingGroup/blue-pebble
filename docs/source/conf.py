@@ -89,6 +89,10 @@ sphinx_gallery_conf = {
     "image_scrapers": ("matplotlib", _plotly_scraper),
     "reset_modules": (_plotly_scraper.reset,),
     "plot_gallery": True,
+    # Disable repr capture — all Plotly figures are handled exclusively by
+    # PlotlyScraper.  Without this, a go.Figure that is the last expression in
+    # a cell is captured twice (once by PlotlyScraper, once by capture_repr).
+    "capture_repr": (),
     # Resolve bluepebble class links in code blocks against the local build.
     # Without this entry, Sphinx-Gallery falls back to intersphinx and links
     # bluepebble classes to Stone Soup's Base class instead.
