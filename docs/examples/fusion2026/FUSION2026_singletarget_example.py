@@ -1,26 +1,18 @@
-"""FUSION 2026 Single Target Example.
+"""
+================================
+FUSION 2026 Single-Target Example
+================================
 
 This example assembles the single-target demonstration used for the FUSION 2026
 workflow. It runs the acoustic simulation, produces detections, compares them with a
 Stone Soup baseline, and prepares figures for presentation output.
 
-**Background**
+Single-target scenarios are often the clearest way to explain the passive-sonar
+pipeline before moving to more ambiguous multi-target cases. Keeping the example
+export-oriented makes it easier to reuse in papers, talks, and reproducibility packages.
+"""  # noqa: D205, D212, D400, D415
 
-- Single-target scenarios are often the clearest way to explain the passive-sonar
-  pipeline before moving to more ambiguous multi-target cases.
-- Presentation examples should preserve the full modelling chain while remaining
-  explicit about what is plugin-specific versus what comes from Stone Soup.
-- Keeping the example export-oriented makes it easier to reuse in papers, talks, and
-  reproducibility packages.
-
-**Key Concepts**
-
-- End-to-end single-target passive-sonar simulation and detection.
-- Baseline comparison between Blue Pebble outputs and Stone Soup tracking components.
-- Figure construction and export for presentation-ready artefacts.
-"""
-
-# %% [markdown]
+# %%
 # Imports
 # -------
 
@@ -63,7 +55,7 @@ from bluepebble.sigproc import (
 )
 from bluepebble.simulator import ContinuousSTFTPassiveSonarArraySimulator
 
-# %% [markdown]
+# %%
 # Configuration
 # -------------
 
@@ -179,7 +171,7 @@ print(
     f"Timestep interval: {cfg['sim']['time_interval'].total_seconds()} seconds"
 )
 
-# %% [markdown]
+# %%
 # Scenario Build, Simulation, and Detection
 # -----------------------------------------
 
@@ -367,7 +359,7 @@ timesteps = [
     for i in range(cfg["sim"]["num_steps"])
 ]
 
-# %% [markdown]
+# %%
 # Tracking and Stone Soup Baseline Detections
 # -------------------------------------------
 
@@ -484,7 +476,7 @@ for i, timestamp in enumerate(timesteps):
 
     stone_soup_detections.append((timestamp, detections_at_time))
 
-# %% [markdown]
+# %%
 # Build Figures
 # -------------
 
@@ -833,11 +825,6 @@ fig.update_layout(
 plugin_vs_ss_fig = fig
 
 # %%
-world_fig.show()
-tracker_fig.show()
-plugin_vs_ss_fig.show()
-
-# %% [markdown]
 # Export and Summary
 # ------------------
 

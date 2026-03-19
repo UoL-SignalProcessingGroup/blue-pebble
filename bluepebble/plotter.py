@@ -20,6 +20,16 @@ from stonesoup.types.track import Track
 
 from .detector.metrics import SweepResult
 
+__all__ = [
+    "launch_bathymetry_and_sound_speed_viewer",
+    "plot_world",
+    "plot_btr",
+    "plot_spectrogram",
+    "plot_roc",
+    "plot_pr",
+    "plot_roc_pr",
+]
+
 
 class _ColormapCallable(Protocol):
     """Protocol for callable colormaps."""

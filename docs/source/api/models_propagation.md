@@ -5,5 +5,4 @@ Propagation models for analytical and optional Bellhop-backed acoustic simulatio
 ```{eval-rst}
 .. automodule:: bluepebble.models.propagation
    :members:
-   :no-index:
 ```

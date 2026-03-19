@@ -1,23 +1,20 @@
-"""Bathymetry Comparison Example.
+"""
+============================
+Bathymetry Comparison Example
+============================
 
 This example compares the same passive-sonar scenario under two seafloor assumptions:
 a flat seabed and an idealised seamount. The aim is to isolate how bathymetry alone
 changes the propagation model, beamformed output, and downstream detections when
 everything else in the scenario is held fixed.
 
-**Background**
-
-In `bluepebble`, bathymetry is part of the acoustic environment. The seafloor shape can
+In Blue Pebble, bathymetry is part of the acoustic environment. The seafloor shape can
 alter propagation paths and the relative strength of arrivals that reach the array.
+Differences in the final SNR maps and detections can therefore be attributed to seabed
+geometry rather than to a different signal-processing chain.
+"""  # noqa: D205, D212, D400, D415
 
-**Key Concepts**
-
-- Geometric variation in the seabed is a key contributor to the received signal quality.
-- Differences in the final SNR maps and detections can therefore be attributed to seabed
-  geometry rather than to a different signal-processing chain.
-"""
-
-# %% [markdown]
+# %%
 # Simulation Parameters
 # ---------------------
 #
@@ -44,7 +41,7 @@ num_steps = int(SIM_LENGTH / SIM_RATE)
 total_duration_s = num_steps * time_interval.total_seconds()
 print(f"Total simulation duration: {total_duration_s} seconds")
 
-# %% [markdown]
+# %%
 # Platform Setup and Generation
 # -----------------------------
 #
@@ -111,7 +108,7 @@ for i in range(1, num_steps):
     new_time = start_time + i * time_interval
     platform.move(new_time)
 
-# %% [markdown]
+# %%
 # Ground Truth Setup and Generation
 # ---------------------------------
 #
@@ -200,9 +197,8 @@ for target_start_vector in target_start_vectors:
     relative_bearing_ground_truths.append(GroundTruthPath(bearing_states))
 
 fig1 = plot_world(truths=target_ground_truths, platform=platform, figsize=(600, 500))
-fig1.show()
 
-# %% [markdown]
+# %%
 # Propagation Model
 # -----------------
 #
@@ -268,13 +264,13 @@ seamount_prop_model = rtrsAcousticPropagationModel(
     integration_method=prop_integration_method,
 )
 
-# %% [markdown]
+# %%
 # Geometry View: Trajectories over Bathymetry
 # -------------------------------------------
 #
-# These plots use `plot_world` with bathymetry overlays to show the same kinematic scene
-# against each seabed model. The trajectories do not change; only the seafloor under
-# them does.
+# These plots use :func:`~bluepebble.plotter.plot_world` with bathymetry overlays to show the
+# same kinematic scene against each seabed model. The trajectories do not change; only the
+# seafloor under them does.
 
 # %%
 from copy import deepcopy
@@ -377,9 +373,8 @@ fig_bathy.update_layout(
     legend=dict(x=1.06, y=0.5),
     title="Bathymetry Comparison",
 )
-fig_bathy.show()
 
-# %% [markdown]
+# %%
 # Signal Model
 # ------------
 #
@@ -404,6 +399,7 @@ ambient_noise_model = ColouredNoiseSignal(
     sampling_rate_hz=sampling_rate_hz,
 )
 
+
 def _make_signal_models():
     models = []
     for target_ground_truth in target_ground_truths:
@@ -424,7 +420,8 @@ def _make_signal_models():
         )
     return models
 
-# %% [markdown]
+
+# %%
 # Beamformer
 # ----------
 #
@@ -479,7 +476,7 @@ steering_calculator = SteeringCalculator(
     steering_azimuths_rad=steering_azimuths_rad,
 )
 
-# %% [markdown]
+# %%
 # Detector Pipeline Setup
 # -----------------------
 #
@@ -545,7 +542,7 @@ simulator_seamount_bathymetry = ContinuousSTFTPassiveSonarArraySimulator(
 detector_flat_bathymetry = make_detector(simulator_flat_bathymetry)
 detector_seamount_bathymetry = make_detector(simulator_seamount_bathymetry)
 
-# %% [markdown]
+# %%
 # Run Detection on Simulated Data
 # -------------------------------
 #
@@ -577,7 +574,7 @@ detections_seamount_bathymetry = [
 print(f"Total no. of detections (flat bathymetry): {len(detections_flat_bathymetry)}")
 print(f"Total no. of detections (seamount bathymetry): {len(detections_seamount_bathymetry)}")
 
-# %% [markdown]
+# %%
 # Results: Flat vs Seamount Bathymetry
 # ------------------------------------
 #
@@ -696,4 +693,3 @@ fig2.update_layout(
     showlegend=False,
     margin=dict(r=90, t=110),
 )
-fig2.show()

@@ -1,27 +1,19 @@
-"""FUSION 2026 Multi-Target Example.
+"""
+================================
+FUSION 2026 Multi-Target Example
+================================
 
 This example assembles the multi-target demonstration used for the FUSION 2026
 workflow. It runs the acoustic simulation, produces detections, compares them with a
 Stone Soup baseline, and packages figures for a presentation or publication pipeline.
 
-**Background**
-
-- Multi-target passive-sonar examples are useful when demonstrating the full chain
-  from acoustic simulation through detection to tracker behaviour.
-- Presentation scripts need to do more than run the scenario; they also need to
-  package figures and summary artefacts consistently.
-- Using the same scenario for both plugin detections and Stone Soup baseline
-  comparisons helps show where the plugin adds value.
-
-**Key Concepts**
-
-- End-to-end multi-target scenario construction for a publication workflow.
-- Comparison of Blue Pebble-derived detections with Stone Soup tracking baselines.
-- Figure assembly and export for external reporting.
-"""
+Multi-target passive-sonar examples demonstrate the full chain from acoustic simulation
+through detection to tracker behaviour. Using the same scenario for both plugin
+detections and Stone Soup baseline comparisons shows where the plugin adds value.
+"""  # noqa: D205, D212, D400, D415
 # sphinx_gallery_skip_execution = True
 
-# %% [markdown]
+# %%
 # Imports
 # -------
 
@@ -71,7 +63,7 @@ from bluepebble.sigproc import (
 )
 from bluepebble.simulator import ContinuousSTFTPassiveSonarArraySimulator
 
-# %% [markdown]
+# %%
 # Configuration
 # -------------
 
@@ -229,7 +221,7 @@ print(
 )
 print(f"Num targets: {len(cfg['targets'])}")
 
-# %% [markdown]
+# %%
 # Scenario Build and Detection
 # ----------------------------
 
@@ -382,6 +374,7 @@ steering_calculator = SteeringCalculator(
     steering_azimuths_rad=bf["steering_azimuths_rad"],
 )
 
+
 def _make_signal_model(target_cfg):
     return SyntheticAnthropogenicSignal(
         duration_s=signal["duration_s"],
@@ -435,7 +428,7 @@ timesteps = [
     for i in range(cfg["sim"]["num_steps"])
 ]
 
-# %% [markdown]
+# %%
 # Tracking and Stone Soup Baseline
 # --------------------------------
 
@@ -624,7 +617,7 @@ for i, timestamp in enumerate(timesteps):
 
     stone_soup_detections.append((timestamp, detections_at_time))
 
-# %% [markdown]
+# %%
 # Build Figures
 # -------------
 
@@ -1197,11 +1190,6 @@ fig.update_layout(
 plugin_vs_ss_fig = fig
 
 # %%
-world_fig.show()
-tracker_fig.show()
-plugin_vs_ss_fig.show()
-
-# %% [markdown]
 # Export
 # ------
 

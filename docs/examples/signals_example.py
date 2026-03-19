@@ -1,27 +1,19 @@
-"""Signals Example.
+"""
+===============
+Signals Example
+===============
 
 This example previews several standalone acoustic source and noise models, then combines
 them into a simple composite soundscape. It is intended as a quick orientation for how
 different source classes behave before they are embedded in a full propagation and
 beamforming pipeline.
 
-**Background**
+Passive-sonar scenes often contain a mix of biological, anthropogenic, and ambient
+contributors. Understanding the isolated time-frequency signature of each component
+makes it easier to interpret later BTRs, spectrograms, and received mixtures.
+"""  # noqa: D205, D212, D400, D415
 
-- Passive-sonar scenes often contain a mix of biological, anthropogenic, and ambient
-  contributors rather than a single clean source.
-- Understanding the isolated time-frequency signature of each component makes it easier
-  to interpret later BTRs, spectrograms, and received mixtures.
-- A lightweight soundscape example is also useful for validating source classes without
-  introducing propagation or tracking complexity.
-
-**Key Concepts**
-
-- Standalone signal generation for biological, anthropogenic, and ambient sources.
-- Spectrogram-based inspection of time-frequency structure.
-- Building a composite soundscape from individually interpretable components.
-"""
-
-# %% [markdown]
+# %%
 # Setup and Reproducibility
 # -------------------------
 #
@@ -60,8 +52,8 @@ def preview_signal(
     hop_length: int,
     y_lim: tuple,
     yaxis_format: str = "kHz",
-) -> None:
-    """Show a spectrogram for a generated signal."""
+):
+    """Return a spectrogram figure for a generated signal."""
     fig = plot_spectrogram(
         signal,
         SAMPLING_RATE_HZ,
@@ -71,10 +63,10 @@ def preview_signal(
         yaxis_format=yaxis_format,
     )
     fig.update_layout(title=title)
-    fig.show()
+    return fig
 
 
-# %% [markdown]
+# %%
 # Whale Call Signal
 # -----------------
 #
@@ -149,7 +141,7 @@ whale_calls_complex = whale_signal_model.generate(
 whale_calls_real = np.real(whale_calls_complex[0, :])
 component_signals["whale_call"] = whale_calls_real
 
-preview_signal(
+fig = preview_signal(
     whale_calls_real,
     title="Whale Call Spectrogram",
     n_fft=4096,
@@ -157,7 +149,7 @@ preview_signal(
     y_lim=(0, 5500),
 )
 
-# %% [markdown]
+# %%
 # Snapping Shrimp Signal
 # ----------------------
 #
@@ -205,7 +197,7 @@ shrimp_signal = shrimp_signal_model.generate(
 shrimp_signal_real = np.real(shrimp_signal[0, :])
 component_signals["snapping_shrimp"] = shrimp_signal_real
 
-preview_signal(
+fig = preview_signal(
     shrimp_signal_real,
     title="Snapping Shrimp Spectrogram",
     n_fft=2048,
@@ -213,7 +205,7 @@ preview_signal(
     y_lim=(0, 20000),
 )
 
-# %% [markdown]
+# %%
 # Commercial Vessel Tonals
 # ------------------------
 #
@@ -246,7 +238,7 @@ _ = tonal_signal_model.compute_stft(source=commercial_vessel_state)
 tonal_signal_real = np.real(tonal_signal_model.get_source_signal())
 component_signals["commercial_vessel"] = tonal_signal_real
 
-preview_signal(
+fig = preview_signal(
     tonal_signal_real,
     title="Commercial Vessel Tonal Spectrogram",
     n_fft=4096 * 6,
@@ -255,7 +247,7 @@ preview_signal(
     yaxis_format="Hz",
 )
 
-# %% [markdown]
+# %%
 # Measured Vessel Noise
 # ---------------------
 #
@@ -300,7 +292,7 @@ measured_signal_real = np.real(measured_signal_model.get_source_signal())
 
 component_signals["measured_vessel"] = measured_signal_real
 
-preview_signal(
+fig = preview_signal(
     measured_signal_real,
     title="Commercial Vessel Tonal Spectrogram",
     n_fft=4096 * 6,
@@ -309,7 +301,7 @@ preview_signal(
     yaxis_format="Hz",
 )
 
-# %% [markdown]
+# %%
 # Ambient White Noise
 # -------------------
 #
@@ -329,7 +321,7 @@ ambient_noise = WhiteNoiseSignal(
 ambient_noise_real = np.real(ambient_noise[0, :])
 component_signals["ambient_white_noise"] = ambient_noise_real
 
-preview_signal(
+fig = preview_signal(
     ambient_noise_real,
     title="Ambient White Noise Spectrogram",
     n_fft=4096,
@@ -337,7 +329,7 @@ preview_signal(
     y_lim=(0, 20000),
 )
 
-# %% [markdown]
+# %%
 # Composite Soundscape
 # --------------------
 #
@@ -357,7 +349,7 @@ soundscape = (
 )
 component_signals["composite_soundscape"] = soundscape
 
-preview_signal(
+fig = preview_signal(
     soundscape,
     title="Composite Soundscape Spectrogram",
     n_fft=4096,

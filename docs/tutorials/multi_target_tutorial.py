@@ -1,48 +1,15 @@
-"""Multi-Target Tutorial.
-
-This tutorial shows how to use `bluepebble` as a Stone Soup plugin for a multi-target
-passive-sonar problem. Compared with the single-target case, the main change is not
-the acoustic simulation interface itself, but the extra care needed in detection
-management, bearing ambiguity, and track association once several sources are active
-at once.
-
-## Background
-
-`bluepebble` extends Stone Soup with passive-sonar-specific modelling blocks: towed-
-array platforms, underwater propagation, source and ambient-noise models, beamforming,
-and passive-sonar detection. Stone Soup still provides the core tracking abstractions,
-including truth types, motion models, associators, initiators, and trackers.
-
-## Key Concepts
-
-- `TowedArrayPlatform` remains a Stone Soup-compatible platform, but adds the array
-  geometry needed for passive-sonar simulation.
-- Multi-target acoustic scenes are still represented with standard Stone Soup
-  `GroundTruthPath` objects, each carrying `bluepebble` source metadata.
-- `ContinuousSTFTPassiveSonarArraySimulator` scales from one source to many; you pass
-  multiple truth paths and one shared set of acoustic-processing components.
-- The main downstream change is in the tracker: multiple simultaneous detections
-  require association logic such as JPDA rather than the simpler single-target PDA
-  pattern.
-
-## What You Will Build
-
-In this tutorial you will assemble the following plugin workflow:
-
-- A manoeuvring `TowedArrayPlatform` built on top of Stone Soup platform abstractions
-- Three target truth paths with acoustic metadata for broadband source generation
-- A range-dependent `bluepebble` propagation model and shared ambient/source models
-- A beamformed bearing-time record and passive-sonar detections from the simulator
-- A Stone Soup multi-target bearing tracker driven by those detections
 """
-# sphinx_gallery_skip_execution = True
+==============================================
+Multi-Target Passive-Sonar Tracking Tutorial
+==============================================
+"""  # noqa: D205, D212, D400, D415
 
-# %% [markdown]
+# %%
 # Simulation Timing and Reproducibility
 # -------------------------------------
 #
 # As in the single-target workflow, begin by defining one shared simulation clock. In
-# `bluepebble`, the timestep is more than a plotting convenience: it controls platform
+# Blue Pebble, the timestep is more than a plotting convenience: it controls platform
 # propagation, the cadence of acoustic synthesis, and the update rate of the detection
 # and tracking pipeline.
 #
@@ -66,13 +33,13 @@ num_steps = int(sim_duration.total_seconds() / time_interval.total_seconds())
 start_time = datetime.now().replace(hour=0, minute=0, second=0, microsecond=0)
 timesteps = np.array([start_time + i * time_interval for i in range(num_steps)], dtype=object)
 
-# %% [markdown]
-# Build a Manoeuvring `TowedArrayPlatform`
-# ----------------------------------------
+# %%
+# Build a Manoeuvring :class:`~.TowedArrayPlatform`
+# --------------------------------------------------
 #
 # This section shows how the plugin reuses Stone Soup motion modelling for a more
 # realistic host trajectory. The platform still starts from a Stone Soup
-# `GroundTruthState` and uses standard transition models, but `TowedArrayPlatform`
+# ``GroundTruthState`` and uses standard transition models, but :class:`~.TowedArrayPlatform`
 # turns that motion into an evolving array geometry suitable for passive beamforming.
 #
 # That distinction matters in multi-target scenes: array heading and curvature affect
@@ -140,13 +107,13 @@ platform = TowedArrayPlatform(
 for timestamp in timesteps[1:]:
     platform.move(timestamp)
 
-# %% [markdown]
+# %%
 # Create Multiple Truth Paths with Acoustic Metadata
 # --------------------------------------------------
 #
-# The targets are built with standard Stone Soup truth objects, but each truth state
-# carries metadata describing the emitted acoustic source. This keeps the modelling
-# split clean:
+# The targets are built with standard Stone Soup :class:`~.GroundTruthPath` objects, but
+# each truth state carries metadata describing the emitted acoustic source. This keeps
+# the modelling split clean:
 #
 # - State vectors describe where each target is and how it moves.
 # - Metadata describes what each target sounds like.
@@ -202,17 +169,17 @@ for sv in [target1_start_vector, target2_start_vector, target3_start_vector]:
 
     target_truths.append(GroundTruthPath(target_states))
 
-plot_world(truths=target_truths, platform=platform).show()
+fig = plot_world(truths=target_truths, platform=platform)
 
-# %% [markdown]
-# Configure a `bluepebble` Propagation Model
+# %%
+# Configure a Blue Pebble Propagation Model
 # ------------------------------------------
 #
 # The multi-target tutorial uses a more sophisticated propagation model than the
 # single-target tutorial. This highlights an important plugin usage point: the
 # surrounding workflow does not change much when you swap acoustic fidelity.
 #
-# Here the code configures `rtrsAcousticPropagationModel` together with a sound-speed
+# Here the code configures :class:`~.rtrsAcousticPropagationModel` together with a sound-speed
 # profile and bathymetry. From the perspective of the simulator, it is simply another
 # propagation component that maps source/platform geometry into array-level acoustic
 # arrivals.
@@ -235,16 +202,16 @@ propagation_model = rtrsAcousticPropagationModel(
     elevation_resolution=1.0,
 )
 
-# %% [markdown]
+# %%
 # Configure Shared Source and Noise Models
 # ----------------------------------------
 #
-# Next, define the signal models that will be reused across the target set. `bluepebble`
+# Next, define the signal models that will be reused across the target set. Blue Pebble
 # lets you keep one consistent processing configuration while still simulating several
 # independent sources.
 #
-# The tutorial uses `ColouredNoiseSignal` for ambient background and
-# `SyntheticAnthropogenicSignal` for target emissions. In this setup, the source model
+# The tutorial uses :class:`~.ColouredNoiseSignal` for ambient background and
+# :class:`~.SyntheticAnthropogenicSignal` for target emissions. In this setup, the source model
 # is shared across targets and reads the per-target metadata attached in the
 # truth-generation step. This is the usual plugin pattern when several targets should
 # be processed with the same acoustic assumptions.
@@ -267,6 +234,7 @@ ambient_noise_model = ColouredNoiseSignal(
     sampling_rate_hz=sampling_rate_hz,
 )
 
+
 def _make_signal_model():
     return SyntheticAnthropogenicSignal(
         duration_s=duration_s,
@@ -284,15 +252,15 @@ def _make_signal_model():
 
 signal_models = [_make_signal_model() for _ in target_truths]
 
-# %% [markdown]
+# %%
 # Run Beamforming and Passive-Sonar Detection
 # -------------------------------------------
 #
-# This is the main acoustic-processing stage. `ContinuousSTFTPassiveSonarArraySimulator`
+# This is the main acoustic-processing stage. :class:`~.ContinuousSTFTPassiveSonarArraySimulator`
 # consumes the platform, propagation model, truth paths, source models, and steering
 # calculator to produce beamformed output over time.
 #
-# `PassiveSonarDetector` then turns that output into discrete detections using a
+# :class:`~.PassiveSonarDetector` then turns that output into discrete detections using a
 # sonar-specific chain of thresholding and peak selection. In multi-target scenes, this
 # stage is where overlapping bearing structure, sidelobes, and clutter begin to
 # influence the tracking problem downstream.
@@ -359,7 +327,7 @@ fig = make_subplots(
     rows=1, cols=2, shared_yaxes=True, subplot_titles=("SNR Map", "SNR Map with Detections")
 )
 
-plot_btr(
+_ = plot_btr(
     data=snr_map,
     timesteps=timesteps,
     steering_azimuths=np.rad2deg(steering_azimuths_rad),
@@ -367,7 +335,7 @@ plot_btr(
     row=1,
     col=1,
 )
-plot_btr(
+_ = plot_btr(
     data=snr_map,
     detections=detections_for_plotter,
     timesteps=timesteps,
@@ -377,14 +345,13 @@ plot_btr(
     col=2,
 )
 
-fig.update_layout(width=1200, height=700, yaxis2=dict(title=""))
-fig.show()
+_ = fig.update_layout(width=1200, height=700, yaxis2=dict(title=""))
 
-# %% [markdown]
+# %%
 # Track Multiple Bearings with Stone Soup Association
 # ---------------------------------------------------
 #
-# Once detections exist, the workflow hands back to Stone Soup. The `bluepebble` portion
+# Once detections exist, the workflow hands back to Stone Soup. The Blue Pebble portion
 # of the pipeline has already converted the acoustic scene into bearing detections;
 # Stone Soup now handles track initiation, data association, state estimation, and
 # deletion.
@@ -499,23 +466,23 @@ for _, current_tracks in kf:
         track[-1].state_vector[0, 0] = mod_bearing(float(track[-1].state_vector[0, 0]))
     tracks |= current_tracks
 
-plot_btr(
+fig = plot_btr(
     timesteps=timesteps,
     steering_azimuths=np.rad2deg(steering_azimuths_rad),
     truths=relative_bearing_truths,
     detections=detections_for_plotter,
     tracks=tracks,
     figsize=(700, 700),
-).show()
+)
 
-# %% [markdown]
+# %%
 # Adapting This Tutorial
 # ----------------------
 #
-# The multi-target plugin workflow is the same basic pattern as the single-target case,
-# but with more emphasis on separability and association:
+# The multi-target plugin workflow follows the same pattern as the single-target case,
+# but with extra emphasis on source separability and association:
 #
-# 1. Build Stone Soup truth and platform objects.
-# 2. Add `bluepebble` array geometry, propagation, and acoustic source/noise models.
+# 1. Build Stone Soup truth and platform objects with per-target acoustic metadata.
+# 2. Add Blue Pebble array geometry, propagation, and shared acoustic source/noise models.
 # 3. Simulate beamformed output and generate passive-sonar detections.
-# 4. Use Stone Soup association and tracking logic to maintain multiple bearing tracks.
+# 4. Use Stone Soup multi-target association and tracking logic to maintain bearing tracks.

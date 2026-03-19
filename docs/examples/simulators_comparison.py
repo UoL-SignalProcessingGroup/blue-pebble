@@ -1,19 +1,22 @@
-"""Broadband Measured vs Synthetic Comparison Across Simulator Modes.
-
-This example extends `bb_sig_analysis.py` by looping over multiple simulator
-implementations and plotting a spectrogram table for each mode.
-
-Retained from the original workflow:
-- Ground-truth world plot
-- Source spectrogram plots (synthetic and measured)
-
-Removed for brevity:
-- Frequency-spectrum plots
-- Time-series plots
-- WAV export
 """
+============================================================
+Broadband Measured vs Synthetic Comparison: Simulator Modes
+============================================================
 
-# %% [markdown]
+This example loops over multiple simulator implementations and plots a spectrogram
+table for each mode, comparing synthetic and measured source signals. It shows how
+different simulator backends affect the received signal structure at a single sensor.
+
+Simulator types compared:
+
+- **STFT Interp**: STFT-domain propagation with interpolation between updates.
+- **WOLA Interp**: Weighted overlap-add reconstruction with interpolated propagation.
+- **COLA**: Constant overlap-add STFT processing for stable frame stitching.
+- **Fractional Delay**: Time-domain model using sub-sample delay alignment.
+- **Discrete**: Per-step discrete simulation baseline.
+"""  # noqa: D205, D212, D400, D415
+
+# %%
 # Setup and Reproducibility
 # -------------------------
 
@@ -51,7 +54,7 @@ from bluepebble.simulator import (
 
 np.random.seed(1999)
 
-# %% [markdown]
+# %%
 # Simulation Parameters
 # ---------------------
 
@@ -71,7 +74,7 @@ print(f"Total simulation duration: {total_duration_s} s")
 print(f"Number of timesteps: {SIM_PARAMS['num_steps']}")
 print(f"Timestep interval: {SIM_PARAMS['time_interval'].total_seconds()} s")
 
-# %% [markdown]
+# %%
 # Platform and Array Parameters
 # -----------------------------
 
@@ -94,7 +97,7 @@ ARRAY_PARAMS = {
 
 SENSOR_TO_ANALYZE = ARRAY_PARAMS["num_sensors"] // 2
 
-# %% [markdown]
+# %%
 # Target Parameters
 # -----------------
 
@@ -114,7 +117,7 @@ TARGET_PARAMS = {
     "noise_spectral_exponent": -1.0,
 }
 
-# %% [markdown]
+# %%
 # Signal Parameters
 # -----------------
 
@@ -128,7 +131,7 @@ SIGNAL_PARAMS = {
     "fade_out_ms": 100.0,
 }
 
-# %% [markdown]
+# %%
 # Platform Generation
 # -------------------
 
@@ -151,7 +154,7 @@ for i in range(1, SIM_PARAMS["num_steps"]):
     new_time = SIM_PARAMS["start_time"] + i * SIM_PARAMS["time_interval"]
     platform.move(new_time)
 
-# %% [markdown]
+# %%
 # Target Trajectory
 # -----------------
 
@@ -188,9 +191,8 @@ target_ground_truth = GroundTruthPath(target_states)
 
 fig_world = plot_world(truths=[target_ground_truth], platform=platform)
 fig_world.update_layout(title="World Picture")
-fig_world.show()
 
-# %% [markdown]
+# %%
 # Source Signal Models
 # --------------------
 
@@ -232,7 +234,7 @@ def _make_measured_signal_model():
 synthetic_signal_model = _make_synthetic_signal_model()
 measured_signal_model = _make_measured_signal_model()
 
-# %% [markdown]
+# %%
 # Propagation Model
 # -----------------
 #
@@ -273,7 +275,7 @@ else:
         ssp=ssp,
     )
 
-# %% [markdown]
+# %%
 # Source Spectrograms
 # -------------------
 
@@ -294,7 +296,6 @@ fig_synth_source_spec = plot_spectrogram(
     figsize=(9, 4),
 )
 fig_synth_source_spec.update_layout(title="Spectrogram - Synthetic Source Signal")
-fig_synth_source_spec.show()
 
 fig_meas_source_spec = plot_spectrogram(
     measured_source_real,
@@ -306,9 +307,8 @@ fig_meas_source_spec = plot_spectrogram(
     figsize=(9, 4),
 )
 fig_meas_source_spec.update_layout(title="Spectrogram - Measured Source Signal")
-fig_meas_source_spec.show()
 
-# %% [markdown]
+# %%
 # Simulator Comparison Table
 # --------------------------
 #
@@ -473,4 +473,3 @@ fig_grid.update_layout(
     width=1200,
     title="Received Signal Spectrogram Table by Simulator Mode",
 )
-fig_grid.show()

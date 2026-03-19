@@ -1,27 +1,21 @@
-"""Multi-Narrowband Beamformer Comparison Example.
+"""
+===========================================
+Multi-Narrowband Beamformer Comparison
+===========================================
 
 This example compares several narrowband MVDR frequency selections on a shared
 passive-sonar scenario. The aim is to isolate how band choice changes the resulting
 BTR structure, detection count, and mid-scan bearing behaviour when everything else
 in the pipeline is held fixed.
 
-**Background**
+Different frequency bands can emphasise different parts of a target signature or
+suppress different noise contributions. In narrowband beamforming, a seemingly small
+change in band limits can noticeably alter peak sharpness, clutter structure, and
+detection stability. A controlled comparison is most useful when geometry, propagation,
+and detector settings remain identical across runs.
+"""  # noqa: D205, D212, D400, D415
 
-- Different frequency bands can emphasise different parts of a target signature or
-  suppress different noise contributions.
-- In narrowband beamforming, a seemingly small change in band limits can noticeably
-  alter peak sharpness, clutter structure, and detection stability.
-- A controlled comparison is most useful when geometry, propagation, and detector
-  settings remain identical across runs.
-
-**Key Concepts**
-
-- MVDR beamforming under multiple narrowband selections.
-- Controlled comparison using shared propagation and detection settings.
-- Per-band BTR inspection, cross-band comparison, and bearing-cut diagnostics.
-"""
-
-# %% [markdown]
+# %%
 # Simulation Parameters
 # ---------------------
 #
@@ -48,7 +42,7 @@ timesteps = np.array([start_time + i * time_interval for i in range(num_steps)],
 total_duration_s = num_steps * time_interval.total_seconds()
 print(f"Total simulation duration: {total_duration_s} seconds")
 
-# %% [markdown]
+# %%
 # Platform Setup and Generation
 # -----------------------------
 #
@@ -154,7 +148,7 @@ print("Platform manoeuvre plan:")
 for description in manoeuvre_descriptions:
     print(f"- {description}")
 
-# %% [markdown]
+# %%
 # Ground Truth Setup and Generation
 # ---------------------------------
 #
@@ -254,9 +248,8 @@ for target_config in target_configs:
 
 fig_world = plot_world(truths=target_ground_truths, platform=platform)
 fig_world.update_layout(title="World Picture: Target and Platform Trajectories")
-fig_world.show()
 
-# %% [markdown]
+# %%
 # Propagation Model
 # -----------------
 #
@@ -288,7 +281,7 @@ prop_model = rtrsAcousticPropagationModel(
     elevation_resolution=prop_elevation_resolution,
 )
 
-# %% [markdown]
+# %%
 # Signal Model
 # ------------
 #
@@ -317,6 +310,7 @@ ambient_noise_model = ColouredNoiseSignal(
     sampling_rate_hz=sampling_rate_hz,
 )
 
+
 def _make_signal_models():
     models = []
     for target_ground_truth in target_ground_truths:
@@ -337,7 +331,8 @@ def _make_signal_models():
         )
     return models
 
-# %% [markdown]
+
+# %%
 # Beamformer
 # ----------
 #
@@ -379,7 +374,7 @@ print("Frequency bands:")
 for config in freq_bands:
     print(f"- {config['label']}")
 
-# %% [markdown]
+# %%
 # Detector Pipeline Setup
 # -----------------------
 #
@@ -429,7 +424,7 @@ for beamformer, steering_calculator in zip(beamformers, steering_calculators, st
     simulators.append(simulator)
     detectors.append(make_detector(simulator, steering_azimuths_rad))
 
-# %% [markdown]
+# %%
 # Run Detection on Simulated Data
 # -------------------------------
 #
@@ -464,7 +459,7 @@ for summary in comparison_summary:
         f"peak SNR {summary['snr_peak_db']:.2f} dB"
     )
 
-# %% [markdown]
+# %%
 # Per-Band BTR Inspection
 # -----------------------
 #
@@ -529,9 +524,8 @@ for snr_map, detections_flat, config in zip(
     )
     fig_btr.update_yaxes(title_text="Time (HH:MM)", row=1, col=1)
     fig_btr.update_yaxes(title_text="", row=1, col=2)
-    fig_btr.show()
 
-# %% [markdown]
+# %%
 # Cross-Band Comparison
 # ---------------------
 #
@@ -589,9 +583,8 @@ fig_compare.update_layout(
     showlegend=False,
 )
 fig_compare.update_yaxes(title_text="Time (HH:MM)", row=1, col=1)
-fig_compare.show()
 
-# %% [markdown]
+# %%
 # Bearing-Cut Diagnostics
 # -----------------------
 #
@@ -666,4 +659,3 @@ for all_detections, snr_map, config in zip(
         yaxis_title="SNR (dB)",
     )
     fig_middle.update_yaxes(range=[y_min, y_max])
-    fig_middle.show()

@@ -31,11 +31,18 @@ extensions = [
     "sphinx.ext.autosummary",
     "sphinx.ext.napoleon",
     "sphinx.ext.viewcode",
+    "sphinx.ext.intersphinx",
     "myst_parser",
     "sphinx_gallery.gen_gallery",
 ]
 
+intersphinx_mapping = {
+    "stonesoup": ("https://stonesoup.readthedocs.io/en/stable/", None),
+}
+
+
 templates_path = ["_templates"]
+html_extra_path = ["_extra"]
 exclude_patterns = [
     "_build",
     "Thumbs.db",
@@ -82,6 +89,12 @@ sphinx_gallery_conf = {
     "image_scrapers": ("matplotlib", _plotly_scraper),
     "reset_modules": (_plotly_scraper.reset,),
     "plot_gallery": True,
+    # Resolve bluepebble class links in code blocks against the local build.
+    # Without this entry, Sphinx-Gallery falls back to intersphinx and links
+    # bluepebble classes to Stone Soup's Base class instead.
+    "reference_url": {
+        "bluepebble": None,
+    },
 }
 
 warnings.filterwarnings("ignore", category=RemovedInSphinx10Warning)

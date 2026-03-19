@@ -1,12 +1,15 @@
-"""Ownship Noise Example.
+"""
+===================
+Ownship Noise Example
+===================
 
 This example compares the same passive-sonar scenario in two conditions:
+ambient noise only, and ambient noise with ownship self-noise added. Holding
+all other pipeline settings fixed isolates the effect of ownship interference
+on the beamformed output and downstream detection counts.
+"""  # noqa: D205, D212, D400, D415
 
-1. Baseline ambient noise only
-2. Ambient + ownship self noise
-"""
-
-# %% [markdown]
+# %%
 # Simulation Parameters
 # ---------------------
 #
@@ -31,7 +34,7 @@ num_steps = int(SIM_LENGTH / SIM_RATE)
 total_duration_s = num_steps * time_interval.total_seconds()
 print(f"Total simulation duration: {total_duration_s} seconds")
 
-# %% [markdown]
+# %%
 # Platform Setup and Generation
 # -----------------------------
 #
@@ -125,7 +128,7 @@ self_noise_states = [
 ]
 self_noise_ground_truth = GroundTruthPath(self_noise_states)
 
-# %% [markdown]
+# %%
 # Ground Truth Setup and Generation
 # ---------------------------------
 #
@@ -218,9 +221,8 @@ for target_start_vector in target_start_vectors:
     relative_bearing_ground_truths.append(GroundTruthPath(bearing_states))
 
 fig1 = plot_world(truths=target_ground_truths, platform=platform)
-fig1.show()
 
-# %% [markdown]
+# %%
 # Propagation Model
 # -----------------
 #
@@ -267,7 +269,7 @@ prop_model = rtrsAcousticPropagationModel(
     integration_method=prop_integration_method,
 )
 
-# %% [markdown]
+# %%
 # Signal Model
 # ------------
 #
@@ -294,6 +296,7 @@ ambient_noise_model = ColouredNoiseSignal(
     duration_s=time_interval.total_seconds(),
     sampling_rate_hz=sampling_rate_hz,
 )
+
 
 def _make_signal_models():
     models = []
@@ -330,7 +333,8 @@ def _make_self_noise_model():
         noise_is_constant=True,
     )
 
-# %% [markdown]
+
+# %%
 # Beamformer
 # ----------
 #
@@ -384,7 +388,7 @@ steering_calculator = SteeringCalculator(
     steering_azimuths_rad=steering_azimuths_rad,
 )
 
-# %% [markdown]
+# %%
 # Detector Pipeline Setup
 # -----------------------
 #
@@ -449,7 +453,7 @@ simulator_with_ownship_noise = ContinuousSTFTPassiveSonarArraySimulator(
 detector_without_ownship_noise = make_detector(simulator_without_ownship_noise)
 detector_with_ownship_noise = make_detector(simulator_with_ownship_noise)
 
-# %% [markdown]
+# %%
 # Run Detection on Simulated Data
 # -------------------------------
 #
@@ -479,7 +483,7 @@ detections_with_ownship_noise = [
 print(f"Total no. of detections w/o ownship noise: {len(detections_without_ownship_noise)}")
 print(f"Total no. of detections w/ ownship noise: {len(detections_with_ownship_noise)}")
 
-# %% [markdown]
+# %%
 # Results: With vs Without Ownship Noise
 # --------------------------------------
 #
@@ -591,4 +595,3 @@ fig2.update_layout(
     showlegend=False,
     margin=dict(r=90, t=110),
 )
-fig2.show()

@@ -4,16 +4,16 @@ Single Target Passive-Sonar Tracking Tutorial
 =============================================
 """  # noqa: D205, D212, D400, D415
 
-# %% [markdown]
-# This tutorial shows how to use `bluepebble` as a Stone Soup plugin for a complete
+# %%
+# This tutorial shows how to use Blue Pebble as a Stone Soup plugin for a complete
 # single-target passive-sonar workflow. The goal is not just to produce a result, but
-# to show how `bluepebble` components fit around standard Stone Soup state, truth,
+# to show how Blue Pebble components fit around standard Stone Soup state, truth,
 # detection, and tracking objects.
 #
 # Background & Key Concepts
 # -------------------------
 #
-# `bluepebble` extends Stone Soup with underwater-acoustics and passive-sonar components
+# Blue Pebble extends Stone Soup with underwater-acoustics and passive-sonar components
 # that are not part of the core tracking library. In practice, the plugin adds
 # array-platform models, acoustic propagation models, source and noise signal models,
 # beamforming, and passive-sonar detection utilities. Stone Soup still provides the
@@ -21,32 +21,32 @@ Single Target Passive-Sonar Tracking Tutorial
 #
 # The key integration patterns to keep in mind are:
 #
-# - `TowedArrayPlatform` is the plugin entry point for representing a passive towed
+# - :class:`~.TowedArrayPlatform` is the plugin entry point for representing a passive towed
 #   array as a Stone Soup-compatible moving platform.
-# - `GroundTruthState` and `GroundTruthPath` remain standard Stone Soup types;
-#   `bluepebble` reads extra acoustic metadata from their `metadata` fields.
-# - `ContinuousSTFTPassiveSonarArraySimulator` is the integration point that combines
+# - :class:`~stonesoup.types.groundtruth.GroundTruthState` and :class:`~stonesoup.types.groundtruth.GroundTruthPath` remain  # noqa: E501
+#   standard Stone Soup types; Blue Pebble reads extra acoustic metadata from their `metadata`
+#   fields.
+# - :class:`~.ContinuousSTFTPassiveSonarArraySimulator` is the integration point that combines
 #   platform geometry, propagation, source models, noise, steering, and beamforming
 #   into beamformed data products.
 # - The detection and tracking stages stay close to normal Stone Soup usage:
-#   `bluepebble` produces passive-sonar detections, and Stone Soup consumes them in
+#   Blue Pebble produces passive-sonar detections, and Stone Soup consumes them in
 #   the tracker.
 #
 # In this tutorial you will assemble the following pipeline:
 #
-# - A Stone Soup `GroundTruthState` platform wrapped in
-#   `bluepebble.platform.TowedArrayPlatform`
-# - A single target truth path with plugin-specific acoustic metadata
-# - A cylindrical acoustic propagation model and broadband signal/noise models
-# - A broadband passive-sonar simulator, beamformer, and detector chain
-# - A Stone Soup bearing tracker driven by `bluepebble` detections
+# - A towed array platform.
+# - A single target truth path with plugin-specific acoustic metadata.
+# - A cylindrical acoustic propagation model and broadband signal/noise models.
+# - A broadband passive-sonar simulator, beamformer, and detector chain.
+# - A Stone Soup bearing tracker driven by Blue Pebble detections.
 
-# %% [markdown]
+# %%
 # Simulation Timing and Reproducibility
 # -------------------------------------
 #
 # Start by defining the timing configuration shared by every plugin component. In
-# `bluepebble`, the integration interval drives more than state propagation: it also
+# Blue Pebble, the integration interval drives more than state propagation: it also
 # sets the cadence for signal generation, beamforming, and detection.
 #
 # Keeping these values explicit at the top of the tutorial makes the later plugin
@@ -70,17 +70,16 @@ num_steps = int(sim_duration.total_seconds() / time_interval.total_seconds())
 start_time = datetime.now().replace(hour=0, minute=0, second=0, microsecond=0)
 timesteps = np.array([start_time + i * time_interval for i in range(num_steps)], dtype=object)
 
-# %% [markdown]
-# Build a Stone Soup Platform with `TowedArrayPlatform`
-# -----------------------------------------------------
+# %%
+# Build a Passive Towed Array Platform
+# ------------------------------------
 #
-# The first plugin-specific object is the host platform. `TowedArrayPlatform` inherits
+# The first plugin-specific object is the host platform. :class:`~.TowedArrayPlatform` inherits
 # from Stone Soup's moving-platform machinery, so you still provide familiar Stone Soup
-# ingredients such as an initial `GroundTruthState`, position/velocity mappings, and
-# transition models.
+# ingredients such as an initial :class:`~stonesoup.types.groundtruth.GroundTruthState`,
+# position/velocity mappings, and :class:`~stonesoup.models.transition.linear.CombinedLinearGaussianTransitionModel`.  # noqa: E501
 #
-# `bluepebble` then adds the array-specific parameters that Stone Soup does not model
-# by default:
+# Blue Pebble then adds the array-specific parameters that Stone Soup does not model by default:
 #
 # - `num_sensors`
 # - `cable_length_m`
@@ -132,17 +131,17 @@ platform = TowedArrayPlatform(
 for timestamp in timesteps[1:]:
     platform.move(timestamp)
 
-# %% [markdown]
-# Attach Acoustic Metadata to Stone Soup Ground Truth
-# ---------------------------------------------------
+# %%
+# Attach Acoustic Metadata to the Ground Truth
+# --------------------------------------------
 #
-# Targets remain ordinary Stone Soup `GroundTruthPath` objects. The plugin-specific
-# step is to attach acoustic source parameters to each state's `metadata` so the
-# signal model and simulator can interpret the target as an emitting underwater source.
+# Targets remain ordinary Stone Soup :class:`~stonesoup.types.groundtruth.GroundTruthPath` objects.
+# The plugin-specific step is to attach acoustic source parameters to each state's `metadata` so
+# the signal model and simulator can interpret the target as an emitting underwater source.
 #
 # In this tutorial the metadata describes a broadband ship-like source with tonal
 # components, tonal bandwidth, and a stochastic noise term. That split is important
-# when using `bluepebble`: kinematics stay in the state vector, while source
+# when using Blue Pebble: kinematics stay in the state vector, while source
 # characteristics live in metadata that downstream acoustic components can read without
 # changing the Stone Soup truth classes themselves.
 
@@ -196,14 +195,14 @@ target_truths = [target_truth]
 
 fig = plot_world(truths=target_truths, platform=platform)
 
-# %% [markdown]
-# Choose a `bluepebble` Propagation Model
+# %%
+# Choose a Blue Pebble Propagation Model
 # ---------------------------------------
 #
-# Next, configure the acoustic environment. This is where `bluepebble` begins to add
+# Next, configure the acoustic environment. This is where Blue Pebble begins to add
 # the underwater-propagation physics that sit outside Stone Soup's core remit.
 #
-# This tutorial uses `CylindricalAcousticPropagationModel` with a simple sound-speed
+# This tutorial uses :class:`~.CylindricalAcousticPropagationModel` with a simple linear sound-speed  # noqa: E501
 # profile and flat bathymetry. Once you provide a propagation model, the simulator can
 # use it to convert target/platform geometry into array-level acoustic observations.
 
@@ -220,24 +219,23 @@ propagation_model = CylindricalAcousticPropagationModel(
     attenuation_factor=attenuation_factor,
 )
 
-# %% [markdown]
+# %%
 # Configure Source and Noise Models
 # ---------------------------------
 #
-# With platform motion and target truth in place, define the acoustic content that will
-# actually reach the array. This is another plugin boundary: `bluepebble` supplies
-# source and ambient-noise generators that are aware of passive-sonar
-# signal-processing settings.
+# With platform motion and target truth in place, define the acoustic content that will actually
+# reach the array. This is another plugin boundary: Blue Pebble supplies source and ambient-noise
+# generators that are aware of passive-sonar signal-processing settings.
 #
 # The two important patterns are:
 #
-# - Ambient background is modelled explicitly with `ColouredNoiseSignal`, usually over
-#   one integration interval at a time.
-# - Target emissions are modelled explicitly with `SyntheticAnthropogenicSignal`,
-#   using the metadata attached to the Stone Soup truth states.
+# - Ambient background is modelled explicitly with :class:`~.ColouredNoiseSignal`, usually over one
+#   integration interval at a time.
+# - Target emissions are modelled explicitly with :class:`~.SyntheticAnthropogenicSignal`, using
+#   the metadata attached to the Stone Soup truth states.
 #
-# Together, these models provide the simulator with physically meaningful inputs while
-# preserving the Stone Soup truth and tracking abstractions around them.
+# Together, these models provide the simulator with physically meaningful inputs while preserving
+# the Stone Soup truth and tracking abstractions around them.
 
 # %%
 from bluepebble.signal.anthropogenic import SyntheticAnthropogenicSignal
@@ -271,17 +269,17 @@ signal_model = SyntheticAnthropogenicSignal(
     noise_is_constant=True,
 )
 
-# %% [markdown]
-# Run the `bluepebble` Simulator, Beamformer, and Detector Chain
+# %%
+# Run the Blue Pebble Simulator, Beamformer, and Detector Chain
 # --------------------------------------------------------------
 #
-# This section is the core plugin workflow. `ContinuousSTFTPassiveSonarArraySimulator`
+# This section is the core plugin workflow. :class:`~.ContinuousSTFTPassiveSonarArraySimulator`
 # brings together the platform, propagation model, source/noise models, steering
 # calculation, and beamformer to produce beamformed sonar output over time.
 #
-# Once the simulator is in place, `PassiveSonarDetector` applies a passive-sonar
+# Once the simulator is in place, :class:`~.PassiveSonarDetector` applies a passive-sonar
 # detection chain to those outputs. Here that chain is CA-CFAR followed by peak
-# picking. The important usage pattern is that `bluepebble` handles the
+# picking. The important usage pattern is that Blue Pebble handles the
 # signal-processing and detection side, then returns timestamped detections that can
 # be analysed directly or passed into Stone Soup tracking components.
 
@@ -381,18 +379,18 @@ _ = plot_btr(
 
 _ = fig.update_layout(width=1200, height=700, yaxis2=dict(title=""))
 
-# %% [markdown]
-# Feed `bluepebble` Detections into a Stone Soup Tracker
+# %%
+# Feed Blue Pebble Detections into a Stone Soup Tracker
 # ------------------------------------------------------
 #
 # The final step shows the hand-off back into Stone Soup. The bearing-time record and
-# passive-sonar detections come from `bluepebble`, but the tracker itself is assembled
+# passive-sonar detections come from Blue Pebble, but the tracker itself is assembled
 # from standard Stone Soup building blocks: a transition model, measurement model,
 # predictor, updater, hypothesiser, data associator, and tracker.
 #
 # That separation is the main plugin pattern to remember:
 #
-# - `bluepebble` models the acoustic sensing process and detection generation.
+# - Blue Pebble models the acoustic sensing process and detection generation.
 # - Stone Soup models the Bayesian tracking logic once measurements exist.
 #
 # For plotting on the same axes, we also convert Cartesian truth to relative bearing
@@ -486,14 +484,13 @@ fig = plot_btr(
     figsize=(700, 700),
 )
 
-# %% [markdown]
+# %%
 # Adapting This Tutorial
 # ----------------------
 #
 # You now have the minimal single-target plugin workflow:
 #
 # 1. Build a Stone Soup platform and truth model.
-# 2. Add `bluepebble` array, propagation, source, and noise components.
-# 3. Run `ContinuousSTFTPassiveSonarArraySimulator` and a passive-sonar detection
-#    chain.
+# 2. Add Blue Pebble array, propagation, source, and noise components.
+# 3. Run passive sonar simulator and a passive-sonar detection chain.
 # 4. Pass the resulting detections into a Stone Soup tracker.

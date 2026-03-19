@@ -1,25 +1,19 @@
-"""Detector Metrics.
+"""
+================
+Detector Metrics
+================
 
 This example evaluates detector behaviour on a shared multi-target scenario and turns
 the outputs into quantitative performance curves. Rather than stopping at a single
 visual BTR inspection, it sweeps detector settings to show how sensitivity and false
 alarms trade off across configurations.
 
-**Background**
-
-- In passive sonar, detector tuning is always a compromise between missed detections
-  and false alarms.
-- Visual inspection of one scenario can suggest whether a detector looks plausible,
-  but it does not quantify how operating point changes affect performance.
-- ROC and precision-recall views are especially useful when detection quality must be
-  compared across parameter settings or detector chains.
-
-**Key Concepts**
-
-- Beamforming followed by thresholding and peak-selection detection.
-- Confusion-count based evaluation over parameter sweeps.
-- ROC and precision-recall metrics for passive-sonar detector comparison.
-"""
+In passive sonar, detector tuning is always a compromise between missed detections and
+false alarms. Visual inspection of one scenario can suggest whether a detector looks
+plausible, but it does not quantify how operating point changes affect performance.
+ROC and precision-recall curves are especially useful when comparing operating points
+across parameter settings or detector chains.
+"""  # noqa: D205, D212, D400, D415
 
 # %%
 from datetime import datetime, timedelta
@@ -43,7 +37,7 @@ from bluepebble.signal.random import ColouredNoiseSignal
 from bluepebble.sigproc import DelayAndSumBeamformer, SteeringCalculator
 from bluepebble.simulator import ContinuousSTFTPassiveSonarArraySimulator
 
-# %% [markdown]
+# %%
 # Simulation Parameters
 # ---------------------
 #
@@ -68,7 +62,7 @@ num_steps = int(sim_duration.total_seconds() / time_interval.total_seconds())
 start_time = datetime.now().replace(hour=0, minute=0, second=0, microsecond=0)
 timesteps = np.array([start_time + i * time_interval for i in range(num_steps)], dtype=object)
 
-# %% [markdown]
+# %%
 # Platform Scenario Setup
 # -----------------------
 #
@@ -130,7 +124,7 @@ platform = TowedArrayPlatform(
 for timestamp in timesteps[1:]:
     platform.move(timestamp)
 
-# %% [markdown]
+# %%
 # Target Truth Generation
 # -----------------------
 #
@@ -182,7 +176,7 @@ for sv in [target1_start_vector, target2_start_vector, target3_start_vector]:
 
     target_truths.append(GroundTruthPath(target_states))
 
-# %% [markdown]
+# %%
 # Propagation Environment
 # -----------------------
 #
@@ -213,7 +207,7 @@ propagation_model = rtrsAcousticPropagationModel(
     elevation_resolution=1.0,
 )
 
-# %% [markdown]
+# %%
 # Signal and Ambient Noise Models
 # -------------------------------
 #
@@ -242,6 +236,7 @@ ambient_noise_model = ColouredNoiseSignal(
     sampling_rate_hz=sampling_rate_hz,
 )
 
+
 def _make_signal_model():
     return SyntheticAnthropogenicSignal(
         duration_s=duration_s,
@@ -259,7 +254,7 @@ def _make_signal_model():
 
 signal_models = [_make_signal_model() for _ in target_truths]
 
-# %% [markdown]
+# %%
 # Beamforming and Detector Pipeline Setup
 # ---------------------------------------
 #
@@ -267,7 +262,7 @@ signal_models = [_make_signal_model() for _ in target_truths]
 #
 # - Steering grid and delay-and-sum beamformer
 # - Broadband simulator
-# - Baseline detection chain (`CACFARDetector` + `PeakDetector`)
+# - Baseline detection chain (:class:`~.CACFARDetector` + :class:`~.PeakDetector`)
 #
 # The baseline run generates detections and `snr_map`, which are then reused for
 # parameter sweeps in the metrics section.
@@ -316,7 +311,7 @@ detector = PassiveSonarDetector(
     steering_azimuths_rad=steering_azimuths_rad,
 )
 
-# %% [markdown]
+# %%
 # Run Detection on Simulated Data
 # -------------------------------
 #
@@ -338,7 +333,7 @@ detections_for_plotter = [d for _, detections in all_detections for d in detecti
 
 print(f"Total no. of detections: {len(detections_for_plotter)}")
 
-# %% [markdown]
+# %%
 # Relative Bearing Ground Truth Conversion
 # ----------------------------------------
 #
@@ -371,7 +366,7 @@ for target_truth in target_truths:
 target_ground_truths = target_truths
 relative_bearing_ground_truths = relative_bearing_truths
 
-# %% [markdown]
+# %%
 # Visualisation
 # -------------
 #
@@ -382,21 +377,21 @@ relative_bearing_ground_truths = relative_bearing_truths
 
 # %%
 # Ground truth and SNR visualisation
-plot_world(truths=target_truths, platform=platform).show()
+fig_world = plot_world(truths=target_truths, platform=platform)
 
-plot_btr(
+fig_btr = plot_btr(
     data=snr_map,
     timesteps=timesteps,
     steering_azimuths=np.rad2deg(steering_azimuths_rad),
     truths=relative_bearing_truths,
     figsize=(1000, 700),
-).show()
+)
 
-# %% [markdown]
+# %%
 # Detection Metrics Sweep (ROC and PR)
 # ------------------------------------
 #
-# Here multiple `SweepSpec` configurations are defined and detector parameters are swept
+# Here multiple :class:`~.SweepSpec` configurations are defined and detector parameters are swept
 # to compare operating behaviour.
 #
 # For each sweep, the example reports:
@@ -482,4 +477,4 @@ for r in results:
         f"param @ FPR={TARGET_FPR}={r.param_at_fpr(TARGET_FPR):.4f}"
     )
 
-plot_roc_pr(results).show()
+fig_roc_pr = plot_roc_pr(results)

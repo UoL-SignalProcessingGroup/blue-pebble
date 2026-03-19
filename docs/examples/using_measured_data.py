@@ -1,13 +1,23 @@
-"""Measured Environmental Data Example.
+"""
+==============================
+Measured Environmental Data Example
+==============================
 
 This example runs one scenario using measured environmental inputs:
 
 - GEBCO bathymetry (seafloor)
 - Copernicus temperature/salinity converted to sound speed via Leroy's equation
-"""
+
+.. note::
+
+   This example requires external data files (GEBCO bathymetry and Copernicus
+   ocean reanalysis) that are not bundled with the repository.  It is excluded
+   from the automated gallery build and must be run manually after downloading
+   the required datasets.
+"""  # noqa: D205, D212, D400, D415
 # sphinx_gallery_skip_execution = True
 
-# %% [markdown]
+# %%
 # Simulation Parameters
 # ---------------------
 #
@@ -32,11 +42,12 @@ num_steps = int(SIM_LENGTH / SIM_RATE)
 total_duration_s = num_steps * time_interval.total_seconds()
 print(f"Total simulation duration: {total_duration_s} seconds")
 
-# %% [markdown]
+# %%
 # Platform Setup and Generation
 # -----------------------------
 #
-# Here the platform is set up and generated.
+# The ownship trajectory and towed-array geometry are configured here and propagated
+# over the full simulation duration.
 
 # %%
 from stonesoup.models.transition.linear import (
@@ -129,11 +140,12 @@ for i in range(1, num_steps):
     new_time = start_time + i * time_interval
     platform.move(new_time)
 
-# %% [markdown]
+# %%
 # Ground Truth Setup and Generation
 # ---------------------------------
 #
-# Here the ground truth is set up and generated.
+# Target kinematics and source metadata are generated here, along with relative-bearing
+# truth sequences used for BTR overlays.
 
 # %%
 from stonesoup.models.transition.linear import (
@@ -214,7 +226,7 @@ for target_start_vector in target_start_vectors:
 
     relative_bearing_ground_truths.append(GroundTruthPath(bearing_states))
 
-# %% [markdown]
+# %%
 # Measured Environment Models (GEBCO + Copernicus)
 # ------------------------------------------------
 #
@@ -298,7 +310,7 @@ prop_model = rtrsAcousticPropagationModel(
     integration_method=prop_integration_method,
 )
 
-# %% [markdown]
+# %%
 # Geometry View: Trajectories over Bathymetry
 # -------------------------------------------
 #
@@ -312,9 +324,8 @@ fig_world = plot_world(
     bathymetry=bathymetry,
     figsize=(700, 550),
 )
-fig_world.show()
 
-# %% [markdown]
+# %%
 # Bathymetry and Sound Speed Viewer
 # ---------------------------------
 #
@@ -345,7 +356,7 @@ else:
         f"Current jupyter_mode={viewer_jupyter_mode!r}."
     )
 
-# %% [markdown]
+# %%
 # Signal Model
 # ------------
 #
@@ -388,7 +399,7 @@ for target_ground_truth in target_ground_truths:
         )
     )
 
-# %% [markdown]
+# %%
 # Beamformer
 # ----------
 #
@@ -443,7 +454,7 @@ steering_calculator = SteeringCalculator(
     steering_azimuths_rad=steering_azimuths_rad,
 )
 
-# %% [markdown]
+# %%
 # Detector Pipeline Setup
 # -----------------------
 #
@@ -485,7 +496,7 @@ detector = PassiveSonarDetector(
     steering_azimuths_rad=steering_azimuths_rad,
 )
 
-# %% [markdown]
+# %%
 # Run Detection on Simulated Data
 # -------------------------------
 #
@@ -501,7 +512,7 @@ steering_azimuths_deg = np.rad2deg(steering_azimuths_rad)
 detections = [d for _, detection_set in all_detections for d in detection_set]
 print(f"Total no. of detections: {len(detections)}")
 
-# %% [markdown]
+# %%
 # Results
 # -------
 #
@@ -547,9 +558,8 @@ fig_results.update_layout(
     showlegend=False,
     margin=dict(r=90, t=90),
 )
-fig_results.show()
 
-# %% [markdown]
+# %%
 # Acknowledgement
 # ~~~~~~~~~~~~~~~
 #
