@@ -761,8 +761,10 @@ def test_rtrs_propagate_returns_single_frequency_zero_pressure_fallback(monkeypa
     assert travel_time == pytest.approx(5.0 / 1500.0)
 
 
-def test_rtrs_propagate_spectrum_transposes_transfer_functions(monkeypatch) -> None:
-    """Mocked spectrum propagation should return sensor-by-frequency transfer functions."""
+def test_rtrs_propagate_spectrum_transposes_and_conjugates_transfer_functions(
+    monkeypatch,
+) -> None:
+    """Mocked spectrum propagation should return transposed, conjugated transfer functions."""
     propagation = _load_propagation_module(monkeypatch)
     platform, source = _make_platform_and_source()
     captured = {}
@@ -797,8 +799,8 @@ def test_rtrs_propagate_spectrum_transposes_transfer_functions(monkeypatch) -> N
         transfer,
         np.array(
             [
-                [2.0 + 20.0j, 4.0 + 40.0j],
-                [1.0 + 10.0j, 3.0 + 30.0j],
+                [1.0 - 10.0j, 3.0 - 30.0j],
+                [2.0 - 20.0j, 4.0 - 40.0j],
             ]
         ),
     )
