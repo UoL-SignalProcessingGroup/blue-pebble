@@ -736,14 +736,30 @@ def plot_world(
     if len(platform.platform_history) == 0:
         raise ValueError("platform.platform_history is empty")
 
+    def _format_timestamp(timestamp: Any) -> str:
+        """Return a readable timestamp string for hover metadata."""
+        if isinstance(timestamp, datetime):
+            return timestamp.strftime("%H:%M:%S")
+        if timestamp is None:
+            return "N/A"
+        return str(timestamp)
+
     plat_x = [float(entry.host.state.state_vector[0]) for entry in platform.platform_history]
     plat_y = [float(entry.host.state.state_vector[2]) for entry in platform.platform_history]
+    plat_timestamps = [
+        _format_timestamp(getattr(entry.host.state, "timestamp", None))
+        for entry in platform.platform_history
+    ]
 
     gt_x = [[] for _ in range(num_truths)]
     gt_y = [[] for _ in range(num_truths)]
+    gt_timestamps = [[] for _ in range(num_truths)]
     for idx, truth in enumerate(truths):
         gt_x[idx] = [float(state.state_vector[0]) for state in truth]
         gt_y[idx] = [float(state.state_vector[2]) for state in truth]
+        gt_timestamps[idx] = [
+            _format_timestamp(getattr(state, "timestamp", None)) for state in truth
+        ]
 
     all_x = plat_x + [x for sublist in gt_x for x in sublist]
     all_y = plat_y + [y for sublist in gt_y for y in sublist]
@@ -788,7 +804,8 @@ def plot_world(
         colorscale = _two_slope_colorscale(_get_cmocean_topo_cmap(), zmin, zmax, vcenter=0.0)
 
         hovertemplate = (
-            "X: %{x:.2f} {unit}<br>Y: %{y:.2f} {unit}<br>Bathymetry z: %{z:.2f} m<extra></extra>"
+            f"X: %{{x:.2f}} {unit}<br>Y: %{{y:.2f}} {unit}<br>"
+            "Bathymetry z: %{z:.2f} m<extra></extra>"
         )
         fig.add_trace(
             go.Heatmap(
@@ -813,6 +830,22 @@ def plot_world(
             )
         )
 
+    def _scatter_hovertemplate(label: str) -> str:
+        """Build a hover template with one coordinate system and timestamp."""
+        lines = [
+            label,
+            f"X: %{{x:.2f}} {unit}",
+            f"Y: %{{y:.2f}} {unit}",
+        ]
+        lines.append("Time: %{customdata[0]}<extra></extra>")
+        return "<br>".join(lines)
+
+    # Preserve native coordinates for hover metadata before scaling for display.
+    plat_x_native = plat_x.copy()
+    plat_y_native = plat_y.copy()
+    gt_x_native = [coords.copy() for coords in gt_x]
+    gt_y_native = [coords.copy() for coords in gt_y]
+
     # Convert coordinates and precomputed ranges from native units to display units.
     plat_x = [x * scale for x in plat_x]
     plat_y = [y * scale for y in plat_y]
@@ -826,6 +859,10 @@ def plot_world(
         np.allclose(plat_x, plat_x[0]) and np.allclose(plat_y, plat_y[0])
     )
     if platform_is_stationary:
+        platform_customdata = np.array(
+            [[plat_timestamps[0], plat_x_native[0], plat_y_native[0]]],
+            dtype=object,
+        )
         fig.add_trace(
             go.Scatter(
                 x=[plat_x[0]],
@@ -833,10 +870,24 @@ def plot_world(
                 mode="markers",
                 marker=dict(color="black", size=10),
                 name="Platform",
+                customdata=platform_customdata,
+                hovertemplate=_scatter_hovertemplate("Platform"),
                 **_legend_group_kwargs("platform", "Platform"),
             )
         )
     else:
+        platform_customdata = np.array(
+            [
+                [timestamp, x_native, y_native]
+                for timestamp, x_native, y_native in zip(
+                    plat_timestamps,
+                    plat_x_native,
+                    plat_y_native,
+                    strict=False,
+                )
+            ],
+            dtype=object,
+        )
         fig.add_trace(
             go.Scatter(
                 x=plat_x,
@@ -844,12 +895,26 @@ def plot_world(
                 mode="lines",
                 line=dict(color="black", width=3),
                 name="Platform",
+                customdata=platform_customdata,
+                hovertemplate=_scatter_hovertemplate("Platform"),
                 **_legend_group_kwargs("platform", "Platform"),
             )
         )
 
     names = [f"Truth {i + 1}" if num_truths > 1 else "Truth" for i in range(num_truths)]
     for i in range(num_truths):
+        truth_customdata = np.array(
+            [
+                [timestamp, x_native, y_native]
+                for timestamp, x_native, y_native in zip(
+                    gt_timestamps[i],
+                    gt_x_native[i],
+                    gt_y_native[i],
+                    strict=False,
+                )
+            ],
+            dtype=object,
+        )
         fig.add_trace(
             go.Scatter(
                 x=gt_x[i],
@@ -857,6 +922,8 @@ def plot_world(
                 mode="lines",
                 line=dict(color=colorway[i % len(colorway)], width=3, dash="5px,2px"),
                 name=names[i],
+                customdata=truth_customdata,
+                hovertemplate=_scatter_hovertemplate(names[i]),
                 **_legend_group_kwargs("truths", "Ground Truths"),
             )
         )

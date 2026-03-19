@@ -367,6 +367,69 @@ def test_plot_world_uses_marker_for_stationary_platform(monkeypatch) -> None:
     assert fig.data[0].name == "Platform"
 
 
+def test_plot_world_hovertemplate_omits_native_metres_when_scale_is_metres(
+    monkeypatch,
+) -> None:
+    """Hover template should not repeat native-metre fields when display unit is already metres."""
+    plotter = _load_plotter(monkeypatch)
+    t0 = datetime(2026, 1, 1, 0, 0, 0)
+    state_a = SimpleNamespace(state_vector=np.array([0.0, 0.0, 0.0]), timestamp=t0)
+    state_b = SimpleNamespace(state_vector=np.array([5.0, 0.0, 3.0]), timestamp=t0)
+    platform = SimpleNamespace(
+        platform_history=[
+            SimpleNamespace(host=SimpleNamespace(state=state_a)),
+            SimpleNamespace(host=SimpleNamespace(state=state_b)),
+        ]
+    )
+    truth_state = SimpleNamespace(state_vector=np.array([10.0, 0.0, 5.0]), timestamp=t0)
+    truths = [[truth_state, truth_state]]
+
+    fig = plotter.plot_world(truths=truths, platform=platform)
+
+    platform_trace = fig.data[0]
+    truth_trace = fig.data[1]
+
+    assert "customdata[1]" not in platform_trace.hovertemplate
+    assert "customdata[2]" not in platform_trace.hovertemplate
+    assert "customdata[0]" in platform_trace.hovertemplate
+    assert "customdata[1]" not in truth_trace.hovertemplate
+    assert "customdata[2]" not in truth_trace.hovertemplate
+    assert "customdata[0]" in truth_trace.hovertemplate
+    assert platform_trace.customdata.shape[1] == 3
+    assert truth_trace.customdata.shape[1] == 3
+
+
+def test_plot_world_hovertemplate_uses_km_unit_when_scale_is_km(
+    monkeypatch,
+) -> None:
+    """Hover template should display coordinates in km when the scene exceeds 1 km."""
+    plotter = _load_plotter(monkeypatch)
+    t0 = datetime(2026, 1, 1, 0, 0, 0)
+    # Coordinates > 1000 m trigger km display scale.
+    state_a = SimpleNamespace(state_vector=np.array([0.0, 0.0, 0.0]), timestamp=t0)
+    state_b = SimpleNamespace(state_vector=np.array([2000.0, 0.0, 1500.0]), timestamp=t0)
+    platform = SimpleNamespace(
+        platform_history=[
+            SimpleNamespace(host=SimpleNamespace(state=state_a)),
+            SimpleNamespace(host=SimpleNamespace(state=state_b)),
+        ]
+    )
+    truth_state = SimpleNamespace(state_vector=np.array([3000.0, 0.0, 2000.0]), timestamp=t0)
+    truths = [[truth_state, truth_state]]
+
+    fig = plotter.plot_world(truths=truths, platform=platform)
+
+    platform_trace = fig.data[0]
+    truth_trace = fig.data[1]
+
+    assert "km" in platform_trace.hovertemplate
+    assert "customdata[0]" in platform_trace.hovertemplate
+    assert "customdata[1]" not in platform_trace.hovertemplate
+    assert "km" in truth_trace.hovertemplate
+    assert "customdata[0]" in truth_trace.hovertemplate
+    assert "customdata[1]" not in truth_trace.hovertemplate
+
+
 def test_plot_world_rejects_empty_platform_history(monkeypatch) -> None:
     """World plotting should fail clearly when no platform states are available."""
     plotter = _load_plotter(monkeypatch)

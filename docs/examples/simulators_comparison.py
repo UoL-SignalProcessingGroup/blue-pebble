@@ -4,7 +4,7 @@ Simulator Modes: Measured vs Synthetic Signals
 ==============================================
 
 This example compares five simulator backends on a 300-second passive sonar
-scenario containing two vessels: a slow-moving tow ship carrying a 3-element
+scenario containing two vessels: a stationary tow ship carrying a 3-element
 hydrophone array and a single target approaching from approximately 1.2 km.
 Both a synthetic ship signal (tonal comb + coloured noise) and a real
 hydrophone recording (SANCTSOUND CI05) are used as sources.
@@ -27,7 +27,8 @@ Simulator modes compared:
 # Imports
 # -------
 #
-# All relevant dependencies are defined here.
+# All dependencies are consolidated here so the example reads top-to-bottom
+# without scattered imports.
 
 from datetime import datetime, timedelta
 from pathlib import Path
@@ -144,7 +145,7 @@ for i in range(1, sim_num_steps):
 target_ground_truth = GroundTruthPath(target_states)
 
 fig_world = plot_world(truths=[target_ground_truth], platform=platform)
-fig_world.update_layout(title="World Picture")
+fig_world = fig_world.update_layout(title="World Picture")
 
 # %%
 # Propagation Model
@@ -153,7 +154,7 @@ fig_world.update_layout(title="World Picture")
 # :class:`~.CylindricalAcousticPropagationModel` combines cylindrical spreading
 # (:math:`10 \log_{10} r`) with a constant absorption term. It is fast, analytical, and supports
 # ``propagate_spectrum()``, which is required by the continuous simulator backends.  Swap it for
-# :class`~.rtrsAcousticPropagationModel` if you need more realistic ray-path geometry. The rest of
+# :class:`~.rtrsAcousticPropagationModel` if you need more realistic ray-path geometry. The rest of
 # the example is unchanged.
 
 ssp = Constant(speed=1500.0)
@@ -249,7 +250,9 @@ measured_signal_model = _make_measured_signal_model()
 #
 # Before running the full simulation, inspect the source signals in isolation. This confirms the
 # tonal structure is present in the synthetic signal and that the recorded signal has comparable
-# bandwidth. The two subplots share the same frequency axis for easy comparison.
+# bandwidth. The two subplots share the same frequency axis for easy comparison. Colour scaling
+# uses the 5th–95th percentile range of each panel to avoid outliers compressing the dynamic
+# range.
 
 _sr = int(sampling_rate_hz)
 _n_fft, _hop = 500, 250
@@ -308,9 +311,10 @@ fig_source_spec = (
 #
 # Each row corresponds to a simulator backend; each column to a source type. All five modes should
 # reproduce the same tonal lines. Differences appear at segment boundaries (frame-stitching
-# artefacts) and in inter-frame phase continuity.  The Discrete mode processes each timestep
+# artefacts) and in inter-frame phase continuity. The Discrete mode processes each timestep
 # independently, so it shows the starkest inter-frame transitions, while the COLA and WOLA modes
-# are designed to minimise them.
+# are designed to minimise them. Colour scaling uses the 5th–95th percentile range so that
+# transient artefacts do not dominate the colour axis.
 
 sim_configs = [
     {"label": "STFT Interp", "kind": "stft", "mode": "stft_interp"},
