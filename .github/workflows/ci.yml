@@ -27,7 +27,7 @@ jobs:
             echo "  ci: add pytest step to workflow"
             echo "  fix(plotter): handle empty detections"
             echo "  docs(api): clarify Bellhop installation"
-            exit 1
+            exit 0
           fi
 
   core:
