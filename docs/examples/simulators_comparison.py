@@ -41,7 +41,7 @@ from bluepebble.models.propagation import (
     rtrsAcousticPropagationModel,
 )
 from bluepebble.platform import TowedArrayPlatform
-from bluepebble.plotter import plot_spectrogram, plot_world
+from bluepebble.plotter import plot_world
 from bluepebble.signal.anthropogenic import (
     RecordedAnthropogenicSignal,
     SyntheticAnthropogenicSignal,
@@ -286,27 +286,65 @@ source_signal_measured = measured_signal_model.get_source_waveform(target_states
 synthetic_source_real = np.real(source_signal_synthetic)
 measured_source_real = np.real(source_signal_measured)
 
-fig_synth_source_spec = plot_spectrogram(
-    synthetic_source_real,
-    int(SIGNAL_PARAMS["sampling_rate_hz"]),
-    n_fft=500,
-    hop_length=250,
-    y_lim=(0, SIGNAL_PARAMS["sampling_rate_hz"] / 2),
-    yaxis_format="hz",
-    figsize=(9, 4),
-)
-fig_synth_source_spec.update_layout(title="Spectrogram - Synthetic Source Signal")
 
-fig_meas_source_spec = plot_spectrogram(
-    measured_source_real,
-    int(SIGNAL_PARAMS["sampling_rate_hz"]),
-    n_fft=500,
-    hop_length=250,
-    y_lim=(0, SIGNAL_PARAMS["sampling_rate_hz"] / 2),
-    yaxis_format="hz",
-    figsize=(9, 4),
+def _spectrogram_heatmap(sig, sr, n_fft, hop_length, show_colorbar):
+    """Compute STFT and return a Heatmap trace for use in a subplot figure."""
+    freqs, times, zxx = spsignal.stft(
+        np.real(sig),
+        fs=sr,
+        window="hann",
+        nperseg=n_fft,
+        noverlap=n_fft - hop_length,
+        nfft=n_fft,
+        boundary=None,
+        padded=False,
+        return_onesided=True,
+    )
+    mag = np.abs(zxx)
+    ref = float(np.max(mag)) if np.max(mag) > 0 else 1.0
+    s_db = 20.0 * np.log10(np.maximum(1e-10, mag)) - 20.0 * np.log10(ref)
+    return go.Heatmap(
+        x=times,
+        y=freqs,
+        z=s_db,
+        colorscale="Viridis",
+        zmin=float(np.max(s_db)) - 60.0,
+        zmax=float(np.max(s_db)),
+        showscale=show_colorbar,
+        colorbar=dict(title="Intensity (dB)") if show_colorbar else None,
+    )
+
+
+_sr = int(SIGNAL_PARAMS["sampling_rate_hz"])
+_n_fft, _hop = 500, 250
+
+fig_source_spec = make_subplots(
+    rows=2,
+    cols=1,
+    shared_xaxes=True,
+    vertical_spacing=0.10,
+    subplot_titles=["Synthetic Source Signal", "Measured Source Signal"],
 )
-fig_meas_source_spec.update_layout(title="Spectrogram - Measured Source Signal")
+fig_source_spec.add_trace(
+    _spectrogram_heatmap(synthetic_source_real, _sr, _n_fft, _hop, show_colorbar=True),
+    row=1,
+    col=1,
+)
+fig_source_spec.add_trace(
+    _spectrogram_heatmap(measured_source_real, _sr, _n_fft, _hop, show_colorbar=False),
+    row=2,
+    col=1,
+)
+fig_source_spec.update_yaxes(
+    title_text="Frequency (Hz)",
+    range=[0, SIGNAL_PARAMS["sampling_rate_hz"] / 2],
+)
+fig_source_spec.update_xaxes(title_text="Time (s)", row=2, col=1)
+fig_source_spec.update_layout(
+    template="plotly_white",
+    height=700,
+    title="Source Signal Spectrograms",
+)
 
 # %%
 # Simulator Comparison Table
