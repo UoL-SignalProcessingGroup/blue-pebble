@@ -1,27 +1,27 @@
 """
-===============
-Signals Example
-===============
+======================
+Acoustic Source Models
+======================
 
 This example previews several standalone acoustic source and noise models, then combines
 them into a simple composite soundscape. It is intended as a quick orientation for how
 different source classes behave before they are embedded in a full propagation and
 beamforming pipeline.
 
-Passive-sonar scenes often contain a mix of biological, anthropogenic, and ambient
+Passive sonar scenes often contain a mix of biological, anthropogenic, and ambient
 contributors. Understanding the isolated time-frequency signature of each component
 makes it easier to interpret later BTRs, spectrograms, and received mixtures.
 """  # noqa: D205, D212, D400, D415
 
 # %%
-# Setup and Reproducibility
-# -------------------------
+# Imports
+# -------
 #
-# This section imports the shared dependencies, fixes the random seed, and defines one
-# helper used to preview each generated signal with a spectrogram.
+# All dependencies are consolidated here so the example reads top-to-bottom
+# without scattered imports.
 
-# %%
 from datetime import datetime
+from pathlib import Path
 
 import numpy as np
 from stonesoup.types.groundtruth import GroundTruthState
@@ -35,36 +35,65 @@ from bluepebble.signal.biological import PointSourceSnappingShrimpSignal, WhaleC
 from bluepebble.signal.effects import Reverb
 from bluepebble.signal.random import WhiteNoiseSignal
 
+# %%
+# Setup and Reproducibility
+# -------------------------
+#
+# A fixed random seed ensures all stochastic signal components are identical on every run,
+# making the spectrograms fully reproducible.
+#
+# Each panel uses a different ``n_fft`` chosen for its frequency content, so PSD
+# (which normalises by frequency resolution, shifting the broadband noise floor by
+# 10·log10(Δf) between panels) would make equivalent signals appear at different
+# levels depending on FFT size. STFT magnitude with peak normalisation is used instead:
+# for tonal signals the bin amplitude is independent of ``n_fft``, and for this example
+# the goal is visual orientation rather than absolute spectral density.
+
 seed = 2000
 np.random.seed(seed)
 
-SAMPLING_RATE_HZ = 48_000
-SIGNAL_DURATION_S = 10.0
-REFERENCE_TIME = datetime(2026, 1, 1, 0, 0, 0)
+sampling_rate_Hz = 48_000
+signal_duration_s = 10.0
+reference_time = datetime(2026, 1, 1, 0, 0, 0)
 
 component_signals = {}
 
 
-def preview_signal(
-    signal: np.ndarray,
-    title: str,
-    n_fft: int,
-    hop_length: int,
-    y_lim: tuple,
-    yaxis_format: str = "kHz",
-):
-    """Return a spectrogram figure for a generated signal."""
-    fig = plot_spectrogram(
-        signal,
-        SAMPLING_RATE_HZ,
-        n_fft=n_fft,
-        hop_length=hop_length,
-        y_lim=y_lim,
-        yaxis_format=yaxis_format,
-    )
-    fig.update_layout(title=title)
-    return fig
+# %%
+# WAV File Path Resolution
+# ------------------------
+#
+# The measured-vessel section loads a WAV recording. The path search below works both in
+# the gallery build (where ``__file__`` is set) and in interactive use from any working
+# directory.
 
+wav_name = "SanctSound_CI05_03_largeship_20190925T135956Z.wav"
+
+_data_dir_candidates: list[Path] = []
+if "__file__" in globals():
+    _data_dir_candidates.append(Path(__file__).resolve().parent / "measured_data")
+
+_data_dir_candidates.extend(
+    [
+        Path.cwd() / "measured_data",
+        Path.cwd() / "docs" / "examples" / "measured_data",
+    ]
+)
+
+measured_wav_path = next(
+    (
+        candidate / wav_name
+        for candidate in _data_dir_candidates
+        if (candidate / wav_name).exists()
+    ),
+    None,
+)
+
+if measured_wav_path is None:
+    raise FileNotFoundError(
+        "Measured WAV file not found. Checked: "
+        + ", ".join(str(candidate / wav_name) for candidate in _data_dir_candidates)
+    )
 
 # %%
 # Whale Call Signal
@@ -76,10 +105,9 @@ def preview_signal(
 # - Harmonics, vibrato, breathy noise, and reverb shape the timbre.
 # - The result is a comparatively rich mid-frequency biological source.
 
-# %%
 whale_source = GroundTruthState(
     [0, 0, 0, 0],
-    timestamp=REFERENCE_TIME,
+    timestamp=reference_time,
     metadata={
         "amplitude_upa": 10 ** (180 / 20),
     },
@@ -98,8 +126,8 @@ song_phrases = [phrase_c, phrase_a, phrase_b]
 reverb_effect = Reverb(duration_s=0.4, wet_dry_mix=0.8)
 
 whale_signal_model = WhaleCallSignal(
-    duration_s=SIGNAL_DURATION_S,
-    sampling_rate_hz=SAMPLING_RATE_HZ,
+    duration_s=signal_duration_s,
+    sampling_rate_hz=sampling_rate_Hz,
     song_structure_enabled=True,
     song_themes=[theme_0, theme_1, theme_2, theme_3],
     song_phrases=song_phrases,
@@ -141,12 +169,26 @@ whale_calls_complex = whale_signal_model.generate(
 whale_calls_real = np.real(whale_calls_complex[0, :])
 component_signals["whale_call"] = whale_calls_real
 
-fig = preview_signal(
-    whale_calls_real,
-    title="Whale Call Spectrogram",
+fig_whale = plot_spectrogram(
+    signal=whale_calls_real,
+    sr=int(sampling_rate_Hz),
     n_fft=4096,
     hop_length=1024,
     y_lim=(0, 5500),
+    yaxis_format="kHz",
+    analysis_mode="stft",
+    db_reference="peak",
+    z_lim=(-60.0, 0.0),
+    colorbar_title="dB re peak",
+    hovertemplate=(
+        "Time: %{x:.2f} s<br>Frequency: %{y:.1f} Hz<br>Level: %{z:.1f} dB re peak<extra></extra>"
+    ),
+).update_layout(
+    title="Whale Call Spectrogram",
+    template="plotly_white",
+    autosize=True,
+    width=None,
+    height=None,
 )
 
 # %%
@@ -161,10 +203,9 @@ fig = preview_signal(
 # - The example uses a point-source far-field approximation rather than a diffuse colony
 #   model.
 
-# %%
 shrimp_source = GroundTruthState(
     [0, 0, 0, 0, -50, 0],
-    timestamp=REFERENCE_TIME,
+    timestamp=reference_time,
     metadata={
         "amplitude_upa": 10 ** (195 / 20),
         "position_mapping": [0, 2, 4],
@@ -172,8 +213,8 @@ shrimp_source = GroundTruthState(
 )
 
 shrimp_signal_model = PointSourceSnappingShrimpSignal(
-    duration_s=SIGNAL_DURATION_S,
-    sampling_rate_hz=SAMPLING_RATE_HZ,
+    duration_s=signal_duration_s,
+    sampling_rate_hz=sampling_rate_Hz,
     temperature_celsius=25,
     start_time_hours=18.0,
     diurnal_amplitude=0.25,
@@ -197,12 +238,26 @@ shrimp_signal = shrimp_signal_model.generate(
 shrimp_signal_real = np.real(shrimp_signal[0, :])
 component_signals["snapping_shrimp"] = shrimp_signal_real
 
-fig = preview_signal(
-    shrimp_signal_real,
-    title="Snapping Shrimp Spectrogram",
+fig_shrimp = plot_spectrogram(
+    signal=shrimp_signal_real,
+    sr=int(sampling_rate_Hz),
     n_fft=2048,
     hop_length=512,
     y_lim=(0, 20000),
+    yaxis_format="kHz",
+    analysis_mode="stft",
+    db_reference="peak",
+    z_lim=(-120.0, 0.0),
+    colorbar_title="dB re peak",
+    hovertemplate=(
+        "Time: %{x:.2f} s<br>Frequency: %{y:.1f} Hz<br>Level: %{z:.1f} dB re peak<extra></extra>"
+    ),
+).update_layout(
+    title="Snapping Shrimp Spectrogram",
+    template="plotly_white",
+    autosize=True,
+    width=None,
+    height=None,
 )
 
 # %%
@@ -216,10 +271,9 @@ fig = preview_signal(
 # - In contrast to the biological examples above, this source is continuous and spectrally
 #   stable over the window shown here.
 
-# %%
 commercial_vessel_state = GroundTruthState(
     [0, 0, 0, 0, -10, 0],
-    timestamp=REFERENCE_TIME,
+    timestamp=reference_time,
     metadata={
         "frequencies_hz": np.array([50.0, 75.0, 125.0, 82.0]),
         "amplitudes_upa": 10 ** (np.array([175.0, 168.0, 162.0, 160.0]) / 20),
@@ -229,8 +283,8 @@ commercial_vessel_state = GroundTruthState(
 )
 
 tonal_signal_model = SyntheticAnthropogenicSignal(
-    duration_s=SIGNAL_DURATION_S,
-    sampling_rate_hz=SAMPLING_RATE_HZ,
+    duration_s=signal_duration_s,
+    sampling_rate_hz=sampling_rate_Hz,
     frame_len=2048,
     hop_factor=4,
 )
@@ -238,13 +292,26 @@ _ = tonal_signal_model.compute_stft(source=commercial_vessel_state)
 tonal_signal_real = np.real(tonal_signal_model.get_source_signal())
 component_signals["commercial_vessel"] = tonal_signal_real
 
-fig = preview_signal(
-    tonal_signal_real,
-    title="Commercial Vessel Tonal Spectrogram",
+fig_vessel_tonal = plot_spectrogram(
+    signal=tonal_signal_real,
+    sr=int(sampling_rate_Hz),
     n_fft=4096 * 6,
     hop_length=1024,
     y_lim=(0, 200),
     yaxis_format="Hz",
+    analysis_mode="stft",
+    db_reference="peak",
+    z_lim=(-40.0, 0.0),
+    colorbar_title="dB re peak",
+    hovertemplate=(
+        "Time: %{x:.2f} s<br>Frequency: %{y:.1f} Hz<br>Level: %{z:.1f} dB re peak<extra></extra>"
+    ),
+).update_layout(
+    title="Commercial Vessel Tonal Spectrogram",
+    template="plotly_white",
+    autosize=True,
+    width=None,
+    height=None,
 )
 
 # %%
@@ -252,20 +319,13 @@ fig = preview_signal(
 # ---------------------
 #
 # This section loads a real recording of a commercial vessel from a WAV file. This
-# recording came from [Sanct Sounds](https://sanctsound.ioos.us/sounds.html#Vessels)
-# and contains the recording of a large vessel.
-
-# %%
-import os
-from pathlib import Path
-
-wav_name = "SanctSound_CI05_03_largeship_20190925T135956Z.wav"
-data_dir = Path(os.getcwd()) / "measured_data"
-measured_wav_path = data_dir / wav_name
+# recording came from `Sanct Sounds <https://sanctsound.ioos.us/sounds.html#Vessels>`_
+# and contains the recording of a large vessel. The file is included in
+# ``docs/examples/measured_data/``; the path was resolved at the top of this script.
 
 measured_vessel_state = GroundTruthState(
     [0, 0, 0, 0, -10, 0],
-    timestamp=REFERENCE_TIME,
+    timestamp=reference_time,
     metadata={
         "frequencies_hz": np.array([50.0, 75.0, 125.0, 82.0]),
         "amplitudes_upa": 10 ** (np.array([175.0, 168.0, 162.0, 160.0]) / 20),
@@ -275,8 +335,8 @@ measured_vessel_state = GroundTruthState(
 )
 
 measured_signal_model = RecordedAnthropogenicSignal(
-    duration_s=SIGNAL_DURATION_S,
-    sampling_rate_hz=SAMPLING_RATE_HZ,
+    duration_s=signal_duration_s,
+    sampling_rate_hz=sampling_rate_Hz,
     frame_len=500,
     hop_factor=2,
     wav_path=str(measured_wav_path),
@@ -289,16 +349,28 @@ measured_signal_model = RecordedAnthropogenicSignal(
 # RecordedAnthropogenicSignal is frequency-domain only
 _ = measured_signal_model.compute_stft(source=measured_vessel_state)
 measured_signal_real = np.real(measured_signal_model.get_source_signal())
-
 component_signals["measured_vessel"] = measured_signal_real
 
-fig = preview_signal(
-    measured_signal_real,
-    title="Commercial Vessel Tonal Spectrogram",
+fig_vessel_measured = plot_spectrogram(
+    signal=measured_signal_real,
+    sr=int(sampling_rate_Hz),
     n_fft=4096 * 6,
     hop_length=1024,
     y_lim=(0, 4000),
     yaxis_format="Hz",
+    analysis_mode="stft",
+    db_reference="peak",
+    z_lim=(-60.0, 0.0),
+    colorbar_title="dB re peak",
+    hovertemplate=(
+        "Time: %{x:.2f} s<br>Frequency: %{y:.1f} Hz<br>Level: %{z:.1f} dB re peak<extra></extra>"
+    ),
+).update_layout(
+    title="Measured Vessel Noise Spectrogram",
+    template="plotly_white",
+    autosize=True,
+    width=None,
+    height=None,
 )
 
 # %%
@@ -307,39 +379,51 @@ fig = preview_signal(
 #
 # This section generates a simple ambient baseline.
 #
-# - `WhiteNoiseSignal` is used here as a deliberately simple reference model.
+# - :class:`~.WhiteNoiseSignal` is used here as a deliberately simple reference model.
 # - It does not attempt to reproduce a full ocean ambient spectrum.
 # - The output is useful as a baseline when contrasting structured and unstructured energy.
 
-# %%
 ambient_noise = WhiteNoiseSignal(
     amplitude_upa=10 ** (90 / 20),
-    duration_s=SIGNAL_DURATION_S,
-    sampling_rate_hz=SAMPLING_RATE_HZ,
+    duration_s=signal_duration_s,
+    sampling_rate_hz=sampling_rate_Hz,
 ).generate()
 
 ambient_noise_real = np.real(ambient_noise[0, :])
 component_signals["ambient_white_noise"] = ambient_noise_real
 
-fig = preview_signal(
-    ambient_noise_real,
-    title="Ambient White Noise Spectrogram",
+fig_ambient = plot_spectrogram(
+    signal=ambient_noise_real,
+    sr=int(sampling_rate_Hz),
     n_fft=4096,
     hop_length=1024,
     y_lim=(0, 20000),
+    yaxis_format="kHz",
+    analysis_mode="stft",
+    db_reference="peak",
+    z_lim=(-60.0, 0.0),
+    colorbar_title="dB re peak",
+    hovertemplate=(
+        "Time: %{x:.2f} s<br>Frequency: %{y:.1f} Hz<br>Level: %{z:.1f} dB re peak<extra></extra>"
+    ),
+).update_layout(
+    title="Ambient White Noise Spectrogram",
+    template="plotly_white",
+    autosize=True,
+    width=None,
+    height=None,
 )
 
 # %%
 # Composite Soundscape
 # --------------------
 #
-# This final signal combines the individual components into one simple scene.
+# This final signal combines the individual synthetic components into one simple scene.
 #
 # - The vessel tonals dominate the low end.
 # - The whale call contributes mid-band contour and harmonic structure.
 # - The shrimp and white-noise components raise the broadband floor.
 
-# %%
 soundscape = (
     component_signals["whale_call"]
     + component_signals["snapping_shrimp"]
@@ -349,10 +433,24 @@ soundscape = (
 )
 component_signals["composite_soundscape"] = soundscape
 
-fig = preview_signal(
-    soundscape,
-    title="Composite Soundscape Spectrogram",
+fig_composite = plot_spectrogram(
+    signal=soundscape,
+    sr=int(sampling_rate_Hz),
     n_fft=4096,
     hop_length=1024,
     y_lim=(0, 5500),
+    yaxis_format="kHz",
+    analysis_mode="stft",
+    db_reference="peak",
+    z_lim=(-120.0, 0.0),
+    colorbar_title="dB re peak",
+    hovertemplate=(
+        "Time: %{x:.2f} s<br>Frequency: %{y:.1f} Hz<br>Level: %{z:.1f} dB re peak<extra></extra>"
+    ),
+).update_layout(
+    title="Composite Soundscape Spectrogram",
+    template="plotly_white",
+    autosize=True,
+    width=None,
+    height=None,
 )
