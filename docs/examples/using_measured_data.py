@@ -1,7 +1,7 @@
 """
-==============================
-Measured Environmental Data Example
-==============================
+=================================
+Using Measured Environmental Data
+=================================
 
 This example runs one scenario using measured environmental inputs:
 

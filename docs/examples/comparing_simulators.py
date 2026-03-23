@@ -1,7 +1,7 @@
 """
-==============================================
-Simulator Modes: Measured vs Synthetic Signals
-==============================================
+====================
+Comparing Simulators
+====================
 
 This example compares five simulator backends on a 300-second passive sonar
 scenario containing two vessels: a stationary tow ship carrying a 3-element

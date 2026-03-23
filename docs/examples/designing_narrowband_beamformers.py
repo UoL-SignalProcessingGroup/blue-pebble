@@ -1,7 +1,7 @@
 """
-===========================================
-Multi-Narrowband Beamformer Comparison
-===========================================
+================================
+Designing Narrowband Beamformers
+================================
 
 This example compares several narrowband MVDR frequency selections on a shared
 passive-sonar scenario. The aim is to isolate how band choice changes the resulting

@@ -1,7 +1,7 @@
 """
-================
-Detector Metrics
-================
+===========================
+Evaluating Detector Metrics
+===========================
 
 This example evaluates detector behaviour on a shared multi-target scenario and turns
 the outputs into quantitative performance curves. Rather than stopping at a single

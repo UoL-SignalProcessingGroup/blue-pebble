@@ -817,14 +817,9 @@ def plot_world(
                 zmax=zmax,
                 opacity=0.8,
                 colorbar=dict(
-                    title=dict(text="Bathymetry z (m)"),
+                    title=dict(text="Bathymetry z (m)", side="right"),
                     thickness=24,
-                    len=0.85,
-                    y=0.5,
-                    yanchor="middle",
-                    x=1.1,
-                    xanchor="left",
-                    xpad=0,
+                    len=1.0,
                 ),
                 hovertemplate=hovertemplate,
             )

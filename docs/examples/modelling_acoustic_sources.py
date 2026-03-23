@@ -1,7 +1,7 @@
 """
-======================
-Acoustic Source Models
-======================
+==========================
+Modelling Acoustic Sources
+==========================
 
 This example previews several standalone acoustic source and noise models, then combines
 them into a simple composite soundscape. It is intended as a quick orientation for how

@@ -79,13 +79,8 @@ sphinx_gallery_conf = {
     "examples_dirs": ["examples", "tutorials"],
     "gallery_dirs": ["source/auto_examples", "source/auto_tutorials"],
     "filename_pattern": r"\.py",
+    "ignore_pattern": r"using_measured_data\.py",
     "abort_on_example_error": False,
-    # Scripts that require external data files (GEBCO, WAV) or removed APIs
-    # are expected to fail when those resources are absent.
-    "expected_failing_examples": {
-        "examples/using_measured_data.py",
-    },
-    "ignore_pattern": r"challenging_tracking_example\.py",
     "image_scrapers": ("matplotlib", _plotly_scraper),
     "reset_modules": (_plotly_scraper.reset,),
     "plot_gallery": True,

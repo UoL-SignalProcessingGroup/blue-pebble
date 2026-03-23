@@ -1,27 +1,21 @@
 """
-============================
-Bathymetry Comparison Example
-============================
+========================
+Simulating Ownship Noise
+========================
 
-This example compares the same passive-sonar scenario under two seafloor assumptions:
-a flat seabed and an idealised seamount. The aim is to isolate how bathymetry alone
-changes the propagation model, beamformed output, and downstream detections when
-everything else in the scenario is held fixed.
-
-In Blue Pebble, bathymetry is part of the acoustic environment. The seafloor shape can
-alter propagation paths and the relative strength of arrivals that reach the array.
-Differences in the final SNR maps and detections can therefore be attributed to seabed
-geometry rather than to a different signal-processing chain.
+This example compares the same passive-sonar scenario in two conditions:
+ambient noise only, and ambient noise with ownship self-noise added. Holding
+all other pipeline settings fixed isolates the effect of ownship interference
+on the beamformed output and downstream detection counts.
 """  # noqa: D205, D212, D400, D415
 
 # %%
 # Simulation Parameters
 # ---------------------
 #
-# This section fixes the random seed and defines one shared simulation clock for the whole
-# comparison. Keeping the timing identical across both bathymetry runs ensures that any
-# later difference comes from propagation over the seabed, not from inconsistent platform
-# or target updates.
+# This section defines reproducibility and timing for the full
+# run:
+# random seed, simulation duration, step size, start time, and total timesteps.
 
 # %%
 from datetime import datetime, timedelta
@@ -45,10 +39,11 @@ print(f"Total simulation duration: {total_duration_s} seconds")
 # Platform Setup and Generation
 # -----------------------------
 #
-# Here the ownship trajectory and towed-array geometry are defined once and then reused
-# throughout the example. The host follows a deterministic multi-leg path so the array
-# heading changes over time, which makes the bathymetry comparison more informative than
-# a purely straight-line transit.
+# Here the ownship trajectory and towed-array geometry are defined.
+#
+# The host platform follows a deterministic multi-leg path (straight-turn-straight),
+# and a `GroundTruthPath` that represents ownship self-noise as a moving source is also
+# created.
 
 # %%
 from stonesoup.models.transition.linear import (
@@ -62,7 +57,7 @@ from bluepebble.platform import TowedArrayPlatform
 
 platform_turn_rate_radps = np.deg2rad(1.0)
 leg1_duration_s = timedelta(seconds=405)
-turn1_angle_rad = np.deg2rad(-85)
+turn1_angle_rad = np.deg2rad(-45)
 turn1_duration_s = timedelta(
     seconds=round((abs(turn1_angle_rad) / platform_turn_rate_radps) / SIM_RATE) * SIM_RATE
 )
@@ -80,11 +75,18 @@ planar_turn1 = KnownTurnRate(
 depth_model = ConstantVelocity(0.0)
 turning_model1 = CombinedLinearGaussianTransitionModel([planar_turn1, depth_model])
 
-platform_start_vector = np.array([0.0, 1.8, 2000.0, 1.8, -5.0, 0.0])
+platform_start_vector = np.array([-7500.0, 1.15, -2000.0, 0.25, -5.0, 0.0])
 platform_position_mapping = [0, 2, 4]
 platform_velocity_mapping = [1, 3, 5]
 platform_transition_models = [straight_model, turning_model1, straight_model]
 platform_transition_times = [leg1_duration_s, turn1_duration_s, leg2_duration_s]
+
+ownship_amplitudes_upa = 10 ** (np.array([80.0, 77.0, 81.0, 76.0]) / 20)
+ownship_frequencies_hz = np.array([50.0, 100.0, 130.0, 200.0])
+ownship_phases_rad = np.array([0.0, 0.0, 0.0, 0.0])
+ownship_tonal_bandwidth_hz = 1.0
+ownship_noise_amplitude_upa = 10 ** (74.0 / 20)
+ownship_noise_spectral_exponent = -1.0
 
 num_sensors = 200
 tow_cable_length_m = 400.0
@@ -108,20 +110,43 @@ for i in range(1, num_steps):
     new_time = start_time + i * time_interval
     platform.move(new_time)
 
+self_noise_states = [
+    GroundTruthState(
+        state.state_vector,
+        timestamp=state.timestamp,
+        metadata={
+            "position_mapping": platform_position_mapping,
+            "velocity_mapping": platform_velocity_mapping,
+            "amplitudes_upa": ownship_amplitudes_upa,
+            "frequencies_hz": ownship_frequencies_hz,
+            "phases_rad": ownship_phases_rad,
+            "tonal_bandwidth_hz": ownship_tonal_bandwidth_hz,
+            "noise_amplitude_upa": ownship_noise_amplitude_upa,
+            "noise_spectral_exponent": ownship_noise_spectral_exponent,
+        },
+    )
+    for state in platform.movement_controller.states
+]
+self_noise_ground_truth = GroundTruthPath(self_noise_states)
+
 # %%
 # Ground Truth Setup and Generation
 # ---------------------------------
 #
-# Target kinematics and source metadata are generated here. Each target truth is
-# propagated over the full timeline, and the corresponding relative-bearing truth is
-# computed with respect to the array reference position.
+# Target kinematics and source metadata are generated here.
+#
+# For each target, motion is propagated over all timesteps and the relative-bearing
+# truth sequence is computed with respect to the array reference position.
+#
+# A world-view plot is shown to validate the geometry before beamforming.
 
 # %%
 from bluepebble.plotter import plot_world
 
 target_start_vectors = [
-    np.array([6000, 0.0, 1.0e3, 10, -5.0, 0.0]),
-    np.array([4000, -8.0, -5.7e3, 0.0, -5.0, 0.0]),
+    np.array([-1.5e4, 9.0, 1.2e4, -10, -5.0, 0.0]),
+    np.array([-1.1e4, -8.0, -5.7e3, 3.6, -5.0, 0.0]),
+    np.array([-3.0e3, 10.4, -9.7e3, 9.7, -5.0, 0.0]),
 ]
 
 target_transition_model = CombinedLinearGaussianTransitionModel(
@@ -138,11 +163,11 @@ target_ground_truths = []
 relative_bearing_ground_truths = []
 
 for target_start_vector in target_start_vectors:
-    target_amplitudes_upa = 10 ** (np.random.uniform(90, 102, 4) / 20)
-    target_frequencies_hz = np.random.uniform(120.0, 250.0, 4)
+    target_amplitudes_upa = 10 ** (np.random.uniform(87, 102, 4) / 20)
+    target_frequencies_hz = np.random.uniform(50.0, 200.0, 4)
     target_phases_rad = np.random.uniform(0, 2 * np.pi, 4)
     target_tonal_bandwidth_hz = np.random.uniform(0.5, 2.0)
-    target_noise_amplitude_upa = 10 ** (np.random.uniform(70, 85) / 20)
+    target_noise_amplitude_upa = 10 ** (np.random.uniform(65, 85) / 20)
 
     target_states = [
         GroundTruthState(
@@ -196,32 +221,28 @@ for target_start_vector in target_start_vectors:
 
     relative_bearing_ground_truths.append(GroundTruthPath(bearing_states))
 
-fig1 = plot_world(truths=target_ground_truths, platform=platform, figsize=(600, 500))
+fig1 = plot_world(truths=target_ground_truths, platform=platform)
 
 # %%
 # Propagation Model
 # -----------------
 #
-# This section defines the acoustic environment used by RTRS propagation: one shared
-# sound-speed profile, two bathymetry models, and the angular and range sampling controls
-# for the solver.
+# This section configures the acoustic environment used by RTRS propagation:
+# sound-speed profile, bathymetry, and angular/range sampling controls.
+#
+# These settings determine transfer functions from each source to each sensor.
 
 # %%
-from bluepebble.models.environment import Constant, FlatBathymetry, SeamountBathymetry
+from bluepebble.models.environment import FlatBathymetry, Linear
 from bluepebble.models.propagation import rtrsAcousticPropagationModel
 
-ssp = Constant(speed=1500.0)
-flat_bathymetry = FlatBathymetry(depth=-150.0)
-seamount_bathymetry = SeamountBathymetry(
-    summit_position=(4000.0, 3000.0, -25.0),
-    radius=10000.0,
-    plateau_depth=-150.0,
-)
+ssp = Linear(surface_speed=1500.0, gradient=0.2)
+bathymetry = FlatBathymetry(depth=-150.0)
 prop_step_m = 20.0
-prop_azimuth_search_width = 10.0
+prop_azimuth_search_width = 2.0
 prop_azimuth_resolution = 0.5
-prop_elevation_range = (-15.0, 15.0)
-prop_elevation_resolution = 0.5
+prop_elevation_range = (-25.0, 25.0)
+prop_elevation_resolution = 1.0
 prop_water_density_g_cm3 = 1.0
 prop_bottom_model = {
     "model": "elastic",
@@ -234,9 +255,9 @@ prop_bottom_model = {
 prop_store_ray_paths = False
 prop_integration_method = "rk2"
 
-flat_prop_model = rtrsAcousticPropagationModel(
+prop_model = rtrsAcousticPropagationModel(
     ssp=ssp,
-    bathymetry=flat_bathymetry,
+    bathymetry=bathymetry,
     use_all_frequencies=False,
     step_m=prop_step_m,
     azimuth_search_width=prop_azimuth_search_width,
@@ -247,139 +268,17 @@ flat_prop_model = rtrsAcousticPropagationModel(
     bottom_model=prop_bottom_model,
     store_ray_paths=prop_store_ray_paths,
     integration_method=prop_integration_method,
-)
-
-seamount_prop_model = rtrsAcousticPropagationModel(
-    ssp=ssp,
-    bathymetry=seamount_bathymetry,
-    use_all_frequencies=False,
-    step_m=prop_step_m,
-    azimuth_search_width=prop_azimuth_search_width,
-    azimuth_resolution=prop_azimuth_resolution,
-    elevation_range=prop_elevation_range,
-    elevation_resolution=prop_elevation_resolution,
-    water_density_g_cm3=prop_water_density_g_cm3,
-    bottom_model=prop_bottom_model,
-    store_ray_paths=prop_store_ray_paths,
-    integration_method=prop_integration_method,
-)
-
-# %%
-# Geometry View: Trajectories over Bathymetry
-# -------------------------------------------
-#
-# These plots use :func:`~bluepebble.plotter.plot_world` with bathymetry overlays to show the
-# same kinematic scene against each seabed model. The trajectories do not change; only the
-# seafloor under them does.
-
-# %%
-from copy import deepcopy
-
-from plotly.subplots import make_subplots
-
-fig_bathy_flat = plot_world(
-    truths=target_ground_truths,
-    platform=platform,
-    bathymetry=flat_bathymetry,
-    figsize=(600, 500),
-)
-
-fig_bathy_seamount = plot_world(
-    truths=target_ground_truths,
-    platform=platform,
-    bathymetry=seamount_bathymetry,
-    figsize=(600, 500),
-)
-
-fig_bathy = make_subplots(
-    rows=1,
-    cols=2,
-    subplot_titles=("Flat Bathymetry", "Seamount Bathymetry"),
-    horizontal_spacing=0.0,
-    column_widths=[0.5, 0.5],
-)
-
-for trace in fig_bathy_flat.data:
-    trace_copy = deepcopy(trace)
-    if trace_copy.type == "heatmap":
-        trace_copy.showscale = False
-    fig_bathy.add_trace(trace_copy, row=1, col=1)
-
-for trace in fig_bathy_seamount.data:
-    trace_copy = deepcopy(trace)
-    if trace_copy.type == "heatmap":
-        trace_copy.showscale = True
-        trace_copy.colorbar = dict(
-            title=dict(text="Depth (m)"),
-            thickness=24,
-            len=0.85,
-            y=0.5,
-            yanchor="middle",
-            x=0.95,
-            xanchor="left",
-        )
-    else:
-        trace_copy.showlegend = False
-    fig_bathy.add_trace(trace_copy, row=1, col=2)
-
-shared_x_range = fig_bathy_flat.layout.xaxis.range
-shared_y_range = fig_bathy_flat.layout.yaxis.range
-
-fig_bathy.update_xaxes(
-    title_text=fig_bathy_flat.layout.xaxis.title.text,
-    range=shared_x_range,
-    scaleanchor="y",
-    scaleratio=1,
-    constrain="domain",
-    showgrid=False,
-    zeroline=False,
-    row=1,
-    col=1,
-)
-fig_bathy.update_xaxes(
-    title_text=fig_bathy_seamount.layout.xaxis.title.text,
-    range=shared_x_range,
-    scaleanchor="y2",
-    scaleratio=1,
-    constrain="domain",
-    showgrid=False,
-    zeroline=False,
-    row=1,
-    col=2,
-)
-fig_bathy.update_yaxes(
-    title_text=fig_bathy_flat.layout.yaxis.title.text,
-    range=shared_y_range,
-    constrain="domain",
-    showgrid=False,
-    zeroline=False,
-    row=1,
-    col=1,
-)
-fig_bathy.update_yaxes(
-    title_text="",
-    range=shared_y_range,
-    constrain="domain",
-    showgrid=False,
-    zeroline=False,
-    row=1,
-    col=2,
-)
-
-fig_bathy.update_layout(
-    template="plotly_white",
-    width=1200,
-    height=500,
-    legend=dict(x=1.06, y=0.5),
-    title="Bathymetry Comparison",
 )
 
 # %%
 # Signal Model
 # ------------
 #
-# Here the source and ambient signal models are defined. Each target receives a broadband
-# ship signal model, and coloured ambient noise is added at the array.
+# Here source and ambient signals are defined.
+#
+# Each target gets a broadband ship signal model, ambient coloured noise is added at the
+# array, and an additional broadband model is created for ownship self noise to enable
+# the with/without comparison.
 
 # %%
 from bluepebble.signal.anthropogenic import SyntheticAnthropogenicSignal
@@ -421,14 +320,28 @@ def _make_signal_models():
     return models
 
 
+def _make_self_noise_model():
+    return SyntheticAnthropogenicSignal(
+        duration_s=total_duration_s,
+        sampling_rate_hz=sampling_rate_hz,
+        frame_len=frame_len,
+        hop_factor=hop_factor,
+        tonal_bandwidth_hz=ownship_tonal_bandwidth_hz,
+        noise_amplitude_upa=ownship_noise_amplitude_upa,
+        noise_spectral_exponent=ownship_noise_spectral_exponent,
+        noise_freq_range_hz=(0.0, sampling_rate_hz / 2),
+        tonal_noise_is_constant=True,
+        noise_is_constant=True,
+    )
+
+
 # %%
 # Beamformer
 # ----------
 #
-# This section sets the beamforming parameters and builds the steering calculator used by
-# both simulators. The steering grid spans the full azimuth range so that any difference
-# in arrival structure caused by the seabed is visible in the resulting bearing-time
-# record.
+# This section sets beamforming parameters (domain, shading, steering grid) and builds
+# the beamformer + steering calculator used by the simulators.
+# The steering grid spans full azimuth so detections can appear over 360 degrees.
 
 # %%
 from scipy.signal import get_window
@@ -482,12 +395,11 @@ steering_calculator = SteeringCalculator(
 #
 # Two simulators are created from the same scenario:
 #
-# - flat bathymetry
-# - seamount bathymetry
+# - without ownship noise
+# - with ownship noise (ownship source appended)
 #
-# Both use the same detector chain, CA-CFAR followed by peak selection. That means any
-# difference in the final output should come from the seabed model rather than from a
-# different detection policy.
+# Both use the same detector chain (CA-CFAR followed by peak selection) so any difference
+# in output is attributable to the added ownship interference.
 
 # %%
 from bluepebble.detector import CACFARDetector, PassiveSonarDetector, PeakDetector
@@ -517,9 +429,9 @@ def make_detector(simulator: ContinuousSTFTPassiveSonarArraySimulator) -> Passiv
     )
 
 
-simulator_flat_bathymetry = ContinuousSTFTPassiveSonarArraySimulator(
+simulator_without_ownship_noise = ContinuousSTFTPassiveSonarArraySimulator(
     platform=platform,
-    propagation_model=flat_prop_model,
+    propagation_model=prop_model,
     signal_models=_make_signal_models(),
     noise_model=ambient_noise_model,
     beamformer=beamformer,
@@ -528,64 +440,58 @@ simulator_flat_bathymetry = ContinuousSTFTPassiveSonarArraySimulator(
     fade_in_ms=fade_in_ms,
 )
 
-simulator_seamount_bathymetry = ContinuousSTFTPassiveSonarArraySimulator(
+simulator_with_ownship_noise = ContinuousSTFTPassiveSonarArraySimulator(
     platform=platform,
-    propagation_model=seamount_prop_model,
-    signal_models=_make_signal_models(),
+    propagation_model=prop_model,
+    signal_models=_make_signal_models() + [_make_self_noise_model()],
     noise_model=ambient_noise_model,
     beamformer=beamformer,
     steering_calculator=steering_calculator,
-    ground_truth_paths=target_ground_truths,
+    ground_truth_paths=target_ground_truths + [self_noise_ground_truth],
     fade_in_ms=fade_in_ms,
 )
 
-detector_flat_bathymetry = make_detector(simulator_flat_bathymetry)
-detector_seamount_bathymetry = make_detector(simulator_seamount_bathymetry)
+detector_without_ownship_noise = make_detector(simulator_without_ownship_noise)
+detector_with_ownship_noise = make_detector(simulator_with_ownship_noise)
 
 # %%
 # Run Detection on Simulated Data
 # -------------------------------
 #
-# This cell executes both detector pipelines and stores the resulting SNR maps and
-# detections for later plotting. At this point the example branches acoustically into
-# two cases, but the scenario definition remains otherwise identical.
+# This cell executes both detector pipelines and stores SNR maps for each condition.
 
 # %%
-all_detections_flat_bathymetry = list(
-    detector_flat_bathymetry.detections_gen(progress_bar=False, total_timesteps=num_steps)
+all_detections_without_ownship_noise = list(
+    detector_without_ownship_noise.detections_gen(progress_bar=False, total_timesteps=num_steps)
 )
-snr_map_flat_bathymetry = detector_flat_bathymetry.snr_history
+snr_map_without_ownship_noise = detector_without_ownship_noise.snr_history
 
-all_detections_seamount_bathymetry = list(
-    detector_seamount_bathymetry.detections_gen(progress_bar=False, total_timesteps=num_steps)
+all_detections_with_ownship_noise = list(
+    detector_with_ownship_noise.detections_gen(progress_bar=False, total_timesteps=num_steps)
 )
-snr_map_seamount_bathymetry = detector_seamount_bathymetry.snr_history
+snr_map_with_ownship_noise = detector_with_ownship_noise.snr_history
 
 timesteps = np.array([start_time + i * time_interval for i in range(num_steps)], dtype=object)
 steering_azimuths_deg = np.rad2deg(steering_azimuths_rad)
 
-detections_flat_bathymetry = [
-    d for _, detection_set in all_detections_flat_bathymetry for d in detection_set
+detections_without_ownship_noise = [
+    d for _, detection_set in all_detections_without_ownship_noise for d in detection_set
 ]
-detections_seamount_bathymetry = [
-    d for _, detection_set in all_detections_seamount_bathymetry for d in detection_set
+detections_with_ownship_noise = [
+    d for _, detection_set in all_detections_with_ownship_noise for d in detection_set
 ]
 
-print(f"Total no. of detections (flat bathymetry): {len(detections_flat_bathymetry)}")
-print(f"Total no. of detections (seamount bathymetry): {len(detections_seamount_bathymetry)}")
+print(f"Total no. of detections w/o ownship noise: {len(detections_without_ownship_noise)}")
+print(f"Total no. of detections w/ ownship noise: {len(detections_with_ownship_noise)}")
 
 # %%
-# Results: Flat vs Seamount Bathymetry
-# ------------------------------------
+# Results: With vs Without Ownship Noise
+# --------------------------------------
 #
-# The final figure compares the two bathymetry conditions in a 2x2 layout:
+# The final figure compares both conditions in a 2x2 layout:
 #
 # - left column: raw SNR maps
 # - right column: SNR maps with detection overlays
-#
-# Any shift in structure, contrast, or detection placement between the two rows reflects
-# the change from flat seabed to seamount bathymetry under the same source, noise,
-# beamforming, and detector settings.
 
 # %%
 from plotly.subplots import make_subplots
@@ -606,7 +512,7 @@ fig2 = make_subplots(
 )
 
 plot_btr(
-    data=snr_map_flat_bathymetry,
+    data=snr_map_without_ownship_noise,
     timesteps=timesteps,
     steering_azimuths=steering_azimuths_deg,
     fig=fig2,
@@ -614,9 +520,8 @@ plot_btr(
     col=1,
 )
 plot_btr(
-    data=snr_map_flat_bathymetry,
-    detections=detections_flat_bathymetry,
-    truths=relative_bearing_ground_truths,
+    data=snr_map_without_ownship_noise,
+    detections=detections_without_ownship_noise,
     timesteps=timesteps,
     steering_azimuths=steering_azimuths_deg,
     fig=fig2,
@@ -624,7 +529,7 @@ plot_btr(
     col=2,
 )
 plot_btr(
-    data=snr_map_seamount_bathymetry,
+    data=snr_map_with_ownship_noise,
     timesteps=timesteps,
     steering_azimuths=steering_azimuths_deg,
     fig=fig2,
@@ -632,9 +537,8 @@ plot_btr(
     col=1,
 )
 plot_btr(
-    data=snr_map_seamount_bathymetry,
-    detections=detections_seamount_bathymetry,
-    truths=relative_bearing_ground_truths,
+    data=snr_map_with_ownship_noise,
+    detections=detections_with_ownship_noise,
     timesteps=timesteps,
     steering_azimuths=steering_azimuths_deg,
     fig=fig2,
@@ -642,13 +546,13 @@ plot_btr(
     col=2,
 )
 
-# Row-level headings
+# Row-level headings.
 fig2.add_annotation(
     x=0.5,
     y=1.08,
     xref="paper",
     yref="paper",
-    text="Flat Bathymetry",
+    text="Without Ownship Noise",
     showarrow=False,
     font=dict(size=16),
 )
@@ -657,12 +561,12 @@ fig2.add_annotation(
     y=0.48,
     xref="paper",
     yref="paper",
-    text="Seamount Bathymetry",
+    text="With Ownship Noise",
     showarrow=False,
     font=dict(size=16),
 )
 
-# Keep a single shared colorbar and shared colour scale for all heatmaps
+# Keep a single shared colorbar and shared colour scale for all heatmaps.
 heatmap_traces = [trace for trace in fig2.data if trace.type == "heatmap"]
 if heatmap_traces:
     shared_zmin = min(np.nanmin(np.asarray(trace.z, dtype=float)) for trace in heatmap_traces)
@@ -674,18 +578,17 @@ if heatmap_traces:
         trace.showscale = i == 0
 
     heatmap_traces[0].colorbar = dict(
-        title=dict(text="SNR (dB)"),
+        title=dict(text="SNR (dB)", side="right"),
         x=1.02,
         y=0.5,
         yanchor="middle",
         len=0.75,
-        thickness=24,
+        thickness=30,
     )
 
-# Remove y-axis labels from column 2
+# Remove y-axis labels from column 2.
 fig2.update_yaxes(title_text="", row=1, col=2)
 fig2.update_yaxes(title_text="", row=2, col=2)
-fig2.update_yaxes(title_text="", row=3, col=2)
 
 fig2.update_layout(
     width=1400,
