@@ -18,8 +18,7 @@ geometry rather than to a different signal-processing chain.
 # Imports
 # -------
 #
-# All dependencies are consolidated here so the example reads top-to-bottom
-# without scattered imports.
+# All dependencies are consolidated here for convenience.
 from copy import deepcopy
 from datetime import datetime, timedelta
 
@@ -37,7 +36,7 @@ from bluepebble.detector import CACFARDetector, PassiveSonarDetector, PeakDetect
 from bluepebble.models.environment import Constant, FlatBathymetry, SeamountBathymetry
 from bluepebble.models.propagation import rtrsAcousticPropagationModel
 from bluepebble.platform import TowedArrayPlatform
-from bluepebble.plotter import plot_btr, plot_world
+from bluepebble.plotter import apply_shared_colourscale, plot_btr, plot_world
 from bluepebble.signal.anthropogenic import SyntheticAnthropogenicSignal
 from bluepebble.signal.random import ColouredNoiseSignal
 from bluepebble.sigproc import (
@@ -60,11 +59,11 @@ seed = 2000
 np.random.seed(seed)
 
 SIM_LENGTH = 900  # seconds
-SIM_RATE = 5.0  # seconds
+sim_rate_s = 5.0  # seconds
 
 start_time = datetime(2026, 1, 1, 0, 0, 0)
-time_interval = timedelta(seconds=SIM_RATE)
-num_steps = int(SIM_LENGTH / SIM_RATE)
+time_interval = timedelta(seconds=sim_rate_s)
+num_steps = int(SIM_LENGTH / sim_rate_s)
 
 total_duration_s = num_steps * time_interval.total_seconds()
 print(f"Total simulation duration: {total_duration_s} seconds")
@@ -82,7 +81,7 @@ platform_turn_rate_radps = np.deg2rad(1.0)
 leg1_duration_s = timedelta(seconds=405)
 turn1_angle_rad = np.deg2rad(-85)
 turn1_duration_s = timedelta(
-    seconds=round((abs(turn1_angle_rad) / platform_turn_rate_radps) / SIM_RATE) * SIM_RATE
+    seconds=round((abs(turn1_angle_rad) / platform_turn_rate_radps) / sim_rate_s) * sim_rate_s
 )
 leg2_duration_s = timedelta(seconds=SIM_LENGTH) - leg1_duration_s - turn1_duration_s
 
@@ -623,25 +622,17 @@ for row, col, snr_map, detections in snr_plot_configs:
         plot_kwargs["detections"] = detections
     plot_btr(**plot_kwargs)
 
-# Keep a single shared colorbar and shared colour scale for all heatmaps
-heatmap_traces = [trace for trace in fig_snr.data if trace.type == "heatmap"]
-if heatmap_traces:
-    shared_zmin = min(np.nanmin(np.asarray(trace.z, dtype=float)) for trace in heatmap_traces)
-    shared_zmax = max(np.nanmax(np.asarray(trace.z, dtype=float)) for trace in heatmap_traces)
-
-    for i, trace in enumerate(heatmap_traces):
-        trace.zmin = shared_zmin
-        trace.zmax = shared_zmax
-        trace.showscale = i == 0
-
-    heatmap_traces[0].colorbar = dict(
+apply_shared_colourscale(
+    fig_snr,
+    colorbar=dict(
         title=dict(text="SNR (dB)", side="right"),
         x=1.02,
         y=0.5,
         yanchor="middle",
         len=1.0,
         thickness=24,
-    )
+    ),
+)
 
 # Remove x-axis labels from row 1
 for col in (1, 2):

@@ -33,11 +33,11 @@ seed = 2000
 np.random.seed(seed)
 
 SIM_LENGTH = 1800  # seconds
-SIM_RATE = 5.0  # seconds
+sim_rate_s = 5.0  # seconds
 
 start_time = datetime.now().replace(hour=0, minute=0, second=0, microsecond=0)
-time_interval = timedelta(seconds=SIM_RATE)
-num_steps = int(SIM_LENGTH / SIM_RATE)
+time_interval = timedelta(seconds=sim_rate_s)
+num_steps = int(SIM_LENGTH / sim_rate_s)
 
 total_duration_s = num_steps * time_interval.total_seconds()
 print(f"Total simulation duration: {total_duration_s} seconds")
@@ -72,7 +72,7 @@ if len(leg_duration_seconds) != len(turn_configs) + 1:
     raise ValueError("Expect one leg duration per segment between turns")
 
 leg_durations_s = [
-    timedelta(seconds=round(seconds / SIM_RATE) * SIM_RATE) for seconds in leg_duration_seconds
+    timedelta(seconds=round(seconds / sim_rate_s) * sim_rate_s) for seconds in leg_duration_seconds
 ]
 
 straight_model = CombinedLinearGaussianTransitionModel(
@@ -89,7 +89,7 @@ def _build_turn(angle_deg: float, rate_deg_per_s: float):
         turn_rate=np.sign(angle_rad) * turn_rate_radps,
         turn_noise_diff_coeffs=np.array([0.0, 0.0]),
     )
-    turn_duration_s = round((abs(angle_rad) / turn_rate_radps) / SIM_RATE) * SIM_RATE
+    turn_duration_s = round((abs(angle_rad) / turn_rate_radps) / sim_rate_s) * sim_rate_s
     return CombinedLinearGaussianTransitionModel([planar_turn, depth_model]), timedelta(
         seconds=turn_duration_s
     )

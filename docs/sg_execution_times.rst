@@ -6,7 +6,7 @@
 
 Computation times
 =================
-**02:15.827** total execution time for 10 files **from all galleries**:
+**02:20.456** total execution time for 10 files **from all galleries**:
 
 .. container::
 
@@ -33,7 +33,7 @@ Computation times
      - Time
      - Mem (MB)
    * - :ref:`sphx_glr_source_auto_examples_comparing_bathymetry.py` (``examples/comparing_bathymetry.py``)
-     - 02:15.827
+     - 02:20.456
      - 0.0
    * - :ref:`sphx_glr_source_auto_examples_comparing_simulators.py` (``examples/comparing_simulators.py``)
      - 00:00.000

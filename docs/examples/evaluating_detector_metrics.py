@@ -16,6 +16,11 @@ across parameter settings or detector chains.
 """  # noqa: D205, D212, D400, D415
 
 # %%
+# Imports
+# -------
+#
+# All dependencies are consolidated here for convenience.
+
 from datetime import datetime, timedelta
 
 import numpy as np
@@ -41,39 +46,29 @@ from bluepebble.simulator import ContinuousSTFTPassiveSonarArraySimulator
 # Simulation Parameters
 # ---------------------
 #
-# This section fixes the global timing and reproducibility settings used throughout the
-# example.
-#
-# - `seed` ensures repeatable random draws for target signal metadata.
-# - `sim_duration` and `time_interval` define the timeline used for platform motion,
-#   truth propagation, simulation, and detector outputs.
-# - `timesteps` is the master time axis reused in plotting and metric calculations.
+# A fixed seed and shared timeline are established here so every stochastic signal
+# component is reproducible and all downstream components (platform motion, target
+# propagation, simulator, and metrics) operate on the same time axis.
 
-# %%
-# Random seed for reproducibility
 seed = 2000
 np.random.seed(seed)
 
-# Simulation parameters (same scenario as multi_target_tutorial)
 sim_duration = timedelta(seconds=900)
 time_interval = timedelta(seconds=5)
 
 num_steps = int(sim_duration.total_seconds() / time_interval.total_seconds())
-start_time = datetime.now().replace(hour=0, minute=0, second=0, microsecond=0)
+start_time = datetime(2026, 1, 1, 0, 0, 0)
 timesteps = np.array([start_time + i * time_interval for i in range(num_steps)], dtype=object)
 
 # %%
-# Platform Scenario Setup
-# -----------------------
+# Platform Setup and Generation
+# -----------------------------
 #
-# The platform follows a deterministic **straight-turn-straight** trajectory matching
-# the tutorial scenario.
-#
-# This cell also defines the towed-array geometry (`num_sensors`, cable length, spacing,
-# depth) and propagates the platform state over all `timesteps`.
+# The platform follows a straight-turn-straight path. The mid-run heading change is
+# important for this example: it shifts the apparent bearing of all three targets
+# over time, which exercises the beamformer over a range of steering angles rather
+# than just one static geometry.
 
-# %%
-# Define the platform's initial state and transition model
 platform_start_vector = np.array([-7500.0, 1.15, -2000.0, 0.25, -5.0, 0.0])
 platform_position_mapping = [0, 2, 4]
 platform_velocity_mapping = [1, 3, 5]
@@ -101,13 +96,11 @@ turning_model1 = CombinedLinearGaussianTransitionModel([planar_turn1, depth_mode
 transition_models = [straight_model, turning_model1, straight_model]
 transition_times = [leg1_duration_s, turn1_duration_s, leg2_duration_s]
 
-# Define the towed array parameters
 num_sensors = 200
 tow_cable_length_m = 100.0
 sensor_spacing_m = 0.5
 array_depth_m = -50.0
 
-# Create the towed array platform and simulate its movement over time
 platform_initial_state = GroundTruthState(platform_start_vector, timestamp=start_time)
 platform = TowedArrayPlatform(
     states=platform_initial_state,
@@ -125,16 +118,19 @@ for timestamp in timesteps[1:]:
     platform.move(timestamp)
 
 # %%
-# Target Truth Generation
-# -----------------------
+# Ground Truth Setup and Generation
+# ---------------------------------
 #
-# Three Cartesian target truth paths are created with constant-velocity dynamics.
+# Three targets are created with random tonal amplitudes, frequencies, and broadband
+# noise levels drawn from the fixed seed. The variation in SNR across targets produces
+# a non-trivial ROC/PR curve. A scenario where all targets are equally easy to detect
+# gives a less informative sweep.
 #
-# Each target also carries metadata used by the signal model (tonal amplitudes/frequencies/
-# phases, tonal bandwidth, and broadband noise parameters).
+# Cartesian truths are immediately converted to relative bearing truths so the
+# bearing-domain metric association is available for all downstream sections.
+# The :func:`~bluepebble.plotter.plot_world` figure confirms the geometry before
+# the detector is run.
 
-# %%
-# Define target initial states and transition model (same scenario as multi_target_tutorial)
 target1_start_vector = np.array([-1.5e4, 9.0, 1.2e4, -10, -5.0, 0.0])
 target2_start_vector = np.array([-1.1e4, -8.0, -5.7e3, 3.6, -5.0, 0.0])
 target3_start_vector = np.array([-3.0e3, 10.4, -9.7e3, 9.7, -5.0, 0.0])
@@ -145,11 +141,11 @@ target_transition_model = CombinedLinearGaussianTransitionModel(
 target_position_mapping = [0, 2, 4]
 target_velocity_mapping = [1, 3, 5]
 
-target_truths = []
-
 target_tonal_bandwidth_hz = np.random.uniform(0.5, 2.0)
 target_noise_amplitude_upa = 10 ** (90 / 20)
 target_noise_spectral_exponent = -1.0
+
+target_truths = []
 
 for sv in [target1_start_vector, target2_start_vector, target3_start_vector]:
     metadata = {
@@ -176,25 +172,41 @@ for sv in [target1_start_vector, target2_start_vector, target3_start_vector]:
 
     target_truths.append(GroundTruthPath(target_states))
 
-# %%
-# Propagation Environment
-# -----------------------
-#
-# Defines the acoustic environment and propagation model used to map source signals to
-# the array:
-#
-# - Linear sound-speed profile (`ssp`)
-# - Flat bathymetry
-# - `rtrsAcousticPropagationModel` with configured spatial search/resolution settings
-#
-# Keeping these parameters fixed is important when comparing detector chains, so ROC/PR
-# differences reflect detector behaviour rather than environmental changes.
+relative_bearing_truths = []
+
+for target_truth in target_truths:
+    bearing_states = []
+    for state in target_truth:
+        platform_state = platform.get_platform_state_at(state.timestamp)
+        assert platform_state is not None
+        ref_sensor_position = np.mean(platform_state.array.state_vector, axis=1)
+
+        target_xy = np.array([state.state_vector[0], state.state_vector[2]])
+        relative_position = target_xy - ref_sensor_position[:2]
+        bearing = np.arctan2(relative_position[1], relative_position[0])
+
+        bearing_states.append(GroundTruthState(np.array([bearing]), timestamp=state.timestamp))
+
+    relative_bearing_truths.append(GroundTruthPath(bearing_states))
+
+fig_world = plot_world(truths=target_truths, platform=platform).update_layout(
+    title="World Picture: Target and Platform Trajectories",
+    template="plotly_white",
+    autosize=True,
+    width=None,
+    height=None,
+)
 
 # %%
-# Propagation model
+# Propagation Model
+# -----------------
+#
+# The acoustic environment and propagation model are held fixed across all detector
+# configurations so that ROC/PR differences reflect detector chain behaviour rather
+# than environmental changes.
+
 ssp = Linear(surface_speed=1500.0, gradient=0.2)
 bathymetry = FlatBathymetry(depth=-150.0)
-attenuation_factor = 0.5
 
 propagation_model = rtrsAcousticPropagationModel(
     ssp=ssp,
@@ -211,17 +223,11 @@ propagation_model = rtrsAcousticPropagationModel(
 # Signal and Ambient Noise Models
 # -------------------------------
 #
-# Constructs:
-#
-# - Broadband ambient noise model
-# - Broadband ship-like source model used by targets
-#
-# These models determine the spectral content and difficulty of the detection task. The
-# resulting SNR structure directly influences detector operating points and curve shape
-# in later ROC/PR analysis.
+# The ambient noise model and per-target signal models set the spectral content and
+# SNR distribution that determine the difficulty of the detection task.
+# :class:`~.SyntheticAnthropogenicSignal` is one-shot per instance, so a factory
+# function is used to produce fresh instances for each simulator construction.
 
-# %%
-# Signal and ambient-noise models
 sampling_rate_hz = 500.0
 frame_len = 500
 hop_factor = 2
@@ -255,20 +261,13 @@ def _make_signal_model():
 signal_models = [_make_signal_model() for _ in target_truths]
 
 # %%
-# Beamforming and Detector Pipeline Setup
+# Beamformer and Detector Pipeline Setup
 # ---------------------------------------
 #
-# This section wires together the runtime pipeline:
-#
-# - Steering grid and delay-and-sum beamformer
-# - Broadband simulator
-# - Baseline detection chain (:class:`~.CACFARDetector` + :class:`~.PeakDetector`)
-#
-# The baseline run generates detections and `snr_map`, which are then reused for
-# parameter sweeps in the metrics section.
+# A broadband delay-and-sum beamformer is used as the baseline. The baseline
+# detector run produces the SNR map that the parameter sweep reuses, so all
+# sweep configurations operate on the same acoustic data.
 
-# %%
-# Beamforming and detector setup
 steering_azimuths_rad = np.linspace(-np.pi, np.pi, 361)
 
 beamformer = DelayAndSumBeamformer(
@@ -295,18 +294,21 @@ simulator = ContinuousSTFTPassiveSonarArraySimulator(
     fade_in_ms=fade_in_ms,
 )
 
+cfar_num_guard_cells = 6
+cfar_num_training_cells = 10
+cfar_threshold_factor = 1.05
+peak_distance = 8
+
 cfar_detector = CACFARDetector(
-    num_guard_cells=6,
-    num_training_cells=10,
-    threshold_factor=1.05,
+    num_guard_cells=cfar_num_guard_cells,
+    num_training_cells=cfar_num_training_cells,
+    threshold_factor=cfar_threshold_factor,
     mode="wrap",
 )
-peak_detector = PeakDetector(distance=8)
-
-detection_chain = [cfar_detector, peak_detector]
+peak_detector = PeakDetector(distance=peak_distance)
 
 detector = PassiveSonarDetector(
-    detection_chain=detection_chain,
+    detection_chain=[cfar_detector, peak_detector],
     sensor_data_gen=simulator.sensor_data_gen(),
     steering_azimuths_rad=steering_azimuths_rad,
 )
@@ -315,17 +317,10 @@ detector = PassiveSonarDetector(
 # Run Detection on Simulated Data
 # -------------------------------
 #
-# Executes the detector over simulator outputs and captures:
-#
-# - `all_detections`: timestamped detection sets
-# - `snr_map`: time-by-bearing SNR map used for visualisation and parameter sweeps
-# - `detections_for_plotter`: flattened detections for overlay plots
-#
-# This provides the core inputs needed for both qualitative inspection and quantitative
-# evaluation.
+# The baseline detector is executed once to produce the SNR map and a flattened set
+# of detections. The SNR map is passed directly to the parameter sweep, avoiding a
+# second simulation run.
 
-# %%
-# Run simulation and collect detections/SNR map
 all_detections = list(detector.detections_gen(progress_bar=False))
 snr_map = detector.snr_history
 
@@ -334,81 +329,47 @@ detections_for_plotter = [d for _, detections in all_detections for d in detecti
 print(f"Total no. of detections: {len(detections_for_plotter)}")
 
 # %%
-# Relative Bearing Ground Truth Conversion
-# ----------------------------------------
+# Baseline Detector Results
+# -------------------------
 #
-# Converts Cartesian target truths into **relative bearing truths** referenced to the
-# towed-array platform at each timestamp.
-#
-# This representation is required for bearing-domain metric evaluation, where detections
-# are associated to truth bearings using angular thresholds.
-
-# %%
-# Convert Cartesian target truths to relative bearing truths
-relative_bearing_truths = []
-
-for target_truth in target_truths:
-    bearing_states = []
-    for state in target_truth:
-        platform_state = platform.get_platform_state_at(state.timestamp)
-        assert platform_state is not None
-        ref_sensor_position = np.mean(platform_state.array.state_vector, axis=1)
-
-        target_xy = np.array([state.state_vector[0], state.state_vector[2]])
-        relative_position = target_xy - ref_sensor_position[:2]
-        bearing = np.arctan2(relative_position[1], relative_position[0])
-
-        bearing_states.append(GroundTruthState(np.array([bearing]), timestamp=state.timestamp))
-
-    relative_bearing_truths.append(GroundTruthPath(bearing_states))
-
-# Backward-compatible aliases used later in this example
-target_ground_truths = target_truths
-relative_bearing_ground_truths = relative_bearing_truths
-
-# %%
-# Visualisation
-# -------------
-#
-# Inspect:
-#
-# - World geometry (`plot_world`)
-# - Bearing-Time Record (`plot_btr`) with SNR heatmap and truth overlays
-
-# %%
-# Ground truth and SNR visualisation
-fig_world = plot_world(truths=target_truths, platform=platform)
+# A bearing-time record of the baseline CA-CFAR run provides a qualitative check
+# before the parameter sweep. Three target bearing tracks are visible sweeping across
+# the BTR; the mid-run heading change causes all three to shift simultaneously around
+# the 00:07 mark. The white detection markers show where the detector fires. A dense
+# cluster near each truth track confirms the CFAR threshold is well-placed for this
+# scenario. False alarms appear as isolated dots away from the truth lines. Inspecting
+# the BTR before the sweep gives geometric intuition that helps interpret any anomalies
+# in the ROC and PR curves that follow.
 
 fig_btr = plot_btr(
     data=snr_map,
     timesteps=timesteps,
     steering_azimuths=np.rad2deg(steering_azimuths_rad),
     truths=relative_bearing_truths,
-    figsize=(1000, 700),
+    detections=detections_for_plotter,
+).update_layout(
+    title="Bearing-Time Record: Baseline Detector",
+    template="plotly_white",
+    autosize=True,
+    width=None,
+    height=None,
 )
 
 # %%
-# Detection Metrics Sweep (ROC and PR)
-# ------------------------------------
+# Sweep Configurations
+# --------------------
 #
-# Here multiple :class:`~.SweepSpec` configurations are defined and detector parameters are swept
-# to compare operating behaviour.
-#
-# For each sweep, the example reports:
-#
-# - ROC AUC
-# - PR AUC
-# - Best parameter by Youden's J statistic
-# - Parameter nearest a target FPR
-#
-# Interpretation guidance:
-#
-# - Higher ROC AUC indicates better global discrimination between positives and negatives.
-# - Higher PR AUC is often more informative when positive events are relatively sparse.
-# - Comparing CFAR-only and CFAR+peak-clustering chains helps quantify how post-processing
-#   changes false-alarm/recall trade-offs.
+# Four detector configurations are swept over ``threshold_factor`` to produce ROC and
+# PR curves. The first two (CA-CFAR and OS-CFAR alone) show how the choice of CFAR
+# variant affects the underlying threshold-to-performance mapping. The second two add
+# a :class:`~.PeakDetector` stage, which clusters nearby detections into single peaks
+# after thresholding. Because the sweep steps ``algorithm_index=0`` (the CFAR stage)
+# while the peak-clustering distance is held fixed, the peak variants produce a
+# fundamentally different sweep trajectory — see the Detection Metrics Results cell
+# for details. ``target_fpr`` marks the operating point printed in the summary table.
 
-# %%
+target_fpr = 0.05
+
 specs = [
     # Just CA-CFAR
     SweepSpec(
@@ -441,7 +402,7 @@ specs = [
         algorithm_index=0,
         param_name="threshold_factor",
         param_values=np.linspace(0.0, 5.0, 400),
-        label="CA-CFAR + peak clustering",
+        label="CA-CFAR + Peak",
     ),
     # OS-CFAR with Peak Detection clustering
     SweepSpec(
@@ -454,11 +415,17 @@ specs = [
         algorithm_index=0,
         param_name="threshold_factor",
         param_values=np.linspace(0.0, 5.0, 400),
-        label="OS-CFAR + peak clustering",
+        label="OS-CFAR + Peak",
     ),
 ]
 
-TARGET_FPR = 0.05
+# %%
+# Run Detection Metrics Sweep
+# ---------------------------
+#
+# The sweep runs each configuration against the pre-computed SNR map, so no second
+# simulation pass is required. Each :class:`~.SweepSpec` steps through
+# ``param_values`` and records ROC and PR statistics at every operating point.
 
 results = sweep_detection_parameter(
     snr_map=snr_map,
@@ -468,13 +435,78 @@ results = sweep_detection_parameter(
     association_threshold_rad=np.deg2rad(2.0),
 )
 
-for r in results:
-    print(
-        f"{r.label}: "
-        f"AUC-ROC={r.auc_roc:.4f}  "
-        f"AUC-PR={r.auc_pr:.4f}  "
-        f"best_param (Youden-J)={r.best_param:.4f}  "
-        f"param @ FPR={TARGET_FPR}={r.param_at_fpr(TARGET_FPR):.4f}"
-    )
+# %%
+# Detection Metrics Results
+# -------------------------
+#
+# The summary table and curves reveal two key results. First, CA-CFAR leads on
+# AUC-ROC (0.85) whilst OS-CFAR leads on AUC-PR (0.12) — the two metrics disagree
+# on which variant is "better", which is why reporting both matters. Second, the
+# CA-CFAR + Peak and OS-CFAR + Peak configurations score AUC-ROC ≈ 0.02 (worse than
+# random) despite holding the highest and second-highest AUC-PR values. This happens
+# because sweeping only the CFAR threshold whilst the peak-clustering distance is
+# fixed causes the ROC curve to run anti-diagonally: at very low thresholds, peak
+# clustering collapses a dense field of raw false alarms into a small number of peaks,
+# so FPR and TPR do not increase in tandem as the threshold drops. The PR curve
+# remains interpretable because it measures precision at each recall level
+# independently of the sweep direction.
 
-fig_roc_pr = plot_roc_pr(results)
+headers = [
+    "Detector",
+    "AUC-ROC",
+    "AUC-PR",
+    "Best Param (Youden-J)",
+    f"Param @ FPR={target_fpr}",
+]
+
+rows = [
+    [
+        r.label,
+        f"{r.auc_roc:.4f}",
+        f"{r.auc_pr:.4f}",
+        f"{r.best_param:.4f}",
+        f"{r.param_at_fpr(target_fpr):.4f}",
+    ]
+    for r in results
+]
+
+table = [headers, *rows]
+col_widths = [max(len(row[i]) for row in table) for i in range(len(headers))]
+separator = "-+-".join("-" * w for w in col_widths)
+
+print(" | ".join(h.ljust(col_widths[i]) for i, h in enumerate(headers)))
+print(separator)
+for row in rows:
+    print(" | ".join(cell.ljust(col_widths[i]) for i, cell in enumerate(row)))
+
+fig_roc_pr = plot_roc_pr(results).update_layout(
+    title="Receiver Operating Characteristic and Precision-Recall Curves",
+    template="plotly_white",
+    autosize=True,
+    width=None,
+    height=int(np.clip(260 * 2, 700, 2200)),
+)
+
+# %%
+# Key Takeaways
+# -------------
+#
+# * **ROC and PR metrics disagree on the best detector** - CA-CFAR leads on AUC-ROC
+#   (0.85) but OS-CFAR leads on AUC-PR (0.12). In passive sonar, where operator
+#   workload scales with false-alarm rate, precision-recall curves are often the more
+#   operationally relevant measure alongside ROC.
+# * **Peak clustering inverts the swept ROC curve** - sweeping the CFAR threshold
+#   whilst holding ``PeakDetector`` fixed causes the ROC curve to run
+#   anti-diagonally (AUC ≈ 0.02). At low thresholds, peak clustering collapses a
+#   dense field of false alarms into a small number of peaks, which does not
+#   translate into proportionally higher true-positive rate. The PR curve remains
+#   interpretable because it measures precision at each recall level independently.
+#   Always inspect both curves before drawing conclusions from a chained pipeline
+#   sweep.
+# * **Sweep only the stage you want to characterise** - ``algorithm_index=0`` sweeps
+#   the CFAR threshold while the peak-clustering distance stays fixed. To characterise
+#   peak clustering directly, set ``algorithm_index=1`` and sweep
+#   ``PeakDetector.distance`` instead.
+# * **The SNR map is computed once and reused** - ``sweep_detection_parameter``
+#   operates on the pre-computed ``snr_map`` rather than re-running the simulator, so
+#   adding further ``SweepSpec`` entries costs only CPU time for the threshold loop.

@@ -17,8 +17,7 @@ makes it easier to interpret later BTRs, spectrograms, and received mixtures.
 # Imports
 # -------
 #
-# All dependencies are consolidated here so the example reads top-to-bottom
-# without scattered imports.
+# All dependencies are consolidated here for convenience.
 
 from datetime import datetime
 from pathlib import Path

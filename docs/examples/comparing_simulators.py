@@ -27,8 +27,7 @@ Simulator modes compared:
 # Imports
 # -------
 #
-# All dependencies are consolidated here so the example reads top-to-bottom
-# without scattered imports.
+# All dependencies are consolidated here for convenience.
 
 from datetime import datetime, timedelta
 from pathlib import Path
