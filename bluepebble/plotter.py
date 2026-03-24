@@ -21,6 +21,8 @@ from stonesoup.types.track import Track
 from .detector.metrics import SweepResult
 
 __all__ = [
+    "apply_shared_colourscale",
+    "deduplicate_legend",
     "launch_bathymetry_and_sound_speed_viewer",
     "plot_world",
     "plot_btr",
@@ -1100,6 +1102,12 @@ def plot_btr(
 
     added_legend_groups: set[str] = set()
 
+    existing_legend_names: set[str] = set()
+    if fig is not None:
+        for t in target_fig.data:
+            if getattr(t, "showlegend", True) is not False and getattr(t, "name", None):
+                existing_legend_names.add(str(t.name))
+
     def _legend_group_kwargs(group_name: str, group_title: str) -> dict[str, str]:
         """Return legend-group kwargs and add a title once per group per figure."""
         kwargs = {"legendgroup": group_name}
@@ -1126,10 +1134,10 @@ def plot_btr(
             zmin=cmin,
             zmax=cmax,
             colorbar=dict(
-                title=dict(text=data_type),
+                title=dict(text=data_type, side="right"),
                 thickness=24,
                 len=1.0,
-                x=1.02,
+                x=1.0,
                 xanchor="left",
                 xpad=0,
             ),
@@ -1142,14 +1150,17 @@ def plot_btr(
     if detections is not None:
         det_x = [_wrap_bearing_deg(float(np.rad2deg(det.state_vector[0]))) for det in detections]
         det_y = [det.timestamp for det in detections]
+        _det_name = "Detection"
         detection_trace = go.Scatter(
             x=det_x,
             y=det_y,
             mode="markers",
             marker=dict(size=5, line=dict(width=1), color="white", opacity=0.8),
-            name="Detection",
+            name=_det_name,
+            showlegend=_det_name not in existing_legend_names,
             **_legend_group_kwargs("detections", "Detections"),
         )
+        existing_legend_names.add(_det_name)
         if using_subplot_target:
             target_fig.add_trace(detection_trace, row=row, col=col)
         else:
@@ -1170,15 +1181,18 @@ def plot_btr(
             ]
             track_y = [state.timestamp for state in track]
             track_x, track_y = _split_wrapped_line(track_x, track_y)
+            _track_name = f"Track {idx + 1}" if len(tracks) > 1 else "Track"
             track_trace = go.Scatter(
                 x=track_x,
                 y=track_y,
                 mode="lines",
                 connectgaps=False,
                 line=dict(color=track_color, width=4),
-                name=f"Track {idx + 1}" if len(tracks) > 1 else "Track",
+                name=_track_name,
+                showlegend=_track_name not in existing_legend_names,
                 **_legend_group_kwargs("tracks", "Tracks"),
             )
+            existing_legend_names.add(_track_name)
             if using_subplot_target:
                 target_fig.add_trace(track_trace, row=row, col=col)
             else:
@@ -1198,15 +1212,18 @@ def plot_btr(
                 truth_color_map[truth_key] = colorway[len(truth_color_map) % len(colorway)]
             truth_color = truth_color_map[truth_key]
             truth_x, truth_y = _split_wrapped_line(gt_x[idx], gt_y[idx])
+            _truth_name = f"Truth {idx + 1}" if len(truths) > 1 else "Truth"
             truth_trace = go.Scatter(
                 x=truth_x,
                 y=truth_y,
                 mode="lines",
                 connectgaps=False,
                 line=dict(color=truth_color, width=3, dash="dash"),
-                name=f"Truth {idx + 1}" if len(truths) > 1 else "Truth",
+                name=_truth_name,
+                showlegend=_truth_name not in existing_legend_names,
                 **_legend_group_kwargs("truths", "Ground Truths"),
             )
+            existing_legend_names.add(_truth_name)
             if using_subplot_target:
                 target_fig.add_trace(truth_trace, row=row, col=col)
             else:
@@ -1273,6 +1290,7 @@ def plot_btr(
             showlegend=True,
             plot_bgcolor="white",
             paper_bgcolor="white",
+            legend=dict(x=1.15, xanchor="left", y=1.0, yanchor="top"),
         )
 
     return target_fig
@@ -1676,9 +1694,9 @@ def plot_pr(
 def plot_roc_pr(
     results: Sequence[SweepResult],
     show_diagonal: bool = True,
-    figsize: tuple[float, float] = (1100, 500),
+    figsize: tuple[float, float] = (600, 900),
 ) -> go.Figure:
-    """Plot ROC and Precision-Recall curves side-by-side for one or more sweep results.
+    """Plot ROC and Precision-Recall curves stacked vertically for one or more sweep results.
 
     Parameters
     ----------
@@ -1689,17 +1707,20 @@ def plot_roc_pr(
     show_diagonal : bool
         If ``True`` (default), overlay the random-classifier diagonal on the ROC subplot.
     figsize : tuple[float, float]
-        Figure dimensions in pixels.  Default is ``(1100, 500)``.
+        Figure dimensions in pixels.  Default is ``(600, 900)``.
 
     Returns
     -------
     go.Figure
-        Plotly figure with ROC (left) and PR (right) subplots.
+        Plotly figure with ROC (top) and PR (bottom) subplots.
 
     """
     colorway = px.colors.qualitative.Plotly
 
-    fig = make_subplots(rows=1, cols=2, subplot_titles=("ROC Curve", "Precision-Recall Curve"))
+    fig = make_subplots(rows=2, cols=1, subplot_titles=("ROC Curve", "PR Curve"))
+
+    grid_color = "rgba(200, 200, 200, 0.5)"
+    axis_line = "rgba(160, 160, 160, 1.0)"
 
     for i, result in enumerate(results):
         color = colorway[i % len(colorway)]
@@ -1713,8 +1734,9 @@ def plot_roc_pr(
                 y=result.tpr[roc_order],
                 mode="lines",
                 line=dict(width=2, color=color),
-                name=f"{result.label} (AUC={result.auc_roc:.3f})",
+                name=f"ROC (AUC={result.auc_roc:.3f})",
                 legendgroup=result.label,
+                legendgrouptitle_text=result.label,
             ),
             row=1,
             col=1,
@@ -1725,12 +1747,11 @@ def plot_roc_pr(
                 y=result.precision[pr_order],
                 mode="lines",
                 line=dict(width=2, color=color),
-                name=f"{result.label} (AUC={result.auc_pr:.3f})",
+                name=f"PR (AUC={result.auc_pr:.3f})",
                 legendgroup=result.label,
-                showlegend=False,  # suppress duplicate; ROC trace represents this group
             ),
-            row=1,
-            col=2,
+            row=2,
+            col=1,
         )
 
     if show_diagonal:
@@ -1747,17 +1768,132 @@ def plot_roc_pr(
             col=1,
         )
 
-    fig.update_xaxes(title_text="False Positive Rate", range=[0.0, 1.0], col=1)
-    fig.update_yaxes(title_text="True Positive Rate", range=[0.0, 1.05], col=1)
-
-    fig.update_xaxes(title_text="Recall", range=[0.0, 1.0], col=2)
-    fig.update_yaxes(title_text="Precision", range=[0.0, 1.05], col=2)
+    fig.update_xaxes(
+        title_text="False Positive Rate",
+        range=[0.0, 1.0],
+        showgrid=True,
+        gridcolor=grid_color,
+        showline=True,
+        linewidth=1,
+        linecolor=axis_line,
+        row=1,
+    )
+    fig.update_yaxes(
+        title_text="True Positive Rate",
+        range=[0.0, 1.05],
+        showgrid=True,
+        gridcolor=grid_color,
+        showline=True,
+        linewidth=1,
+        linecolor=axis_line,
+        row=1,
+    )
+    fig.update_xaxes(
+        title_text="Recall",
+        range=[0.0, 1.0],
+        showgrid=True,
+        gridcolor=grid_color,
+        showline=True,
+        linewidth=1,
+        linecolor=axis_line,
+        row=2,
+    )
+    fig.update_yaxes(
+        title_text="Precision",
+        range=[0.0, 1.05],
+        showgrid=True,
+        gridcolor=grid_color,
+        showline=True,
+        linewidth=1,
+        linecolor=axis_line,
+        row=2,
+    )
 
     fig.update_layout(
         template="plotly_white",
         width=figsize[0],
         height=figsize[1],
         showlegend=True,
+        plot_bgcolor="white",
+        paper_bgcolor="white",
+        legend=dict(
+            y=0.5,
+        ),
     )
+
+    return fig
+
+
+def apply_shared_colourscale(
+    fig: go.Figure,
+    zmin: float | None = None,
+    zmax: float | None = None,
+    colorbar: dict | None = None,
+) -> go.Figure:
+    """Apply a shared colour scale across all heatmap traces in a figure.
+
+    Parameters
+    ----------
+    fig : go.Figure
+        Figure containing one or more heatmap traces.
+    zmin : float | None
+        Lower bound of the shared colour scale.  If ``None``, computed as the
+        minimum finite value across all heatmap traces.
+    zmax : float | None
+        Upper bound of the shared colour scale.  If ``None``, computed as the
+        maximum finite value across all heatmap traces.
+    colorbar : dict | None
+        Plotly colorbar dict applied to the first heatmap trace.  If ``None``,
+        the existing colorbar is left unchanged.
+
+    Returns
+    -------
+    go.Figure
+        The modified figure (mutated in-place and returned).
+
+    """
+    heatmap_traces = [t for t in fig.data if getattr(t, "type", None) == "heatmap"]
+    if not heatmap_traces:
+        return fig
+
+    if zmin is None:
+        zmin = float(min(np.nanmin(np.asarray(t.z, dtype=float)) for t in heatmap_traces))
+    if zmax is None:
+        zmax = float(max(np.nanmax(np.asarray(t.z, dtype=float)) for t in heatmap_traces))
+
+    for i, trace in enumerate(heatmap_traces):
+        trace.zmin = zmin
+        trace.zmax = zmax
+        trace.showscale = i == 0
+
+    if colorbar is not None:
+        heatmap_traces[0].colorbar = colorbar
+
+    return fig
+
+
+def deduplicate_legend(fig: go.Figure) -> go.Figure:
+    """Suppress duplicate legend entries, keeping the first occurrence of each name.
+
+    Parameters
+    ----------
+    fig : go.Figure
+        Figure whose legend entries should be deduplicated.
+
+    Returns
+    -------
+    go.Figure
+        The modified figure (mutated in-place and returned).
+
+    """
+    seen: set[str] = set()
+    for trace in fig.data:
+        name = getattr(trace, "name", None)
+        if not name:
+            continue
+        if name in seen:
+            trace.showlegend = False
+        else:
+            seen.add(str(name))
 
     return fig
