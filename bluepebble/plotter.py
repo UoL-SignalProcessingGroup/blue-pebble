@@ -851,6 +851,9 @@ def plot_world(
     x_range = [value * scale for value in x_range_native]
     y_range = [value * scale for value in y_range_native]
 
+    # Arrow length: 5% of the padded display span, used for direction annotations.
+    arrow_length = max_span * scale * 0.05
+
     # Plot a single marker for stationary platforms to avoid a degenerate line trace.
     platform_is_stationary = len(plat_x) <= 1 or (
         np.allclose(plat_x, plat_x[0]) and np.allclose(plat_y, plat_y[0])
@@ -897,6 +900,28 @@ def plot_world(
                 **_legend_group_kwargs("platform", "Platform"),
             )
         )
+        if len(plat_x) >= 2:
+            dx = plat_x[-1] - plat_x[-2]
+            dy = plat_y[-1] - plat_y[-2]
+            if dx != 0 or dy != 0:
+                norm = float(np.hypot(dx, dy))
+                tip_x = plat_x[-1] + (dx / norm) * arrow_length
+                tip_y = plat_y[-1] + (dy / norm) * arrow_length
+                fig.add_annotation(
+                    x=tip_x,
+                    y=tip_y,
+                    ax=plat_x[-1],
+                    ay=plat_y[-1],
+                    xref="x",
+                    yref="y",
+                    axref="x",
+                    ayref="y",
+                    showarrow=True,
+                    arrowhead=2,
+                    arrowwidth=2,
+                    arrowcolor="black",
+                    text="",
+                )
 
     names = [f"Truth {i + 1}" if num_truths > 1 else "Truth" for i in range(num_truths)]
     for i in range(num_truths):
@@ -924,6 +949,28 @@ def plot_world(
                 **_legend_group_kwargs("truths", "Ground Truths"),
             )
         )
+        if len(gt_x[i]) >= 2:
+            dx = gt_x[i][-1] - gt_x[i][-2]
+            dy = gt_y[i][-1] - gt_y[i][-2]
+            if dx != 0 or dy != 0:
+                norm = float(np.hypot(dx, dy))
+                tip_x = gt_x[i][-1] + (dx / norm) * arrow_length
+                tip_y = gt_y[i][-1] + (dy / norm) * arrow_length
+                fig.add_annotation(
+                    x=tip_x,
+                    y=tip_y,
+                    ax=gt_x[i][-1],
+                    ay=gt_y[i][-1],
+                    xref="x",
+                    yref="y",
+                    axref="x",
+                    ayref="y",
+                    showarrow=True,
+                    arrowhead=2,
+                    arrowwidth=2,
+                    arrowcolor=colorway[i % len(colorway)],
+                    text="",
+                )
 
     width_px, height_px = _normalise_plotly_figsize(figsize)
 

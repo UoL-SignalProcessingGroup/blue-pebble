@@ -386,8 +386,8 @@ def test_plot_world_hovertemplate_omits_native_metres_when_scale_is_metres(
 
     fig = plotter.plot_world(truths=truths, platform=platform)
 
-    platform_trace = fig.data[0]
-    truth_trace = fig.data[1]
+    platform_trace = next(t for t in fig.data if t.name == "Platform")
+    truth_trace = next(t for t in fig.data if t.name == "Truth")
 
     assert "customdata[1]" not in platform_trace.hovertemplate
     assert "customdata[2]" not in platform_trace.hovertemplate
@@ -419,8 +419,8 @@ def test_plot_world_hovertemplate_uses_km_unit_when_scale_is_km(
 
     fig = plotter.plot_world(truths=truths, platform=platform)
 
-    platform_trace = fig.data[0]
-    truth_trace = fig.data[1]
+    platform_trace = next(t for t in fig.data if t.name == "Platform")
+    truth_trace = next(t for t in fig.data if t.name == "Truth")
 
     assert "km" in platform_trace.hovertemplate
     assert "customdata[0]" in platform_trace.hovertemplate
@@ -428,6 +428,43 @@ def test_plot_world_hovertemplate_uses_km_unit_when_scale_is_km(
     assert "km" in truth_trace.hovertemplate
     assert "customdata[0]" in truth_trace.hovertemplate
     assert "customdata[1]" not in truth_trace.hovertemplate
+
+
+def test_plot_world_adds_direction_arrows_for_moving_elements(monkeypatch) -> None:
+    """Arrow marker traces should be added at the last position of each moving element."""
+    plotter = _load_plotter(monkeypatch)
+    # Platform moves due East: dx > 0, dy == 0 → plotly angle == 90°.
+    state_a = SimpleNamespace(state_vector=np.array([0.0, 0.0, 0.0]))
+    state_b = SimpleNamespace(state_vector=np.array([10.0, 0.0, 0.0]))
+    platform = SimpleNamespace(
+        platform_history=[
+            SimpleNamespace(host=SimpleNamespace(state=state_a)),
+            SimpleNamespace(host=SimpleNamespace(state=state_b)),
+        ]
+    )
+    # Truth moves due North: dx == 0, dy > 0 → plotly angle == 0°.
+    truth_a = SimpleNamespace(state_vector=np.array([50.0, 0.0, 0.0]))
+    truth_b = SimpleNamespace(state_vector=np.array([50.0, 0.0, 10.0]))
+    truths = [[truth_a, truth_b]]
+
+    fig = plotter.plot_world(truths=truths, platform=platform)
+
+    annotations = fig.layout.annotations
+    assert len(annotations) == 2, "expected one direction annotation per moving element"
+
+    # Platform moves due East: base at (10, 0), tip at x > 10, y == 0.
+    platform_ann = next(a for a in annotations if a.arrowcolor == "black")
+    assert float(platform_ann.ax) == pytest.approx(10.0)
+    assert float(platform_ann.ay) == pytest.approx(0.0)
+    assert float(platform_ann.x) > 10.0
+    assert float(platform_ann.y) == pytest.approx(0.0)
+
+    # Truth moves due North: base at (50, 10), tip at x == 50, y > 10.
+    truth_ann = next(a for a in annotations if a.arrowcolor != "black")
+    assert float(truth_ann.ax) == pytest.approx(50.0)
+    assert float(truth_ann.ay) == pytest.approx(10.0)
+    assert float(truth_ann.x) == pytest.approx(50.0)
+    assert float(truth_ann.y) > 10.0
 
 
 def test_plot_world_rejects_empty_platform_history(monkeypatch) -> None:
