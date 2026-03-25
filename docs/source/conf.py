@@ -28,7 +28,6 @@ root_doc = "source/index"
 
 extensions = [
     "sphinx.ext.autodoc",
-    "sphinx.ext.autosummary",
     "sphinx.ext.napoleon",
     "sphinx.ext.viewcode",
     "sphinx.ext.intersphinx",
@@ -54,7 +53,6 @@ exclude_patterns = [
     "tutorials",
 ]
 
-autosummary_generate = True
 autodoc_member_order = "bysource"
 autodoc_typehints = "description"
 napoleon_google_docstring = False

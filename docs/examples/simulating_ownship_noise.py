@@ -58,21 +58,17 @@ np.random.seed(seed)
 sim_length_s = 900
 sim_step_s = 5.0
 
-start_time = datetime.now().replace(hour=0, minute=0, second=0, microsecond=0)
+start_time = datetime(2026, 1, 1, 0, 0, 0)
 time_interval = timedelta(seconds=sim_step_s)
 num_steps = int(sim_length_s / sim_step_s)
 total_duration_s = num_steps * time_interval.total_seconds()
 timesteps = np.array([start_time + i * time_interval for i in range(num_steps)], dtype=object)
-
-print(f"Total simulation duration: {total_duration_s} seconds")
 
 # %%
 # Platform Setup and Generation
 # -----------------------------
 #
 # The platform follows a straight-turn-straight path with a towed linear array.
-# A second truth path is built from the platform states to represent ownship
-# self-noise as a moving acoustic source.
 
 platform_turn_rate_radps = np.deg2rad(1.0)
 leg1_duration_s = timedelta(seconds=405)
@@ -128,6 +124,13 @@ platform = TowedArrayPlatform(
 for timestamp in timesteps[1:]:
     platform.move(timestamp)
 
+# %%
+# Ownship Self-Noise Ground Truth
+# -------------------------------
+# A second truth path is built from the platform states to represent ownship self-noise as a
+# moving acoustic source. Self-noise in Blue Pebble is effectively an additional source with
+# time-varying position and source metadata, so this path allows the same signal model to be
+# applied to both targets and ownship noise under the same simulator framework.
 self_noise_states = [
     GroundTruthState(
         state.state_vector,
@@ -153,7 +156,9 @@ self_noise_ground_truth = GroundTruthPath(self_noise_states)
 #
 # Three targets are created with reproducible randomised source metadata. Their
 # Cartesian trajectories are converted to relative bearing truths for detector
-# interpretation, then visualised to verify the simulation geometry.
+# interpretation, then visualised to verify the simulation geometry. PassiveSonarDetector reports
+# bearing-state detections, so truth needs to be in the same space for any downstream comparison.
+
 
 target_start_vectors = [
     np.array([-1.5e4, 9.0, 1.2e4, -10, -5.0, 0.0]),
@@ -242,6 +247,7 @@ fig_world = plot_world(truths=target_ground_truths, platform=platform).update_la
     height=None,
 )
 
+
 # %%
 # Propagation Model
 # -----------------
@@ -279,15 +285,16 @@ propagation_model = rtrsAcousticPropagationModel(
 # Acoustic Environment and Signal Models
 # --------------------------------------
 #
-# Ambient coloured noise is fixed at the array and source models are created via
-# factories. Fresh signal instances are required because these models are one-shot.
+# Ambient coloured noise is fixed at the array and source models are created via factories. Fresh
+# signal instances are required because these models are one-shot, so re-use would corrupt the
+# second run.
 
 sampling_rate_hz = 500.0
 frame_len = 500
 hop_factor = 2
 fade_in_ms = 1000.0
 ambient_amplitude_upa = 10 ** (45 / 20)
-ambient_spectral_exponent = -1
+ambient_spectral_exponent = -1  # pink noise
 
 ambient_noise_model = ColouredNoiseSignal(
     amplitude_upa=ambient_amplitude_upa,
@@ -298,7 +305,6 @@ ambient_noise_model = ColouredNoiseSignal(
 
 
 def _make_signal_models() -> list[SyntheticAnthropogenicSignal]:
-    """Create one target signal model per truth path."""
     models: list[SyntheticAnthropogenicSignal] = []
     for target_ground_truth in target_ground_truths:
         target_metadata = next(iter(target_ground_truth)).metadata
@@ -338,8 +344,8 @@ def _make_self_noise_model() -> SyntheticAnthropogenicSignal:
 # Beamformer
 # ----------
 #
-# A single beamformer configuration is shared between the two simulation
-# branches so source/noise differences are compared under identical processing.
+# A single beamformer configuration is shared between the two simulation branches so source/noise
+# differences are compared under identical processing.
 
 beamformer_type = "DAS"
 beamformer_shading = None
@@ -384,6 +390,9 @@ steering_calculator = SteeringCalculator(
 #
 # Two simulators are created from the same scenario: one without ownship
 # self-noise and one with ownship self-noise appended as an additional source.
+#
+# Keeping propagation, beamformer, and detector settings identical between the two simulators means
+# any difference in output is solely attributable to the ownship source term.
 
 cfar_num_guard_cells = 6
 cfar_num_training_cells = 10
@@ -391,8 +400,7 @@ cfar_threshold_factor = 1.05
 peak_distance = 8
 
 
-def make_detector(simulator: ContinuousSTFTPassiveSonarArraySimulator) -> PassiveSonarDetector:
-    """Create a detector with CACFAR followed by peak selection."""
+def _make_detector(simulator: ContinuousSTFTPassiveSonarArraySimulator) -> PassiveSonarDetector:
     cfar_detector = CACFARDetector(
         num_guard_cells=cfar_num_guard_cells,
         num_training_cells=cfar_num_training_cells,
@@ -430,8 +438,8 @@ simulator_with_ownship_noise = ContinuousSTFTPassiveSonarArraySimulator(
     fade_in_ms=fade_in_ms,
 )
 
-detector_without_ownship_noise = make_detector(simulator_without_ownship_noise)
-detector_with_ownship_noise = make_detector(simulator_with_ownship_noise)
+detector_without_ownship_noise = _make_detector(simulator_without_ownship_noise)
+detector_with_ownship_noise = _make_detector(simulator_with_ownship_noise)
 
 # %%
 # Run Detection on Simulated Data
@@ -468,80 +476,56 @@ print(f"Total no. of detections w/ ownship noise: {len(detections_with_ownship_n
 #
 # A two-row comparison grid highlights how ownship self-noise changes the raw
 # SNR field and corresponding detection overlays under the same detector chain.
+# In the ambient-only row the three target tracks are cleanly resolved, with
+# detections following each line closely. In the ownship-noise row the same
+# tracks remain present but a wideband elevation appears concentrated around
+# the heading bearing — the direction from the array towards the towing vessel.
+# Unlike a distant contact, which produces a narrow bearing track, ownship
+# self-noise is broadband and spreads across a wide angular region centred on
+# that bearing. The elevated power in this region drives additional detections,
+# visible as scattered points near the heading in the right column.
 
 n_rows = 2
+row_titles = ["Without Ownship Noise", "With Ownship Noise"]
+col_titles = ["SNR Map", "SNR Map w/ Detections"]
 fig_results = make_subplots(
     rows=n_rows,
     cols=2,
+    shared_xaxes=True,
     shared_yaxes=True,
-    subplot_titles=(
-        "SNR Map",
-        "SNR Map w/ Detections",
-        "SNR Map",
-        "SNR Map w/ Detections",
-    ),
-    vertical_spacing=0.15,
+    row_titles=row_titles,
+    column_titles=col_titles,
 )
 
-plot_btr(
-    data=snr_map_without_ownship_noise,
-    timesteps=timesteps,
-    steering_azimuths=steering_azimuths_deg,
-    fig=fig_results,
-    row=1,
-    col=1,
-)
-plot_btr(
-    data=snr_map_without_ownship_noise,
-    detections=detections_without_ownship_noise,
-    timesteps=timesteps,
-    steering_azimuths=steering_azimuths_deg,
-    fig=fig_results,
-    row=1,
-    col=2,
-)
-plot_btr(
-    data=snr_map_with_ownship_noise,
-    timesteps=timesteps,
-    steering_azimuths=steering_azimuths_deg,
-    fig=fig_results,
-    row=2,
-    col=1,
-)
-plot_btr(
-    data=snr_map_with_ownship_noise,
-    detections=detections_with_ownship_noise,
-    timesteps=timesteps,
-    steering_azimuths=steering_azimuths_deg,
-    fig=fig_results,
-    row=2,
-    col=2,
-)
+result_panels = [
+    (1, snr_map_without_ownship_noise, detections_without_ownship_noise),
+    (2, snr_map_with_ownship_noise, detections_with_ownship_noise),
+]
 
-fig_results.add_annotation(
-    x=0.5,
-    y=1.08,
-    xref="paper",
-    yref="paper",
-    text="Without Ownship Noise",
-    showarrow=False,
-    font=dict(size=16),
-)
-fig_results.add_annotation(
-    x=0.5,
-    y=0.48,
-    xref="paper",
-    yref="paper",
-    text="With Ownship Noise",
-    showarrow=False,
-    font=dict(size=16),
-)
+for row, snr_map, detections in result_panels:
+    plot_btr(
+        data=snr_map,
+        timesteps=timesteps,
+        steering_azimuths=steering_azimuths_deg,
+        fig=fig_results,
+        row=row,
+        col=1,
+    )
+    plot_btr(
+        data=snr_map,
+        detections=detections,
+        timesteps=timesteps,
+        steering_azimuths=steering_azimuths_deg,
+        fig=fig_results,
+        row=row,
+        col=2,
+    )
 
 apply_shared_colourscale(
     fig_results,
     colorbar=dict(
         title=dict(text="SNR (dB)", side="right"),
-        x=1.02,
+        x=1.1,
         xanchor="left",
         y=0.5,
         yanchor="middle",
@@ -550,13 +534,13 @@ apply_shared_colourscale(
     ),
 )
 
-fig_results.update_xaxes(title_text="", showticklabels=False, row=1, col=1)
-fig_results.update_xaxes(title_text="", showticklabels=False, row=1, col=2)
-fig_results.update_yaxes(title_text="", showticklabels=False, row=1, col=2)
-fig_results.update_yaxes(title_text="", showticklabels=False, row=2, col=2)
+for col in [1, 2]:
+    fig_results.update_xaxes(title_text="", showticklabels=False, row=1, col=col)
+for row in [1, 2]:
+    fig_results.update_yaxes(title_text="", showticklabels=False, row=row, col=2)
 
 fig_results.update_layout(
-    title="Bearing-Time Comparison: Ambient vs Ownship Self-Noise",
+    title="Bearing-Time Comparison: Without vs With Ownship Self-Noise",
     template="plotly_white",
     autosize=True,
     width=None,
@@ -569,9 +553,24 @@ fig_results.update_layout(
 # Key Takeaways
 # -------------
 #
-# * **Ownship contribution** - adding self-noise raises local clutter and can
-#   increase false alarms near ownship-bearing regions.
-# * **Fair comparison** - keeping propagation, beamforming, and detector settings
-#   fixed isolates the impact of ownship interference.
-# * **Extension path** - vary self-noise amplitudes or detector thresholds to
-#   map sensitivity of operating points to ownship conditions.
+# * **Wideband heading clutter** - ownship self-noise appears as a broad
+#   elevation centred on the heading angle. Its broadband character spreads
+#   power across a wide angular region rather than the thin line a distant
+#   tonal source would produce.
+# * **Target tracks survive** - the three target lines remain visible in both
+#   rows; ownship noise raises the noise floor but does not mask the targets at
+#   these source levels.
+# * **Increased false alarms** - the elevated background in the ownship-noise
+#   row causes the CACFAR detector to produce additional detections during the
+#   banding intervals, visible as inter-track scatter in the right column.
+# * **Fair comparison** - keeping propagation, beamformer, and detector settings
+#   identical between runs means any difference is solely attributable to the
+#   ownship source term.
+# * **Tow cable as mitigation** - increasing ``tow_cable_length_m`` separates
+#   the array from the ownship source, which the propagation model converts into
+#   additional transmission loss. A longer cable therefore reduces the self-noise
+#   level at the array and narrows the banding. This mirrors the real-world
+#   practice of deploying longer cables to improve self-noise rejection.
+# * **Extension path** - increase ownship amplitude or reduce the CACFAR
+#   threshold factor to find the operating point at which self-noise begins to
+#   mask true targets.
