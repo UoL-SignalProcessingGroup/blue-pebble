@@ -24,7 +24,6 @@ from datetime import datetime, timedelta
 
 import numpy as np
 from plotly.subplots import make_subplots
-from scipy.signal import get_window
 from stonesoup.models.transition.linear import (
     CombinedLinearGaussianTransitionModel,
     ConstantVelocity,
@@ -41,7 +40,6 @@ from bluepebble.signal.anthropogenic import SyntheticAnthropogenicSignal
 from bluepebble.signal.random import ColouredNoiseSignal
 from bluepebble.sigproc import (
     DelayAndSumBeamformer,
-    MinimumVarianceDistortionlessResponseBeamformer,
     SteeringCalculator,
 )
 from bluepebble.simulator import ContinuousSTFTPassiveSonarArraySimulator
@@ -66,7 +64,6 @@ time_interval = timedelta(seconds=sim_rate_s)
 num_steps = int(SIM_LENGTH / sim_rate_s)
 
 total_duration_s = num_steps * time_interval.total_seconds()
-print(f"Total simulation duration: {total_duration_s} seconds")
 
 # %%
 # Platform Setup and Generation
@@ -210,16 +207,6 @@ for target_start_vector in target_start_vectors:
 
     relative_bearing_ground_truths.append(GroundTruthPath(bearing_states))
 
-fig1 = plot_world(
-    truths=target_ground_truths, platform=platform, figsize=(600, 500)
-).update_layout(
-    title="Platform and Target Trajectories",
-    template="plotly_white",
-    autosize=True,
-    width=None,
-    height=None,
-)
-
 # %%
 # Propagation Model
 # -----------------
@@ -319,7 +306,6 @@ def _add_bathymetry_traces(figure, source_figure, *, row, show_colourbar):
         trace_copy = deepcopy(trace)
         if trace_copy.type == "heatmap":
             trace_copy.showscale = show_colourbar
-            trace_copy.colorscale = "greens"
             if show_colourbar:
                 trace_copy.colorbar = dict(
                     title=dict(text="Depth (m)", side="right"),
@@ -334,12 +320,25 @@ def _add_bathymetry_traces(figure, source_figure, *, row, show_colourbar):
             trace_copy.showlegend = False
         figure.add_trace(trace_copy, row=row, col=1)
 
+    suffix = "" if row == 1 else str(row)
+    for annotation in source_figure.layout.annotations:
+        ann = deepcopy(annotation)
+        ann.xref = f"x{suffix}"
+        ann.yref = f"y{suffix}"
+        ann.axref = f"x{suffix}"
+        ann.ayref = f"y{suffix}"
+        figure.add_annotation(ann)
+
 
 _add_bathymetry_traces(fig_bathy, fig_bathy_flat, row=1, show_colourbar=False)
 _add_bathymetry_traces(fig_bathy, fig_bathy_seamount, row=2, show_colourbar=True)
 
+x_title = fig_bathy_flat.layout.xaxis.title.text
+y_title = fig_bathy_flat.layout.yaxis.title.text
 shared_x_range = fig_bathy_flat.layout.xaxis.range
 shared_y_range = fig_bathy_flat.layout.yaxis.range
+
+del fig_bathy_flat, fig_bathy_seamount
 
 common_axis_style = dict(
     constrain="domain",
@@ -348,39 +347,10 @@ common_axis_style = dict(
     zeroline=False,
 )
 
-fig_bathy.update_xaxes(
-    title_text="",
-    range=shared_x_range,
-    scaleanchor="y",
-    scaleratio=1,
-    showticklabels=False,
-    row=1,
-    col=1,
-    **common_axis_style,
-)
-fig_bathy.update_xaxes(
-    title_text=fig_bathy_seamount.layout.xaxis.title.text,
-    range=shared_x_range,
-    scaleanchor="y2",
-    scaleratio=1,
-    row=2,
-    col=1,
-    **common_axis_style,
-)
-fig_bathy.update_yaxes(
-    title_text=fig_bathy_flat.layout.yaxis.title.text,
-    range=shared_y_range,
-    row=1,
-    col=1,
-    **common_axis_style,
-)
-fig_bathy.update_yaxes(
-    title_text=fig_bathy_seamount.layout.yaxis.title.text,
-    range=shared_y_range,
-    row=2,
-    col=1,
-    **common_axis_style,
-)
+fig_bathy.update_xaxes(range=shared_x_range, scaleratio=1, **common_axis_style)
+fig_bathy.update_xaxes(title_text="", scaleanchor="y", showticklabels=False, row=1, col=1)
+fig_bathy.update_xaxes(title_text=x_title, scaleanchor="y2", row=2, col=1)
+fig_bathy.update_yaxes(title_text=y_title, range=shared_y_range, **common_axis_style)
 
 fig_bathy.update_layout(
     template="plotly_white",
@@ -391,9 +361,6 @@ fig_bathy.update_layout(
     margin=dict(b=90, t=60),
     title="Bathymetry Comparison",
 )
-
-# Remove intermediate figures from namespace so they don't render in docs
-del fig_bathy_flat, fig_bathy_seamount
 
 # %%
 # Signal Model
@@ -447,37 +414,12 @@ def _make_signal_models():
 # in arrival structure caused by the seabed is visible in the resulting bearing-time
 # record.
 
-beamformer_type = "DAS"
-beamformer_shading = None
-beamformer_domain = "frequency"
 steering_azimuths_rad = np.linspace(-np.pi, np.pi, 181)
 
-shading = None
-if beamformer_shading is not None:
-    shading = get_window(beamformer_shading, platform.num_sensors)
-
-if beamformer_type == "DAS":
-    if beamformer_domain == "broadband_power":
-        beamformer = DelayAndSumBeamformer(
-            domain=beamformer_domain,
-            sampling_rate_hz=sampling_rate_hz,
-            fmin=0.0,
-            fmax=sampling_rate_hz / 2,
-        )
-    else:
-        beamformer = DelayAndSumBeamformer(
-            sampling_rate_hz=sampling_rate_hz,
-            shading=shading,
-            domain=beamformer_domain,
-        )
-elif beamformer_type == "MVDR":
-    beamformer = MinimumVarianceDistortionlessResponseBeamformer(
-        sampling_rate_hz=sampling_rate_hz,
-        fmin=0.0,
-        fmax=sampling_rate_hz / 2,
-    )
-else:
-    raise ValueError(f"Unknown beamformer type: {beamformer_type}")
+beamformer = DelayAndSumBeamformer(
+    sampling_rate_hz=sampling_rate_hz,
+    domain="frequency",
+)
 
 steering_calculator = SteeringCalculator(
     ssp=ssp,
@@ -610,17 +552,15 @@ snr_plot_configs = [
 ]
 
 for row, col, snr_map, detections in snr_plot_configs:
-    plot_kwargs = dict(
+    plot_btr(
         data=snr_map,
+        detections=detections,
         timesteps=timesteps,
         steering_azimuths=steering_azimuths_deg,
         fig=fig_snr,
         row=row,
         col=col,
     )
-    if detections is not None:
-        plot_kwargs["detections"] = detections
-    plot_btr(**plot_kwargs)
 
 apply_shared_colourscale(
     fig_snr,
@@ -645,7 +585,7 @@ for row in (1, 2):
 fig_snr.update_layout(
     template="plotly_white",
     autosize=True,
-    height=int(np.clip(260 * 2, 700, 2200)),
+    height=700,
     showlegend=False,
     title="SNR Maps and Detections: Flat vs Seamount Bathymetry",
 )
