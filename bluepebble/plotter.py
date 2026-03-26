@@ -803,11 +803,10 @@ def plot_world(
         eps = max(1e-9, 1e-6 * max(abs(zmin_raw), abs(zmax_raw), 1.0))
         zmin = zmin_raw if zmin_raw < 0.0 else -eps
         zmax = zmax_raw if zmax_raw > 0.0 else eps
-        colorscale = _two_slope_colorscale(_get_cmocean_topo_cmap(), zmin, zmax, vcenter=0.0)
+        colorscale = "Greens"
 
         hovertemplate = (
-            f"X: %{{x:.2f}} {unit}<br>Y: %{{y:.2f}} {unit}<br>"
-            "Bathymetry z: %{z:.2f} m<extra></extra>"
+            f"X: %{{x:.2f}} {unit}<br>Y: %{{y:.2f}} {unit}<br>Z: %{{z:.2f}} m<extra></extra>"
         )
         fig.add_trace(
             go.Heatmap(
@@ -819,7 +818,7 @@ def plot_world(
                 zmax=zmax,
                 opacity=0.8,
                 colorbar=dict(
-                    title=dict(text="Bathymetry z (m)", side="right"),
+                    title=dict(text="Depth (m)", side="right"),
                     thickness=24,
                     len=1.0,
                 ),
@@ -1002,6 +1001,8 @@ def plot_world(
                 x=0.0,
             ),
             margin=dict(b=120),
+            xaxis=dict(gridcolor="#929292"),
+            yaxis=dict(gridcolor="#929292"),
         )
 
     return fig
