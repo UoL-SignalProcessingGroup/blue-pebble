@@ -33,6 +33,7 @@ extensions = [
     "sphinx.ext.intersphinx",
     "myst_parser",
     "sphinx_gallery.gen_gallery",
+    "_sgscript",
 ]
 
 intersphinx_mapping = {
@@ -77,6 +78,8 @@ sphinx_gallery_conf = {
     "examples_dirs": ["examples", "tutorials"],
     "gallery_dirs": ["source/auto_examples", "source/auto_tutorials"],
     "filename_pattern": r"\.py",
+    # Exclude scripts that require external data not bundled with the repository.
+    # These examples have hand-written RST pages under docs/source/examples/.
     "ignore_pattern": r"using_measured_data\.py",
     "abort_on_example_error": False,
     "image_scrapers": ("matplotlib", _plotly_scraper),
@@ -95,3 +98,87 @@ sphinx_gallery_conf = {
 }
 
 warnings.filterwarnings("ignore", category=RemovedInSphinx10Warning)
+
+# ---------------------------------------------------------------------------
+# Patch the SG-generated gallery index to include the measured-data example.
+#
+# Sphinx-Gallery regenerates source/auto_examples/index.rst on every build,
+# so any manual edits are lost.  The setup() hook below runs in builder-inited
+# AFTER SG's own handler (same priority 500, FIFO order) and splices in a
+# "Measured Data Examples" section before the FUSION 2026 section.
+# ---------------------------------------------------------------------------
+
+_MEASURED_DATA_SECTION = """\
+Measured Data Examples
+----------------------
+
+Examples that require external geophysical datasets not bundled with the
+repository.  Pre-generated figures are embedded so the pages render without
+re-running the scripts.
+
+
+
+.. raw:: html
+
+    <div class="sphx-glr-thumbnails">
+
+.. thumbnail-parent-div-open
+
+.. raw:: html
+
+    <div class="sphx-glr-thumbcontainer" tooltip="Runs one scenario using measured environmental inputs: GEBCO bathymetry and Copernicus temperature/salinity converted to sound speed via Leroy&#x27;s equation.  Demonstrates how to wire real geophysical datasets into the Blue Pebble pipeline.">
+
+.. only:: html
+
+  .. image:: /source/_static/measured_data_figs/using_measured_data_world.png
+    :alt:
+
+  :doc:`/source/examples/using_measured_data`
+
+.. raw:: html
+
+      <div class="sphx-glr-thumbnail-title">Using Measured Environmental Data</div>
+    </div>
+
+
+.. thumbnail-parent-div-close
+
+.. raw:: html
+
+    </div>
+
+
+.. toctree::
+   :hidden:
+
+   /source/examples/using_measured_data
+
+
+"""
+
+
+def _patch_gallery_index(app: object) -> None:
+    """Splice the measured-data section into the SG-generated gallery index.
+
+    Also demotes the SG-generated "FUSION 2026 Examples" heading from h1 (=)
+    to h2 (-) so that both sub-sections nest correctly under "Examples" in the
+    sidebar navigation.
+    """
+    gallery_index = Path(app.srcdir) / "source" / "auto_examples" / "index.rst"  # type: ignore[attr-defined]
+    if not gallery_index.exists():
+        return
+    content = gallery_index.read_text(encoding="utf-8")
+    if _MEASURED_DATA_SECTION in content:
+        return  # already patched (shouldn't happen, but be safe)
+    # Splice our measured-data section before the (now-demoted) FUSION heading.
+    marker = "FUSION 2026 Examples\n"
+    idx = content.find(marker)
+    if idx == -1:
+        content = content + "\n" + _MEASURED_DATA_SECTION
+    else:
+        content = content[:idx] + _MEASURED_DATA_SECTION + content[idx:]
+    gallery_index.write_text(content, encoding="utf-8")
+
+
+def setup(app: object) -> None:
+    app.connect("builder-inited", _patch_gallery_index)  # type: ignore[attr-defined]
