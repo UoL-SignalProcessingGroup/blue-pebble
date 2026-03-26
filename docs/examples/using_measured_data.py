@@ -10,46 +10,23 @@ This example runs one scenario using measured environmental inputs:
 
 .. note::
 
-   This example requires external data files (GEBCO bathymetry and Copernicus
-   ocean reanalysis) that are not bundled with the repository.  It is excluded
-   from the automated gallery build and must be run manually after downloading
-   the required datasets.
+   This example requires external data files (GEBCO bathymetry and Copernicus ocean
+   reanalysis) that are not bundled with the repository.  The figures below are
+   pre-generated from a local run with the measured data.  To regenerate them, set
+   ``save_figures = True`` in the Simulation Parameters section and run the script
+   with the data files present.
 """  # noqa: D205, D212, D400, D415
-# sphinx_gallery_skip_execution = True
 
 # %%
-# Simulation Parameters
-# ---------------------
+# Imports
+# -------
 #
-# Here core parameters for the simulation are set.
-
-# %%
+# All dependencies are consolidated here for convenience.
 from datetime import datetime, timedelta
 from pathlib import Path
 
 import numpy as np
-
-seed = 2000
-np.random.seed(seed)
-
-SIM_LENGTH = 1800  # seconds
-sim_rate_s = 5.0  # seconds
-
-start_time = datetime.now().replace(hour=0, minute=0, second=0, microsecond=0)
-time_interval = timedelta(seconds=sim_rate_s)
-num_steps = int(SIM_LENGTH / sim_rate_s)
-
-total_duration_s = num_steps * time_interval.total_seconds()
-print(f"Total simulation duration: {total_duration_s} seconds")
-
-# %%
-# Platform Setup and Generation
-# -----------------------------
-#
-# The ownship trajectory and towed-array geometry are configured here and propagated
-# over the full simulation duration.
-
-# %%
+from plotly.subplots import make_subplots
 from stonesoup.models.transition.linear import (
     CombinedLinearGaussianTransitionModel,
     ConstantVelocity,
@@ -57,29 +34,83 @@ from stonesoup.models.transition.linear import (
 )
 from stonesoup.types.groundtruth import GroundTruthPath, GroundTruthState
 
+from bluepebble.detector import CACFARDetector, PassiveSonarDetector, PeakDetector
+from bluepebble.models.environment import GEBCOBathymetry, LeroyCopernicusSoundSpeedProfile
+from bluepebble.models.propagation import rtrsAcousticPropagationModel
 from bluepebble.platform import TowedArrayPlatform
+from bluepebble.plotter import (
+    apply_shared_colourscale,
+    launch_bathymetry_and_sound_speed_viewer,
+    plot_btr,
+    plot_world,
+)
+from bluepebble.signal.anthropogenic import SyntheticAnthropogenicSignal
+from bluepebble.signal.random import ColouredNoiseSignal
+from bluepebble.sigproc import (
+    MinimumVarianceDistortionlessResponseBeamformer,
+    SteeringCalculator,
+)
+from bluepebble.simulator import ContinuousSTFTPassiveSonarArraySimulator
 
-turn_configs = [
-    {"angle_deg": -85.0, "rate_deg_per_s": 1.0},
-    {"angle_deg": 85.0, "rate_deg_per_s": 1.0},
-]
-leg_duration_seconds = [
-    SIM_LENGTH / 3,
-    SIM_LENGTH / 5,
-    SIM_LENGTH / 3,
-]
-if len(leg_duration_seconds) != len(turn_configs) + 1:
-    raise ValueError("Expect one leg duration per segment between turns")
+# %%
+# Simulation Parameters
+# ---------------------
+#
+# Here core parameters for the simulation are set. A fixed seed and a deterministic
+# start time ensure the scenario is reproducible across runs.
 
-leg_durations_s = [
-    timedelta(seconds=round(seconds / sim_rate_s) * sim_rate_s) for seconds in leg_duration_seconds
-]
+seed = 2000
+np.random.seed(seed)
 
-straight_model = CombinedLinearGaussianTransitionModel(
-    [ConstantVelocity(0.0), ConstantVelocity(0.0), ConstantVelocity(0.0)]
+sim_length_s = 1800  # seconds
+sim_rate_s = 5.0  # seconds
+
+start_time = datetime(2026, 1, 1, 0, 0, 0)
+time_interval = timedelta(seconds=sim_rate_s)
+num_steps = int(sim_length_s / sim_rate_s)
+
+total_duration_s = num_steps * time_interval.total_seconds()
+save_figures = False  # set True when running locally with data to regenerate PNGs
+# Guard: exec()-based runners (e.g. Sphinx-Gallery) do not define __file__, so
+# figure export cannot resolve the output path. Force False in that context.
+save_figures = save_figures and "__file__" in globals()
+
+# %%
+# Measured Data Path Resolution
+# -----------------------------
+#
+# The NetCDF file paths are resolved here so they can be updated in one place if
+# the data directory or filenames change, without touching the model construction
+# cells below. The bathymetry is from GEBCO 2024 for a region south of the Faroe
+# Islands; the temperature and salinity reanalysis are from the Copernicus Marine
+# Service for the same region and date.
+#
+# Files can be downloaded from:
+#
+# - GEBCO Compilation Group, The GEBCO Grid (GEBCO_2024 Grid).
+# - E.U. Copernicus Marine Service Information (https://doi.org/10.48670/moi-00016).
+
+data_dir = Path(__file__).parent / "measured_data"
+if not data_dir.exists():
+    raise FileNotFoundError(f"Could not find measured_data directory at {data_dir}")
+
+gebco_file = data_dir / "GEBCO_11_Apr_2025_cd1b685d47c9" / "gebco_2024_n61.25_s59.0_w-8.0_e-5.0.nc"
+cop_temp_file = (
+    data_dir / "cmems_mod_glo_phy-thetao_anfc_0.083deg"
+    "_PT6H-i_thetao_8.00W-5.00W_59.00N-61.25N_0.49-5274.78m_2025-03-19.nc"
+)
+cop_sal_file = (
+    data_dir / "cmems_mod_glo_phy-so_anfc_0.083deg"
+    "_PT6H-i_so_8.00W-5.00W_59.00N-61.25N_0.49-5274.78m_2025-03-19.nc"
 )
 
-depth_model = ConstantVelocity(0.0)
+# %%
+# Turn Model Helper
+# -----------------
+#
+# `_build_turn` converts a desired turn angle and rate into a :class:`~.KnownTurnRate`
+# transition model paired with its duration, keeping the platform construction loop
+# below declarative and easy to modify.
 
 
 def _build_turn(angle_deg: float, rate_deg_per_s: float):
@@ -94,6 +125,34 @@ def _build_turn(angle_deg: float, rate_deg_per_s: float):
         seconds=turn_duration_s
     )
 
+
+# %%
+# Platform Setup and Generation
+# -----------------------------
+#
+# The ownship trajectory and towed-array geometry are configured here and propagated
+# over the full simulation duration.
+
+turn_configs = [
+    {"angle_deg": -85.0, "rate_deg_per_s": 1.0},
+    {"angle_deg": 85.0, "rate_deg_per_s": 1.0},
+]
+leg_duration_seconds = [
+    sim_length_s / 3,
+    sim_length_s / 5,
+    sim_length_s / 3,
+]
+if len(leg_duration_seconds) != len(turn_configs) + 1:
+    raise ValueError("Expect one leg duration per segment between turns")
+
+leg_durations_s = [
+    timedelta(seconds=round(seconds / sim_rate_s) * sim_rate_s) for seconds in leg_duration_seconds
+]
+
+straight_model = CombinedLinearGaussianTransitionModel(
+    [ConstantVelocity(0.0), ConstantVelocity(0.0), ConstantVelocity(0.0)]
+)
+depth_model = ConstantVelocity(0.0)
 
 platform_start_vector = np.array([0.0, 2.2, 20000.0, 2.2, -5.0, 0.0])
 platform_position_mapping = [0, 2, 4]
@@ -145,16 +204,9 @@ for i in range(1, num_steps):
 # ---------------------------------
 #
 # Target kinematics and source metadata are generated here, along with relative-bearing
-# truth sequences used for BTR overlays.
-
-# %%
-from stonesoup.models.transition.linear import (
-    CombinedLinearGaussianTransitionModel,
-    ConstantVelocity,
-)
-from stonesoup.types.groundtruth import GroundTruthState
-
-from bluepebble.plotter import plot_world
+# truth sequences used for BTR overlays. The measured bathymetry and sound speed profile
+# are also constructed at the end of this section — they are needed for the world
+# overview figure and are reused by the propagation model that follows.
 
 target_start_vectors = [
     np.array([-15000, 10.0, 20000, 10, -5.0, 0.0]),
@@ -226,46 +278,6 @@ for target_start_vector in target_start_vectors:
 
     relative_bearing_ground_truths.append(GroundTruthPath(bearing_states))
 
-# %%
-# Measured Environment Models (GEBCO + Copernicus)
-# ------------------------------------------------
-#
-# Load the measured environmental data and create the corresponding environment models.
-# The bathymetry for this example is from the GEBCO 2025 dataset for a region south of
-# the Faroe Islands, and the sound speed profile is from the Copernicus Marine Service
-# for the same region. This data is not generated by this example and is loaded from the
-# `docs/examples/measured_data` folder. Both datasets are in `.nc` NetCDF format.
-#
-# The files can be downloaded from:
-#
-# - GEBCO Compilation Group, The GEBCO Grid (GEBCO_2024 Grid).
-# - E.U. Copernicus Marine Service Information
-#   (https://doi.org/10.48670/moi-00016).
-#
-# The sound speed profile is calculated from the temperature and salinity profiles using
-# Leroy's equation, which is implemented in the `LeroyCopernicusSoundSpeedProfile` class.
-# The bathymetry is loaded from the GEBCO dataset using the `GEBCOBathymetry` class.
-
-# %%
-import os
-
-from bluepebble.models.environment import GEBCOBathymetry, LeroyCopernicusSoundSpeedProfile
-from bluepebble.models.propagation import rtrsAcousticPropagationModel
-
-data_dir = Path(os.getcwd()) / "measured_data"
-if not data_dir.exists():
-    raise FileNotFoundError(f"Could not find measured_data directory at {data_dir}")
-
-gebco_file = data_dir / "GEBCO_11_Apr_2025_cd1b685d47c9" / "gebco_2024_n61.25_s59.0_w-8.0_e-5.0.nc"
-cop_temp_file = (
-    data_dir / "cmems_mod_glo_phy-thetao_anfc_0.083deg"
-    "_PT6H-i_thetao_8.00W-5.00W_59.00N-61.25N_0.49-5274.78m_2025-03-19.nc"
-)
-cop_sal_file = (
-    data_dir / "cmems_mod_glo_phy-so_anfc_0.083deg"
-    "_PT6H-i_so_8.00W-5.00W_59.00N-61.25N_0.49-5274.78m_2025-03-19.nc"
-)
-
 bathymetry = GEBCOBathymetry(
     file_path=str(gebco_file),
     resolution=500.0,
@@ -277,6 +289,73 @@ ssp = LeroyCopernicusSoundSpeedProfile(
     reference_lat_deg=bathymetry.reference_lat_deg,
     reference_lon_deg=bathymetry.reference_lon_deg,
 )
+
+fig_world = plot_world(
+    truths=target_ground_truths,
+    platform=platform,
+    bathymetry=bathymetry,
+).update_layout(
+    title="World Picture: Platform and Target Trajectories",
+    template="plotly_white",
+    width=600,
+    height=600,
+    legend=dict(x=0.5, y=-0.14, xanchor="center", yanchor="top", orientation="h"),
+)
+
+if save_figures:
+    _figs_dir = (
+        Path(__file__).resolve().parent.parent / "source" / "_static" / "measured_data_figs"
+    )
+    fig_world.write_image(_figs_dir / "using_measured_data_world.png", scale=2)
+    html_fragment = fig_world.to_html(include_plotlyjs="cdn", full_html=False)
+    (_figs_dir / "using_measured_data_world.html").write_text(
+        f'<div style="overflow-x: auto;">{html_fragment}</div>', encoding="utf-8"
+    )
+
+# %%
+# .. raw:: html
+#    :file: ../_static/measured_data_figs/using_measured_data_world.html
+#
+# .. only:: not html
+#
+#    .. image:: ../_static/measured_data_figs/using_measured_data_world.png
+#       :alt: Platform and target trajectories overlaid on measured GEBCO bathymetry
+
+# %%
+# Bathymetry and Sound Speed Viewer
+# ---------------------------------
+#
+# The Dash viewer supports notebook display modes through `jupyter_mode`: `inline`,
+# `tab`, `external`, or `jupyterlab`.
+# Use `None` for standard server mode.
+
+launch_bathymetry_ssp_viewer = False
+viewer_host = "127.0.0.1"
+viewer_port = 8050
+viewer_jupyter_mode = None
+
+if launch_bathymetry_ssp_viewer:
+    launch_bathymetry_and_sound_speed_viewer(
+        bathymetry=bathymetry,
+        ssp=ssp,
+        host=viewer_host,
+        port=viewer_port,
+        debug=False,
+        jupyter_mode=viewer_jupyter_mode,
+    )
+else:
+    print(
+        "Set launch_bathymetry_ssp_viewer=True to start the dashboard. "
+        f"Current jupyter_mode={viewer_jupyter_mode!r}."
+    )
+
+# %%
+# Propagation Model
+# -----------------
+#
+# RTRS ray-tracing is used because it natively accepts the measured bathymetry and
+# sound speed profile objects built above, supporting range-varying environments
+# without approximation.
 
 prop_step_m = 25.0
 prop_azimuth_search_width = 10.0
@@ -311,61 +390,11 @@ prop_model = rtrsAcousticPropagationModel(
 )
 
 # %%
-# Geometry View: Trajectories over Bathymetry
-# -------------------------------------------
-#
-# These plots use `plot_world` with bathymetry overlays to show the kinematic scene
-# against the measured seabed model.
-
-# %%
-fig_world = plot_world(
-    truths=target_ground_truths,
-    platform=platform,
-    bathymetry=bathymetry,
-    figsize=(700, 550),
-)
-
-# %%
-# Bathymetry and Sound Speed Viewer
-# ---------------------------------
-#
-# The Dash viewer supports notebook display modes through `jupyter_mode`: `inline`,
-# `tab`, `external`, or `jupyterlab`.
-# Use `None` for standard server mode.
-
-# %%
-from bluepebble.plotter import launch_bathymetry_and_sound_speed_viewer
-
-launch_bathymetry_ssp_viewer = False
-viewer_host = "127.0.0.1"
-viewer_port = 8050
-viewer_jupyter_mode = None
-
-if launch_bathymetry_ssp_viewer:
-    launch_bathymetry_and_sound_speed_viewer(
-        bathymetry=bathymetry,
-        ssp=ssp,
-        host=viewer_host,
-        port=viewer_port,
-        debug=False,
-        jupyter_mode=viewer_jupyter_mode,
-    )
-else:
-    print(
-        "Set launch_bathymetry_ssp_viewer=True to start the dashboard. "
-        f"Current jupyter_mode={viewer_jupyter_mode!r}."
-    )
-
-# %%
 # Signal Model
 # ------------
 #
 # Here the source and ambient signal models are defined. Each target receives a broadband
 # ship signal model, and coloured ambient noise is added at the array.
-
-# %%
-from bluepebble.signal.anthropogenic import SyntheticAnthropogenicSignal
-from bluepebble.signal.random import ColouredNoiseSignal
 
 sampling_rate_hz = 500.0
 frame_len = 500
@@ -406,48 +435,15 @@ for target_ground_truth in target_ground_truths:
 # This section sets the beamforming parameters and builds the steering calculator.
 # An MVDR beamformer is used.
 
-# %%
-from scipy.signal import get_window
-
-from bluepebble.sigproc import (
-    DelayAndSumBeamformer,
-    MinimumVarianceDistortionlessResponseBeamformer,
-    SteeringCalculator,
-)
-
-beamformer_type = "MVDR"
-beamformer_shading = None
-beamformer_domain = "frequency"
 steering_azimuths_rad = np.linspace(-np.pi, np.pi, 181)
 fmin = 120.0
 fmax = 250.0
 
-shading = None
-if beamformer_shading is not None:
-    shading = get_window(beamformer_shading, platform.num_sensors)
-
-if beamformer_type == "DAS":
-    if beamformer_domain == "broadband_power":
-        beamformer = DelayAndSumBeamformer(
-            domain=beamformer_domain,
-            sampling_rate_hz=sampling_rate_hz,
-            fmin=fmin,
-            fmax=fmax,
-        )
-    else:
-        beamformer = DelayAndSumBeamformer(
-            sampling_rate_hz=sampling_rate_hz,
-            shading=shading,
-            domain=beamformer_domain,
-        )
-elif beamformer_type == "MVDR":
-    beamformer = MinimumVarianceDistortionlessResponseBeamformer(
-        sampling_rate_hz=sampling_rate_hz,
-        fmin=fmin,
-        fmax=fmax,
-    )
-else:
-    raise ValueError(f"Unknown beamformer type: {beamformer_type}")
+beamformer = MinimumVarianceDistortionlessResponseBeamformer(
+    sampling_rate_hz=sampling_rate_hz,
+    fmin=fmin,
+    fmax=fmax,
+)
 
 steering_calculator = SteeringCalculator(
     ssp=ssp,
@@ -458,12 +454,10 @@ steering_calculator = SteeringCalculator(
 # Detector Pipeline Setup
 # -----------------------
 #
-# Set up the detector pipeline, which is a CA-CFAR detector with local maximum
-# clustering.
-
-# %%
-from bluepebble.detector import CACFARDetector, PassiveSonarDetector, PeakDetector
-from bluepebble.simulator import ContinuousSTFTPassiveSonarArraySimulator
+# CA-CFAR with `mode='wrap'` is chosen because the azimuth grid is circular, so
+# training cells should wrap around the ±180° boundary without a gap. Peak selection
+# then retains only the strongest local maximum within each cluster of threshold
+# crossings, suppressing duplicates at adjacent bearing bins.
 
 cfar_num_guard_cells = 2
 cfar_num_training_cells = 5
@@ -500,10 +494,10 @@ detector = PassiveSonarDetector(
 # Run Detection on Simulated Data
 # -------------------------------
 #
-# This cell runs the simulation and applies the detector pipeline.
+# Exhausting the detector generator produces the full SNR history and detection set
+# that are compared in the results figure below.
 
-# %%
-all_detections = list(detector.detections_gen(progress_bar=False, total_timesteps=num_steps))
+all_detections = list(detector.detections_gen(progress_bar=True, total_timesteps=num_steps))
 snr_map = detector.snr_history
 
 timesteps = [start_time + i * time_interval for i in range(num_steps)]
@@ -513,22 +507,17 @@ detections = [d for _, detection_set in all_detections for d in detection_set]
 print(f"Total no. of detections: {len(detections)}")
 
 # %%
-# Results
-# -------
+# Results: Measured Environment Scenario
+# --------------------------------------
 #
-# Here the beamformer SNR map is shown, along with the detections overlaid on the ground
-# truth.
-
-# %%
-from plotly.subplots import make_subplots
-
-from bluepebble.plotter import plot_btr
+# The left panel shows the raw SNR map; the right panel overlays detections and truth
+# bearings so bearing accuracy and false-alarm rate can be assessed simultaneously
+# against the measured acoustic environment.
 
 fig_results = make_subplots(
     rows=1,
     cols=2,
     shared_yaxes=True,
-    subplot_titles=("SNR Map", "SNR Map w/ Detections"),
     horizontal_spacing=0.08,
 )
 
@@ -551,17 +540,52 @@ plot_btr(
     col=2,
 )
 
-fig_results.update_yaxes(title_text="", row=1, col=2)
-fig_results.update_layout(
-    width=1300,
-    height=600,
-    showlegend=False,
-    margin=dict(r=90, t=90),
+apply_shared_colourscale(
+    fig_results,
+    colorbar=dict(
+        title=dict(text="SNR (dB)", side="right"),
+        x=1.02,
+        xanchor="left",
+        y=0.5,
+        yanchor="middle",
+        len=1.0,
+        thickness=24,
+    ),
 )
+
+fig_results.update_yaxes(title_text="", showticklabels=False, row=1, col=2)
+fig_results.update_layout(
+    title="Results: Measured Environment Scenario",
+    template="plotly_white",
+    autosize=True,
+    width=None,
+    height=700,
+    margin=dict(r=90, t=90),
+    legend=dict(x=0.5, y=-0.14, xanchor="center", yanchor="top", orientation="h"),
+)
+
+if save_figures:
+    _figs_dir = (
+        Path(__file__).resolve().parent.parent / "source" / "_static" / "measured_data_figs"
+    )
+    fig_results.write_image(_figs_dir / "using_measured_data_results.png", scale=2)
+    html_fragment = fig_results.to_html(include_plotlyjs="cdn", full_html=False)
+    (_figs_dir / "using_measured_data_results.html").write_text(
+        f'<div style="overflow-x: auto;">{html_fragment}</div>', encoding="utf-8"
+    )
+
+# %%
+# .. raw:: html
+#    :file: ../_static/measured_data_figs/using_measured_data_results.html
+#
+# .. only:: not html
+#
+#    .. image:: ../_static/measured_data_figs/using_measured_data_results.png
+#       :alt: SNR map and detections for the measured environment scenario
 
 # %%
 # Acknowledgement
-# ~~~~~~~~~~~~~~~
+# ---------------
 #
 # This example uses external environmental data derived from:
 #
