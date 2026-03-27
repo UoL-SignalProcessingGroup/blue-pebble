@@ -63,11 +63,11 @@ from bluepebble.simulator import (
 
 np.random.seed(1999)
 
-sim_rate = 2.0
+sim_rate_s = 2.0
 sim_length_s = 300.0
 sim_start_time = datetime.now().replace(hour=0, minute=0, second=0, microsecond=0)
-sim_time_interval = timedelta(seconds=sim_rate)
-sim_num_steps = int(sim_length_s / sim_rate)
+sim_time_interval = timedelta(seconds=sim_rate_s)
+sim_num_steps = int(sim_length_s / sim_rate_s)
 
 total_duration_s = sim_num_steps * sim_time_interval.total_seconds()
 
@@ -79,31 +79,31 @@ total_duration_s = sim_num_steps * sim_time_interval.total_seconds()
 # cable with 1 m sensor spacing at 10 m depth. The target vessel starts approximately 1.2 km away
 # and moves slowly from the north-west.
 
-ship_start_vector = np.array([0, 0, 0, 0, -10.0, 0])
-ship_position_mapping = [0, 2, 4]
-ship_velocity_mapping = [1, 3, 5]
-ship_transition_model = CombinedLinearGaussianTransitionModel(
+platform_start_vector = np.array([0, 0, 0, 0, -10.0, 0])
+platform_position_mapping = [0, 2, 4]
+platform_velocity_mapping = [1, 3, 5]
+platform_transition_model = CombinedLinearGaussianTransitionModel(
     [ConstantVelocity(0), ConstantVelocity(0), ConstantVelocity(0)]
 )
 
-array_num_sensors = 3
-array_tow_cable_length_m = 10.0
-array_sensor_spacing_m = 1.0
+num_sensors = 3
+tow_cable_length_m = 10.0
+sensor_spacing_m = 1.0
 array_depth_m = -10.0
 
-sensor_to_analyse = array_num_sensors // 2
+sensor_to_analyse = num_sensors // 2
 
-initial_state = GroundTruthState(ship_start_vector, timestamp=sim_start_time)
+initial_state = GroundTruthState(platform_start_vector, timestamp=sim_start_time)
 
 platform = TowedArrayPlatform(
     states=[initial_state],
-    position_mapping=ship_position_mapping,
-    velocity_mapping=ship_velocity_mapping,
-    transition_models=[ship_transition_model],
+    position_mapping=platform_position_mapping,
+    velocity_mapping=platform_velocity_mapping,
+    transition_models=[platform_transition_model],
     transition_times=[timedelta(seconds=total_duration_s)],
-    num_sensors=array_num_sensors,
-    cable_length_m=array_tow_cable_length_m,
-    sensor_spacing_m=array_sensor_spacing_m,
+    num_sensors=num_sensors,
+    cable_length_m=tow_cable_length_m,
+    sensor_spacing_m=sensor_spacing_m,
     array_depth_m=array_depth_m,
 )
 
@@ -157,7 +157,7 @@ fig_world = fig_world.update_layout(title="World Picture")
 # the example is unchanged.
 
 ssp = Constant(speed=1500.0)
-prop_model = CylindricalAcousticPropagationModel(ssp=ssp, attenuation_factor=0.5)
+propagation_model = CylindricalAcousticPropagationModel(ssp=ssp, attenuation_factor=0.5)
 
 # %%
 # Source Signal Models
@@ -328,7 +328,7 @@ def build_simulator(config, signal_model):
     """Build a simulator based on the config dict and signal model."""
     common_kwargs = {
         "platform": platform,
-        "propagation_model": prop_model,
+        "propagation_model": propagation_model,
         "signal_models": [signal_model],
         "noise_model": None,
         "beamformer": None,
@@ -456,7 +456,7 @@ fig_grid = fig_grid.update_layout(
 #   discontinuity.
 # * **Swap the propagation model** for :class:`~.rtrsAcousticPropagationModel` for more realistic
 #   ray-path geometry and multipath structure.
-# * **Adjust** ``array_num_sensors`` and ``sensor_to_analyse`` to explore multi-element effects
+# * **Adjust** ``num_sensors`` and ``sensor_to_analyse`` to explore multi-element effects
 #   such as beam steering or spatial filtering.
 # * **Remove the data dependency** by replacing :class:`~.RecordedAnthropogenicSignal` with a
 #   second :class:`~.SyntheticAnthropogenicSignal` configured with different tonal frequencies or

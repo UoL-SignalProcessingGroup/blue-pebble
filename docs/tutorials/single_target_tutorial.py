@@ -63,10 +63,11 @@ seed = 2000
 np.random.seed(seed)
 
 # Simulation parameters
-sim_duration = timedelta(seconds=900)
-time_interval = timedelta(seconds=5)
+sim_length_s = 900
+sim_rate_s = 5.0
+time_interval = timedelta(seconds=sim_rate_s)
 
-num_steps = int(sim_duration.total_seconds() / time_interval.total_seconds())
+num_steps = int(sim_length_s / sim_rate_s)
 start_time = datetime.now().replace(hour=0, minute=0, second=0, microsecond=0)
 timesteps = np.array([start_time + i * time_interval for i in range(num_steps)], dtype=object)
 
@@ -121,7 +122,7 @@ platform = TowedArrayPlatform(
     position_mapping=platform_position_mapping,
     velocity_mapping=platform_velocity_mapping,
     transition_models=[platform_transition_model],
-    transition_times=[sim_duration],
+    transition_times=[timedelta(seconds=sim_length_s)],
     num_sensors=num_sensors,
     cable_length_m=tow_cable_length_m,
     sensor_spacing_m=sensor_spacing_m,
@@ -193,7 +194,7 @@ for timestamp in timesteps[1:]:
 target_truth = GroundTruthPath(target_states)
 target_truths = [target_truth]
 
-fig = plot_world(truths=target_truths, platform=platform)
+plot_world(truths=target_truths, platform=platform)
 
 # %%
 # Choose a Blue Pebble Propagation Model
@@ -245,7 +246,7 @@ sampling_rate_hz = 500.0
 frame_len = 500
 hop_factor = 2
 fade_in_ms = 1000.0
-duration_s = num_steps * time_interval.total_seconds()
+total_duration_s = num_steps * time_interval.total_seconds()
 
 ambient_amplitude_upa = 10 ** (45 / 20)
 ambient_spectral_exponent = -1
@@ -257,7 +258,7 @@ ambient_noise_model = ColouredNoiseSignal(
 )
 
 signal_model = SyntheticAnthropogenicSignal(
-    duration_s=duration_s,
+    duration_s=total_duration_s,
     sampling_rate_hz=sampling_rate_hz,
     frame_len=frame_len,
     hop_factor=hop_factor,
@@ -290,7 +291,7 @@ from bluepebble.detector import (
     PassiveSonarDetector,
     PeakDetector,
 )
-from bluepebble.plotter import plot_btr
+from bluepebble.plotter import apply_shared_colourscale, plot_btr
 from bluepebble.sigproc import (
     MinimumVarianceDistortionlessResponseBeamformer,
     SteeringCalculator,
@@ -355,29 +356,53 @@ print(f"Total no. of detections: {len(detections_for_plotter)}")
 # %%
 from plotly.subplots import make_subplots
 
-fig = make_subplots(
-    rows=1, cols=2, shared_yaxes=True, subplot_titles=("SNR Map", "SNR Map with Detections")
+fig_btr = make_subplots(
+    rows=1,
+    cols=2,
+    shared_yaxes=True,
+    subplot_titles=("SNR Map", "SNR Map w/ Detections"),
 )
 
-_ = plot_btr(
+plot_btr(
     data=snr_map,
     timesteps=timesteps,
     steering_azimuths=np.rad2deg(steering_azimuths_rad),
-    fig=fig,
+    fig=fig_btr,
     row=1,
     col=1,
 )
-_ = plot_btr(
+plot_btr(
     data=snr_map,
     detections=detections_for_plotter,
     timesteps=timesteps,
     steering_azimuths=np.rad2deg(steering_azimuths_rad),
-    fig=fig,
+    fig=fig_btr,
     row=1,
     col=2,
 )
 
-_ = fig.update_layout(width=1200, height=700, yaxis2=dict(title=""))
+apply_shared_colourscale(
+    fig_btr,
+    colorbar=dict(
+        title=dict(text="SNR (dB)", side="right"),
+        x=1.02,
+        xanchor="left",
+        y=0.5,
+        yanchor="middle",
+        len=1.0,
+        thickness=24,
+    ),
+)
+
+fig_btr.update_layout(
+    template="plotly_white",
+    autosize=True,
+    width=None,
+    height=700,
+    showlegend=False,
+    margin=dict(r=80),
+    yaxis2=dict(title=""),
+)
 
 # %%
 # Feed Blue Pebble Detections into a Stone Soup Tracker
@@ -475,13 +500,17 @@ for _, current_tracks in kf:
         track[-1].state_vector[0, 0] = mod_bearing(float(track[-1].state_vector[0, 0]))
     tracks |= current_tracks
 
-fig = plot_btr(
+plot_btr(
     timesteps=timesteps,
     steering_azimuths=np.rad2deg(steering_azimuths_rad),
     truths=relative_bearing_truths,
     detections=detections_for_plotter,
     tracks=tracks,
-    figsize=(700, 700),
+).update_layout(
+    template="plotly_white",
+    autosize=True,
+    width=None,
+    height=700,
 )
 
 # %%

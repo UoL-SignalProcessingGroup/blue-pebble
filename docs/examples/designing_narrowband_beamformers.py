@@ -287,7 +287,7 @@ prop_azimuth_resolution = 0.5
 prop_elevation_range = (-25.0, 25.0)
 prop_elevation_resolution = 1.0
 
-prop_model = rtrsAcousticPropagationModel(
+propagation_model = rtrsAcousticPropagationModel(
     ssp=ssp,
     bathymetry=bathymetry,
     step_m=prop_step_m,
@@ -302,12 +302,12 @@ frame_len = 500
 hop_factor = 2
 fade_in_ms = 1000.0
 
-ambient_noise_amplitude_upa = 10 ** (50.0 / 20)
-ambient_noise_spectral_exponent = -1.0
+ambient_amplitude_upa = 10 ** (50.0 / 20)
+ambient_spectral_exponent = -1.0
 
 ambient_noise_model = ColouredNoiseSignal(
-    amplitude_upa=ambient_noise_amplitude_upa,
-    spectral_exponent=ambient_noise_spectral_exponent,
+    amplitude_upa=ambient_amplitude_upa,
+    spectral_exponent=ambient_spectral_exponent,
     duration_s=time_interval.total_seconds(),
     sampling_rate_hz=sampling_rate_hz,
 )
@@ -407,7 +407,7 @@ detectors = []
 for beamformer, steering_calculator in zip(beamformers, steering_calculators, strict=False):
     simulator = ContinuousSTFTPassiveSonarArraySimulator(
         platform=platform,
-        propagation_model=prop_model,
+        propagation_model=propagation_model,
         signal_models=_make_signal_models(),
         noise_model=ambient_noise_model,
         beamformer=beamformer,

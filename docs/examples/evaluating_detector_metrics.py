@@ -53,10 +53,11 @@ from bluepebble.simulator import ContinuousSTFTPassiveSonarArraySimulator
 seed = 2000
 np.random.seed(seed)
 
-sim_duration = timedelta(seconds=900)
-time_interval = timedelta(seconds=5)
+sim_length_s = 900
+sim_rate_s = 5.0
+time_interval = timedelta(seconds=sim_rate_s)
 
-num_steps = int(sim_duration.total_seconds() / time_interval.total_seconds())
+num_steps = int(sim_length_s / sim_rate_s)
 start_time = datetime(2026, 1, 1, 0, 0, 0)
 timesteps = np.array([start_time + i * time_interval for i in range(num_steps)], dtype=object)
 
@@ -77,9 +78,9 @@ platform_turn_rate_radps = np.deg2rad(1.0)
 leg1_duration_s = timedelta(seconds=405)
 turn1_angle_rad = np.deg2rad(-45)
 turn1_duration_s = timedelta(
-    seconds=round((abs(turn1_angle_rad) / platform_turn_rate_radps) / 5.0) * 5.0
+    seconds=round((abs(turn1_angle_rad) / platform_turn_rate_radps) / sim_rate_s) * sim_rate_s
 )
-leg2_duration_s = sim_duration - leg1_duration_s - turn1_duration_s
+leg2_duration_s = timedelta(seconds=sim_length_s) - leg1_duration_s - turn1_duration_s
 
 straight_model = CombinedLinearGaussianTransitionModel(
     [ConstantVelocity(0.0), ConstantVelocity(0.0), ConstantVelocity(0.0)]
@@ -231,7 +232,7 @@ propagation_model = rtrsAcousticPropagationModel(
 sampling_rate_hz = 500.0
 frame_len = 500
 hop_factor = 2
-duration_s = num_steps * time_interval.total_seconds()
+total_duration_s = num_steps * time_interval.total_seconds()
 
 ambient_amplitude_upa = 10 ** (45 / 20)
 ambient_spectral_exponent = -1
@@ -245,7 +246,7 @@ ambient_noise_model = ColouredNoiseSignal(
 
 def _make_signal_model():
     return SyntheticAnthropogenicSignal(
-        duration_s=duration_s,
+        duration_s=total_duration_s,
         sampling_rate_hz=sampling_rate_hz,
         frame_len=frame_len,
         hop_factor=hop_factor,

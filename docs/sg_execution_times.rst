@@ -6,7 +6,7 @@
 
 Computation times
 =================
-**02:04.203** total execution time for 10 files **from all galleries**:
+**01:54.109** total execution time for 10 files **from all galleries**:
 
 .. container::
 
@@ -32,11 +32,17 @@ Computation times
    * - Example
      - Time
      - Mem (MB)
+   * - :ref:`sphx_glr_source_auto_tutorials_multi_target_tutorial.py` (``tutorials/multi_target_tutorial.py``)
+     - 01:14.980
+     - 0.0
+   * - :ref:`sphx_glr_source_auto_tutorials_single_target_tutorial.py` (``tutorials/single_target_tutorial.py``)
+     - 00:39.129
+     - 0.0
    * - :ref:`sphx_glr_source_auto_examples_FUSION2026_multitarget_example.py` (``examples/FUSION2026_multitarget_example.py``)
-     - 01:19.271
+     - 00:00.000
      - 0.0
    * - :ref:`sphx_glr_source_auto_examples_FUSION2026_singletarget_example.py` (``examples/FUSION2026_singletarget_example.py``)
-     - 00:44.932
+     - 00:00.000
      - 0.0
    * - :ref:`sphx_glr_source_auto_examples_comparing_bathymetry.py` (``examples/comparing_bathymetry.py``)
      - 00:00.000
@@ -54,11 +60,5 @@ Computation times
      - 00:00.000
      - 0.0
    * - :ref:`sphx_glr_source_auto_examples_simulating_ownship_noise.py` (``examples/simulating_ownship_noise.py``)
-     - 00:00.000
-     - 0.0
-   * - :ref:`sphx_glr_source_auto_tutorials_multi_target_tutorial.py` (``tutorials/multi_target_tutorial.py``)
-     - 00:00.000
-     - 0.0
-   * - :ref:`sphx_glr_source_auto_tutorials_single_target_tutorial.py` (``tutorials/single_target_tutorial.py``)
      - 00:00.000
      - 0.0

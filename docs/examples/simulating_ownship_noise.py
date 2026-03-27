@@ -56,11 +56,11 @@ seed = 2000
 np.random.seed(seed)
 
 sim_length_s = 900
-sim_step_s = 5.0
+sim_rate_s = 5.0
 
 start_time = datetime(2026, 1, 1, 0, 0, 0)
-time_interval = timedelta(seconds=sim_step_s)
-num_steps = int(sim_length_s / sim_step_s)
+time_interval = timedelta(seconds=sim_rate_s)
+num_steps = int(sim_length_s / sim_rate_s)
 total_duration_s = num_steps * time_interval.total_seconds()
 timesteps = np.array([start_time + i * time_interval for i in range(num_steps)], dtype=object)
 
@@ -74,7 +74,7 @@ platform_turn_rate_radps = np.deg2rad(1.0)
 leg1_duration_s = timedelta(seconds=405)
 turn1_angle_rad = np.deg2rad(-45)
 turn1_duration_s = timedelta(
-    seconds=round((abs(turn1_angle_rad) / platform_turn_rate_radps) / sim_step_s) * sim_step_s
+    seconds=round((abs(turn1_angle_rad) / platform_turn_rate_radps) / sim_rate_s) * sim_rate_s
 )
 leg2_duration_s = timedelta(seconds=sim_length_s) - leg1_duration_s - turn1_duration_s
 

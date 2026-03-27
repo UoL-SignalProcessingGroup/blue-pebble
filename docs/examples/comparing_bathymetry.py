@@ -56,12 +56,12 @@ from bluepebble.simulator import ContinuousSTFTPassiveSonarArraySimulator
 seed = 2000
 np.random.seed(seed)
 
-SIM_LENGTH = 900  # seconds
+sim_length_s = 900  # seconds
 sim_rate_s = 5.0  # seconds
 
 start_time = datetime(2026, 1, 1, 0, 0, 0)
 time_interval = timedelta(seconds=sim_rate_s)
-num_steps = int(SIM_LENGTH / sim_rate_s)
+num_steps = int(sim_length_s / sim_rate_s)
 
 total_duration_s = num_steps * time_interval.total_seconds()
 
@@ -80,7 +80,7 @@ turn1_angle_rad = np.deg2rad(-85)
 turn1_duration_s = timedelta(
     seconds=round((abs(turn1_angle_rad) / platform_turn_rate_radps) / sim_rate_s) * sim_rate_s
 )
-leg2_duration_s = timedelta(seconds=SIM_LENGTH) - leg1_duration_s - turn1_duration_s
+leg2_duration_s = timedelta(seconds=sim_length_s) - leg1_duration_s - turn1_duration_s
 
 straight_model = CombinedLinearGaussianTransitionModel(
     [ConstantVelocity(0.0), ConstantVelocity(0.0), ConstantVelocity(0.0)]
@@ -446,7 +446,7 @@ cfar_mode = "wrap"
 peak_distance = 8
 
 
-def make_detector(simulator: ContinuousSTFTPassiveSonarArraySimulator) -> PassiveSonarDetector:
+def _make_detector(simulator: ContinuousSTFTPassiveSonarArraySimulator) -> PassiveSonarDetector:
     """Create a PassiveSonarDetector with a CACFARDetector followed by a PeakDetector."""
     cfar_detector = CACFARDetector(
         num_guard_cells=cfar_num_guard_cells,
@@ -485,8 +485,8 @@ simulator_seamount_bathymetry = ContinuousSTFTPassiveSonarArraySimulator(
     fade_in_ms=fade_in_ms,
 )
 
-detector_flat_bathymetry = make_detector(simulator_flat_bathymetry)
-detector_seamount_bathymetry = make_detector(simulator_seamount_bathymetry)
+detector_flat_bathymetry = _make_detector(simulator_flat_bathymetry)
+detector_seamount_bathymetry = _make_detector(simulator_seamount_bathymetry)
 
 # %%
 # Run Detection on Simulated Data

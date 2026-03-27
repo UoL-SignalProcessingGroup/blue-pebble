@@ -61,7 +61,6 @@ Implemented capabilities include:
 :caption: Contents
 
 installation
-getting_started
 auto_tutorials/index
 auto_examples/index
 api/index
