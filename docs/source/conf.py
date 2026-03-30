@@ -4,6 +4,7 @@
 from __future__ import annotations
 
 import os
+import re
 import sys
 import warnings
 from pathlib import Path
@@ -189,6 +190,39 @@ def _patch_gallery_index(app: object) -> None:
     gallery_index.write_text(content, encoding="utf-8")
 
 
+_TIMING_ROW_RE = re.compile(
+    r"   \* - :ref:`[^`]+`[^\n]*\n     - [^\n]*\n     - [^\n]*\n"
+)
+_IGNORED_IN_TIMING = re.compile(
+    r"comparing_simulators|modelling_acoustic_sources|using_measured_data"
+)
+
+
+def _patch_timing_files(app: object) -> None:
+    """Remove rows for ignored scripts from SG-generated execution-time tables.
+
+    Sphinx-Gallery includes ignored scripts (with 0s timing) in the timing
+    tables but generates no gallery page for them, leaving broken :ref: targets.
+    This hook strips those rows after SG has written the files.
+    """
+    candidates = [
+        Path(app.srcdir) / "source" / "auto_examples" / "sg_execution_times.rst",  # type: ignore[attr-defined]
+        Path(app.srcdir) / "source" / "auto_tutorials" / "sg_execution_times.rst",  # type: ignore[attr-defined]
+        Path(app.srcdir) / "sg_execution_times.rst",  # type: ignore[attr-defined]
+    ]
+    for timing_file in candidates:
+        if not timing_file.exists():
+            continue
+        content = timing_file.read_text(encoding="utf-8")
+        patched = _TIMING_ROW_RE.sub(
+            lambda m: "" if _IGNORED_IN_TIMING.search(m.group(0)) else m.group(0),
+            content,
+        )
+        if patched != content:
+            timing_file.write_text(patched, encoding="utf-8")
+
+
 def setup(app: object) -> None:
     """Register Blue Pebble's Sphinx extensions with the application."""
     app.connect("builder-inited", _patch_gallery_index)  # type: ignore[attr-defined]
+    app.connect("builder-inited", _patch_timing_files)  # type: ignore[attr-defined]
