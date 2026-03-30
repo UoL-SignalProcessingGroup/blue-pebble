@@ -57,6 +57,11 @@ reference_time = datetime(2026, 1, 1, 0, 0, 0)
 
 component_signals = {}
 
+save_figures = False  # set True when running locally with WAV data to regenerate PNGs
+# Guard: exec()-based runners (e.g. Sphinx-Gallery) do not define __file__, so
+# figure export cannot resolve the output path. Force False in that context.
+save_figures = save_figures and "__file__" in globals()
+
 
 # %%
 # WAV File Path Resolution
@@ -190,6 +195,25 @@ fig_whale = plot_spectrogram(
     height=None,
 )
 
+if save_figures:
+    _figs_dir = (
+        Path(__file__).resolve().parent.parent / "source" / "_static" / "acoustic_source_figs"
+    )
+    fig_whale.write_image(_figs_dir / "modelling_acoustic_sources_whale.png", scale=2)
+    html_fragment = fig_whale.to_html(include_plotlyjs="cdn", full_html=False)
+    (_figs_dir / "modelling_acoustic_sources_whale.html").write_text(
+        f'<div style="overflow-x: auto;">{html_fragment}</div>', encoding="utf-8"
+    )
+
+# %%
+# .. raw:: html
+#    :file: ../_static/acoustic_source_figs/modelling_acoustic_sources_whale.html
+#
+# .. only:: not html
+#
+#    .. image:: ../_static/acoustic_source_figs/modelling_acoustic_sources_whale.png
+#       :alt: Whale call spectrogram
+
 # %%
 # Snapping Shrimp Signal
 # ----------------------
@@ -259,6 +283,25 @@ fig_shrimp = plot_spectrogram(
     height=None,
 )
 
+if save_figures:
+    _figs_dir = (
+        Path(__file__).resolve().parent.parent / "source" / "_static" / "acoustic_source_figs"
+    )
+    fig_shrimp.write_image(_figs_dir / "modelling_acoustic_sources_shrimp.png", scale=2)
+    html_fragment = fig_shrimp.to_html(include_plotlyjs="cdn", full_html=False)
+    (_figs_dir / "modelling_acoustic_sources_shrimp.html").write_text(
+        f'<div style="overflow-x: auto;">{html_fragment}</div>', encoding="utf-8"
+    )
+
+# %%
+# .. raw:: html
+#    :file: ../_static/acoustic_source_figs/modelling_acoustic_sources_shrimp.html
+#
+# .. only:: not html
+#
+#    .. image:: ../_static/acoustic_source_figs/modelling_acoustic_sources_shrimp.png
+#       :alt: Snapping shrimp spectrogram
+
 # %%
 # Commercial Vessel Tonals
 # ------------------------
@@ -312,6 +355,27 @@ fig_vessel_tonal = plot_spectrogram(
     width=None,
     height=None,
 )
+
+if save_figures:
+    _figs_dir = (
+        Path(__file__).resolve().parent.parent / "source" / "_static" / "acoustic_source_figs"
+    )
+    fig_vessel_tonal.write_image(
+        _figs_dir / "modelling_acoustic_sources_vessel_tonal.png", scale=2
+    )
+    html_fragment = fig_vessel_tonal.to_html(include_plotlyjs="cdn", full_html=False)
+    (_figs_dir / "modelling_acoustic_sources_vessel_tonal.html").write_text(
+        f'<div style="overflow-x: auto;">{html_fragment}</div>', encoding="utf-8"
+    )
+
+# %%
+# .. raw:: html
+#    :file: ../_static/acoustic_source_figs/modelling_acoustic_sources_vessel_tonal.html
+#
+# .. only:: not html
+#
+#    .. image:: ../_static/acoustic_source_figs/modelling_acoustic_sources_vessel_tonal.png
+#       :alt: Commercial vessel tonal spectrogram
 
 # %%
 # Measured Vessel Noise
@@ -372,6 +436,27 @@ fig_vessel_measured = plot_spectrogram(
     height=None,
 )
 
+if save_figures:
+    _figs_dir = (
+        Path(__file__).resolve().parent.parent / "source" / "_static" / "acoustic_source_figs"
+    )
+    fig_vessel_measured.write_image(
+        _figs_dir / "modelling_acoustic_sources_vessel_measured.png", scale=2
+    )
+    html_fragment = fig_vessel_measured.to_html(include_plotlyjs="cdn", full_html=False)
+    (_figs_dir / "modelling_acoustic_sources_vessel_measured.html").write_text(
+        f'<div style="overflow-x: auto;">{html_fragment}</div>', encoding="utf-8"
+    )
+
+# %%
+# .. raw:: html
+#    :file: ../_static/acoustic_source_figs/modelling_acoustic_sources_vessel_measured.html
+#
+# .. only:: not html
+#
+#    .. image:: ../_static/acoustic_source_figs/modelling_acoustic_sources_vessel_measured.png
+#       :alt: Measured vessel noise spectrogram
+
 # %%
 # Ambient White Noise
 # -------------------
@@ -413,6 +498,25 @@ fig_ambient = plot_spectrogram(
     height=None,
 )
 
+if save_figures:
+    _figs_dir = (
+        Path(__file__).resolve().parent.parent / "source" / "_static" / "acoustic_source_figs"
+    )
+    fig_ambient.write_image(_figs_dir / "modelling_acoustic_sources_ambient.png", scale=2)
+    html_fragment = fig_ambient.to_html(include_plotlyjs="cdn", full_html=False)
+    (_figs_dir / "modelling_acoustic_sources_ambient.html").write_text(
+        f'<div style="overflow-x: auto;">{html_fragment}</div>', encoding="utf-8"
+    )
+
+# %%
+# .. raw:: html
+#    :file: ../_static/acoustic_source_figs/modelling_acoustic_sources_ambient.html
+#
+# .. only:: not html
+#
+#    .. image:: ../_static/acoustic_source_figs/modelling_acoustic_sources_ambient.png
+#       :alt: Ambient white noise spectrogram
+
 # %%
 # Composite Soundscape
 # --------------------
@@ -453,3 +557,22 @@ fig_composite = plot_spectrogram(
     width=None,
     height=None,
 )
+
+if save_figures:
+    _figs_dir = (
+        Path(__file__).resolve().parent.parent / "source" / "_static" / "acoustic_source_figs"
+    )
+    fig_composite.write_image(_figs_dir / "modelling_acoustic_sources_composite.png", scale=2)
+    html_fragment = fig_composite.to_html(include_plotlyjs="cdn", full_html=False)
+    (_figs_dir / "modelling_acoustic_sources_composite.html").write_text(
+        f'<div style="overflow-x: auto;">{html_fragment}</div>', encoding="utf-8"
+    )
+
+# %%
+# .. raw:: html
+#    :file: ../_static/acoustic_source_figs/modelling_acoustic_sources_composite.html
+#
+# .. only:: not html
+#
+#    .. image:: ../_static/acoustic_source_figs/modelling_acoustic_sources_composite.png
+#       :alt: Composite soundscape spectrogram

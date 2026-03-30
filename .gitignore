@@ -12,6 +12,7 @@ __pycache__/
 /docs/_build/
 /docs/source/auto*
 /docs/source/sg_execution_times.rst
+/docs/sg_execution_times.rst
 
 # coverage
 .coverage

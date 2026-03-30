@@ -330,17 +330,17 @@ detections_for_plotter = [d for _, detections in all_detections for d in detecti
 print(f"Total no. of detections: {len(detections_for_plotter)}")
 
 # %%
-# Baseline Detector Results
+# Baseline Detector Example
 # -------------------------
 #
-# A bearing-time record of the baseline CA-CFAR run provides a qualitative check
-# before the parameter sweep. Three target bearing tracks are visible sweeping across
-# the BTR; the mid-run heading change causes all three to shift simultaneously around
-# the 00:07 mark. The white detection markers show where the detector fires. A dense
-# cluster near each truth track confirms the CFAR threshold is well-placed for this
-# scenario. False alarms appear as isolated dots away from the truth lines. Inspecting
-# the BTR before the sweep gives geometric intuition that helps interpret any anomalies
-# in the ROC and PR curves that follow.
+# A bearing-time record of the baseline CA-CFAR run provides a qualitative check before the
+# parameter sweep. Three target bearing tracks are visible sweeping across the BTR, and an
+# ownship heading change at around the 00:07 mark causes all three apparent bearings to shift
+# simultaneously. The white markers show where the detector fires, with dense clusters near the
+# truth tracks suggesting that the CFAR threshold is reasonably set for this scenario, while
+# isolated detections away from the truth lines indicate false alarms or background clutter.
+# Inspecting the BTR before the sweep provides geometric intuition that helps interpret any
+# anomalies in the ROC and PR curves that follow.
 
 fig_btr = plot_btr(
     data=snr_map,
@@ -440,17 +440,17 @@ results = sweep_detection_parameter(
 # Detection Metrics Results
 # -------------------------
 #
-# The summary table and curves reveal two key results. First, CA-CFAR leads on
-# AUC-ROC (0.85) whilst OS-CFAR leads on AUC-PR (0.12) — the two metrics disagree
-# on which variant is "better", which is why reporting both matters. Second, the
-# CA-CFAR + Peak and OS-CFAR + Peak configurations score AUC-ROC ≈ 0.02 (worse than
-# random) despite holding the highest and second-highest AUC-PR values. This happens
-# because sweeping only the CFAR threshold whilst the peak-clustering distance is
-# fixed causes the ROC curve to run anti-diagonally: at very low thresholds, peak
-# clustering collapses a dense field of raw false alarms into a small number of peaks,
-# so FPR and TPR do not increase in tandem as the threshold drops. The PR curve
-# remains interpretable because it measures precision at each recall level
-# independently of the sweep direction.
+# The summary table and curves highlight two main results. First, CA-CFAR gives
+# the strongest ROC performance (AUC-ROC = 0.8593), while OS-CFAR gives the best
+# PR performance among the non-peak variants (AUC-PR = 0.1175), confirming that
+# detector ranking depends on the metric used. Second, adding peak clustering
+# yields the highest PR score for CA-CFAR + Peak (AUC-PR = 0.1347), but both
+# peak-augmented variants produce near-zero AUC-ROC values. This suggests that
+# sweeping the CFAR threshold alone, while holding the clustering distance fixed,
+# produces a non-standard ROC trajectory: at low thresholds, many raw detections
+# are merged into a smaller set of peaks, so false-positive and true-positive
+# behaviour no longer evolves monotonically with threshold. As a result, PR is the
+# more reliable summary metric for the peak-augmented configurations in this sweep.
 
 headers = [
     "Detector",
@@ -492,22 +492,18 @@ fig_roc_pr = plot_roc_pr(results).update_layout(
 # Key Takeaways
 # -------------
 #
-# * **ROC and PR metrics disagree on the best detector** - CA-CFAR leads on AUC-ROC
-#   (0.85) but OS-CFAR leads on AUC-PR (0.12). In passive sonar, where operator
-#   workload scales with false-alarm rate, precision-recall curves are often the more
-#   operationally relevant measure alongside ROC.
-# * **Peak clustering inverts the swept ROC curve** - sweeping the CFAR threshold
-#   whilst holding ``PeakDetector`` fixed causes the ROC curve to run
-#   anti-diagonally (AUC ≈ 0.02). At low thresholds, peak clustering collapses a
-#   dense field of false alarms into a small number of peaks, which does not
-#   translate into proportionally higher true-positive rate. The PR curve remains
-#   interpretable because it measures precision at each recall level independently.
-#   Always inspect both curves before drawing conclusions from a chained pipeline
-#   sweep.
+# * **ROC and PR can rank detectors differently** - CA-CFAR achieves the highest
+#   AUC-ROC (0.8593), while CA-CFAR + Peak achieves the highest AUC-PR (0.1347).
+#   Among the non-peak variants, OS-CFAR has the stronger AUC-PR (0.1175). This is
+#   why both ROC and PR curves should be reported.
+# * **Peak clustering changes how the ROC sweep behaves** - sweeping only the CFAR
+#   threshold while holding ``PeakDetector.distance`` fixed produces a non-standard
+#   ROC trajectory for the peak-augmented chains, yielding near-zero AUC-ROC despite
+#   competitive AUC-PR values. In this setting, PR is the more interpretable summary
+#   metric for the peak configurations.
 # * **Sweep only the stage you want to characterise** - ``algorithm_index=0`` sweeps
-#   the CFAR threshold while the peak-clustering distance stays fixed. To characterise
-#   peak clustering directly, set ``algorithm_index=1`` and sweep
-#   ``PeakDetector.distance`` instead.
+#   the CFAR threshold while peak clustering remains fixed. To characterise the peak
+#   stage itself, set ``algorithm_index=1`` and sweep ``PeakDetector.distance``.
 # * **The SNR map is computed once and reused** - ``sweep_detection_parameter``
-#   operates on the pre-computed ``snr_map`` rather than re-running the simulator, so
-#   adding further ``SweepSpec`` entries costs only CPU time for the threshold loop.
+#   operates on the pre-computed ``snr_map``, so adding more sweep configurations
+#   does not require rerunning the simulator.
