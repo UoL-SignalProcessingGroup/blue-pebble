@@ -1797,6 +1797,7 @@ def plot_roc_pr(
                 line=dict(width=2, color=color),
                 name=f"PR (AUC={result.auc_pr:.3f})",
                 legendgroup=result.label,
+                showlegend=False,
             ),
             row=2,
             col=1,
