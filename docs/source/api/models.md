@@ -11,5 +11,4 @@ models_propagation
 
 ```{eval-rst}
 .. automodule:: bluepebble.models
-   :members:
 ```

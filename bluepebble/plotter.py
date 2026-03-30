@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from collections.abc import Sequence
+from collections.abc import Collection, Sequence
 from datetime import datetime
 from typing import Any, Protocol, cast
 
@@ -19,6 +19,18 @@ from stonesoup.types.groundtruth import GroundTruthPath
 from stonesoup.types.track import Track
 
 from .detector.metrics import SweepResult
+
+__all__ = [
+    "apply_shared_colourscale",
+    "deduplicate_legend",
+    "launch_bathymetry_and_sound_speed_viewer",
+    "plot_world",
+    "plot_btr",
+    "plot_spectrogram",
+    "plot_roc",
+    "plot_pr",
+    "plot_roc_pr",
+]
 
 
 class _ColormapCallable(Protocol):
@@ -233,6 +245,71 @@ def _validate_spectrogram_params(
         normalised_y_lim = (low, high)
 
     return canonical_format, normalised_y_lim
+
+
+def _validate_spectrogram_render_params(
+    analysis_mode: str,
+    db_reference: str,
+    z_lim: tuple[float, float] | None,
+) -> tuple[str, str, tuple[float, float] | None]:
+    """Validate spectrogram rendering options and normalise string inputs."""
+    if not isinstance(analysis_mode, str):
+        raise ValueError("analysis_mode must be one of {'stft', 'psd'}")
+    if not isinstance(db_reference, str):
+        raise ValueError("db_reference must be one of {'peak', 'absolute'}")
+
+    normalised_mode = analysis_mode.strip().lower()
+    if normalised_mode not in {"stft", "psd"}:
+        raise ValueError("analysis_mode must be one of {'stft', 'psd'}")
+
+    normalised_reference = db_reference.strip().lower()
+    if normalised_reference not in {"peak", "absolute"}:
+        raise ValueError("db_reference must be one of {'peak', 'absolute'}")
+
+    if z_lim is None:
+        normalised_z_lim = None
+    else:
+        if not isinstance(z_lim, (tuple, list, np.ndarray)) or len(z_lim) != 2:
+            raise ValueError("z_lim must be a (low, high) pair")
+        low, high = float(z_lim[0]), float(z_lim[1])
+        if not np.isfinite(low) or not np.isfinite(high):
+            raise ValueError("z_lim values must be finite")
+        if low >= high:
+            raise ValueError("z_lim must satisfy low < high")
+        normalised_z_lim = (low, high)
+
+    return normalised_mode, normalised_reference, normalised_z_lim
+
+
+def _validate_percentile_limits(
+    z_percentiles: tuple[float, float] | None,
+) -> tuple[float, float] | None:
+    """Validate percentile-based colour scaling input.
+
+    Parameters
+    ----------
+    z_percentiles : tuple[float, float] | None
+        Optional ``(low, high)`` percentile pair in [0, 100].
+
+    Returns
+    -------
+    tuple[float, float] | None
+        Normalised percentile pair when provided.
+
+    """
+    if z_percentiles is None:
+        return None
+
+    if not isinstance(z_percentiles, (tuple, list, np.ndarray)) or len(z_percentiles) != 2:
+        raise ValueError("z_percentiles must be a (low, high) pair")
+
+    low, high = float(z_percentiles[0]), float(z_percentiles[1])
+    if not np.isfinite(low) or not np.isfinite(high):
+        raise ValueError("z_percentiles values must be finite")
+    if not (0.0 <= low < high <= 100.0):
+        raise ValueError("z_percentiles must satisfy 0 <= low < high <= 100")
+
+    return low, high
 
 
 def _normalise_plotly_figsize(figsize: tuple[float, float]) -> tuple[int, int]:
@@ -661,14 +738,30 @@ def plot_world(
     if len(platform.platform_history) == 0:
         raise ValueError("platform.platform_history is empty")
 
+    def _format_timestamp(timestamp: Any) -> str:
+        """Return a readable timestamp string for hover metadata."""
+        if isinstance(timestamp, datetime):
+            return timestamp.strftime("%H:%M:%S")
+        if timestamp is None:
+            return "N/A"
+        return str(timestamp)
+
     plat_x = [float(entry.host.state.state_vector[0]) for entry in platform.platform_history]
     plat_y = [float(entry.host.state.state_vector[2]) for entry in platform.platform_history]
+    plat_timestamps = [
+        _format_timestamp(getattr(entry.host.state, "timestamp", None))
+        for entry in platform.platform_history
+    ]
 
     gt_x = [[] for _ in range(num_truths)]
     gt_y = [[] for _ in range(num_truths)]
+    gt_timestamps = [[] for _ in range(num_truths)]
     for idx, truth in enumerate(truths):
         gt_x[idx] = [float(state.state_vector[0]) for state in truth]
         gt_y[idx] = [float(state.state_vector[2]) for state in truth]
+        gt_timestamps[idx] = [
+            _format_timestamp(getattr(state, "timestamp", None)) for state in truth
+        ]
 
     all_x = plat_x + [x for sublist in gt_x for x in sublist]
     all_y = plat_y + [y for sublist in gt_y for y in sublist]
@@ -710,10 +803,10 @@ def plot_world(
         eps = max(1e-9, 1e-6 * max(abs(zmin_raw), abs(zmax_raw), 1.0))
         zmin = zmin_raw if zmin_raw < 0.0 else -eps
         zmax = zmax_raw if zmax_raw > 0.0 else eps
-        colorscale = _two_slope_colorscale(_get_cmocean_topo_cmap(), zmin, zmax, vcenter=0.0)
+        colorscale = "Greens"
 
         hovertemplate = (
-            "X: %{x:.2f} {unit}<br>Y: %{y:.2f} {unit}<br>Bathymetry z: %{z:.2f} m<extra></extra>"
+            f"X: %{{x:.2f}} {unit}<br>Y: %{{y:.2f}} {unit}<br>Z: %{{z:.2f}} m<extra></extra>"
         )
         fig.add_trace(
             go.Heatmap(
@@ -725,18 +818,29 @@ def plot_world(
                 zmax=zmax,
                 opacity=0.8,
                 colorbar=dict(
-                    title=dict(text="Bathymetry z (m)"),
+                    title=dict(text="Depth (m)", side="right"),
                     thickness=24,
-                    len=0.85,
-                    y=0.5,
-                    yanchor="middle",
-                    x=1.1,
-                    xanchor="left",
-                    xpad=0,
+                    len=1.0,
                 ),
                 hovertemplate=hovertemplate,
             )
         )
+
+    def _scatter_hovertemplate(label: str) -> str:
+        """Build a hover template with one coordinate system and timestamp."""
+        lines = [
+            label,
+            f"X: %{{x:.2f}} {unit}",
+            f"Y: %{{y:.2f}} {unit}",
+        ]
+        lines.append("Time: %{customdata[0]}<extra></extra>")
+        return "<br>".join(lines)
+
+    # Preserve native coordinates for hover metadata before scaling for display.
+    plat_x_native = plat_x.copy()
+    plat_y_native = plat_y.copy()
+    gt_x_native = [coords.copy() for coords in gt_x]
+    gt_y_native = [coords.copy() for coords in gt_y]
 
     # Convert coordinates and precomputed ranges from native units to display units.
     plat_x = [x * scale for x in plat_x]
@@ -746,11 +850,18 @@ def plot_world(
     x_range = [value * scale for value in x_range_native]
     y_range = [value * scale for value in y_range_native]
 
+    # Arrow length: 5% of the padded display span, used for direction annotations.
+    arrow_length = max_span * scale * 0.05
+
     # Plot a single marker for stationary platforms to avoid a degenerate line trace.
     platform_is_stationary = len(plat_x) <= 1 or (
         np.allclose(plat_x, plat_x[0]) and np.allclose(plat_y, plat_y[0])
     )
     if platform_is_stationary:
+        platform_customdata = np.array(
+            [[plat_timestamps[0], plat_x_native[0], plat_y_native[0]]],
+            dtype=object,
+        )
         fig.add_trace(
             go.Scatter(
                 x=[plat_x[0]],
@@ -758,10 +869,24 @@ def plot_world(
                 mode="markers",
                 marker=dict(color="black", size=10),
                 name="Platform",
+                customdata=platform_customdata,
+                hovertemplate=_scatter_hovertemplate("Platform"),
                 **_legend_group_kwargs("platform", "Platform"),
             )
         )
     else:
+        platform_customdata = np.array(
+            [
+                [timestamp, x_native, y_native]
+                for timestamp, x_native, y_native in zip(
+                    plat_timestamps,
+                    plat_x_native,
+                    plat_y_native,
+                    strict=False,
+                )
+            ],
+            dtype=object,
+        )
         fig.add_trace(
             go.Scatter(
                 x=plat_x,
@@ -769,12 +894,48 @@ def plot_world(
                 mode="lines",
                 line=dict(color="black", width=3),
                 name="Platform",
+                customdata=platform_customdata,
+                hovertemplate=_scatter_hovertemplate("Platform"),
                 **_legend_group_kwargs("platform", "Platform"),
             )
         )
+        if len(plat_x) >= 2:
+            dx = plat_x[-1] - plat_x[-2]
+            dy = plat_y[-1] - plat_y[-2]
+            if dx != 0 or dy != 0:
+                norm = float(np.hypot(dx, dy))
+                tip_x = plat_x[-1] + (dx / norm) * arrow_length
+                tip_y = plat_y[-1] + (dy / norm) * arrow_length
+                fig.add_annotation(
+                    x=tip_x,
+                    y=tip_y,
+                    ax=plat_x[-1],
+                    ay=plat_y[-1],
+                    xref="x",
+                    yref="y",
+                    axref="x",
+                    ayref="y",
+                    showarrow=True,
+                    arrowhead=2,
+                    arrowwidth=2,
+                    arrowcolor="black",
+                    text="",
+                )
 
     names = [f"Truth {i + 1}" if num_truths > 1 else "Truth" for i in range(num_truths)]
     for i in range(num_truths):
+        truth_customdata = np.array(
+            [
+                [timestamp, x_native, y_native]
+                for timestamp, x_native, y_native in zip(
+                    gt_timestamps[i],
+                    gt_x_native[i],
+                    gt_y_native[i],
+                    strict=False,
+                )
+            ],
+            dtype=object,
+        )
         fig.add_trace(
             go.Scatter(
                 x=gt_x[i],
@@ -782,9 +943,33 @@ def plot_world(
                 mode="lines",
                 line=dict(color=colorway[i % len(colorway)], width=3, dash="5px,2px"),
                 name=names[i],
+                customdata=truth_customdata,
+                hovertemplate=_scatter_hovertemplate(names[i]),
                 **_legend_group_kwargs("truths", "Ground Truths"),
             )
         )
+        if len(gt_x[i]) >= 2:
+            dx = gt_x[i][-1] - gt_x[i][-2]
+            dy = gt_y[i][-1] - gt_y[i][-2]
+            if dx != 0 or dy != 0:
+                norm = float(np.hypot(dx, dy))
+                tip_x = gt_x[i][-1] + (dx / norm) * arrow_length
+                tip_y = gt_y[i][-1] + (dy / norm) * arrow_length
+                fig.add_annotation(
+                    x=tip_x,
+                    y=tip_y,
+                    ax=gt_x[i][-1],
+                    ay=gt_y[i][-1],
+                    xref="x",
+                    yref="y",
+                    axref="x",
+                    ayref="y",
+                    showarrow=True,
+                    arrowhead=2,
+                    arrowwidth=2,
+                    arrowcolor=colorway[i % len(colorway)],
+                    text="",
+                )
 
     width_px, height_px = _normalise_plotly_figsize(figsize)
 
@@ -816,6 +1001,8 @@ def plot_world(
                 x=0.0,
             ),
             margin=dict(b=120),
+            xaxis=dict(gridcolor="#929292"),
+            yaxis=dict(gridcolor="#929292"),
         )
 
     return fig
@@ -827,7 +1014,7 @@ def plot_btr(
     data: ArrayLike | None = None,
     truths: Sequence[GroundTruthPath] | None = None,
     detections: Sequence[Detection] | None = None,
-    tracks: Sequence[Track] | None = None,
+    tracks: Collection[Track] | None = None,
     data_type: str = "SNR (dB)",
     cmin: float | None = None,
     cmax: float | None = None,
@@ -853,7 +1040,7 @@ def plot_btr(
         Ground-truth paths representing target trajectories. Default is ``None``.
     detections : Sequence[Detection] | None
         Detection objects to overlay. Default is ``None``.
-    tracks : Sequence[Track] | None
+    tracks : Collection[Track] | None
         Track objects to overlay. Default is ``None``.
     data_type : str
         Label for the plotted heatmap quantity (for example ``"SNR (dB)"``).
@@ -963,6 +1150,12 @@ def plot_btr(
 
     added_legend_groups: set[str] = set()
 
+    existing_legend_names: set[str] = set()
+    if fig is not None:
+        for t in target_fig.data:
+            if getattr(t, "showlegend", True) is not False and getattr(t, "name", None):
+                existing_legend_names.add(str(t.name))
+
     def _legend_group_kwargs(group_name: str, group_title: str) -> dict[str, str]:
         """Return legend-group kwargs and add a title once per group per figure."""
         kwargs = {"legendgroup": group_name}
@@ -989,10 +1182,10 @@ def plot_btr(
             zmin=cmin,
             zmax=cmax,
             colorbar=dict(
-                title=dict(text=data_type),
+                title=dict(text=data_type, side="right"),
                 thickness=24,
                 len=1.0,
-                x=1.02,
+                x=1.0,
                 xanchor="left",
                 xpad=0,
             ),
@@ -1005,14 +1198,17 @@ def plot_btr(
     if detections is not None:
         det_x = [_wrap_bearing_deg(float(np.rad2deg(det.state_vector[0]))) for det in detections]
         det_y = [det.timestamp for det in detections]
+        _det_name = "Detection"
         detection_trace = go.Scatter(
             x=det_x,
             y=det_y,
             mode="markers",
             marker=dict(size=5, line=dict(width=1), color="white", opacity=0.8),
-            name="Detection",
+            name=_det_name,
+            showlegend=_det_name not in existing_legend_names,
             **_legend_group_kwargs("detections", "Detections"),
         )
+        existing_legend_names.add(_det_name)
         if using_subplot_target:
             target_fig.add_trace(detection_trace, row=row, col=col)
         else:
@@ -1033,15 +1229,18 @@ def plot_btr(
             ]
             track_y = [state.timestamp for state in track]
             track_x, track_y = _split_wrapped_line(track_x, track_y)
+            _track_name = f"Track {idx + 1}" if len(tracks) > 1 else "Track"
             track_trace = go.Scatter(
                 x=track_x,
                 y=track_y,
                 mode="lines",
                 connectgaps=False,
                 line=dict(color=track_color, width=4),
-                name=f"Track {idx + 1}" if len(tracks) > 1 else "Track",
+                name=_track_name,
+                showlegend=_track_name not in existing_legend_names,
                 **_legend_group_kwargs("tracks", "Tracks"),
             )
+            existing_legend_names.add(_track_name)
             if using_subplot_target:
                 target_fig.add_trace(track_trace, row=row, col=col)
             else:
@@ -1061,15 +1260,18 @@ def plot_btr(
                 truth_color_map[truth_key] = colorway[len(truth_color_map) % len(colorway)]
             truth_color = truth_color_map[truth_key]
             truth_x, truth_y = _split_wrapped_line(gt_x[idx], gt_y[idx])
+            _truth_name = f"Truth {idx + 1}" if len(truths) > 1 else "Truth"
             truth_trace = go.Scatter(
                 x=truth_x,
                 y=truth_y,
                 mode="lines",
                 connectgaps=False,
                 line=dict(color=truth_color, width=3, dash="dash"),
-                name=f"Truth {idx + 1}" if len(truths) > 1 else "Truth",
+                name=_truth_name,
+                showlegend=_truth_name not in existing_legend_names,
                 **_legend_group_kwargs("truths", "Ground Truths"),
             )
+            existing_legend_names.add(_truth_name)
             if using_subplot_target:
                 target_fig.add_trace(truth_trace, row=row, col=col)
             else:
@@ -1136,6 +1338,7 @@ def plot_btr(
             showlegend=True,
             plot_bgcolor="white",
             paper_bgcolor="white",
+            legend=dict(x=1.15, xanchor="left", y=1.0, yanchor="top"),
         )
 
     return target_fig
@@ -1149,6 +1352,18 @@ def plot_spectrogram(
     y_lim: tuple[float, float] | None = None,
     yaxis_format: str = "kHz",
     figsize: tuple[float, float] = (12, 6),
+    fig: go.Figure | None = None,
+    row: int | None = None,
+    col: int | None = None,
+    analysis_mode: str = "stft",
+    db_reference: str = "peak",
+    z_lim: tuple[float, float] | None = None,
+    z_percentiles: tuple[float, float] | None = None,
+    showscale: bool = True,
+    colorbar_title: str = "Intensity (dB)",
+    colorscale: str = "Viridis",
+    customdata: ArrayLike | None = None,
+    hovertemplate: str | None = None,
 ) -> go.Figure:
     """Generate and display a formatted spectrogram with Plotly.
 
@@ -1169,6 +1384,37 @@ def plot_spectrogram(
     figsize : tuple[float, float]
         Figure size. Values that look like inches (for example ``(12, 6)``) are
         converted to pixels using 100 px/in; larger values are treated as pixels.
+        Ignored when ``fig`` is provided.
+    fig : go.Figure | None
+        Optional target figure. Provide a subplot figure from
+        :func:`plotly.subplots.make_subplots` to draw directly into a cell.
+        If None, a new standalone figure is created.
+    row : int | None
+        Subplot row when ``fig`` is provided.
+    col : int | None
+        Subplot column when ``fig`` is provided.
+    analysis_mode : str
+        Spectral analysis backend. Use ``"stft"`` for short-time Fourier transform
+        magnitude or ``"psd"`` for power spectral density.
+    db_reference : str
+        Decibel reference mode. ``"peak"`` computes values relative to each panel's
+        peak value. ``"absolute"`` leaves values in absolute dB units.
+    z_lim : tuple[float, float] | None
+        Optional colour scale limits in dB as ``(min, max)``.
+    z_percentiles : tuple[float, float] | None
+        Optional percentile-based colour scale limits as ``(low, high)`` in
+        [0, 100]. Used only when ``z_lim`` is ``None``.
+    showscale : bool
+        Whether to show a colour bar for this trace.
+    colorbar_title : str
+        Colour bar title text.
+    colorscale : str
+        Plotly colour scale name.
+    customdata : ArrayLike | None
+        Optional customdata to attach to the heatmap trace for use in hover templates.
+    hovertemplate : str | None
+        Optional hover template for the heatmap trace. See Plotly documentation for
+        details on hover templates and how to reference customdata.
 
     Returns
     -------
@@ -1176,6 +1422,17 @@ def plot_spectrogram(
         A Plotly figure containing the spectrogram.
 
     """
+    if fig is not None:
+        if (row is None) != (col is None):
+            raise ValueError("row and col must both be provided when fig is supplied")
+        if row is None or col is None:
+            raise ValueError("row and col must both be provided when fig is supplied")
+        if row <= 0 or col <= 0:
+            raise ValueError("row and col must be positive")
+
+    if fig is None and (row is not None or col is not None):
+        raise ValueError("row and col can only be used when fig is supplied")
+
     yaxis_format, y_lim = _validate_spectrogram_params(
         sr=sr,
         n_fft=n_fft,
@@ -1183,6 +1440,12 @@ def plot_spectrogram(
         y_lim=y_lim,
         yaxis_format=yaxis_format,
     )
+    analysis_mode, db_reference, z_lim = _validate_spectrogram_render_params(
+        analysis_mode=analysis_mode,
+        db_reference=db_reference,
+        z_lim=z_lim,
+    )
+    z_percentiles = _validate_percentile_limits(z_percentiles)
 
     signal = np.asarray(signal)
     if signal.size == 0:
@@ -1190,30 +1453,65 @@ def plot_spectrogram(
     if signal.ndim > 1:
         signal = signal.flatten()
 
-    boundary: Any = None
-    freqs_hz, times, zxx = scipy_signal.stft(
-        signal,
-        fs=sr,
-        window="hann",
-        nperseg=n_fft,
-        noverlap=n_fft - hop_length,
-        nfft=n_fft,
-        boundary=boundary,
-        padded=False,
-        return_onesided=True,
-    )
+    if analysis_mode == "stft":
+        boundary: Any = None
+        freqs_hz, times, zxx = scipy_signal.stft(
+            signal,
+            fs=sr,
+            window="hann",
+            nperseg=n_fft,
+            noverlap=n_fft - hop_length,
+            nfft=n_fft,
+            boundary=boundary,
+            padded=False,
+            return_onesided=True,
+        )
+        magnitude = np.abs(zxx)
+        amin = 1e-10
+        magnitude_db = 20.0 * np.log10(np.maximum(amin, magnitude))
+        if db_reference == "peak":
+            ref = float(np.max(magnitude))
+            if ref <= 0:
+                ref = 1.0
+            s_db = magnitude_db - 20.0 * np.log10(ref)
+        else:
+            s_db = magnitude_db
+    else:
+        # Keep PSD behaviour aligned with historical examples that use the
+        # real-valued waveform component for spectrogram generation.
+        signal_for_psd = np.real(signal)
+        freqs_hz, times, spec_power = scipy_signal.spectrogram(
+            signal_for_psd,
+            fs=sr,
+            nperseg=n_fft,
+            noverlap=n_fft - hop_length,
+            scaling="density",
+            mode="psd",
+        )
+        amin = 1e-16
+        psd_db = 10.0 * np.log10(spec_power + amin)
+        if db_reference == "peak":
+            ref = float(np.max(spec_power))
+            if ref <= 0:
+                ref = 1.0
+            s_db = psd_db - 10.0 * np.log10(ref)
+        else:
+            s_db = psd_db
 
-    magnitude = np.abs(zxx)
-    ref = np.max(magnitude)
-    if ref <= 0:
-        ref = 1.0
-    amin = 1e-10
-    # Convert to dB relative to peak magnitude while guarding against log(0).
-    s_db = 20.0 * np.log10(np.maximum(amin, magnitude)) - 20.0 * np.log10(ref)
-
-    vmax = float(np.max(s_db))
-    # Display a fixed 60 dB window to keep low-energy detail visible.
-    vmin = vmax - 60.0
+    if z_lim is None:
+        if z_percentiles is not None:
+            low_pct, high_pct = z_percentiles
+            vmin = float(np.percentile(s_db, low_pct))
+            vmax = float(np.percentile(s_db, high_pct))
+        else:
+            vmax = float(np.max(s_db))
+            if db_reference == "peak":
+                # Display a fixed 60 dB window to keep low-energy detail visible.
+                vmin = vmax - 60.0
+            else:
+                vmin = float(np.min(s_db))
+    else:
+        vmin, vmax = z_lim
 
     if yaxis_format == "kHz":
         y_values = freqs_hz / 1000.0
@@ -1224,37 +1522,66 @@ def plot_spectrogram(
         y_title = "Frequency (Hz)"
         y_range = list(y_lim) if y_lim else None
 
-    fig = go.Figure(
-        data=go.Heatmap(
-            z=s_db,
-            x=times,
-            y=y_values,
-            colorscale="Viridis",
-            zmin=vmin,
-            zmax=vmax,
-            colorbar=dict(
-                title=dict(text="Intensity (dB)"),
+    target_fig = go.Figure() if fig is None else fig
+    using_subplot_target = fig is not None
+
+    heatmap = go.Heatmap(
+        z=s_db,
+        x=times,
+        y=y_values,
+        colorscale=colorscale,
+        zmin=vmin,
+        zmax=vmax,
+        showscale=showscale,
+        colorbar=(
+            dict(
+                title=dict(text=colorbar_title, side="right"),
                 thickness=24,
                 len=1.0,
-            ),
+            )
+            if showscale
+            else None
+        ),
+        customdata=customdata,
+        hovertemplate=hovertemplate,
+    )
+    if using_subplot_target:
+        target_fig.add_trace(heatmap, row=row, col=col)
+    else:
+        target_fig.add_trace(heatmap)
+
+    x_range = [0, len(signal) / float(sr)]
+    if using_subplot_target:
+        target_fig.update_xaxes(
+            title_text="Time (s)",
+            range=x_range,
+            showgrid=False,
+            row=row,
+            col=col,
         )
-    )
+        target_fig.update_yaxes(
+            title_text=y_title,
+            range=y_range,
+            showgrid=False,
+            row=row,
+            col=col,
+        )
+    else:
+        width_px, height_px = _normalise_plotly_figsize(figsize)
+        target_fig.update_layout(width=width_px, height=height_px, template="plotly_white")
 
-    width_px, height_px = _normalise_plotly_figsize(figsize)
-    fig.update_layout(width=width_px, height=height_px, template="plotly_white")
+        target_fig.update_xaxes(
+            title_text="Time (s)",
+            range=x_range,
+            showgrid=False,
+        )
+        target_fig.update_yaxes(
+            title_text=y_title,
+            range=y_range,
+            showgrid=False,
+        )
 
-    fig.update_xaxes(
-        title_text="Time (s)",
-        range=[0, len(signal) / float(sr)],
-        showgrid=False,
-    )
-    fig.update_yaxes(
-        title_text=y_title,
-        range=y_range,
-        showgrid=False,
-    )
-
-    return fig
+    return target_fig
 
 
 def plot_roc(
@@ -1415,9 +1742,9 @@ def plot_pr(
 def plot_roc_pr(
     results: Sequence[SweepResult],
     show_diagonal: bool = True,
-    figsize: tuple[float, float] = (1100, 500),
+    figsize: tuple[float, float] = (600, 900),
 ) -> go.Figure:
-    """Plot ROC and Precision-Recall curves side-by-side for one or more sweep results.
+    """Plot ROC and Precision-Recall curves stacked vertically for one or more sweep results.
 
     Parameters
     ----------
@@ -1428,17 +1755,20 @@ def plot_roc_pr(
     show_diagonal : bool
         If ``True`` (default), overlay the random-classifier diagonal on the ROC subplot.
     figsize : tuple[float, float]
-        Figure dimensions in pixels.  Default is ``(1100, 500)``.
+        Figure dimensions in pixels.  Default is ``(600, 900)``.
 
     Returns
     -------
     go.Figure
-        Plotly figure with ROC (left) and PR (right) subplots.
+        Plotly figure with ROC (top) and PR (bottom) subplots.
 
     """
     colorway = px.colors.qualitative.Plotly
 
-    fig = make_subplots(rows=1, cols=2, subplot_titles=("ROC Curve", "Precision-Recall Curve"))
+    fig = make_subplots(rows=2, cols=1, subplot_titles=("ROC Curve", "PR Curve"))
+
+    grid_color = "rgba(200, 200, 200, 0.5)"
+    axis_line = "rgba(160, 160, 160, 1.0)"
 
     for i, result in enumerate(results):
         color = colorway[i % len(colorway)]
@@ -1452,8 +1782,9 @@ def plot_roc_pr(
                 y=result.tpr[roc_order],
                 mode="lines",
                 line=dict(width=2, color=color),
-                name=f"{result.label} (AUC={result.auc_roc:.3f})",
+                name=f"ROC (AUC={result.auc_roc:.3f})",
                 legendgroup=result.label,
+                legendgrouptitle_text=result.label,
             ),
             row=1,
             col=1,
@@ -1464,12 +1795,12 @@ def plot_roc_pr(
                 y=result.precision[pr_order],
                 mode="lines",
                 line=dict(width=2, color=color),
-                name=f"{result.label} (AUC={result.auc_pr:.3f})",
+                name=f"PR (AUC={result.auc_pr:.3f})",
                 legendgroup=result.label,
-                showlegend=False,  # suppress duplicate; ROC trace represents this group
+                showlegend=False,
             ),
-            row=1,
-            col=2,
+            row=2,
+            col=1,
         )
 
     if show_diagonal:
@@ -1486,17 +1817,132 @@ def plot_roc_pr(
             col=1,
         )
 
-    fig.update_xaxes(title_text="False Positive Rate", range=[0.0, 1.0], col=1)
-    fig.update_yaxes(title_text="True Positive Rate", range=[0.0, 1.05], col=1)
-
-    fig.update_xaxes(title_text="Recall", range=[0.0, 1.0], col=2)
-    fig.update_yaxes(title_text="Precision", range=[0.0, 1.05], col=2)
+    fig.update_xaxes(
+        title_text="False Positive Rate",
+        range=[0.0, 1.0],
+        showgrid=True,
+        gridcolor=grid_color,
+        showline=True,
+        linewidth=1,
+        linecolor=axis_line,
+        row=1,
+    )
+    fig.update_yaxes(
+        title_text="True Positive Rate",
+        range=[0.0, 1.05],
+        showgrid=True,
+        gridcolor=grid_color,
+        showline=True,
+        linewidth=1,
+        linecolor=axis_line,
+        row=1,
+    )
+    fig.update_xaxes(
+        title_text="Recall",
+        range=[0.0, 1.0],
+        showgrid=True,
+        gridcolor=grid_color,
+        showline=True,
+        linewidth=1,
+        linecolor=axis_line,
+        row=2,
+    )
+    fig.update_yaxes(
+        title_text="Precision",
+        range=[0.0, 1.05],
+        showgrid=True,
+        gridcolor=grid_color,
+        showline=True,
+        linewidth=1,
+        linecolor=axis_line,
+        row=2,
+    )
 
     fig.update_layout(
         template="plotly_white",
         width=figsize[0],
         height=figsize[1],
         showlegend=True,
+        plot_bgcolor="white",
+        paper_bgcolor="white",
+        legend=dict(
+            y=0.5,
+        ),
     )
+
+    return fig
+
+
+def apply_shared_colourscale(
+    fig: go.Figure,
+    zmin: float | None = None,
+    zmax: float | None = None,
+    colorbar: dict | None = None,
+) -> go.Figure:
+    """Apply a shared colour scale across all heatmap traces in a figure.
+
+    Parameters
+    ----------
+    fig : go.Figure
+        Figure containing one or more heatmap traces.
+    zmin : float | None
+        Lower bound of the shared colour scale.  If ``None``, computed as the
+        minimum finite value across all heatmap traces.
+    zmax : float | None
+        Upper bound of the shared colour scale.  If ``None``, computed as the
+        maximum finite value across all heatmap traces.
+    colorbar : dict | None
+        Plotly colorbar dict applied to the first heatmap trace.  If ``None``,
+        the existing colorbar is left unchanged.
+
+    Returns
+    -------
+    go.Figure
+        The modified figure (mutated in-place and returned).
+
+    """
+    heatmap_traces = [t for t in fig.data if getattr(t, "type", None) == "heatmap"]
+    if not heatmap_traces:
+        return fig
+
+    if zmin is None:
+        zmin = float(min(np.nanmin(np.asarray(t.z, dtype=float)) for t in heatmap_traces))
+    if zmax is None:
+        zmax = float(max(np.nanmax(np.asarray(t.z, dtype=float)) for t in heatmap_traces))
+
+    for i, trace in enumerate(heatmap_traces):
+        trace.zmin = zmin
+        trace.zmax = zmax
+        trace.showscale = i == 0
+
+    if colorbar is not None:
+        heatmap_traces[0].colorbar = colorbar
+
+    return fig
+
+
+def deduplicate_legend(fig: go.Figure) -> go.Figure:
+    """Suppress duplicate legend entries, keeping the first occurrence of each name.
+
+    Parameters
+    ----------
+    fig : go.Figure
+        Figure whose legend entries should be deduplicated.
+
+    Returns
+    -------
+    go.Figure
+        The modified figure (mutated in-place and returned).
+
+    """
+    seen: set[str] = set()
+    for trace in fig.data:
+        name = getattr(trace, "name", None)
+        if not name:
+            continue
+        if name in seen:
+            trace.showlegend = False
+        else:
+            seen.add(str(name))
 
     return fig

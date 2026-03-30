@@ -1,4 +1,14 @@
-"""Signal post-processing effects."""
+"""Signal post-processing effects.
+
+This module provides :class:`Effect` subclasses that can be applied to
+complex sensor-signal arrays after synthesis but before beamforming or
+output.  Each effect operates independently on each sensor channel.
+
+Current implementations:
+
+- :class:`Reverb` — convolutional reverb via a synthetic exponentially-decaying
+  impulse response, controlled by ``duration_s`` and ``wet_dry_mix``.
+"""
 
 from abc import ABC, abstractmethod
 

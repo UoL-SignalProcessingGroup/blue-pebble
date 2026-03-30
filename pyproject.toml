@@ -61,13 +61,13 @@ docs = [
     "sphinx",
     "sphinx-rtd-theme",
     "myst-parser",
-    "myst-nb",
+    "sphinx-gallery>=0.15",
+    "kaleido>=1.0.0",
 ]
 examples = [
     "ipykernel",
     "ipywidgets",
     "jupyterlab",
-    "kaleido",
 ]
 
 [tool.setuptools_scm]
@@ -83,6 +83,7 @@ select = ["F", "E", "W", "I", "B", "D", "UP"]
 [tool.ruff.lint.per-file-ignores]
 "docs/tutorials/*" = ["E402"]
 "docs/examples/*" = ["E402"]
+"docs/source/conf.py" = ["E501"]
 
 [tool.pyright]
 venvPath = "."

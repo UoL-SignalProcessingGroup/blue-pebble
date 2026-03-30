@@ -112,6 +112,42 @@ def test_validate_spectrogram_params_normalises_and_validates_inputs(monkeypatch
         )
 
 
+def test_validate_spectrogram_render_params_checks_modes_and_limits(monkeypatch) -> None:
+    """Spectrogram rendering validation should check mode/reference and z limits."""
+    plotter = _load_plotter(monkeypatch)
+
+    mode, reference, z_lim = plotter._validate_spectrogram_render_params(
+        analysis_mode=" PSD ",
+        db_reference=" absolute ",
+        z_lim=(-50.0, 20.0),
+    )
+
+    assert mode == "psd"
+    assert reference == "absolute"
+    assert z_lim == (-50.0, 20.0)
+
+    with pytest.raises(ValueError, match="analysis_mode must be one of"):
+        plotter._validate_spectrogram_render_params(
+            analysis_mode="wavelet",
+            db_reference="peak",
+            z_lim=None,
+        )
+
+    with pytest.raises(ValueError, match="db_reference must be one of"):
+        plotter._validate_spectrogram_render_params(
+            analysis_mode="stft",
+            db_reference="linear",
+            z_lim=None,
+        )
+
+    with pytest.raises(ValueError, match="z_lim must satisfy low < high"):
+        plotter._validate_spectrogram_render_params(
+            analysis_mode="stft",
+            db_reference="peak",
+            z_lim=(1.0, 1.0),
+        )
+
+
 def test_normalise_plotly_figsize_handles_inches_and_pixels(monkeypatch) -> None:
     """Small figure sizes should be treated as inches and larger ones as pixels."""
     plotter = _load_plotter(monkeypatch)
@@ -152,6 +188,81 @@ def test_plot_spectrogram_rejects_empty_signal(monkeypatch) -> None:
 
     with pytest.raises(ValueError, match="signal is empty"):
         plotter.plot_spectrogram(signal=np.array([]), sr=48_000)
+
+
+def test_plot_spectrogram_validates_row_and_col_arguments(monkeypatch) -> None:
+    """Spectrogram plotting should reject inconsistent subplot targeting arguments."""
+    plotter = _load_plotter(monkeypatch)
+    signal = np.ones(1024)
+
+    with pytest.raises(ValueError, match="can only be used when fig is supplied"):
+        plotter.plot_spectrogram(signal=signal, sr=48_000, row=1)
+
+    with pytest.raises(ValueError, match="must both be provided when fig is supplied"):
+        plotter.plot_spectrogram(
+            signal=signal,
+            sr=48_000,
+            fig=plotter.go.Figure(),
+            row=1,
+        )
+
+    with pytest.raises(ValueError, match="row and col must be positive"):
+        plotter.plot_spectrogram(
+            signal=signal,
+            sr=48_000,
+            fig=plotter.go.Figure(),
+            row=0,
+            col=1,
+        )
+
+
+def test_plot_spectrogram_writes_into_subplot_cell(monkeypatch) -> None:
+    """Spectrogram plotting should be able to draw into a provided subplot cell."""
+    plotter = _load_plotter(monkeypatch)
+    signal = np.sin(2.0 * np.pi * 220.0 * np.arange(2048) / 48_000.0)
+    fig = plotter.make_subplots(rows=1, cols=2)
+
+    returned_fig = plotter.plot_spectrogram(
+        signal=signal,
+        sr=48_000,
+        n_fft=256,
+        hop_length=64,
+        yaxis_format="Hz",
+        fig=fig,
+        row=1,
+        col=2,
+    )
+
+    assert returned_fig is fig
+    assert len(fig.data) == 1
+    assert fig.data[0].type == "heatmap"
+    assert fig.layout.xaxis2.title.text == "Time (s)"
+    assert fig.layout.yaxis2.title.text == "Frequency (Hz)"
+
+
+def test_plot_spectrogram_supports_psd_absolute_and_colourbar_controls(monkeypatch) -> None:
+    """PSD mode should support absolute dB plotting with explicit z-limits."""
+    plotter = _load_plotter(monkeypatch)
+    signal = np.sin(2.0 * np.pi * 440.0 * np.arange(4096) / 48_000.0)
+
+    fig = plotter.plot_spectrogram(
+        signal=signal,
+        sr=48_000,
+        n_fft=512,
+        hop_length=128,
+        yaxis_format="Hz",
+        analysis_mode="psd",
+        db_reference="absolute",
+        z_lim=(-50.0, 20.0),
+        showscale=False,
+        colorbar_title="dB re 1 uPa^2/Hz",
+    )
+
+    assert len(fig.data) == 1
+    assert fig.data[0].type == "heatmap"
+    assert fig.data[0].zmin == -50.0
+    assert fig.data[0].zmax == 20.0
+    assert fig.data[0].showscale is False
 
 
 def test_plot_roc_and_pr_include_auc_in_trace_names(monkeypatch) -> None:
@@ -254,6 +365,106 @@ def test_plot_world_uses_marker_for_stationary_platform(monkeypatch) -> None:
     assert fig.data[0].type == "scatter"
     assert fig.data[0].mode == "markers"
     assert fig.data[0].name == "Platform"
+
+
+def test_plot_world_hovertemplate_omits_native_metres_when_scale_is_metres(
+    monkeypatch,
+) -> None:
+    """Hover template should not repeat native-metre fields when display unit is already metres."""
+    plotter = _load_plotter(monkeypatch)
+    t0 = datetime(2026, 1, 1, 0, 0, 0)
+    state_a = SimpleNamespace(state_vector=np.array([0.0, 0.0, 0.0]), timestamp=t0)
+    state_b = SimpleNamespace(state_vector=np.array([5.0, 0.0, 3.0]), timestamp=t0)
+    platform = SimpleNamespace(
+        platform_history=[
+            SimpleNamespace(host=SimpleNamespace(state=state_a)),
+            SimpleNamespace(host=SimpleNamespace(state=state_b)),
+        ]
+    )
+    truth_state = SimpleNamespace(state_vector=np.array([10.0, 0.0, 5.0]), timestamp=t0)
+    truths = [[truth_state, truth_state]]
+
+    fig = plotter.plot_world(truths=truths, platform=platform)
+
+    platform_trace = next(t for t in fig.data if t.name == "Platform")
+    truth_trace = next(t for t in fig.data if t.name == "Truth")
+
+    assert "customdata[1]" not in platform_trace.hovertemplate
+    assert "customdata[2]" not in platform_trace.hovertemplate
+    assert "customdata[0]" in platform_trace.hovertemplate
+    assert "customdata[1]" not in truth_trace.hovertemplate
+    assert "customdata[2]" not in truth_trace.hovertemplate
+    assert "customdata[0]" in truth_trace.hovertemplate
+    assert platform_trace.customdata.shape[1] == 3
+    assert truth_trace.customdata.shape[1] == 3
+
+
+def test_plot_world_hovertemplate_uses_km_unit_when_scale_is_km(
+    monkeypatch,
+) -> None:
+    """Hover template should display coordinates in km when the scene exceeds 1 km."""
+    plotter = _load_plotter(monkeypatch)
+    t0 = datetime(2026, 1, 1, 0, 0, 0)
+    # Coordinates > 1000 m trigger km display scale.
+    state_a = SimpleNamespace(state_vector=np.array([0.0, 0.0, 0.0]), timestamp=t0)
+    state_b = SimpleNamespace(state_vector=np.array([2000.0, 0.0, 1500.0]), timestamp=t0)
+    platform = SimpleNamespace(
+        platform_history=[
+            SimpleNamespace(host=SimpleNamespace(state=state_a)),
+            SimpleNamespace(host=SimpleNamespace(state=state_b)),
+        ]
+    )
+    truth_state = SimpleNamespace(state_vector=np.array([3000.0, 0.0, 2000.0]), timestamp=t0)
+    truths = [[truth_state, truth_state]]
+
+    fig = plotter.plot_world(truths=truths, platform=platform)
+
+    platform_trace = next(t for t in fig.data if t.name == "Platform")
+    truth_trace = next(t for t in fig.data if t.name == "Truth")
+
+    assert "km" in platform_trace.hovertemplate
+    assert "customdata[0]" in platform_trace.hovertemplate
+    assert "customdata[1]" not in platform_trace.hovertemplate
+    assert "km" in truth_trace.hovertemplate
+    assert "customdata[0]" in truth_trace.hovertemplate
+    assert "customdata[1]" not in truth_trace.hovertemplate
+
+
+def test_plot_world_adds_direction_arrows_for_moving_elements(monkeypatch) -> None:
+    """Arrow marker traces should be added at the last position of each moving element."""
+    plotter = _load_plotter(monkeypatch)
+    # Platform moves due East: dx > 0, dy == 0 → plotly angle == 90°.
+    state_a = SimpleNamespace(state_vector=np.array([0.0, 0.0, 0.0]))
+    state_b = SimpleNamespace(state_vector=np.array([10.0, 0.0, 0.0]))
+    platform = SimpleNamespace(
+        platform_history=[
+            SimpleNamespace(host=SimpleNamespace(state=state_a)),
+            SimpleNamespace(host=SimpleNamespace(state=state_b)),
+        ]
+    )
+    # Truth moves due North: dx == 0, dy > 0 → plotly angle == 0°.
+    truth_a = SimpleNamespace(state_vector=np.array([50.0, 0.0, 0.0]))
+    truth_b = SimpleNamespace(state_vector=np.array([50.0, 0.0, 10.0]))
+    truths = [[truth_a, truth_b]]
+
+    fig = plotter.plot_world(truths=truths, platform=platform)
+
+    annotations = fig.layout.annotations
+    assert len(annotations) == 2, "expected one direction annotation per moving element"
+
+    # Platform moves due East: base at (10, 0), tip at x > 10, y == 0.
+    platform_ann = next(a for a in annotations if a.arrowcolor == "black")
+    assert float(platform_ann.ax) == pytest.approx(10.0)
+    assert float(platform_ann.ay) == pytest.approx(0.0)
+    assert float(platform_ann.x) > 10.0
+    assert float(platform_ann.y) == pytest.approx(0.0)
+
+    # Truth moves due North: base at (50, 10), tip at x == 50, y > 10.
+    truth_ann = next(a for a in annotations if a.arrowcolor != "black")
+    assert float(truth_ann.ax) == pytest.approx(50.0)
+    assert float(truth_ann.ay) == pytest.approx(10.0)
+    assert float(truth_ann.x) == pytest.approx(50.0)
+    assert float(truth_ann.y) > 10.0
 
 
 def test_plot_world_rejects_empty_platform_history(monkeypatch) -> None:
