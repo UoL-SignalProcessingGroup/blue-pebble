@@ -123,9 +123,9 @@ _MEASURED_DATA_SECTION = """\
 Measured Data Examples
 ----------------------
 
-Examples that require external geophysical datasets not bundled with the
-repository.  Pre-generated figures are embedded so the pages render without
-re-running the scripts.
+Examples that require external data files not bundled with the repository.
+Pre-generated figures are embedded so the pages render without re-running
+the scripts.
 
 
 
@@ -134,6 +134,22 @@ re-running the scripts.
     <div class="sphx-glr-thumbnails">
 
 .. thumbnail-parent-div-open
+
+.. raw:: html
+
+    <div class="sphx-glr-thumbcontainer" tooltip="Previews whale call, snapping shrimp, commercial vessel tonals, measured vessel noise, and ambient white noise models, then combines them into a composite soundscape.">
+
+.. only:: html
+
+  .. image:: /source/_static/acoustic_source_figs/modelling_acoustic_sources_whale.png
+    :alt:
+
+  :doc:`/source/examples/modelling_acoustic_sources`
+
+.. raw:: html
+
+      <div class="sphx-glr-thumbnail-title">Modelling Acoustic Sources</div>
+    </div>
 
 .. raw:: html
 
@@ -162,6 +178,7 @@ re-running the scripts.
 .. toctree::
    :hidden:
 
+   /source/examples/modelling_acoustic_sources
    /source/examples/using_measured_data
 
 
