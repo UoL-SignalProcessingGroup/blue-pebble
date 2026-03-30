@@ -47,16 +47,10 @@ Computation times
    * - :ref:`sphx_glr_source_auto_examples_comparing_bathymetry.py` (``examples/comparing_bathymetry.py``)
      - 00:00.000
      - 0.0
-   * - :ref:`sphx_glr_source_auto_examples_comparing_simulators.py` (``examples/comparing_simulators.py``)
-     - 00:00.000
-     - 0.0
    * - :ref:`sphx_glr_source_auto_examples_designing_narrowband_beamformers.py` (``examples/designing_narrowband_beamformers.py``)
      - 00:00.000
      - 0.0
    * - :ref:`sphx_glr_source_auto_examples_evaluating_detector_metrics.py` (``examples/evaluating_detector_metrics.py``)
-     - 00:00.000
-     - 0.0
-   * - :ref:`sphx_glr_source_auto_examples_modelling_acoustic_sources.py` (``examples/modelling_acoustic_sources.py``)
      - 00:00.000
      - 0.0
    * - :ref:`sphx_glr_source_auto_examples_simulating_ownship_noise.py` (``examples/simulating_ownship_noise.py``)
