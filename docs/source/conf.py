@@ -78,9 +78,22 @@ sphinx_gallery_conf = {
     "examples_dirs": ["examples", "tutorials"],
     "gallery_dirs": ["source/auto_examples", "source/auto_tutorials"],
     "filename_pattern": r"\.py",
-    # Exclude scripts that require external data not bundled with the repository.
-    # These examples have hand-written RST pages under docs/source/examples/.
-    "ignore_pattern": r"using_measured_data\.py",
+    # Exclude scripts that cannot run in CI:
+    #   - WAV-dependent: require measured audio files not bundled with the repo.
+    #     These have hand-written RST pages under docs/source/examples/.
+    #   - rtrs-dependent: require the rtrs package, which is currently private.
+    #     Remove from this list once rtrs is publicly available on PyPI.
+    "ignore_pattern": (
+        r"using_measured_data\.py"
+        r"|modelling_acoustic_sources\.py"
+        r"|comparing_simulators\.py"
+        r"|comparing_bathymetry\.py"
+        r"|designing_narrowband_beamformers\.py"
+        r"|evaluating_detector_metrics\.py"
+        r"|simulating_ownship_noise\.py"
+        r"|FUSION2026_multitarget_example\.py"
+        r"|multi_target_tutorial\.py"
+    ),
     "abort_on_example_error": False,
     "image_scrapers": ("matplotlib", _plotly_scraper),
     "reset_modules": (_plotly_scraper.reset,),
