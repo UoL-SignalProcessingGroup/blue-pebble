@@ -52,6 +52,11 @@ exclude_patterns = [
     # sphinx-gallery-generated RST output under source/auto_examples/ etc.
     "examples",
     "tutorials",
+    # Exclude RST stubs for WAV-dependent scripts that are in ignore_pattern.
+    # These files may persist from earlier builds and would otherwise cause
+    # toc.not_included warnings.
+    "auto_examples/comparing_simulators.rst",
+    "auto_examples/modelling_acoustic_sources.rst",
 ]
 
 autodoc_member_order = "bysource"
