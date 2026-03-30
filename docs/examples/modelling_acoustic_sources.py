@@ -57,11 +57,6 @@ reference_time = datetime(2026, 1, 1, 0, 0, 0)
 
 component_signals = {}
 
-save_figures = False  # set True when running locally with WAV data to regenerate PNGs
-# Guard: exec()-based runners (e.g. Sphinx-Gallery) do not define __file__, so
-# figure export cannot resolve the output path. Force False in that context.
-save_figures = save_figures and "__file__" in globals()
-
 
 # %%
 # WAV File Path Resolution
@@ -108,6 +103,13 @@ if measured_wav_path is None:
 # - The call is built from reusable themes and phrases.
 # - Harmonics, vibrato, breathy noise, and reverb shape the timbre.
 # - The result is a comparatively rich mid-frequency biological source.
+#
+# # The whale-call spectrogram shows a sequence of repeated vocalisations with clear harmonic
+# structure. Each call appears as a stack of narrowband components extending from a low fundamental
+# to higher overtones, giving the signal a rich and structured time-frequency signature. The
+# repeated call groups and slight variation between them reflect the underlying theme- and
+# phrase-based song model, while the dense harmonic content makes this source visually distinct
+# from broadband noise or purely tonal machinery signals.
 
 whale_source = GroundTruthState(
     [0, 0, 0, 0],
@@ -195,16 +197,6 @@ fig_whale = plot_spectrogram(
     height=None,
 )
 
-if save_figures:
-    _figs_dir = (
-        Path(__file__).resolve().parent.parent / "source" / "_static" / "acoustic_source_figs"
-    )
-    fig_whale.write_image(_figs_dir / "modelling_acoustic_sources_whale.png", scale=2)
-    html_fragment = fig_whale.to_html(include_plotlyjs="cdn", full_html=False)
-    (_figs_dir / "modelling_acoustic_sources_whale.html").write_text(
-        f'<div style="overflow-x: auto;">{html_fragment}</div>', encoding="utf-8"
-    )
-
 # %%
 # .. raw:: html
 #    :file: ../_static/acoustic_source_figs/modelling_acoustic_sources_whale.html
@@ -225,6 +217,13 @@ if save_figures:
 #   in the example.
 # - The example uses a point-source far-field approximation rather than a diffuse colony
 #   model.
+#
+# The snapping-shrimp spectrogram is dominated by short, impulsive broadband events, visible as
+# dense vertical stripes across the time axis. Unlike the whale-call example, which shows organised
+# harmonic structure, this signal is transient and noise-like, with energy spread over a wide
+# frequency range and concentrated most strongly in the mid-to-high bands. The result is a highly
+# cluttered spectrogram signature that is useful for representing biologically generated impulsive
+# interference in passive acoustic scenes.
 
 shrimp_source = GroundTruthState(
     [0, 0, 0, 0, -50, 0],
@@ -283,16 +282,6 @@ fig_shrimp = plot_spectrogram(
     height=None,
 )
 
-if save_figures:
-    _figs_dir = (
-        Path(__file__).resolve().parent.parent / "source" / "_static" / "acoustic_source_figs"
-    )
-    fig_shrimp.write_image(_figs_dir / "modelling_acoustic_sources_shrimp.png", scale=2)
-    html_fragment = fig_shrimp.to_html(include_plotlyjs="cdn", full_html=False)
-    (_figs_dir / "modelling_acoustic_sources_shrimp.html").write_text(
-        f'<div style="overflow-x: auto;">{html_fragment}</div>', encoding="utf-8"
-    )
-
 # %%
 # .. raw:: html
 #    :file: ../_static/acoustic_source_figs/modelling_acoustic_sources_shrimp.html
@@ -312,6 +301,12 @@ if save_figures:
 # - These tones represent blade-rate and machinery components.
 # - In contrast to the biological examples above, this source is continuous and spectrally
 #   stable over the window shown here.
+#
+# The synthetic commercial-vessel spectrogram is characterised by a small number of stable
+# narrowband tonals, visible as horizontal lines at fixed frequencies. In contrast to the whale and
+# snapping-shrimp examples, the energy here is highly regular in both time and frequency, making
+# this a simple and easily recognisable machinery-like signature. This makes the signal useful as a
+# controlled baseline before introducing more complex measured or mixed-source examples.
 
 commercial_vessel_state = GroundTruthState(
     [0, 0, 0, 0, -10, 0],
@@ -356,18 +351,6 @@ fig_vessel_tonal = plot_spectrogram(
     height=None,
 )
 
-if save_figures:
-    _figs_dir = (
-        Path(__file__).resolve().parent.parent / "source" / "_static" / "acoustic_source_figs"
-    )
-    fig_vessel_tonal.write_image(
-        _figs_dir / "modelling_acoustic_sources_vessel_tonal.png", scale=2
-    )
-    html_fragment = fig_vessel_tonal.to_html(include_plotlyjs="cdn", full_html=False)
-    (_figs_dir / "modelling_acoustic_sources_vessel_tonal.html").write_text(
-        f'<div style="overflow-x: auto;">{html_fragment}</div>', encoding="utf-8"
-    )
-
 # %%
 # .. raw:: html
 #    :file: ../_static/acoustic_source_figs/modelling_acoustic_sources_vessel_tonal.html
@@ -385,6 +368,13 @@ if save_figures:
 # recording came from `Sanct Sounds <https://sanctsound.ioos.us/sounds.html#Vessels>`_
 # and contains the recording of a large vessel. The file is included in
 # ``docs/examples/measured_data/``; the path was resolved at the top of this script.
+#
+# The measured-vessel spectrogram is less idealised than the synthetic tonal example, combining a
+# broad background of irregular energy with a small number of persistent narrowband features.
+# Rather than a few perfectly clean horizontal lines, the measured recording shows the variability
+# and texture typical of real acoustic data, where machinery tonals are embedded within broadband
+# flow, propulsion, and recording artefacts. This makes the figure useful for illustrating the gap
+# between simple analytic source models and real measured vessel signatures.
 
 measured_vessel_state = GroundTruthState(
     [0, 0, 0, 0, -10, 0],
@@ -436,18 +426,6 @@ fig_vessel_measured = plot_spectrogram(
     height=None,
 )
 
-if save_figures:
-    _figs_dir = (
-        Path(__file__).resolve().parent.parent / "source" / "_static" / "acoustic_source_figs"
-    )
-    fig_vessel_measured.write_image(
-        _figs_dir / "modelling_acoustic_sources_vessel_measured.png", scale=2
-    )
-    html_fragment = fig_vessel_measured.to_html(include_plotlyjs="cdn", full_html=False)
-    (_figs_dir / "modelling_acoustic_sources_vessel_measured.html").write_text(
-        f'<div style="overflow-x: auto;">{html_fragment}</div>', encoding="utf-8"
-    )
-
 # %%
 # .. raw:: html
 #    :file: ../_static/acoustic_source_figs/modelling_acoustic_sources_vessel_measured.html
@@ -466,6 +444,11 @@ if save_figures:
 # - :class:`~.WhiteNoiseSignal` is used here as a deliberately simple reference model.
 # - It does not attempt to reproduce a full ocean ambient spectrum.
 # - The output is useful as a baseline when contrasting structured and unstructured energy.
+#
+# The ambient white-noise spectrogram shows broadly uniform energy across both time and frequency,
+# with no persistent tonal lines or impulsive events. This lack of visible structure makes it a
+# useful baseline for contrasting with more organised sources such as whale calls, shrimp snaps,
+# or vessel machinery tonals.
 
 ambient_noise = WhiteNoiseSignal(
     amplitude_upa=10 ** (90 / 20),
@@ -498,16 +481,6 @@ fig_ambient = plot_spectrogram(
     height=None,
 )
 
-if save_figures:
-    _figs_dir = (
-        Path(__file__).resolve().parent.parent / "source" / "_static" / "acoustic_source_figs"
-    )
-    fig_ambient.write_image(_figs_dir / "modelling_acoustic_sources_ambient.png", scale=2)
-    html_fragment = fig_ambient.to_html(include_plotlyjs="cdn", full_html=False)
-    (_figs_dir / "modelling_acoustic_sources_ambient.html").write_text(
-        f'<div style="overflow-x: auto;">{html_fragment}</div>', encoding="utf-8"
-    )
-
 # %%
 # .. raw:: html
 #    :file: ../_static/acoustic_source_figs/modelling_acoustic_sources_ambient.html
@@ -526,6 +499,14 @@ if save_figures:
 # - The vessel tonals dominate the low end.
 # - The whale call contributes mid-band contour and harmonic structure.
 # - The shrimp and white-noise components raise the broadband floor.
+#
+# The composite soundscape spectrogram combines several source classes into a single mixed scene.
+# Low-frequency vessel energy forms a persistent base, the whale calls appear as repeated harmonic
+# structures extending upward in frequency, and the snapping-shrimp component adds dense impulsive
+# vertical streaking throughout the record. Together with the ambient white-noise background, these
+# components produce a more cluttered and realistic soundscape than any isolated source model on
+# its own, illustrating why mixed passive-acoustic scenes are harder to interpret than
+# single-source examples.
 
 soundscape = (
     component_signals["whale_call"]
@@ -557,16 +538,6 @@ fig_composite = plot_spectrogram(
     width=None,
     height=None,
 )
-
-if save_figures:
-    _figs_dir = (
-        Path(__file__).resolve().parent.parent / "source" / "_static" / "acoustic_source_figs"
-    )
-    fig_composite.write_image(_figs_dir / "modelling_acoustic_sources_composite.png", scale=2)
-    html_fragment = fig_composite.to_html(include_plotlyjs="cdn", full_html=False)
-    (_figs_dir / "modelling_acoustic_sources_composite.html").write_text(
-        f'<div style="overflow-x: auto;">{html_fragment}</div>', encoding="utf-8"
-    )
 
 # %%
 # .. raw:: html
