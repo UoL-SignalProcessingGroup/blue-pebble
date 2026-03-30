@@ -64,6 +64,7 @@ autodoc_member_order = "bysource"
 autodoc_typehints = "description"
 napoleon_google_docstring = False
 napoleon_numpy_docstring = True
+napoleon_use_ivar = True
 
 html_theme = "sphinx_rtd_theme"
 html_title = f"{project} {release}"
@@ -106,11 +107,6 @@ sphinx_gallery_conf = {
         "bluepebble": None,
     },
 }
-
-# Stone Soup's Property metaclass dynamically sets __doc__ on descriptors,
-# causing Sphinx to document each Property attribute twice: once from the class
-# body and once from the metaclass-generated docstring at <unknown>:1.
-suppress_warnings = ["py.duplicate"]
 
 warnings.filterwarnings("ignore", category=RemovedInSphinx10Warning)
 
