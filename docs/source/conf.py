@@ -107,6 +107,11 @@ sphinx_gallery_conf = {
     },
 }
 
+# Stone Soup's Property metaclass dynamically sets __doc__ on descriptors,
+# causing Sphinx to document each Property attribute twice: once from the class
+# body and once from the metaclass-generated docstring at <unknown>:1.
+suppress_warnings = ["py.duplicate"]
+
 warnings.filterwarnings("ignore", category=RemovedInSphinx10Warning)
 
 # ---------------------------------------------------------------------------
