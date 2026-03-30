@@ -181,4 +181,5 @@ def _patch_gallery_index(app: object) -> None:
 
 
 def setup(app: object) -> None:
+    """Register Blue Pebble's Sphinx extensions with the application."""
     app.connect("builder-inited", _patch_gallery_index)  # type: ignore[attr-defined]

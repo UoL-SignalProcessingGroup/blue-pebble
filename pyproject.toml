@@ -83,6 +83,7 @@ select = ["F", "E", "W", "I", "B", "D", "UP"]
 [tool.ruff.lint.per-file-ignores]
 "docs/tutorials/*" = ["E402"]
 "docs/examples/*" = ["E402"]
+"docs/source/conf.py" = ["E501"]
 
 [tool.pyright]
 venvPath = "."
