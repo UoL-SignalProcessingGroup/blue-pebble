@@ -79,10 +79,8 @@ save_figures = save_figures and "__file__" in globals()
 # Measured Data Path Resolution
 # -----------------------------
 #
-# The NetCDF file paths are resolved here so they can be updated in one place if
-# the data directory or filenames change, without touching the model construction
-# cells below. The bathymetry is from GEBCO 2024 for a region south of the Faroe
-# Islands; the temperature and salinity reanalysis are from the Copernicus Marine
+# The NetCDF file paths are resolved here. The bathymetry is from GEBCO 2024 for a region south of
+# the Faroe Islands; the temperature and salinity reanalysis are from the Copernicus Marine
 # Service for the same region and date.
 #
 # Files can be downloaded from:
@@ -205,7 +203,7 @@ for i in range(1, num_steps):
 #
 # Target kinematics and source metadata are generated here, along with relative-bearing
 # truth sequences used for BTR overlays. The measured bathymetry and sound speed profile
-# are also constructed at the end of this section — they are needed for the world
+# are also constructed at the end of this section - they are needed for the world
 # overview figure and are reused by the propagation model that follows.
 
 target_start_vectors = [
@@ -510,9 +508,21 @@ print(f"Total no. of detections: {len(detections)}")
 # Results: Measured Environment Scenario
 # --------------------------------------
 #
-# The left panel shows the raw SNR map; the right panel overlays detections and truth
-# bearings so bearing accuracy and false-alarm rate can be assessed simultaneously
-# against the measured acoustic environment.
+# **What**:
+# This figure presents results from a measured environment. The left panel shows the recorded
+# bearing-time SNR, while the right panel shows the extracted detections overlaid on the
+# ground-truth target tracks. Unlike a synthetic scenario, the data contains irregular background
+# structure, persistent interference, and scattered detections in addition to the target
+# signatures, reflecting the complexity of real measurements.
+#
+# **Why**:
+# This is important because it demonstrates algorithm performance under realistic operating
+# conditions rather than in an idealised simulated scene. The figure shows not only whether the
+# targets can be observed, but also how well they can be distinguished from genuine clutter and
+# nuisance returns present in measured data. Detections that cluster near a dashed truth line
+# indicate successful target observation, whereas detections scattered away from the truth tracks
+# are more likely to represent clutter, false alarms, multipath effects, or other environmental
+# interference.
 
 fig_results = make_subplots(
     rows=1,
