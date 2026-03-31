@@ -33,6 +33,7 @@ from stonesoup.models.transition.linear import (
 )
 from stonesoup.types.groundtruth import GroundTruthPath, GroundTruthState
 
+import bluepebble
 from bluepebble.detector import CACFARDetector, PassiveSonarDetector, PeakDetector
 from bluepebble.models.environment import FlatBathymetry, Linear
 from bluepebble.models.propagation import rtrsAcousticPropagationModel
@@ -52,7 +53,8 @@ from bluepebble.simulator import ContinuousSTFTPassiveSonarArraySimulator
 # every run fully reproducible.
 
 seed = 2000
-np.random.seed(seed)
+bluepebble.set_seed(seed)
+rng = bluepebble.get_rng()
 
 sim_length_s = 900  # seconds
 sim_rate_s = 5.0  # seconds
@@ -86,7 +88,7 @@ def _generate_random_manoeuvres(
 
     current_time = 0.0
     while current_time < total_duration_s - min_leg_duration_s:
-        leg_duration = np.random.uniform(min_leg_duration_s, max_leg_duration_s)
+        leg_duration = rng.uniform(min_leg_duration_s, max_leg_duration_s)
         leg_duration = round(leg_duration / timestep_s) * timestep_s
         leg_duration = min(leg_duration, total_duration_s - current_time)
 
@@ -96,7 +98,7 @@ def _generate_random_manoeuvres(
             )
             description = f"Straight ({leg_duration:.0f}s)"
         else:
-            turn_angle_deg = np.random.uniform(-90, 90)
+            turn_angle_deg = rng.uniform(-90, 90)
             turn_rate_deg_per_s = 1.0
 
             turn_duration_s = abs(turn_angle_deg) / turn_rate_deg_per_s

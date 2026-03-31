@@ -12,6 +12,7 @@ from scipy import signal as scipy_signal
 from scipy.io import wavfile
 from stonesoup.base import Property
 
+from .._seed import _spawn_rng
 from .base import ComplexArray, Signal, _get_source_metadata
 from .utils import compute_stft
 
@@ -329,8 +330,9 @@ class SyntheticAnthropogenicSignal(AnthropogenicSignal):
         If True, use same noise realization for all signal generations (constant scalar over time).
         If False, generate new random noise each time. Default is True.
     seed : int or None, optional
-        Seed for the random number generator. ``None`` (default) gives non-deterministic output;
-        an integer makes noise realisations reproducible across runs.
+        Seed for the random number generator. When ``None`` (default), defers to the global seed
+        set by ``bluepebble.set_seed()`` if called, otherwise non-deterministic. Provide an
+        integer for a reproducible independent stream.
 
     Examples
     --------
@@ -387,8 +389,9 @@ class SyntheticAnthropogenicSignal(AnthropogenicSignal):
     )
     seed: int | None = Property(
         default=None,
-        doc="Seed for the random number generator. ``None`` gives non-deterministic output; "
-        "an integer makes noise realisations reproducible across runs.",
+        doc="Seed for the random number generator. ``None`` defers to the global seed set by "
+        "``bluepebble.set_seed()`` if called, otherwise gives non-deterministic output; "
+        "an explicit integer always produces a reproducible independent stream.",
     )
 
     def __init__(self, *args: object, **kwargs: object) -> None:
@@ -396,7 +399,7 @@ class SyntheticAnthropogenicSignal(AnthropogenicSignal):
         super().__init__(*args, **kwargs)
         self._validate_tonal_bandwidth(self.tonal_bandwidth_hz)
         self._validate_noise_variance(self.noise_variance)
-        self._rng = np.random.default_rng(self.seed)
+        self._rng = _spawn_rng(self.seed)
         self._noise_realization: ComplexArray | None = None
         self._tonal_realizations: list[ComplexArray] | None = None
 
