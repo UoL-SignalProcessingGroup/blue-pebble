@@ -803,7 +803,12 @@ def plot_world(
         eps = max(1e-9, 1e-6 * max(abs(zmin_raw), abs(zmax_raw), 1.0))
         zmin = zmin_raw if zmin_raw < 0.0 else -eps
         zmax = zmax_raw if zmax_raw > 0.0 else eps
-        colorscale = "Greens"
+        colorscale = _two_slope_colorscale(
+            _get_cmocean_topo_cmap(),
+            zmin,
+            zmax,
+            vcenter=0.0,
+        )
 
         hovertemplate = (
             f"X: %{{x:.2f}} {unit}<br>Y: %{{y:.2f}} {unit}<br>Z: %{{z:.2f}} m<extra></extra>"
@@ -1018,6 +1023,7 @@ def plot_btr(
     data_type: str = "SNR (dB)",
     cmin: float | None = None,
     cmax: float | None = None,
+    colorscale: str = "Turbo",
     figsize: tuple[float, float] = (800, 600),
     fig: go.Figure | None = None,
     row: int | None = None,
@@ -1051,6 +1057,8 @@ def plot_btr(
     cmax : float | None
         Optional upper bound of the heatmap color scale. If ``None`` (default),
         Plotly automatically chooses the upper bound from the data.
+    colorscale : str
+        Name of the Plotly colorscale to use for the heatmap. Default is ``"Turbo"``.
     figsize : tuple[float, float]
         Figure size for standalone plots. Values that look like inches (for example
         ``(12, 6)``) are converted to pixels using 100 px/in; larger values are
@@ -1178,7 +1186,7 @@ def plot_btr(
             z=data_array,
             y=timesteps_array,
             x=steering_array,
-            colorscale="Viridis",
+            colorscale=colorscale,
             zmin=cmin,
             zmax=cmax,
             colorbar=dict(
@@ -1361,7 +1369,7 @@ def plot_spectrogram(
     z_percentiles: tuple[float, float] | None = None,
     showscale: bool = True,
     colorbar_title: str = "Intensity (dB)",
-    colorscale: str = "Viridis",
+    colorscale: str = "Turbo",
     customdata: ArrayLike | None = None,
     hovertemplate: str | None = None,
 ) -> go.Figure:

@@ -12,9 +12,8 @@ This example runs one scenario using measured environmental inputs:
 
    This example requires external data files (GEBCO bathymetry and Copernicus ocean
    reanalysis) that are not bundled with the repository.  The figures below are
-   pre-generated from a local run with the measured data.  To regenerate them, set
-   ``save_figures = True`` in the Simulation Parameters section and run the script
-   with the data files present.
+   pre-generated from a local run with the measured data.  To regenerate them, run
+   ``docs/scripts/generate_using_measured_data_figs.py`` with the data files present.
 """  # noqa: D205, D212, D400, D415
 
 # %%
@@ -70,10 +69,6 @@ time_interval = timedelta(seconds=sim_rate_s)
 num_steps = int(sim_length_s / sim_rate_s)
 
 total_duration_s = num_steps * time_interval.total_seconds()
-save_figures = False  # set True when running locally with data to regenerate PNGs
-# Guard: exec()-based runners (e.g. Sphinx-Gallery) do not define __file__, so
-# figure export cannot resolve the output path. Force False in that context.
-save_figures = save_figures and "__file__" in globals()
 
 # %%
 # Measured Data Path Resolution
@@ -299,16 +294,6 @@ fig_world = plot_world(
     height=600,
     legend=dict(x=0.5, y=-0.14, xanchor="center", yanchor="top", orientation="h"),
 )
-
-if save_figures:
-    _figs_dir = (
-        Path(__file__).resolve().parent.parent / "source" / "_static" / "measured_data_figs"
-    )
-    fig_world.write_image(_figs_dir / "using_measured_data_world.png", scale=2)
-    html_fragment = fig_world.to_html(include_plotlyjs="cdn", full_html=False)
-    (_figs_dir / "using_measured_data_world.html").write_text(
-        f'<div style="overflow-x: auto;">{html_fragment}</div>', encoding="utf-8"
-    )
 
 # %%
 # .. raw:: html
@@ -573,16 +558,6 @@ fig_results.update_layout(
     margin=dict(r=90, t=90),
     legend=dict(x=0.5, y=-0.14, xanchor="center", yanchor="top", orientation="h"),
 )
-
-if save_figures:
-    _figs_dir = (
-        Path(__file__).resolve().parent.parent / "source" / "_static" / "measured_data_figs"
-    )
-    fig_results.write_image(_figs_dir / "using_measured_data_results.png", scale=2)
-    html_fragment = fig_results.to_html(include_plotlyjs="cdn", full_html=False)
-    (_figs_dir / "using_measured_data_results.html").write_text(
-        f'<div style="overflow-x: auto;">{html_fragment}</div>', encoding="utf-8"
-    )
 
 # %%
 # .. raw:: html

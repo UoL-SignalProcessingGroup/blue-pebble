@@ -16,9 +16,8 @@ for bathymetry and sound speed profile.
 
    This example requires external data files (GEBCO bathymetry and Copernicus ocean
    reanalysis) that are not bundled with the repository.  The figures below were
-   pre-generated from a local run with the measured data.  To regenerate them, set
-   ``save_figures = True`` in the Simulation Parameters section of the script and run
-   it with the data files present.
+   pre-generated from a local run with the measured data.  To regenerate them, run
+   ``docs/scripts/generate_using_measured_data_figs.py`` with the data files present.
 
    Data can be obtained from:
 

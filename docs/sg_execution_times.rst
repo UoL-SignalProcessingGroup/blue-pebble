@@ -6,7 +6,7 @@
 
 Computation times
 =================
-**01:54.109** total execution time for 10 files **from all galleries**:
+**04:52.178** total execution time for 8 files **from all galleries**:
 
 .. container::
 
@@ -32,22 +32,13 @@ Computation times
    * - Example
      - Time
      - Mem (MB)
-   * - :ref:`sphx_glr_source_auto_tutorials_multi_target_tutorial.py` (``tutorials/multi_target_tutorial.py``)
-     - 01:14.980
-     - 0.0
-   * - :ref:`sphx_glr_source_auto_tutorials_single_target_tutorial.py` (``tutorials/single_target_tutorial.py``)
-     - 00:39.129
+   * - :ref:`sphx_glr_source_auto_examples_comparing_bathymetry.py` (``examples/comparing_bathymetry.py``)
+     - 04:52.178
      - 0.0
    * - :ref:`sphx_glr_source_auto_examples_FUSION2026_multitarget_example.py` (``examples/FUSION2026_multitarget_example.py``)
      - 00:00.000
      - 0.0
    * - :ref:`sphx_glr_source_auto_examples_FUSION2026_singletarget_example.py` (``examples/FUSION2026_singletarget_example.py``)
-     - 00:00.000
-     - 0.0
-   * - :ref:`sphx_glr_source_auto_examples_comparing_bathymetry.py` (``examples/comparing_bathymetry.py``)
-     - 00:00.000
-     - 0.0
-   * - :ref:`sphx_glr_source_auto_examples_comparing_simulators.py` (``examples/comparing_simulators.py``)
      - 00:00.000
      - 0.0
    * - :ref:`sphx_glr_source_auto_examples_designing_narrowband_beamformers.py` (``examples/designing_narrowband_beamformers.py``)
@@ -56,9 +47,12 @@ Computation times
    * - :ref:`sphx_glr_source_auto_examples_evaluating_detector_metrics.py` (``examples/evaluating_detector_metrics.py``)
      - 00:00.000
      - 0.0
-   * - :ref:`sphx_glr_source_auto_examples_modelling_acoustic_sources.py` (``examples/modelling_acoustic_sources.py``)
+   * - :ref:`sphx_glr_source_auto_examples_simulating_ownship_noise.py` (``examples/simulating_ownship_noise.py``)
      - 00:00.000
      - 0.0
-   * - :ref:`sphx_glr_source_auto_examples_simulating_ownship_noise.py` (``examples/simulating_ownship_noise.py``)
+   * - :ref:`sphx_glr_source_auto_tutorials_multi_target_tutorial.py` (``tutorials/multi_target_tutorial.py``)
+     - 00:00.000
+     - 0.0
+   * - :ref:`sphx_glr_source_auto_tutorials_single_target_tutorial.py` (``tutorials/single_target_tutorial.py``)
      - 00:00.000
      - 0.0
