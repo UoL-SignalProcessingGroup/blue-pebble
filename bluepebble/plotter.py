@@ -1057,6 +1057,8 @@ def plot_btr(
     cmax : float | None
         Optional upper bound of the heatmap color scale. If ``None`` (default),
         Plotly automatically chooses the upper bound from the data.
+    colorscale : str
+        Name of the Plotly colorscale to use for the heatmap. Default is ``"Turbo"``.
     figsize : tuple[float, float]
         Figure size for standalone plots. Values that look like inches (for example
         ``(12, 6)``) are converted to pixels using 100 px/in; larger values are
