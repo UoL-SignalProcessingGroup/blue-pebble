@@ -58,9 +58,12 @@ from datetime import datetime, timedelta
 
 import numpy as np
 
+import bluepebble
+
 # Random seed for reproducibility
-seed = 2000
-np.random.seed(seed)
+seed = 42
+bluepebble.set_seed(seed)
+rng = bluepebble.get_rng()
 
 # Simulation parameters
 sim_length_s = 900
@@ -160,10 +163,10 @@ target_position_mapping = [0, 2, 4]
 target_velocity_mapping = [1, 3, 5]
 
 # Define the target's signal parameters
-target_amplitudes_upa = 10 ** (np.random.uniform(97, 112, 4) / 20)
-target_frequencies_hz = np.random.uniform(25.0, 200.0, 4)
-target_phases_rad = np.random.uniform(0, 2 * np.pi, 4)
-target_tonal_bandwidth_hz = np.random.uniform(0.5, 2.0)
+target_amplitudes_upa = 10 ** (rng.uniform(97, 112, 4) / 20)
+target_frequencies_hz = rng.uniform(25.0, 200.0, 4)
+target_phases_rad = rng.uniform(0, 2 * np.pi, 4)
+target_tonal_bandwidth_hz = rng.uniform(0.5, 2.0)
 target_noise_amplitude_upa = 10 ** (90 / 20)
 target_noise_spectral_exponent = -1.0  # Pink noise
 

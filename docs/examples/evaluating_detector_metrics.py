@@ -31,6 +31,7 @@ from stonesoup.models.transition.linear import (
 )
 from stonesoup.types.groundtruth import GroundTruthPath, GroundTruthState
 
+import bluepebble
 from bluepebble.detector import CACFARDetector, OSCFARDetector, PassiveSonarDetector, PeakDetector
 from bluepebble.detector.metrics import SweepSpec, sweep_detection_parameter
 from bluepebble.models.environment import FlatBathymetry, Linear
@@ -51,7 +52,8 @@ from bluepebble.simulator import ContinuousSTFTPassiveSonarArraySimulator
 # propagation, simulator, and metrics) operate on the same time axis.
 
 seed = 2000
-np.random.seed(seed)
+bluepebble.set_seed(seed)
+rng = bluepebble.get_rng()
 
 sim_length_s = 900
 sim_rate_s = 5.0
@@ -142,7 +144,7 @@ target_transition_model = CombinedLinearGaussianTransitionModel(
 target_position_mapping = [0, 2, 4]
 target_velocity_mapping = [1, 3, 5]
 
-target_tonal_bandwidth_hz = np.random.uniform(0.5, 2.0)
+target_tonal_bandwidth_hz = rng.uniform(0.5, 2.0)
 target_noise_amplitude_upa = 10 ** (90 / 20)
 target_noise_spectral_exponent = -1.0
 
@@ -152,11 +154,11 @@ for sv in [target1_start_vector, target2_start_vector, target3_start_vector]:
     metadata = {
         "position_mapping": target_position_mapping,
         "velocity_mapping": target_velocity_mapping,
-        "amplitudes_upa": 10 ** (np.random.uniform(87, 102, 4) / 20),
-        "frequencies_hz": np.random.uniform(50.0, 200.0, 4),
-        "phases_rad": np.random.uniform(0, 2 * np.pi, 4),
-        "tonal_bandwidth_hz": np.random.uniform(0.5, 2.0),
-        "noise_amplitude_upa": 10 ** (np.random.uniform(65, 85) / 20),
+        "amplitudes_upa": 10 ** (rng.uniform(87, 102, 4) / 20),
+        "frequencies_hz": rng.uniform(50.0, 200.0, 4),
+        "phases_rad": rng.uniform(0, 2 * np.pi, 4),
+        "tonal_bandwidth_hz": rng.uniform(0.5, 2.0),
+        "noise_amplitude_upa": 10 ** (rng.uniform(65, 85) / 20),
         "target_tonal_bandwidth_hz": target_tonal_bandwidth_hz,
         "target_noise_amplitude_upa": target_noise_amplitude_upa,
         "noise_spectral_exponent": target_noise_spectral_exponent,
@@ -493,8 +495,8 @@ fig_roc_pr = plot_roc_pr(results).update_layout(
 # -------------
 #
 # * **ROC and PR can rank detectors differently** - CA-CFAR achieves the highest
-#   AUC-ROC (0.8593), while CA-CFAR + Peak achieves the highest AUC-PR (0.1347).
-#   Among the non-peak variants, OS-CFAR has the stronger AUC-PR (0.1175). This is
+#   AUC-ROC (0.8491), while CA-CFAR + Peak achieves the highest AUC-PR (0.1907).
+#   Among the non-peak variants, OS-CFAR has the stronger AUC-PR (0.1655). This is
 #   why both ROC and PR curves should be reported.
 # * **Peak clustering changes how the ROC sweep behaves** - sweeping only the CFAR
 #   threshold while holding ``PeakDetector.distance`` fixed produces a non-standard

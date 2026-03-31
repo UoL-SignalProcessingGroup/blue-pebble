@@ -10,6 +10,8 @@ except PackageNotFoundError:
 
 __all__ = [
     "__version__",
+    "get_rng",
+    "set_seed",
     "detector",
     "models",
     "platform",
@@ -23,7 +25,7 @@ __all__ = [
 
 
 def __getattr__(name: str):
-    """Lazily import top-level subpackages on first access."""
+    """Lazily import top-level subpackages and seed helpers on first access."""
     if name in {
         "detector",
         "models",
@@ -38,6 +40,11 @@ def __getattr__(name: str):
         module = import_module(f"{__name__}.{name}")
         globals()[name] = module
         return module
+    if name in {"get_rng", "set_seed"}:
+        from bluepebble._seed import get_rng, set_seed  # noqa: PLC0415
+        globals()["get_rng"] = get_rng
+        globals()["set_seed"] = set_seed
+        return globals()[name]
     raise AttributeError(f"module {__name__!r} has no attribute {name!r}")
 
 

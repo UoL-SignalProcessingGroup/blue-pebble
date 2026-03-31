@@ -50,6 +50,7 @@ from stonesoup.types.state import GaussianState, State
 from stonesoup.types.update import GaussianStateUpdate
 from stonesoup.updater.kalman import ExtendedKalmanUpdater
 
+import bluepebble
 from bluepebble.detector import CACFARDetector, PassiveSonarDetector, PeakDetector
 from bluepebble.models.environment import FlatBathymetry, Linear
 from bluepebble.models.propagation import rtrsAcousticPropagationModel
@@ -69,7 +70,8 @@ from bluepebble.simulator import ContinuousSTFTPassiveSonarArraySimulator
 
 # %%
 seed = 12
-np.random.seed(seed)
+bluepebble.set_seed(seed)
+rng = bluepebble.get_rng()
 
 sim_length = 900
 sim_rate = 5.0
@@ -138,11 +140,11 @@ for sv in target_svs:
             "transition_model": CombinedLinearGaussianTransitionModel(
                 [ConstantVelocity(0), ConstantVelocity(0), ConstantVelocity(0)]
             ),
-            "amplitudes_upa": 10 ** (np.random.uniform(87, 102, 4) / 20),
-            "frequencies_hz": np.random.uniform(25.0, 200.0, 4),
-            "phases_rad": np.random.uniform(0, 2 * np.pi, 4),
-            "tonal_bandwidth_hz": np.random.uniform(0.5, 2.0),
-            "noise_amplitude_upa": 10 ** (np.random.uniform(65, 85) / 20),
+            "amplitudes_upa": 10 ** (rng.uniform(87, 102, 4) / 20),
+            "frequencies_hz": rng.uniform(25.0, 200.0, 4),
+            "phases_rad": rng.uniform(0, 2 * np.pi, 4),
+            "tonal_bandwidth_hz": rng.uniform(0.5, 2.0),
+            "noise_amplitude_upa": 10 ** (rng.uniform(65, 85) / 20),
             "noise_spectral_exponent": -1.0,
         }
     )
@@ -158,7 +160,7 @@ signal_params = {
 }
 
 ambient_noise_params = {
-    "amplitude_upa": 10 ** (np.random.uniform(45, 55) / 20),
+    "amplitude_upa": 10 ** (rng.uniform(45, 55) / 20),
     "spectral_exponent": -1,
 }
 
@@ -465,7 +467,7 @@ init_associator = GNNWith2DAssignment(init_hypothesiser)
 
 deleter = CovarianceBasedDeleter(covar_trace_thresh=0.2)
 
-initial_bearing = float(relative_bearing_ground_truths[0][0].state_vector[0]) + np.random.normal(
+initial_bearing = float(relative_bearing_ground_truths[0][0].state_vector[0]) + rng.normal(
     0, np.deg2rad(2)
 )
 initial_bearing = mod_bearing(initial_bearing)
@@ -604,7 +606,7 @@ for i, timestamp in enumerate(timesteps):
                     )
                 )
 
-    num_clutter = np.random.poisson(clutter_spatial_density)
+    num_clutter = rng.poisson(clutter_spatial_density)
     for _ in range(num_clutter):
         clutter_bearing = uniform.rvs(loc=-np.pi, scale=2 * np.pi)
         detections_at_time.append(

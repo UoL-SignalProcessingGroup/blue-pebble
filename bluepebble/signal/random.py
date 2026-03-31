@@ -5,6 +5,7 @@ from abc import ABC, abstractmethod
 import numpy as np
 from stonesoup.base import Property
 
+from .._seed import _spawn_rng
 from .base import ComplexArray, Signal
 
 
@@ -26,23 +27,24 @@ class RandomSignal(Signal, ABC):
     sampling_rate_hz : int
         Sampling rate in Hertz.
     seed : int or None, optional
-        Seed for the random number generator. When ``None`` (default), the RNG
-        is seeded non-deterministically. Provide an integer for reproducible
-        signal realisations across runs.
+        Seed for the random number generator. When ``None`` (default), defers
+        to the global seed set by ``bluepebble.set_seed()`` if called, otherwise
+        non-deterministic. Provide an integer for a reproducible independent stream.
 
     """
 
     amplitude_upa: float = Property(doc="The signal amplitude (e.g., in µPa)")
     seed: int | None = Property(
         default=None,
-        doc="Seed for the random number generator. ``None`` gives non-deterministic output; "
-        "an integer makes signal realisations reproducible across runs.",
+        doc="Seed for the random number generator. ``None`` defers to the global seed set by "
+        "``bluepebble.set_seed()`` if called, otherwise gives non-deterministic output; "
+        "an explicit integer always produces a reproducible independent stream.",
     )
 
     def __init__(self, *args, **kwargs) -> None:
         """Initialise and seed the random number generator."""
         super().__init__(*args, **kwargs)
-        self._rng = np.random.default_rng(self.seed)
+        self._rng = _spawn_rng(self.seed)
 
     def _generate_unit_white_noise(
         self, num_sensors: int, num_samples: int | None = None

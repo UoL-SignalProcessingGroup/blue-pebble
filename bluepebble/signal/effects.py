@@ -15,6 +15,7 @@ from abc import ABC, abstractmethod
 import numpy as np
 from stonesoup.base import Base, Property
 
+from .._seed import _spawn_rng
 from .base import ComplexArray
 
 
@@ -37,9 +38,10 @@ class Reverb(Effect):
     )
     seed: int | None = Property(
         default=None,
-        doc="Seed for the impulse-response RNG. ``None`` gives a different reverb tail on every "
-        "call; an integer produces the same tail for the same ``duration_s`` and "
-        "``sampling_rate_hz`` across calls and runs.",
+        doc="Seed for the impulse-response RNG. ``None`` defers to the global seed set by "
+        "``bluepebble.set_seed()`` (different reproducible tail per call) or gives a "
+        "non-deterministic tail if no global seed is set; an explicit integer produces the "
+        "same tail for the same ``duration_s`` and ``sampling_rate_hz`` across calls and runs.",
     )
 
     def apply(self, signals: ComplexArray, sampling_rate_hz: int) -> ComplexArray:
@@ -74,7 +76,7 @@ class Reverb(Effect):
         # Generate a synthetic Impulse Response (IR) for the reverb effect.
         # Re-create the RNG from seed each call so the same seed always produces the same IR,
         # regardless of how many times apply() has been called previously.
-        rng = np.random.default_rng(self.seed)
+        rng = _spawn_rng(self.seed)
         ir_samples = int(self.duration_s * sampling_rate_hz)
         time = np.arange(ir_samples) / sampling_rate_hz
         decay = np.exp(-5.0 * time / self.duration_s)  # Exponential decay
