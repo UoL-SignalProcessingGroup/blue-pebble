@@ -40,6 +40,7 @@ from stonesoup.models.transition.linear import (
 )
 from stonesoup.types.groundtruth import GroundTruthPath, GroundTruthState
 
+import bluepebble
 from bluepebble.models.environment import Constant
 from bluepebble.models.propagation import CylindricalAcousticPropagationModel
 from bluepebble.platform import TowedArrayPlatform
@@ -61,7 +62,8 @@ from bluepebble.simulator import (
 # A fixed random seed ensures the tonal phases and noise realisations are identical on every run,
 # making the spectrograms fully reproducible.
 
-np.random.seed(1999)
+bluepebble.set_seed(1999)
+rng = bluepebble.get_rng()
 
 sim_rate_s = 2.0
 sim_length_s = 300.0
@@ -118,7 +120,7 @@ target_states = [
         metadata={
             "amplitudes_upa": 10 ** (np.array([100.0, 90.0, 100.0, 85.0]) / 20),
             "frequencies_hz": np.array([20.0, 140.0, 200.0, 500.0]),
-            "phases_rad": np.random.uniform(0, 2 * np.pi, 4),
+            "phases_rad": rng.uniform(0, 2 * np.pi, 4),
             "position_mapping": [0, 2, 4],
             "velocity_mapping": [1, 3, 5],
         },

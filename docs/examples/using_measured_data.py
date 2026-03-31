@@ -33,6 +33,7 @@ from stonesoup.models.transition.linear import (
 )
 from stonesoup.types.groundtruth import GroundTruthPath, GroundTruthState
 
+import bluepebble
 from bluepebble.detector import CACFARDetector, PassiveSonarDetector, PeakDetector
 from bluepebble.models.environment import GEBCOBathymetry, LeroyCopernicusSoundSpeedProfile
 from bluepebble.models.propagation import rtrsAcousticPropagationModel
@@ -59,7 +60,8 @@ from bluepebble.simulator import ContinuousSTFTPassiveSonarArraySimulator
 # start time ensure the scenario is reproducible across runs.
 
 seed = 2000
-np.random.seed(seed)
+bluepebble.set_seed(seed)
+rng = bluepebble.get_rng()
 
 sim_length_s = 1800  # seconds
 sim_rate_s = 5.0  # seconds
@@ -216,11 +218,11 @@ target_ground_truths = []
 relative_bearing_ground_truths = []
 
 for target_start_vector in target_start_vectors:
-    target_amplitudes_upa = 10 ** (np.random.uniform(90, 102, 4) / 20)
-    target_frequencies_hz = np.random.uniform(120.0, 250.0, 4)
-    target_phases_rad = np.random.uniform(0, 2 * np.pi, 4)
-    target_tonal_bandwidth_hz = np.random.uniform(0.5, 2.0)
-    target_noise_amplitude_upa = 10 ** (np.random.uniform(75, 85) / 20)
+    target_amplitudes_upa = 10 ** (rng.uniform(90, 102, 4) / 20)
+    target_frequencies_hz = rng.uniform(120.0, 250.0, 4)
+    target_phases_rad = rng.uniform(0, 2 * np.pi, 4)
+    target_tonal_bandwidth_hz = rng.uniform(0.5, 2.0)
+    target_noise_amplitude_upa = 10 ** (rng.uniform(75, 85) / 20)
 
     target_states = [
         GroundTruthState(

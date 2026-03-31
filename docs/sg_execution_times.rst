@@ -6,7 +6,7 @@
 
 Computation times
 =================
-**04:52.178** total execution time for 8 files **from all galleries**:
+**02:29.237** total execution time for 8 files **from all galleries**:
 
 .. container::
 
@@ -32,8 +32,8 @@ Computation times
    * - Example
      - Time
      - Mem (MB)
-   * - :ref:`sphx_glr_source_auto_examples_comparing_bathymetry.py` (``examples/comparing_bathymetry.py``)
-     - 04:52.178
+   * - :ref:`sphx_glr_source_auto_examples_evaluating_detector_metrics.py` (``examples/evaluating_detector_metrics.py``)
+     - 02:29.237
      - 0.0
    * - :ref:`sphx_glr_source_auto_examples_FUSION2026_multitarget_example.py` (``examples/FUSION2026_multitarget_example.py``)
      - 00:00.000
@@ -41,10 +41,10 @@ Computation times
    * - :ref:`sphx_glr_source_auto_examples_FUSION2026_singletarget_example.py` (``examples/FUSION2026_singletarget_example.py``)
      - 00:00.000
      - 0.0
-   * - :ref:`sphx_glr_source_auto_examples_designing_narrowband_beamformers.py` (``examples/designing_narrowband_beamformers.py``)
+   * - :ref:`sphx_glr_source_auto_examples_comparing_bathymetry.py` (``examples/comparing_bathymetry.py``)
      - 00:00.000
      - 0.0
-   * - :ref:`sphx_glr_source_auto_examples_evaluating_detector_metrics.py` (``examples/evaluating_detector_metrics.py``)
+   * - :ref:`sphx_glr_source_auto_examples_designing_narrowband_beamformers.py` (``examples/designing_narrowband_beamformers.py``)
      - 00:00.000
      - 0.0
    * - :ref:`sphx_glr_source_auto_examples_simulating_ownship_noise.py` (``examples/simulating_ownship_noise.py``)

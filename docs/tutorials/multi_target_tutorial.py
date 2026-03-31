@@ -21,9 +21,12 @@ from datetime import datetime, timedelta
 
 import numpy as np
 
+import bluepebble
+
 # Random seed for reproducibility
-seed = 2000
-np.random.seed(seed)
+seed = 42
+bluepebble.set_seed(seed)
+rng = bluepebble.get_rng()
 
 # Simulation parameters
 sim_length_s = 900
@@ -141,7 +144,7 @@ target_velocity_mapping = [1, 3, 5]
 
 target_truths = []
 
-target_tonal_bandwidth_hz = np.random.uniform(0.5, 2.0)
+target_tonal_bandwidth_hz = rng.uniform(0.5, 2.0)
 target_noise_amplitude_upa = 10 ** (90 / 20)
 target_noise_spectral_exponent = -1.0
 
@@ -149,11 +152,11 @@ for sv in [target1_start_vector, target2_start_vector, target3_start_vector]:
     metadata = {
         "position_mapping": target_position_mapping,
         "velocity_mapping": target_velocity_mapping,
-        "amplitudes_upa": 10 ** (np.random.uniform(87, 102, 4) / 20),
-        "frequencies_hz": np.random.uniform(50.0, 200.0, 4),
-        "phases_rad": np.random.uniform(0, 2 * np.pi, 4),
-        "tonal_bandwidth_hz": np.random.uniform(0.5, 2.0),
-        "noise_amplitude_upa": 10 ** (np.random.uniform(65, 85) / 20),
+        "amplitudes_upa": 10 ** (rng.uniform(87, 102, 4) / 20),
+        "frequencies_hz": rng.uniform(50.0, 200.0, 4),
+        "phases_rad": rng.uniform(0, 2 * np.pi, 4),
+        "tonal_bandwidth_hz": rng.uniform(0.5, 2.0),
+        "noise_amplitude_upa": 10 ** (rng.uniform(65, 85) / 20),
         "target_tonal_bandwidth_hz": target_tonal_bandwidth_hz,
         "target_noise_amplitude_upa": target_noise_amplitude_upa,
         "noise_spectral_exponent": target_noise_spectral_exponent,

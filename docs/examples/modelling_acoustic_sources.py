@@ -25,6 +25,7 @@ from pathlib import Path
 import numpy as np
 from stonesoup.types.groundtruth import GroundTruthState
 
+import bluepebble
 from bluepebble.plotter import plot_spectrogram
 from bluepebble.signal.anthropogenic import (
     RecordedAnthropogenicSignal,
@@ -49,7 +50,8 @@ from bluepebble.signal.random import WhiteNoiseSignal
 # the goal is visual orientation rather than absolute spectral density.
 
 seed = 2000
-np.random.seed(seed)
+bluepebble.set_seed(seed)
+rng = bluepebble.get_rng()
 
 sampling_rate_Hz = 48_000
 signal_duration_s = 10.0
@@ -314,7 +316,7 @@ commercial_vessel_state = GroundTruthState(
     metadata={
         "frequencies_hz": np.array([50.0, 75.0, 125.0, 82.0]),
         "amplitudes_upa": 10 ** (np.array([175.0, 168.0, 162.0, 160.0]) / 20),
-        "phases_rad": np.random.uniform(0, 2 * np.pi, 4),
+        "phases_rad": rng.uniform(0, 2 * np.pi, 4),
         "position_mapping": [0, 2, 4],
     },
 )
@@ -382,7 +384,7 @@ measured_vessel_state = GroundTruthState(
     metadata={
         "frequencies_hz": np.array([50.0, 75.0, 125.0, 82.0]),
         "amplitudes_upa": 10 ** (np.array([175.0, 168.0, 162.0, 160.0]) / 20),
-        "phases_rad": np.random.uniform(0, 2 * np.pi, 4),
+        "phases_rad": rng.uniform(0, 2 * np.pi, 4),
         "position_mapping": [0, 2, 4],
     },
 )
