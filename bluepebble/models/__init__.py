@@ -1,5 +1,5 @@
 """Models package public API."""
 
-from . import environment, propagation
+from . import environment, hydrophone, propagation
 
-__all__ = ["environment", "propagation"]
+__all__ = ["environment", "hydrophone", "propagation"]
