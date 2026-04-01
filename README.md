@@ -56,6 +56,7 @@ Implemented capabilities include:
 - Detection algorithms with performance metrics  
 - Passive sonar simulation pipelines  
 - Integration of real environmental datasets (bathymetry, range-dependent sound speed profiles)
+- Incorporation of measured source signatures
 - Native integration with Stone Soup tracking workflows  
 - Plotting utilities for bearings and Cartesian tracks  
 - Notebook-based tutorials and worked examples
@@ -175,9 +176,11 @@ Blue Pebble is licensed under the MIT license.
 
 See `LICENSE` and `NOTICE.md` for details.
 
-## Third-Party Data
+## Third-Party Components
 
-Blue Pebble does not distribute external data in its PyPI package. Users are responsible for complying with the licenses of any external data they utilise.
+**Software:** The optional rtrs backend is licensed under the MIT licence and is not distributed with Blue Pebble. Users are responsible for installing it separately.
+
+**Data:** Blue Pebble does not distribute external data in its PyPI package. Users are responsible for complying with the licences of any external data they utilise.
 
 ## Future Enhancements
 
@@ -185,17 +188,19 @@ Planned and potential extensions include:
 
 ### Environmental Modelling
 - Coherent ambient noise modelling (wind, rain, wave-induced noise)
-- Improved acoustic volume attenuation and boundary loss modelling
 - Systematic environmental uncertainty modelling (sound speed and sensor position errors)
 
 ### Signal and Source Modelling
-- Incorporation of measured source signatures
 - Expanded source directivity modelling
-- Additional sensing geometries (hull-mounted arrays, sonobuoys, distributed arrays)
 
 ### Detection and Performance Analysis
 - Alternative SNR and beam power outputs (e.g., angle-dependent CFAR variants)
+- Bearing × time × frequency output volume to support multi-band downstream processing
+- Multi-band detector operating across frequency bands simultaneously
+- 2D CFAR with training cells spanning both bearing and time, giving the detector access to a limited time history
 
-### Extended Sensing Modalities
+### Sensing Modalities
 - Active sonar modelling
 - Multistatic and bistatic configurations
+- Additional sensing geometries (hull-mounted arrays, sonobuoys, distributed arrays)
+- Explicit hydrophone modelling

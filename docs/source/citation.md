@@ -19,6 +19,8 @@ Blue Pebble is licensed under the MIT licence.
 
 See `LICENSE` and `NOTICE.md` for details.
 
-## Third-party data
+## Third-party components
 
-Optional data such as measured bathymetry are licensed separately. Blue Pebble does not distribute this data in its PyPI package, and users are responsible for complying with the licences of any external data they use.
+**Software:** The optional rtrs backend is licensed under the MIT licence and is not distributed with Blue Pebble. Users are responsible for installing it separately.
+
+**Data:** Blue Pebble does not distribute external data in its PyPI package. Users are responsible for complying with the licences of any external data they utilise.

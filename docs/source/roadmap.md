@@ -18,6 +18,9 @@ Planned and potential extensions include:
 ## Detection and performance analysis
 
 - Alternative SNR and beam-power outputs, including angle-dependent CFAR variants
+- Bearing × time × frequency output volume to support multi-band downstream processing
+- Multi-band detector operating across frequency bands simultaneously
+- 2D CFAR with training cells spanning both bearing and time, giving the detector access to a limited time history
 
 ## Extended sensing modalities
 
