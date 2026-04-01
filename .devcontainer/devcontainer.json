@@ -2,7 +2,10 @@
     "name": "Blue Pebble Development",
     "build": {
         "dockerfile": "../Dockerfile",
-        "context": ".."
+        "context": "..",
+        "args": {
+            "RTRS_URL": "${localEnv:RTRS_URL}"
+        }
     },
 
     "features": {
