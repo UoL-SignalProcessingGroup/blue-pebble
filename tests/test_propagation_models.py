@@ -12,7 +12,6 @@ import pytest
 from .support import (
     install_fake_stonesoup,
     install_repo_package,
-    load_module_from_repo,
     load_package_module_from_repo,
 )
 
