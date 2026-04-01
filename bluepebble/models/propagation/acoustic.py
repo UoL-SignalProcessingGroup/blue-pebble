@@ -1,18 +1,13 @@
 """Defines acoustic propagation models for simulating sound propagation."""
 
-import subprocess
-import tempfile
 from abc import ABC, abstractmethod
 from collections.abc import Mapping
-from pathlib import Path
-from shutil import which
 from typing import TYPE_CHECKING, Any, Protocol, TypeAlias, cast
 
 import numpy as np
 from numpy.typing import ArrayLike, NDArray
 from stonesoup.base import Base, Property
 
-from ...utils import read_shade_file
 from ..environment import Bathymetry, SoundSpeedProfile
 
 if TYPE_CHECKING:
@@ -225,7 +220,7 @@ class CylindricalAcousticPropagationModel(AcousticPropagationModel, SpectrumProp
     """A simple acoustic model based on cylindrical spreading and absorption loss.
 
     This model provides a basic estimate of transmission loss without the computational overhead of
-    more complex models like Bellhop.
+    more complex ray tracing methods.
 
     Attributes
     ----------
@@ -344,7 +339,7 @@ class SphericalAcousticPropagationModel(AcousticPropagationModel, SpectrumPropag
     """A simple acoustic model based on spherical spreading and absorption loss.
 
     This model provides a basic estimate of transmission loss without the computational overhead of
-    more complex models like Bellhop.
+    more complex ray tracing methods.
 
     Attributes
     ----------
@@ -460,231 +455,6 @@ class SphericalAcousticPropagationModel(AcousticPropagationModel, SpectrumPropag
         )
 
         return H_sensors, float(propagation_time_s)
-
-
-class BellhopAcousticPropagationModel(AcousticPropagationModel):
-    """Representation of a Bellhop acoustic propagation model.
-
-    This model calls an external Bellhop executable to perform propagation simulations. The Bellhop
-    binary must be installed and available on the system or provided via ``exe_path``.
-
-    Attributes
-    ----------
-    env_depth : float
-        The depth of the environment in meters.
-    ssp : SoundSpeedProfile
-        An instance of a sound speed profile.
-    exe_path : str | Path
-        The path to the Bellhop executable (defaults to ``'bellhopcxx'``).
-
-    """
-
-    env_depth: float = Property(doc="The depth of the environment in meters")
-    exe_path: str = Property(
-        default="bellhopcxx",
-        doc="The path to Bellhop executable, defaults to 'bellhopcxx'",
-    )
-
-    def __init__(self, *args: object, **kwargs: object) -> None:
-        """Initialise and validate Bellhop executable availability."""
-        super().__init__(*args, **kwargs)
-        self.exe_path = self._resolve_bellhop_executable(self.exe_path)
-
-    @staticmethod
-    def _resolve_bellhop_executable(exe_path: str | Path) -> str:
-        """Resolve Bellhop executable path and raise if unavailable."""
-        exe_name = str(exe_path)
-        bellhop_path = which(exe_name)
-        if bellhop_path is None:
-            raise FileNotFoundError(
-                f"Bellhop executable '{exe_name}' not found. Ensure it is installed and in "
-                "your system's PATH, or provide the full path via the 'exe_path' property."
-            )
-        return bellhop_path
-
-    def propagate(self, platform: "Platform", source: "State") -> tuple[float, float]:
-        """Run a Bellhop simulation for a single source and receiver.
-
-        The method writes a Bellhop environment file, executes the Bellhop binary, reads the
-        resulting shade file and computes transmission loss and travel time.
-
-        Parameters
-        ----------
-        platform : Platform
-            Platform object representing the sensor array.
-        source : State
-            Source (State) object representing the acoustic point source.
-
-        Returns
-        -------
-        tuple
-            - ``tloss`` (float): Transmission loss in decibels (dB).
-            - ``time`` (float): Direct-path travel time in seconds.
-
-        Raises
-        ------
-        subprocess.CalledProcessError
-            If the external Bellhop executable returns a non-zero exit code.
-
-        """
-        with tempfile.TemporaryDirectory() as temp_dir:
-            temp_path = Path(temp_dir)
-            self._create_env_file(platform, source, output_dir=temp_path)
-
-            env_file_path = temp_path / "env"
-
-            try:
-                subprocess.run(
-                    [self.exe_path, str(env_file_path)],
-                    capture_output=True,
-                    check=True,
-                    text=True,  # Decode stdout/stderr as text
-                )
-            except subprocess.CalledProcessError as e:
-                print("--- Bellhop Execution Failed ---")
-                print(f"Bellhop returned with exit code: {e.returncode}")
-                print("\n--- Bellhop's Standard Output ---")
-                print(e.stdout)
-                print("\n--- Bellhop's Error Messages (STDERR) ---")
-                print(e.stderr)
-                print("\nCheck the error messages above for clues from Bellhop.")
-                print(f"The input file that caused the error was: '{env_file_path}'")
-                # Re-raise the exception so the program still stops
-                raise
-
-            shd_path = temp_path / "env.shd"
-            pressure, _ = read_shade_file(shd_path)
-
-        np.seterr(divide="ignore")
-        pressure_array = np.asarray(pressure)
-        pressure = np.squeeze(pressure_array)
-        pressure_magnitude = np.abs(pressure)
-        tloss = -20 * np.log10(np.maximum(pressure_magnitude, 1e-12))
-
-        distance = float(
-            np.linalg.norm(source.state_vector[[0, 2, 4]] - platform.array.ref_state_vector)
-        )
-        speed = float(np.asarray(self.ssp.calculate(platform.array.ref_state_vector[2])).item())
-        time = float(distance / speed)
-
-        # Handle cases where pressure is effectively zero by returning a large finite loss.
-        if np.atleast_1d(pressure_magnitude)[-1] < 1e-12:
-            return 999.0, float(time)  # Return a large, finite loss value
-
-        return float(np.atleast_1d(tloss)[-1]), float(time)
-
-    def _create_env_file(
-        self,
-        platform: "Platform",
-        source: "State",
-        output_dir: Path = Path("."),
-        options: str = "SVW",
-        bottom_bc: str = "A",
-        runtype: str = "Cb",
-        nbeams: int = 0,
-        beam_angles: list[float] | None = None,
-    ) -> None:
-        """Create the Bellhop environment file (.env) from a template.
-
-        The method collects simulation parameters, formats them according to Bellhop's input
-        specification and writes the environment file.
-
-        Parameters
-        ----------
-        platform
-            Platform object containing array/state information.
-        source
-            Source object containing its state and metadata.
-        output_dir : Path, optional
-            Directory to save the generated file (default current directory).
-        options : str, optional
-            Bellhop option string (default ``"SVW"``).
-        bottom_bc : str, optional
-            Bottom boundary condition code (default ``"A"``).
-        runtype : str, optional
-            Bellhop run type code (default ``"Cb"``).
-        nbeams : int, optional
-            Number of beams for the simulation (0 lets Bellhop choose).
-        beam_angles : list[float], optional
-            Minimum and maximum beam launch angles in degrees
-            (default ``[-89.0, 89.0]``).
-
-        """
-        if beam_angles is None:
-            beam_angles = [-89.0, 89.0]
-
-        # 1. Calculate All Required Values
-        # ==================================
-        title = "'env'"
-
-        depth = np.arange(0, self.env_depth + 1, 100)
-        sound_speed = self.ssp.calculate(depth)
-        ssp = np.column_stack((depth, sound_speed))
-
-        source_position = _get_source_position(source)
-        array_ref_position = platform.array.ref_state_vector
-
-        frequencies_hz, amplitudes_upa = _get_source_tonal_arrays(source)
-        frequency = frequencies_hz[int(np.argmax(amplitudes_upa))]
-        max_range_m = np.linalg.norm(source_position - array_ref_position)
-
-        # Source and receiver depths
-        source_depth = float(np.abs(source_position[2]).item())
-        receiver_depth = float(np.abs(array_ref_position[2]).item())
-
-        # Define bathymetry and check if a .bty file is needed
-        bathy = [[0, self.env_depth]]  # Simple flat bottom
-        bottom_bc_final = "A~" if len(bathy) > 2 else bottom_bc
-        if len(bathy) > 2:
-            self._write_bathy_file(bathy, "env", output_dir)
-
-        # Prepare Sound Speed Profile (SSP) string
-        ssp_header = f"{ssp[0, 0]:.1f} {ssp[0, 1]:.1f}  /\n"
-        ssp_body = "\n".join([f"{z:.1f} {c:.1f}  /" for z, c in ssp[1:]])
-        ssp_string = ssp_header + ssp_body
-
-        # Bottom half-space properties
-        bottom_props_str = "1700.0 0.0 1.5 0.5"
-
-        # 2. Define The File Template
-        # ============================
-        env_template = f"""
-            {title}
-            {frequency:.1f}
-            1
-            '{options}'
-            0 0 {self.env_depth:.1f}
-            {ssp_string}
-            '{bottom_bc_final}' 0.0
-            {self.env_depth:.1f} {bottom_props_str} /
-            1
-            {source_depth:.1f} /
-            1
-            {receiver_depth:.1f} /
-            {int(max_range_m) + 1}
-            0.0 {max_range_m / 1000.0} /
-            '{runtype}'
-            {nbeams}
-            {beam_angles[0]} {beam_angles[1]} /
-            0.0 {self.env_depth * 1.2:.1f} {(max_range_m / 1000.0) * 1.1:.2f}
-        """.strip()
-
-        # 3. Write The File
-        # =================
-        filename_env = output_dir / "env.env"
-        with open(filename_env, "w") as file:
-            file.write(env_template)
-
-    def _write_bathy_file(
-        self,
-        bathy: list[list[float]],
-        filename: str,
-        output_dir: Path,
-    ) -> None:
-        """Write bathymetry file for complex bottom topography."""
-        # This method would write a .bty file for complex bathymetry
-        # For now, it's a placeholder since we use simple flat bottom
-        pass
 
 
 class rtrsAcousticPropagationModel(AcousticPropagationModel, SpectrumPropagationModel):
