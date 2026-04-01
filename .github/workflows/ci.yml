@@ -26,7 +26,6 @@ jobs:
             echo "Examples:"
             echo "  ci: add pytest step to workflow"
             echo "  fix(plotter): handle empty detections"
-            echo "  docs(api): clarify Bellhop installation"
             exit 0
           fi
 

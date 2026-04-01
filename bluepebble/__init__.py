@@ -20,7 +20,6 @@ __all__ = [
     "sigproc",
     "simulator",
     "types",
-    "utils",
 ]
 
 
@@ -35,13 +34,13 @@ def __getattr__(name: str):
         "sigproc",
         "simulator",
         "types",
-        "utils",
     }:
         module = import_module(f"{__name__}.{name}")
         globals()[name] = module
         return module
     if name in {"get_rng", "set_seed"}:
         from bluepebble._seed import get_rng, set_seed  # noqa: PLC0415
+
         globals()["get_rng"] = get_rng
         globals()["set_seed"] = set_seed
         return globals()[name]

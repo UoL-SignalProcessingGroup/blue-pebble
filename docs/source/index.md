@@ -11,6 +11,8 @@ Designed as a plugin for [Stone Soup](https://stonesoup.rtfd.io/), Blue Pebble s
 - Beamforming and detection theory
 - Target tracking and data association
 
+> **Naming conventions:** The project is referred to as **Blue Pebble** throughout documentation. The repository and PyPI package use the hyphenated form **blue-pebble** (e.g., `pip install blue-pebble`). Within Python code, the package is imported as **bluepebble** (e.g., `import bluepebble`).
+
 ---
 
 ## Research Applications
@@ -46,7 +48,7 @@ This separation enables systematic experimentation across modelling assumptions 
 Implemented capabilities include:
 
 - Multi-body kinematic modelling for flexible towed arrays  
-- Analytical spreading models and external ray-tracing integration (e.g., Bellhop)  
+- Analytical spreading models and external ray-tracing integration (e.g., rtrs)  
 - Configurable source signature synthesis  
 - Ambient, biological, and ownship noise modelling  
 - Multiple beamforming algorithms  

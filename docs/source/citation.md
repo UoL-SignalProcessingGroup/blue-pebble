@@ -19,6 +19,6 @@ Blue Pebble is licensed under the MIT licence.
 
 See `LICENSE` and `NOTICE.md` for details.
 
-## Third-party software
+## Third-party data
 
-Optional backends such as bellhopcuda are licensed separately. Blue Pebble does not distribute these components in its PyPI package, and users are responsible for complying with the licences of any external tools they install.
+Optional data such as measured bathymetry are licensed separately. Blue Pebble does not distribute this data in its PyPI package, and users are responsible for complying with the licences of any external data they use.

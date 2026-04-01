@@ -16,7 +16,9 @@ Designed as a plugin for [Stone Soup](https://stonesoup.rtfd.io/), Blue Pebble s
 - Beamforming and detection theory
 - Target tracking and data association
 
-Blue Pebble provides modular acoustic propagation backends, ranging from analytical spreading laws to external ray-tracing solvers (e.g., Bellhop), enabling trade-offs between physical fidelity and computational efficiency.
+Blue Pebble provides modular acoustic propagation backends, ranging from analytical spreading laws to external ray-tracing solvers (e.g., rtrs), enabling trade-offs between physical fidelity and computational efficiency.
+
+> **Naming conventions:** The project is referred to as **Blue Pebble** throughout documentation. The repository and PyPI package use the hyphenated form **blue-pebble** (e.g., `pip install blue-pebble`). Within Python code, the package is imported as **bluepebble** (e.g., `import bluepebble`).
 
 ## Research Applications
 
@@ -47,12 +49,13 @@ This separation enables systematic experimentation across modelling assumptions 
 Implemented capabilities include:
 
 - Multi-body kinematic modelling for flexible towed arrays  
-- Analytical spreading models and external ray-tracing integration (e.g., Bellhop)  
+- Analytical spreading models and external ray-tracing integration (e.g., rtrs)  
 - Configurable source signature synthesis  
 - Ambient, biological, and ownship noise modelling  
 - Multiple beamforming algorithms  
 - Detection algorithms with performance metrics  
 - Passive sonar simulation pipelines  
+- Integration of real environmental datasets (bathymetry, range-dependent sound speed profiles)
 - Native integration with Stone Soup tracking workflows  
 - Plotting utilities for bearings and Cartesian tracks  
 - Notebook-based tutorials and worked examples
@@ -67,90 +70,29 @@ pip install blue-pebble
 
 This installs the core framework with built-in propagation models.
 
-### Optional: Ray Tracing with Bellhop
+### Optional: Ray Tracing with rtrs
 
-Blue Pebble supports Bellhop via an external executable.
+Blue Pebble supports ray traced propagation via the rtrs package.
 
-We recommend [bellhopcuda](https://github.com/A-New-BellHope/bellhopcuda), a modern C++/CUDA port.
+rtrs is currently private, but will be made public in the near future. In the meantime, provided you have access it can be installed as follows.
 
-> **Important**: Blue Pebble does **not** distribute Bellhop or bellhopcuda. These must be installed separately.
+#### Installing rtrs
 
-#### Installing bellhopcuda
-
-**Windows (Precompiled)**
-Download precompiled binaries from the [bellhopcuda Releases page](https://github.com/A-New-BellHope/bellhopcuda/releases)
-
-Place `bellhopcxx.exe` somewhere on your system `PATH`, or provide its path explicitly in Blue Pebble.
-
-**Linux/macOS (Build from Source, Outside Docker)**
-
-Install the native build tools first.
-
-On Debian/Ubuntu:
-
+Clone the repository:
 ```bash
-sudo apt-get update
-sudo apt-get install -y git cmake build-essential
+git clone https://github.com/fincb/rtrs.git
 ```
 
-On macOS with Homebrew:
-
+With a Blue Pebble virtual environment activated, install with pip:
 ```bash
-brew install cmake
-xcode-select --install
-```
-
-To keep Bellhop local to this repository rather than installing it system-wide:
-
-```bash
-git clone --recurse-submodules https://github.com/A-New-BellHope/bellhopcuda.git external_tools/bellhopcuda
-cd external_tools/bellhopcuda
-mkdir -p build
-cd build
-cmake -DBHC_ENABLE_CUDA=OFF -DBHC_BUILD_EXAMPLES=OFF ..
-cmake --build . -j
-```
-
-This produces a local executable at `external_tools/bellhopcuda/bin/bellhopcxx`.
-
-You can then either add it to `PATH`:
-
-```bash
-export PATH="$PWD/external_tools/bellhopcuda/bin:$PATH"
-```
-
-or pass the path explicitly in Blue Pebble.
-
-#### Using Bellhop in Blue Pebble
-
-Blue Pebble automatically detects the executable:
-
-```python
-from bluepebble.models.propagation import BellhopAcousticPropagationModel
-
-model = BellhopAcousticPropagationModel(
-    env_depth=3000,
-    ssp=my_ssp
-)
-```
-
-If needed, provide the full path:
-
-```python
-from bluepebble.models.propagation import BellhopAcousticPropagationModel
-
-model = BellhopAcousticPropagationModel(
-    env_depth=3000,
-    ssp=my_ssp,
-    exe_path="external_tools/bellhopcuda/bin/bellhopcxx"
-)
+pip install -e /path/to/rtrs
 ```
 
 ## Development
 
 ### Recommended: Dev Container (Easiest Setup)
 
-For a fully configured development environment (including bellhopcuda and other build dependencies), use the included Dev Container.
+For a fully configured development environment, use the included Dev Container.
 
 #### Requirements
 
@@ -173,6 +115,12 @@ cd blue-pebble
 code .
 ```
 
+To include the optional rtrs backend, set `RTRS_URL` in your shell before opening VS Code:
+```bash
+export RTRS_URL="https://<token>@github.com/fincb/rtrs.git"
+code .
+```
+
 When prompted, select **"Reopen in Container."**
 
 VS Code will:
@@ -184,7 +132,7 @@ VS Code will:
 This provides a fully configured development environment including:
 - Python
 - Required build dependencies
-- Optional propagation model backends (e.g., bellhopcuda)
+- Optional propagation model backends (e.g., rtrs)
 
 #### Using the Container Without VS Code (CLI Workflow)
 
@@ -197,6 +145,11 @@ docker run -it --rm -v $(pwd):/workspace blue-pebble-dev
 On Windows PowerShell:
 ```bash
 docker run -it --rm -v ${PWD}:/workspace blue-pebble-dev
+```
+
+To include the optional rtrs backend, pass its URL as a build argument:
+```bash
+docker build --build-arg RTRS_URL="https://<token>@github.com/fincb/rtrs.git" -t blue-pebble-dev .
 ```
 
 This starts an interactive shell inside the container.
@@ -222,19 +175,15 @@ Blue Pebble is licensed under the MIT license.
 
 See `LICENSE` and `NOTICE.md` for details.
 
-## Third-Party Software
+## Third-Party Data
 
-Optional backends (e.g., bellhopcuda) are licensed separately.
-
-Blue Pebble does not distribute these components in its PyPI package. Users are responsible for complying with the licenses of any external tools they install.
-
+Blue Pebble does not distribute external data in its PyPI package. Users are responsible for complying with the licenses of any external data they utilise.
 
 ## Future Enhancements
 
 Planned and potential extensions include:
 
 ### Environmental Modelling
-- Integration of real environmental datasets (bathymetry, range-dependent sound speed profiles)
 - Coherent ambient noise modelling (wind, rain, wave-induced noise)
 - Improved acoustic volume attenuation and boundary loss modelling
 - Systematic environmental uncertainty modelling (sound speed and sensor position errors)

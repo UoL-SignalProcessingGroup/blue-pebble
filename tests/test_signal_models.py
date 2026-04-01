@@ -1,11 +1,9 @@
-"""Coverage-oriented tests for signal models and Bellhop utilities."""
+"""Coverage-oriented tests for signal models."""
 
 from __future__ import annotations
 
-import builtins
 import sys
 import types
-from pathlib import Path
 
 import numpy as np
 import pytest
@@ -202,106 +200,3 @@ def test_reverb_wet_dry_mix_zero_is_passthrough(monkeypatch) -> None:
     np.testing.assert_array_equal(reverbed, signal)
 
 
-class _FakeShadeFile:
-    """A tiny binary file stub supporting seek/read for test doubles."""
-
-    def __init__(self, plot_type: str):
-        self._pos = 0
-        self._plot_type = plot_type
-
-    def __enter__(self):
-        return self
-
-    def __exit__(self, exc_type, exc_val, exc_tb):
-        return False
-
-    def seek(self, offset: int, whence: int = 0):
-        if whence == 0:
-            self._pos = offset
-        elif whence == 1:
-            self._pos += offset
-        else:
-            raise ValueError("Only SEEK_SET/SEEK_CUR are supported in this test stub")
-
-    def tell(self) -> int:
-        return self._pos
-
-    def read(self, size: int) -> bytes:
-        _ = size
-        return self._plot_type.encode("utf-8").ljust(10, b" ")
-
-
-def test_read_shade_file_reads_standard_full_field(monkeypatch) -> None:
-    """Standard shade files should parse geometry and pressure field."""
-    bellhop = load_module_from_repo("bluepebble/utils/bellhop.py", "bluepebble.utils.bellhop")
-
-    fake_file = _FakeShadeFile(plot_type="rect")
-    monkeypatch.setattr(builtins, "open", lambda *_args, **_kwargs: fake_file)
-
-    calls = iter(
-        [
-            np.array([16], dtype=np.int32),
-            np.array([1, 1, 1, 1, 1, 1, 2], dtype=np.int32),
-            np.array([100.0], dtype=np.float32),
-            np.array([0.0], dtype=np.float32),
-            np.array([1000.0], dtype=np.float32),
-            np.array([2000.0], dtype=np.float32),
-            np.array([50.0], dtype=np.float32),
-            np.array([100.0], dtype=np.float32),
-            np.array([1.0, 2.0], dtype=np.float32),
-            np.array([1 + 1j, 2 + 2j], dtype=np.complex64),
-        ]
-    )
-
-    monkeypatch.setattr(bellhop.np, "fromfile", lambda *_args, **_kwargs: next(calls))
-    pressure, geometry = bellhop.read_shade_file(Path("dummy.shd"))
-
-    assert pressure.shape == (1, 1, 1, 2)
-    np.testing.assert_allclose(pressure[0, 0, 0], np.array([1 + 1j, 2 + 2j], dtype=np.complex64))
-    assert geometry["plot_type"] == "rect"
-    np.testing.assert_allclose(geometry["source_x"], np.array([1000.0], dtype=np.float32))
-
-
-def test_read_shade_file_reads_tl_slice_by_source_position(monkeypatch) -> None:
-    """Compressed TL shade files should support nearest-source slice extraction."""
-    bellhop = load_module_from_repo("bluepebble/utils/bellhop.py", "bluepebble.utils.bellhop")
-
-    fake_file = _FakeShadeFile(plot_type="TL")
-    monkeypatch.setattr(builtins, "open", lambda *_args, **_kwargs: fake_file)
-
-    calls = iter(
-        [
-            np.array([16], dtype=np.int32),
-            np.array([1, 1, 2, 2, 1, 1, 2], dtype=np.int32),
-            np.array([200.0], dtype=np.float32),
-            np.array([0.0], dtype=np.float32),
-            np.array([0.0, 2000.0], dtype=np.float32),
-            np.array([0.0, 2000.0], dtype=np.float32),
-            np.array([20.0], dtype=np.float32),
-            np.array([30.0], dtype=np.float32),
-            np.array([1.0, 2.0], dtype=np.float32),
-            np.array([3 + 4j, 5 + 6j], dtype=np.complex64),
-        ]
-    )
-
-    monkeypatch.setattr(bellhop.np, "fromfile", lambda *_args, **_kwargs: next(calls))
-    pressure, geometry = bellhop.read_shade_file(Path("dummy_tl.shd"), xs=1.6, ys=0.1)
-
-    assert pressure.shape == (1, 1, 1, 2)
-    np.testing.assert_allclose(pressure[0, 0, 0], np.array([3 + 4j, 5 + 6j], dtype=np.complex64))
-    np.testing.assert_allclose(geometry["source_x"], np.array([0.0, 2000.0]))
-    np.testing.assert_allclose(geometry["source_y"], np.array([0.0, 2000.0]))
-
-
-def test_read_shade_file_returns_none_pair_for_missing_file(monkeypatch) -> None:
-    """Missing files should be handled gracefully by returning ``(None, None)``."""
-    bellhop = load_module_from_repo("bluepebble/utils/bellhop.py", "bluepebble.utils.bellhop")
-
-    def _raise_file_not_found(*_args, **_kwargs):
-        raise FileNotFoundError("missing")
-
-    monkeypatch.setattr(builtins, "open", _raise_file_not_found)
-
-    pressure, geometry = bellhop.read_shade_file(Path("missing.shd"))
-    assert pressure is None
-    assert geometry is None

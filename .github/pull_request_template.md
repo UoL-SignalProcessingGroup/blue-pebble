@@ -5,7 +5,7 @@ PR title format: `type(scope): summary`
 Examples:
 - `ci: add pytest step to workflow`
 - `fix(plotter): handle empty detections`
-- `docs(api): clarify Bellhop installation`
+- `docs(api): clarify rtrs installation`
 
 Scope is encouraged but not required.
 
