@@ -133,6 +133,83 @@ class TabulatedFrequencyResponse(FrequencyResponse):
         return (mag_linear * np.exp(1j * phase_rad)).astype(np.complex128)
 
 
+class FirstOrderHighPassResponse(FrequencyResponse):
+    r"""First-order high-pass frequency response.
+
+    Models the low-frequency acoustic coupling cutoff of a hydrophone.
+    Below the cutoff the response rolls off at +20 dB/decade; above it
+    the response is flat (unity magnitude, zero phase).
+
+    .. math::
+
+        H(f) = \frac{j f / f_c}{1 + j f / f_c}
+
+    Parameters
+    ----------
+    cutoff_hz : float
+        -3 dB cutoff frequency in Hz.
+
+    """
+
+    cutoff_hz: float = Property(doc="-3 dB cutoff frequency in Hz.")
+
+    def evaluate(self, frequencies_hz: ArrayLike) -> ComplexArray:
+        """Evaluate the high-pass response at the given frequencies.
+
+        Parameters
+        ----------
+        frequencies_hz : ArrayLike
+            Frequencies in Hz at which to evaluate the response.
+
+        Returns
+        -------
+        ComplexArray
+            Complex frequency response, shape ``(num_frequencies,)``.
+
+        """
+        f = np.asarray(frequencies_hz, dtype=float)
+        ratio = 1j * f / self.cutoff_hz
+        return (ratio / (1.0 + ratio)).astype(np.complex128)
+
+
+class FirstOrderLowPassResponse(FrequencyResponse):
+    r"""First-order low-pass frequency response.
+
+    Models the high-frequency roll-off of a hydrophone.  Below the cutoff
+    the response is flat (unity magnitude, zero phase); above it the
+    response rolls off at -20 dB/decade.
+
+    .. math::
+
+        H(f) = \frac{1}{1 + j f / f_c}
+
+    Parameters
+    ----------
+    cutoff_hz : float
+        -3 dB cutoff frequency in Hz.
+
+    """
+
+    cutoff_hz: float = Property(doc="-3 dB cutoff frequency in Hz.")
+
+    def evaluate(self, frequencies_hz: ArrayLike) -> ComplexArray:
+        """Evaluate the low-pass response at the given frequencies.
+
+        Parameters
+        ----------
+        frequencies_hz : ArrayLike
+            Frequencies in Hz at which to evaluate the response.
+
+        Returns
+        -------
+        ComplexArray
+            Complex frequency response, shape ``(num_frequencies,)``.
+
+        """
+        f = np.asarray(frequencies_hz, dtype=float)
+        return (1.0 / (1.0 + 1j * f / self.cutoff_hz)).astype(np.complex128)
+
+
 class HydrophoneModel(Base):
     """Model of a single hydrophone element as an LTI system.
 

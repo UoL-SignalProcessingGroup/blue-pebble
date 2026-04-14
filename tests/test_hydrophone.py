@@ -136,6 +136,79 @@ class TestTabulatedFrequencyResponse:
 # ---------------------------------------------------------------------------
 
 
+class TestFirstOrderHighPassResponse:
+    """Tests for FirstOrderHighPassResponse."""
+
+    def test_unity_magnitude_well_above_cutoff(self, monkeypatch):
+        mod = _load_hydrophone_module(monkeypatch)
+        hp = mod.FirstOrderHighPassResponse(cutoff_hz=100.0)
+        f = np.array([1e6])
+        result = hp.evaluate(f)
+        np.testing.assert_allclose(np.abs(result), 1.0, rtol=1e-4)
+
+    def test_minus_3db_at_cutoff(self, monkeypatch):
+        mod = _load_hydrophone_module(monkeypatch)
+        hp = mod.FirstOrderHighPassResponse(cutoff_hz=1000.0)
+        result = hp.evaluate(np.array([1000.0]))
+        np.testing.assert_allclose(np.abs(result), 1.0 / np.sqrt(2), rtol=1e-12)
+
+    def test_rolls_off_below_cutoff(self, monkeypatch):
+        mod = _load_hydrophone_module(monkeypatch)
+        hp = mod.FirstOrderHighPassResponse(cutoff_hz=1000.0)
+        result = hp.evaluate(np.array([100.0]))
+        np.testing.assert_allclose(
+            np.abs(result), 100.0 / np.sqrt(100.0**2 + 1000.0**2), rtol=1e-12
+        )
+
+    def test_phase_at_cutoff_is_45_degrees(self, monkeypatch):
+        mod = _load_hydrophone_module(monkeypatch)
+        hp = mod.FirstOrderHighPassResponse(cutoff_hz=500.0)
+        result = hp.evaluate(np.array([500.0]))
+        np.testing.assert_allclose(np.degrees(np.angle(result)), 45.0, atol=1e-10)
+
+    def test_output_dtype_is_complex128(self, monkeypatch):
+        mod = _load_hydrophone_module(monkeypatch)
+        hp = mod.FirstOrderHighPassResponse(cutoff_hz=1000.0)
+        result = hp.evaluate(np.array([100.0, 1000.0, 10000.0]))
+        assert result.dtype == np.complex128
+
+
+class TestFirstOrderLowPassResponse:
+    """Tests for FirstOrderLowPassResponse."""
+
+    def test_unity_magnitude_well_below_cutoff(self, monkeypatch):
+        mod = _load_hydrophone_module(monkeypatch)
+        lp = mod.FirstOrderLowPassResponse(cutoff_hz=10000.0)
+        result = lp.evaluate(np.array([1.0]))
+        np.testing.assert_allclose(np.abs(result), 1.0, rtol=1e-4)
+
+    def test_minus_3db_at_cutoff(self, monkeypatch):
+        mod = _load_hydrophone_module(monkeypatch)
+        lp = mod.FirstOrderLowPassResponse(cutoff_hz=1000.0)
+        result = lp.evaluate(np.array([1000.0]))
+        np.testing.assert_allclose(np.abs(result), 1.0 / np.sqrt(2), rtol=1e-12)
+
+    def test_rolls_off_above_cutoff(self, monkeypatch):
+        mod = _load_hydrophone_module(monkeypatch)
+        lp = mod.FirstOrderLowPassResponse(cutoff_hz=1000.0)
+        result = lp.evaluate(np.array([10000.0]))
+        np.testing.assert_allclose(
+            np.abs(result), 1000.0 / np.sqrt(1000.0**2 + 10000.0**2), rtol=1e-12
+        )
+
+    def test_phase_at_cutoff_is_minus_45_degrees(self, monkeypatch):
+        mod = _load_hydrophone_module(monkeypatch)
+        lp = mod.FirstOrderLowPassResponse(cutoff_hz=500.0)
+        result = lp.evaluate(np.array([500.0]))
+        np.testing.assert_allclose(np.degrees(np.angle(result)), -45.0, atol=1e-10)
+
+    def test_output_dtype_is_complex128(self, monkeypatch):
+        mod = _load_hydrophone_module(monkeypatch)
+        lp = mod.FirstOrderLowPassResponse(cutoff_hz=1000.0)
+        result = lp.evaluate(np.array([100.0, 1000.0, 10000.0]))
+        assert result.dtype == np.complex128
+
+
 class TestHydrophoneModel:
     """Tests for HydrophoneModel."""
 
