@@ -245,6 +245,28 @@ class TestHydrophoneModel:
         expected = 10.0 ** (-170.0 / 20.0)
         np.testing.assert_allclose(np.abs(result), expected, rtol=1e-12)
 
+    def test_phase_offset_rotates_transfer_function(self, monkeypatch):
+        mod = _load_hydrophone_module(monkeypatch)
+        hydro = mod.HydrophoneModel(sensitivity_db=0.0, phase_offset_deg=90.0)
+        freqs = np.array([100.0, 1000.0])
+        result = hydro.transfer_function(freqs)
+        np.testing.assert_allclose(np.abs(result), 1.0, rtol=1e-12)
+        np.testing.assert_allclose(np.degrees(np.angle(result)), 90.0, atol=1e-10)
+
+    def test_phase_offset_is_frequency_independent(self, monkeypatch):
+        mod = _load_hydrophone_module(monkeypatch)
+        hydro = mod.HydrophoneModel(sensitivity_db=0.0, phase_offset_deg=45.0)
+        freqs = np.linspace(10.0, 10000.0, 50)
+        result = hydro.transfer_function(freqs)
+        np.testing.assert_allclose(np.degrees(np.angle(result)), 45.0, atol=1e-10)
+
+    def test_phase_offset_default_is_zero(self, monkeypatch):
+        mod = _load_hydrophone_module(monkeypatch)
+        hydro = mod.HydrophoneModel(sensitivity_db=0.0)
+        freqs = np.array([500.0])
+        result = hydro.transfer_function(freqs)
+        np.testing.assert_allclose(np.angle(result), 0.0, atol=1e-15)
+
     def test_zero_db_sensitivity_with_flat_response_is_unity(self, monkeypatch):
         mod = _load_hydrophone_module(monkeypatch)
         hydro = mod.HydrophoneModel(sensitivity_db=0.0)

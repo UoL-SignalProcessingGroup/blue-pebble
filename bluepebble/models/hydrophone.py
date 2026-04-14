@@ -224,6 +224,11 @@ class HydrophoneModel(Base):
     frequency_response : FrequencyResponse or None
         Frequency-dependent response model.  Defaults to
         :class:`FlatFrequencyResponse` when ``None``.
+    phase_offset_deg : float
+        Constant phase offset in degrees applied uniformly across all
+        frequencies.  Use this to model inter-element phase mismatch from
+        sources such as cable length variation or connector tolerances.
+        Defaults to 0.
 
     """
 
@@ -232,16 +237,24 @@ class HydrophoneModel(Base):
         default=None,
         doc="Frequency-dependent response model.  Defaults to FlatFrequencyResponse.",
     )
+    phase_offset_deg: float = Property(
+        default=0.0,
+        doc=(
+            "Constant phase offset in degrees applied across all frequencies. "
+            "Models inter-element phase mismatch from cable or connector variation."
+        ),
+    )
 
     def transfer_function(self, frequencies_hz: ArrayLike) -> ComplexArray:
         r"""Compute the combined complex transfer function.
 
         .. math::
 
-            H(f) = S \cdot R(f)
+            H(f) = S \cdot R(f) \cdot e^{j\varphi}
 
         where :math:`S = 10^{(\text{sensitivity\_db} / 20)}` is the linear
-        sensitivity and :math:`R(f)` is the frequency response.
+        sensitivity, :math:`R(f)` is the frequency response, and
+        :math:`\varphi` is the constant phase offset in radians.
 
         Parameters
         ----------
@@ -256,7 +269,10 @@ class HydrophoneModel(Base):
         """
         response = self.frequency_response or FlatFrequencyResponse()
         sensitivity_linear = 10.0 ** (self.sensitivity_db / 20.0)
-        return (sensitivity_linear * response.evaluate(frequencies_hz)).astype(np.complex128)
+        phase_phasor = np.exp(1j * np.deg2rad(self.phase_offset_deg))
+        return (sensitivity_linear * phase_phasor * response.evaluate(frequencies_hz)).astype(
+            np.complex128
+        )
 
 
 def evaluate_hydrophone_transfer_functions(
