@@ -10,6 +10,7 @@ from numpy.typing import NDArray
 from stonesoup.base import Property
 from stonesoup.simulator.base import SensorSimulator
 
+from ..models.hydrophone import HydrophoneModel, evaluate_hydrophone_transfer_functions
 from ..models.propagation import AcousticPropagationModel
 from ..platform import TowedArrayPlatform
 from ..signal.random import RandomSignal
@@ -51,6 +52,14 @@ class PassiveSonarArraySimulatorBase(SensorSimulator):
     ground_truth_paths: list["GroundTruthPath"] = Property(
         default=None,
         doc="List of GroundTruthPath objects",
+    )
+    hydrophone_models: HydrophoneModel | list[HydrophoneModel] | None = Property(
+        default=None,
+        doc=(
+            "Hydrophone receive model(s).  A single HydrophoneModel applies "
+            "uniformly to all sensors; a list provides per-sensor models.  "
+            "None disables hydrophone processing (backwards compatible)."
+        ),
     )
 
     def __init__(self, *args: object, **kwargs: object) -> None:
@@ -195,6 +204,75 @@ class PassiveSonarArraySimulatorBase(SensorSimulator):
             )
 
         return noise
+
+    def _apply_hydrophone_to_chunk(
+        self,
+        sensor_signals: ComplexArray,
+        sampling_rate_hz: float,
+    ) -> ComplexArray:
+        """Apply the hydrophone transfer function to a time-domain sensor chunk.
+
+        Converts the chunk to the frequency domain, multiplies by the hydrophone
+        transfer function, and converts back.  This ensures ambient noise added
+        before this call passes through the same hydrophone response as the signal.
+
+        If no hydrophone model is configured the input is returned unchanged.
+
+        Parameters
+        ----------
+        sensor_signals : numpy.ndarray
+            Complex sensor data, shape ``(num_sensors, num_samples)``, in the
+            pressure domain (before hydrophone conversion).
+        sampling_rate_hz : float
+            Sampling rate in Hz, used to compute the FFT frequency axis.
+
+        Returns
+        -------
+        numpy.ndarray
+            Complex sensor data in the voltage domain, same shape as input.
+
+        """
+        if self.hydrophone_models is None:
+            return sensor_signals
+
+        num_sensors, num_samples = sensor_signals.shape
+        frequencies_hz = np.fft.fftfreq(num_samples, d=1.0 / sampling_rate_hz)
+        H = self._evaluate_hydrophone_tf(num_sensors, frequencies_hz)
+        if H is None:
+            return sensor_signals
+
+        H_c64 = np.asarray(H, dtype=np.complex64)
+        s_fft = np.fft.fft(sensor_signals, axis=1)
+        return np.fft.ifft(s_fft * H_c64, axis=1).astype(np.complex64)
+
+    def _evaluate_hydrophone_tf(
+        self,
+        num_sensors: int,
+        frequencies_hz: NDArray[np.floating[Any]],
+    ) -> ComplexArray | None:
+        """Evaluate the hydrophone transfer function matrix if configured.
+
+        Parameters
+        ----------
+        num_sensors : int
+            Number of sensor elements in the array.
+        frequencies_hz : ArrayLike
+            Frequencies in Hz at which to evaluate.
+
+        Returns
+        -------
+        numpy.ndarray or None
+            Complex array of shape ``(num_sensors, num_frequencies)`` when
+            hydrophone models are configured; otherwise ``None``.
+
+        """
+        if self.hydrophone_models is None:
+            return None
+        return evaluate_hydrophone_transfer_functions(
+            self.hydrophone_models,
+            num_sensors,
+            frequencies_hz,
+        )
 
     def _beamform_if_configured(
         self,

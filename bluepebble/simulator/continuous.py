@@ -794,6 +794,8 @@ class ContinuousSTFTPassiveSonarArraySimulator(PassiveSonarArraySimulatorBase):
             if noise is not None:
                 sensor_signals += noise
 
+            sensor_signals = self._apply_hydrophone_to_chunk(sensor_signals, ctx.fs)
+
             beamformed_data = self._beamform_if_configured(
                 timestamp=timestamp,
                 sensor_signals=sensor_signals,
@@ -1030,6 +1032,8 @@ class ContinuousFractionalDelayPassiveSonarArraySimulator(PassiveSonarArraySimul
             )
             if noise is not None:
                 sensor_signals += noise
+
+            sensor_signals = self._apply_hydrophone_to_chunk(sensor_signals, fs)
 
             beamformed_data = self._beamform_if_configured(
                 timestamp=timestamp,

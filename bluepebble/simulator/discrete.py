@@ -261,6 +261,8 @@ class DiscretePassiveSonarArraySimulator(PassiveSonarArraySimulatorBase):
             if noise is not None:
                 sensor_signals += noise
 
+            sensor_signals = self._apply_hydrophone_to_chunk(sensor_signals, sampling_rate_hz)
+
             beamformed_data = self._beamform_if_configured(
                 timestamp=timestamp,
                 sensor_signals=sensor_signals,
