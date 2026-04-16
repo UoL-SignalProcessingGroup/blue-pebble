@@ -11,8 +11,9 @@ from stonesoup.base import Base, Property
 from ..environment import Bathymetry, SoundSpeedProfile
 
 if TYPE_CHECKING:
-    from stonesoup.platform.base import Platform
     from stonesoup.types.state import State
+
+    from ...platform.towedarray import TowedArrayPlatform
 
 FloatArray: TypeAlias = NDArray[np.float64]
 ComplexArray: TypeAlias = NDArray[np.complexfloating[Any, Any]]
@@ -130,7 +131,7 @@ class AcousticPropagationModel(ABC, Base):
     ssp: SoundSpeedProfile = Property(doc="Sound speed profile")
 
     @abstractmethod
-    def propagate(self, platform: "Platform", source: "State") -> PropagationResult:
+    def propagate(self, platform: "TowedArrayPlatform", source: "State") -> PropagationResult:
         """Propagate a signal from a source to a platform.
 
         Notes
@@ -140,7 +141,7 @@ class AcousticPropagationModel(ABC, Base):
         """
         ...
 
-    def compute_sensor_delays(self, platform: "Platform", source: "State") -> FloatArray:
+    def compute_sensor_delays(self, platform: "TowedArrayPlatform", source: "State") -> FloatArray:
         """Compute time delays for each sensor in an array.
 
         The method calculates time-differences-of-arrival (TDOA) relative to the array reference
@@ -148,7 +149,7 @@ class AcousticPropagationModel(ABC, Base):
 
         Parameters
         ----------
-        platform : Platform
+        platform : TowedArrayPlatform
             Platform object representing the sensor array.
         source : State
             Source (State) object representing the acoustic point source.
@@ -160,8 +161,10 @@ class AcousticPropagationModel(ABC, Base):
 
         """
         source_position = _get_source_position(source)
-        array_position = platform.array.state_vector
-        array_ref_position = platform.array.ref_state_vector
+        array = platform.sensor_array
+        array_position = array.position_matrix_at(source.timestamp)
+        ref_state = array.element_states_at(source.timestamp)[array.reference_element_idx]
+        array_ref_position = ref_state.state_vector
 
         # Calculate distance from each sensor to the source
         distances = np.linalg.norm(
@@ -191,7 +194,7 @@ class SpectrumPropagationModel(ABC):
     @abstractmethod
     def propagate_spectrum(
         self,
-        platform: "Platform",
+        platform: "TowedArrayPlatform",
         source: "State",
         frequencies_hz: ArrayLike,
     ) -> SpectrumResult:
@@ -238,7 +241,7 @@ class CylindricalAcousticPropagationModel(AcousticPropagationModel, SpectrumProp
         if self.attenuation_factor < 0:
             raise ValueError("Attenuation factor must be non-negative.")
 
-    def propagate(self, platform: "Platform", source: "State") -> tuple[float, float]:
+    def propagate(self, platform: "TowedArrayPlatform", source: "State") -> tuple[float, float]:
         """Propagate a signal using a cylindrical spreading loss model.
 
         The model combines cylindrical spreading (10*log10(r)) with a frequency-independent
@@ -246,7 +249,7 @@ class CylindricalAcousticPropagationModel(AcousticPropagationModel, SpectrumProp
 
         Parameters
         ----------
-        platform : Platform
+        platform : TowedArrayPlatform
             Platform object representing the sensor array.
         source : State
             Source (State) object representing the acoustic point source.
@@ -259,7 +262,10 @@ class CylindricalAcousticPropagationModel(AcousticPropagationModel, SpectrumProp
 
         """
         source_position = _get_source_position(source)
-        array_ref_position = platform.array.ref_state_vector
+        array = platform.sensor_array
+        array_ref_position = array.element_states_at(source.timestamp)[
+            array.reference_element_idx
+        ].state_vector
 
         distance = float(np.linalg.norm(source_position - array_ref_position))
         speed = _as_scalar_float(self.ssp.calculate(array_ref_position[2]), "sound speed")
@@ -268,7 +274,7 @@ class CylindricalAcousticPropagationModel(AcousticPropagationModel, SpectrumProp
         return float(tloss), float(time)
 
     def propagate_spectrum(
-        self, platform: "Platform", source: "State", frequencies_hz: ArrayLike
+        self, platform: "TowedArrayPlatform", source: "State", frequencies_hz: ArrayLike
     ) -> SpectrumResult:
         """Propagate spectrum using cylindrical spreading.
 
@@ -277,7 +283,7 @@ class CylindricalAcousticPropagationModel(AcousticPropagationModel, SpectrumProp
 
         Parameters
         ----------
-        platform : Platform
+        platform : TowedArrayPlatform
             Platform object representing the sensor array.
         source : State
             Source (State) object representing the acoustic point source.
@@ -294,8 +300,11 @@ class CylindricalAcousticPropagationModel(AcousticPropagationModel, SpectrumProp
 
         """
         source_position = _get_source_position(source)
-        array_position = platform.array.state_vector
-        array_ref_position = platform.array.ref_state_vector
+        array = platform.sensor_array
+        array_position = array.position_matrix_at(source.timestamp)
+        array_ref_position = array.element_states_at(source.timestamp)[
+            array.reference_element_idx
+        ].state_vector
 
         # Calculate distances for each sensor. Shape: (num_sensors,)
         distances = np.linalg.norm(source_position - array_position, axis=0)
@@ -357,7 +366,7 @@ class SphericalAcousticPropagationModel(AcousticPropagationModel, SpectrumPropag
         if self.attenuation_factor < 0:
             raise ValueError("Attenuation factor must be non-negative.")
 
-    def propagate(self, platform: "Platform", source: "State") -> tuple[float, float]:
+    def propagate(self, platform: "TowedArrayPlatform", source: "State") -> tuple[float, float]:
         """Propagate a signal using a spherical spreading loss model.
 
         The model combines spherical spreading (20*log10(r)) with a frequency-independent
@@ -365,7 +374,7 @@ class SphericalAcousticPropagationModel(AcousticPropagationModel, SpectrumPropag
 
         Parameters
         ----------
-        platform : Platform
+        platform : TowedArrayPlatform
             Platform object representing the sensor array.
         source : State
             Source (State) object representing the acoustic point source.
@@ -378,7 +387,10 @@ class SphericalAcousticPropagationModel(AcousticPropagationModel, SpectrumPropag
 
         """
         source_position = _get_source_position(source)
-        array_ref_position = platform.array.ref_state_vector
+        array = platform.sensor_array
+        array_ref_position = array.element_states_at(source.timestamp)[
+            array.reference_element_idx
+        ].state_vector
 
         distance = float(np.linalg.norm(source_position - array_ref_position))
         speed = _as_scalar_float(self.ssp.calculate(array_ref_position[2]), "sound speed")
@@ -387,7 +399,7 @@ class SphericalAcousticPropagationModel(AcousticPropagationModel, SpectrumPropag
         return float(tloss), float(time)
 
     def propagate_spectrum(
-        self, platform: "Platform", source: "State", frequencies_hz: ArrayLike
+        self, platform: "TowedArrayPlatform", source: "State", frequencies_hz: ArrayLike
     ) -> SpectrumResult:
         """Propagate spectrum using spherical spreading.
 
@@ -396,7 +408,7 @@ class SphericalAcousticPropagationModel(AcousticPropagationModel, SpectrumPropag
 
         Parameters
         ----------
-        platform : Platform
+        platform : TowedArrayPlatform
             Platform object representing the sensor array.
         source : State
             Source (State) object representing the acoustic point source.
@@ -413,8 +425,11 @@ class SphericalAcousticPropagationModel(AcousticPropagationModel, SpectrumPropag
 
         """
         source_position = _get_source_position(source)
-        array_position = platform.array.state_vector
-        array_ref_position = platform.array.ref_state_vector
+        array = platform.sensor_array
+        array_position = array.position_matrix_at(source.timestamp)
+        array_ref_position = array.element_states_at(source.timestamp)[
+            array.reference_element_idx
+        ].state_vector
 
         # Calculate distances for each sensor
         distances = np.linalg.norm(
@@ -614,7 +629,7 @@ class rtrsAcousticPropagationModel(AcousticPropagationModel, SpectrumPropagation
 
         return max_steps, max_range_m
 
-    def propagate(self, platform: "Platform", source: "State") -> PropagationResult:
+    def propagate(self, platform: "TowedArrayPlatform", source: "State") -> PropagationResult:
         """Run an rtrs simulation for a single source and receiver.
 
         The method prepares the rtrs environment, runs the ray-tracing simulation and returns
@@ -637,7 +652,10 @@ class rtrsAcousticPropagationModel(AcousticPropagationModel, SpectrumPropagation
         """
         run_simulation = _get_rtrs_run_simulation()
         source_position = _get_source_position(source)
-        array_ref_position = platform.array.ref_state_vector
+        array = platform.sensor_array
+        array_ref_position = array.element_states_at(source.timestamp)[
+            array.reference_element_idx
+        ].state_vector
 
         # Flatten to 1D arrays for easier indexing
         source_pos = source_position.flatten()
@@ -807,7 +825,7 @@ class rtrsAcousticPropagationModel(AcousticPropagationModel, SpectrumPropagation
 
     def propagate_spectrum(
         self,
-        platform: "Platform",
+        platform: "TowedArrayPlatform",
         source: "State",
         frequencies_hz: ArrayLike,
     ) -> SpectrumResult:
@@ -835,8 +853,11 @@ class rtrsAcousticPropagationModel(AcousticPropagationModel, SpectrumPropagation
         """
         run_simulation = _get_rtrs_run_simulation()
         source_position = _get_source_position(source)
-        array_position = platform.array.state_vector
-        array_ref_position = platform.array.ref_state_vector
+        array = platform.sensor_array
+        array_position = array.position_matrix_at(source.timestamp)
+        array_ref_position = array.element_states_at(source.timestamp)[
+            array.reference_element_idx
+        ].state_vector
 
         # Flatten to 1D
         source_pos = source_position.flatten()

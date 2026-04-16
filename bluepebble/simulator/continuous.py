@@ -221,7 +221,7 @@ class ContinuousSTFTPassiveSonarArraySimulator(PassiveSonarArraySimulatorBase):
         num_freq_bins, frequencies, hop, window, num_frames = ref_model.stft_geometry()
         frame_len = int(ref_model.frame_len)
         fs = float(ref_model.sampling_rate_hz)
-        num_sensors = int(self.platform.num_sensors)
+        num_sensors = len(self.platform.sensor_array.elements)
 
         t0 = all_timestamps[0]
         step_times_s = np.array(
@@ -315,20 +315,19 @@ class ContinuousSTFTPassiveSonarArraySimulator(PassiveSonarArraySimulatorBase):
             tau_hist = np.zeros((ctx.n_steps, ctx.num_sensors), dtype=np.float64)
 
             for step_idx, timestamp in enumerate(ctx.all_timestamps):
-                platform_state = self.platform.get_platform_state_at(timestamp)
                 target_state = self._target_state_at(target_path, timestamp)
                 if target_state is None:
                     continue
 
                 H_sensors, prop_time_s = spectrum_propagation_model.propagate_spectrum(
-                    platform_state,
+                    self.platform,
                     target_state,
                     ctx.frequencies,
                 )
                 H_hist[step_idx, :, :] = np.asarray(H_sensors, dtype=np.complex64)
 
                 sensor_delays_s = self.propagation_model.compute_sensor_delays(
-                    platform_state,
+                    self.platform,
                     target_state,
                 )
                 tau_hist[step_idx, :] = np.asarray(prop_time_s + sensor_delays_s, dtype=np.float64)
@@ -914,7 +913,7 @@ class ContinuousFractionalDelayPassiveSonarArraySimulator(PassiveSonarArraySimul
             "signal models",
         )
         fs = float(ref_signal_model.sampling_rate_hz)
-        num_sensors = int(self.platform.num_sensors)
+        num_sensors = len(self.platform.sensor_array.elements)
 
         frame_len = int(ref_signal_model.frame_len)
         frequencies_hz = np.fft.rfftfreq(frame_len, d=1.0 / fs)
@@ -959,18 +958,17 @@ class ContinuousFractionalDelayPassiveSonarArraySimulator(PassiveSonarArraySimul
             sensor_delay_history_s = np.zeros((n_steps, num_sensors), dtype=np.float64)
 
             for step_idx, timestamp in enumerate(all_timestamps):
-                platform_state = self.platform.get_platform_state_at(timestamp)
                 target_state = self._target_state_at(target_path, timestamp)
                 if target_state is None:
                     continue
 
                 H_sensors, prop_time_s = spectrum_propagation_model.propagate_spectrum(
-                    platform_state,
+                    self.platform,
                     target_state,
                     frequencies_hz,
                 )
                 sensor_delays_s = self.propagation_model.compute_sensor_delays(
-                    platform_state,
+                    self.platform,
                     target_state,
                 )
 

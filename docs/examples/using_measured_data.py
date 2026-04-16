@@ -44,6 +44,7 @@ from bluepebble.plotter import (
     plot_btr,
     plot_world,
 )
+from bluepebble.sensor import Hydrophone, HydrophoneResponse, LinearHydrophoneArray
 from bluepebble.signal.anthropogenic import SyntheticAnthropogenicSignal
 from bluepebble.signal.random import ColouredNoiseSignal
 from bluepebble.sigproc import (
@@ -177,6 +178,10 @@ tow_cable_length_m = 400.0
 sensor_spacing_m = 1.1
 array_depth_m = -100.0
 
+hydrophone_response = HydrophoneResponse()
+elements = [Hydrophone(response=hydrophone_response) for _ in range(num_sensors)]
+sensor_array = LinearHydrophoneArray(elements=elements, element_spacing_m=sensor_spacing_m)
+
 initial_state = GroundTruthState(platform_start_vector, timestamp=start_time)
 platform = TowedArrayPlatform(
     states=[initial_state],
@@ -184,9 +189,8 @@ platform = TowedArrayPlatform(
     velocity_mapping=platform_velocity_mapping,
     transition_models=platform_transition_models,
     transition_times=platform_transition_times,
-    num_sensors=num_sensors,
+    sensor_array=sensor_array,
     cable_length_m=tow_cable_length_m,
-    sensor_spacing_m=sensor_spacing_m,
     array_depth_m=array_depth_m,
 )
 
@@ -260,8 +264,8 @@ for target_start_vector in target_start_vectors:
 
     bearing_states = []
     for target_state in target_ground_truth.states:
-        platform_state = platform.get_platform_state_at(target_state.timestamp)
-        ref_sensor_position = np.mean(platform_state.array.state_vector, axis=1)
+        positions = platform.sensor_array.position_matrix_at(target_state.timestamp)
+        ref_sensor_position = np.mean(positions, axis=1)
         target_pos = np.array([target_state.state_vector[0], target_state.state_vector[2]])
         relative_pos = target_pos - ref_sensor_position[:2]
         bearing_rad = np.arctan2(relative_pos[1], relative_pos[0])

@@ -108,7 +108,7 @@ class PassiveSonarDetector(DetectionReader):
         sensor_data_iterator: Iterable[SensorDataStep] = self.sensor_data_gen
         if progress_bar:
             sensor_data_iterator = tqdm(
-                sensor_data_iterator, desc="Generating Detections", total=total_timesteps
+                sensor_data_iterator, desc="Generating detections", total=total_timesteps
             )
 
         for timestamp, sensor_data_set in sensor_data_iterator:

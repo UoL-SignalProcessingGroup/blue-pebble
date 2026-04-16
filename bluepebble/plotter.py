@@ -735,8 +735,8 @@ def plot_world(
             added_group_titles.add(group_name)
         return kwargs
 
-    if len(platform.platform_history) == 0:
-        raise ValueError("platform.platform_history is empty")
+    if len(platform.states) == 0:
+        raise ValueError("platform has no recorded states")
 
     def _format_timestamp(timestamp: Any) -> str:
         """Return a readable timestamp string for hover metadata."""
@@ -746,11 +746,10 @@ def plot_world(
             return "N/A"
         return str(timestamp)
 
-    plat_x = [float(entry.host.state.state_vector[0]) for entry in platform.platform_history]
-    plat_y = [float(entry.host.state.state_vector[2]) for entry in platform.platform_history]
+    plat_x = [float(state.state_vector[0]) for state in platform.states]
+    plat_y = [float(state.state_vector[2]) for state in platform.states]
     plat_timestamps = [
-        _format_timestamp(getattr(entry.host.state, "timestamp", None))
-        for entry in platform.platform_history
+        _format_timestamp(getattr(state, "timestamp", None)) for state in platform.states
     ]
 
     gt_x = [[] for _ in range(num_truths)]

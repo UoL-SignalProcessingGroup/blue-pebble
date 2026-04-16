@@ -45,6 +45,7 @@ from bluepebble.models.environment import Constant
 from bluepebble.models.propagation import CylindricalAcousticPropagationModel
 from bluepebble.platform import TowedArrayPlatform
 from bluepebble.plotter import plot_spectrogram, plot_world
+from bluepebble.sensor import Hydrophone, HydrophoneResponse, LinearHydrophoneArray
 from bluepebble.signal.anthropogenic import (
     RecordedAnthropogenicSignal,
     SyntheticAnthropogenicSignal,
@@ -95,6 +96,10 @@ array_depth_m = -10.0
 
 sensor_to_analyse = num_sensors // 2
 
+hydrophone_response = HydrophoneResponse()
+elements = [Hydrophone(response=hydrophone_response) for _ in range(num_sensors)]
+sensor_array = LinearHydrophoneArray(elements=elements, element_spacing_m=sensor_spacing_m)
+
 initial_state = GroundTruthState(platform_start_vector, timestamp=sim_start_time)
 
 platform = TowedArrayPlatform(
@@ -103,9 +108,8 @@ platform = TowedArrayPlatform(
     velocity_mapping=platform_velocity_mapping,
     transition_models=[platform_transition_model],
     transition_times=[timedelta(seconds=total_duration_s)],
-    num_sensors=num_sensors,
+    sensor_array=sensor_array,
     cable_length_m=tow_cable_length_m,
-    sensor_spacing_m=sensor_spacing_m,
     array_depth_m=array_depth_m,
 )
 

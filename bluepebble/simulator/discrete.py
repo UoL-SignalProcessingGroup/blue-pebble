@@ -168,7 +168,7 @@ class DiscretePassiveSonarArraySimulator(PassiveSonarArraySimulatorBase):
             msg = "signal models must contain at least one model"
             raise ValueError(msg)
 
-        num_sensors = int(self.platform.num_sensors)
+        num_sensors = len(self.platform.sensor_array.elements)
         sampling_rate_hz = float(signal_models_list[0].sampling_rate_hz)
         total_samples = int(signal_models_list[0].num_samples)
 
@@ -218,8 +218,6 @@ class DiscretePassiveSonarArraySimulator(PassiveSonarArraySimulatorBase):
 
         n_steps = len(all_timestamps)
         for step_idx, timestamp in enumerate(all_timestamps):
-            platform_state = self.platform.get_platform_state_at(timestamp)
-
             start_sample = int(step_sample_idx[step_idx])
             if step_idx < n_steps - 1:
                 end_sample = int(step_sample_idx[step_idx + 1])
@@ -247,7 +245,7 @@ class DiscretePassiveSonarArraySimulator(PassiveSonarArraySimulatorBase):
                 source_fft = np.fft.fft(source_chunk)
 
                 H_sensors, _ = spectrum_propagation_model.propagate_spectrum(
-                    platform_state,
+                    self.platform,
                     target_state,
                     frequencies_hz,
                 )

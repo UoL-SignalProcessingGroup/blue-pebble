@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 import sys
-from types import ModuleType, SimpleNamespace
+from types import ModuleType
 
 import numpy as np
 import pytest
@@ -292,19 +292,31 @@ def test_mvdr_returns_zero_when_no_frequency_bins_are_active(monkeypatch) -> Non
 
 def test_steering_calculator_returns_expected_horizontal_delays(monkeypatch) -> None:
     """Steering delays should match the 2D projected sensor offsets."""
+    from datetime import datetime
+
+    from stonesoup.types.array import StateVector
+    from stonesoup.types.state import State
+
+    from bluepebble.sensor.array import LinearHydrophoneArray
+    from bluepebble.sensor.hydrophone import Hydrophone, HydrophoneResponse
+
     beamformer = _load_beamformer_module(monkeypatch)
     calculator = beamformer.SteeringCalculator(
         ssp=ConstantSSP(1500.0),
         steering_azimuths_rad=np.array([0.0, np.pi / 2]),
     )
-    platform = SimpleNamespace(
-        array=SimpleNamespace(
-            state_vector=np.array([[0.0, 1.0], [0.0, 0.0], [-10.0, -10.0]]),
-            ref_state_vector=np.array([[0.0], [0.0], [-10.0]]),
-        )
-    )
 
-    delays = calculator.calculate(platform)
+    ts = datetime(2024, 1, 1)
+    response = HydrophoneResponse(sensitivity_db=0.0)
+    elements = [
+        Hydrophone(response=response),
+        Hydrophone(response=HydrophoneResponse(sensitivity_db=0.0)),
+    ]
+    elements[0].states.append(State(state_vector=StateVector([0.0, 0.0, -10.0]), timestamp=ts))
+    elements[1].states.append(State(state_vector=StateVector([1.0, 0.0, -10.0]), timestamp=ts))
+    array = LinearHydrophoneArray(elements=elements, element_spacing_m=1.0)
+
+    delays = calculator.calculate(array, ts)
 
     np.testing.assert_allclose(
         delays,

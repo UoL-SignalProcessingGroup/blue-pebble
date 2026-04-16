@@ -6,19 +6,40 @@ voltage (in V).  The combined transfer function is:
 
 .. math::
 
-    H_{\text{hydrophone}}(f) = S \cdot R(f)
+    H_{\text{hydrophone}}(f) = S \cdot R(f) \cdot e^{j\varphi}
 
-where *S* is the scalar sensitivity (V/uPa, converted from dB re 1 V/uPa)
-and *R(f)* is a frequency-dependent complex response.
+where *S* is the scalar sensitivity (V/uPa, converted from dB re 1 V/uPa),
+*R(f)* is a frequency-dependent complex response, and :math:`\varphi` is a
+constant phase offset in radians.
+
+Classes
+-------
+FrequencyResponse
+    Abstract base class for frequency response models.
+FlatFrequencyResponse
+    Unity response at all frequencies.
+TabulatedFrequencyResponse
+    Response interpolated from datasheet measurements.
+FirstOrderHighPassResponse
+    First-order high-pass roll-off model.
+FirstOrderLowPassResponse
+    First-order low-pass roll-off model.
+HydrophoneResponse
+    Combined LTI electro-acoustic response model.
+Hydrophone
+    A single physical hydrophone element: response model and position state.
 """
 
 from abc import ABC, abstractmethod
-from collections.abc import Sequence
-from typing import Any, TypeAlias
+from typing import TYPE_CHECKING, Any, TypeAlias
 
 import numpy as np
 from numpy.typing import ArrayLike, NDArray
 from stonesoup.base import Base, Property
+from stonesoup.types.state import State
+
+if TYPE_CHECKING:
+    pass
 
 ComplexArray: TypeAlias = NDArray[np.complexfloating[Any, Any]]
 FloatArray: TypeAlias = NDArray[np.floating[Any]]
@@ -210,8 +231,8 @@ class FirstOrderLowPassResponse(FrequencyResponse):
         return (1.0 / (1.0 + 1j * f / self.cutoff_hz)).astype(np.complex128)
 
 
-class HydrophoneModel(Base):
-    """Model of a single hydrophone element as an LTI system.
+class HydrophoneResponse(Base):
+    """Electro-acoustic response model of a single hydrophone transducer.
 
     Combines a scalar sensitivity with a frequency response to produce
     a complex transfer function that maps received acoustic pressure
@@ -219,8 +240,10 @@ class HydrophoneModel(Base):
 
     Parameters
     ----------
-    sensitivity_db : float
-        Hydrophone sensitivity in dB re 1 V/uPa.
+    sensitivity_db : float, optional
+        Hydrophone sensitivity in dB re 1 V/uPa.  Defaults to ``0.0``, which
+        applies no additional scaling and is equivalent to running a simulation
+        without an explicit hydrophone model.
     frequency_response : FrequencyResponse or None
         Frequency-dependent response model.  Defaults to
         :class:`FlatFrequencyResponse` when ``None``.
@@ -232,7 +255,14 @@ class HydrophoneModel(Base):
 
     """
 
-    sensitivity_db: float = Property(doc="Hydrophone sensitivity in dB re 1 V/uPa.")
+    sensitivity_db: float = Property(
+        default=0.0,
+        doc=(
+            "Hydrophone sensitivity in dB re 1 V/uPa. "
+            "Defaults to 0.0 dB, which applies no additional scaling and produces "
+            "output equivalent to a simulation without an explicit hydrophone model."
+        ),
+    )
     frequency_response: FrequencyResponse | None = Property(
         default=None,
         doc="Frequency-dependent response model.  Defaults to FlatFrequencyResponse.",
@@ -275,48 +305,51 @@ class HydrophoneModel(Base):
         )
 
 
-def evaluate_hydrophone_transfer_functions(
-    models: "HydrophoneModel | Sequence[HydrophoneModel]",
-    num_sensors: int,
-    frequencies_hz: ArrayLike,
-) -> ComplexArray:
-    """Evaluate hydrophone transfer functions for all sensors.
+class Hydrophone(Base):
+    """A single physical hydrophone element.
+
+    Pairs an electro-acoustic response model with a dynamic position state.
+    Position state is managed externally by :class:`LinearHydrophoneArray`
+    via repeated calls to its :meth:`~LinearHydrophoneArray.move` method.
 
     Parameters
     ----------
-    models : HydrophoneModel or Sequence[HydrophoneModel]
-        A single model (applied uniformly to every sensor) or a list of
-        per-sensor models.
-    num_sensors : int
-        Number of sensor elements in the array.
-    frequencies_hz : ArrayLike
-        Frequencies in Hz at which to evaluate.
+    response : HydrophoneResponse
+        Electro-acoustic transducer model for this element.
 
-    Returns
-    -------
-    ComplexArray
-        Complex transfer functions, shape ``(num_sensors, num_frequencies)``.
-
-    Raises
-    ------
-    ValueError
-        If a list of models is provided whose length does not match
-        *num_sensors*.
+    Notes
+    -----
+    Each ``Hydrophone`` instance must be a distinct object.  Sharing one
+    instance across multiple elements in an array will cause all elements
+    to accumulate states on the same list.
 
     """
-    if isinstance(models, HydrophoneModel):
-        h = models.transfer_function(frequencies_hz)
-        return np.tile(h, (num_sensors, 1))
 
-    models_list = list(models)
-    if len(models_list) != num_sensors:
-        msg = (
-            f"Number of hydrophone models ({len(models_list)}) must match "
-            f"number of sensors ({num_sensors})"
-        )
-        raise ValueError(msg)
+    response: HydrophoneResponse = Property(doc="Electro-acoustic transducer model.")
 
-    return np.stack(
-        [m.transfer_function(frequencies_hz) for m in models_list],
-        axis=0,
-    )
+    def __init__(self, *args: object, **kwargs: object) -> None:
+        """Initialise the hydrophone with an empty state history.
+
+        Parameters
+        ----------
+        *args : object
+            Positional arguments forwarded to ``Base``.
+        **kwargs : object
+            Keyword arguments forwarded to ``Base``.
+
+        """
+        super().__init__(*args, **kwargs)
+        self.states: list[State] = []
+
+    @property
+    def state(self) -> State | None:
+        """Return the most recent position state, or ``None`` if uninitialised.
+
+        Returns
+        -------
+        State or None
+            The last appended state, or ``None`` before the first
+            :meth:`~LinearHydrophoneArray.move` call.
+
+        """
+        return self.states[-1] if self.states else None

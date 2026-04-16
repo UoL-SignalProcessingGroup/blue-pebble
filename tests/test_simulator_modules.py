@@ -130,12 +130,18 @@ class _FakePath:
 
 class _FakePlatform:
     def __init__(self, timestamps: list[datetime], num_sensors: int):
-        self.num_sensors = num_sensors
         self.movement_controller = SimpleNamespace(states=[_FakeState(t) for t in timestamps])
-        self._states = {t: SimpleNamespace(timestamp=t) for t in timestamps}
-
-    def get_platform_state_at(self, timestamp: datetime):
-        return self._states[timestamp]
+        self.sensor_array = SimpleNamespace(
+            elements=[SimpleNamespace() for _ in range(num_sensors)],
+            transfer_functions=lambda freqs: np.ones(
+                (num_sensors, len(freqs)), dtype=np.complex128
+            ),
+            position_matrix_at=lambda t: np.zeros((3, num_sensors)),
+            element_states_at=lambda t: [
+                SimpleNamespace(state_vector=np.zeros((3, 1))) for _ in range(num_sensors)
+            ],
+            reference_element_idx=0,
+        )
 
 
 def test_base_resolve_models_and_target_lookup(monkeypatch) -> None:
@@ -245,8 +251,8 @@ def test_base_beamform_if_configured_and_make_sensor_data(monkeypatch) -> None:
         def __init__(self):
             self.seen = None
 
-        def calculate(self, platform_state):
-            self.seen = platform_state
+        def calculate(self, array, timestamp):
+            self.seen = timestamp
             return np.array([0.1])
 
     class Beamformer:
@@ -264,7 +270,7 @@ def test_base_beamform_if_configured_and_make_sensor_data(monkeypatch) -> None:
 
     beamformed = simulator._beamform_if_configured(timestamp, sensor_signals)
     np.testing.assert_array_equal(beamformed, np.array([42.0 + 0.0j], dtype=np.complex64))
-    assert steering.seen.timestamp == timestamp
+    assert steering.seen == timestamp
     np.testing.assert_array_equal(beamformer.calls[0][0], sensor_signals)
     np.testing.assert_array_equal(beamformer.calls[0][1], np.array([0.1]))
 
@@ -776,7 +782,7 @@ def test_fractional_delay_simulator_covers_errors_fallback_and_outputs(monkeypat
             return np.ones((num_sensors, 2), dtype=np.complex64)
 
     class Steering:
-        def calculate(self, platform_state):
+        def calculate(self, array, timestamp):
             return np.array([0.0])
 
     class Beamformer:

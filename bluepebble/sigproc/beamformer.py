@@ -1,6 +1,7 @@
 """Beamforming algorithms for processing signals from an array of sensors."""
 
 from abc import ABC, abstractmethod
+from datetime import datetime
 from typing import TYPE_CHECKING, Literal, TypeAlias
 
 import numpy as np
@@ -12,7 +13,7 @@ from stonesoup.base import Base, Property
 from ..models.environment import SoundSpeedProfile
 
 if TYPE_CHECKING:
-    from stonesoup.platform.base import Platform
+    from ..sensor.array import LinearHydrophoneArray
 
 ComplexArray: TypeAlias = NDArray[np.complex128]
 FloatArray: TypeAlias = NDArray[np.float64]
@@ -716,17 +717,16 @@ class SteeringCalculator(Base):
         doc="Azimuth angles for steering, in radians",
     )
 
-    def calculate(self, platform: "Platform") -> FloatArray:
+    def calculate(self, array: "LinearHydrophoneArray", timestamp: datetime) -> FloatArray:
         """Calculate per-direction per-sensor steering delays.
-
-        This method assumes the platform has an `array` attribute which is an object with
-        `state_vector` and `ref_state_vector` attributes, such as the one configured by
-        `TowedArrayPlatform`.
 
         Parameters
         ----------
-        platform : Platform
-            The platform containing the sensor array.
+        array : LinearHydrophoneArray
+            The hydrophone array providing element positions.
+        timestamp : datetime
+            Timestamp at which to query element positions from the array's
+            state history.
 
         Returns
         -------
@@ -736,10 +736,11 @@ class SteeringCalculator(Base):
 
         """
         # Get sensor positions - these are 3D positions [x, y, z] for each sensor
-        sensor_positions = platform.array.state_vector  # Shape: (3, num_sensors)
+        sensor_positions = array.position_matrix_at(timestamp)  # Shape: (3, num_sensors)
 
-        # Center the array relative to the reference sensor
-        reference_position = platform.array.ref_state_vector  # Shape: (3, 1)
+        # Centre the array relative to the reference sensor
+        ref_state = array.element_states_at(timestamp)[array.reference_element_idx]
+        reference_position = ref_state.state_vector  # Shape: (3, 1)
         sensor_positions_relative = sensor_positions - reference_position
 
         # Calculate the 2D direction vectors for each steering direction

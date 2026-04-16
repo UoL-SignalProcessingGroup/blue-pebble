@@ -47,6 +47,7 @@ from bluepebble.detector import CACFARDetector, PassiveSonarDetector, PeakDetect
 from bluepebble.models.environment import FlatBathymetry, Linear
 from bluepebble.models.propagation import CylindricalAcousticPropagationModel
 from bluepebble.platform import TowedArrayPlatform
+from bluepebble.sensor import Hydrophone, HydrophoneResponse, LinearHydrophoneArray
 from bluepebble.signal.anthropogenic import SyntheticAnthropogenicSignal
 from bluepebble.signal.random import ColouredNoiseSignal
 from bluepebble.sigproc import (
@@ -184,15 +185,19 @@ array = cfg["array"]
 
 initial_state = GroundTruthState(ship["start_vector"], timestamp=sim["start_time"])
 
+_hydrophone_response = HydrophoneResponse()
+_elements = [Hydrophone(response=_hydrophone_response) for _ in range(array["num_sensors"])]
+_sensor_array = LinearHydrophoneArray(
+    elements=_elements, element_spacing_m=array["sensor_spacing"]
+)
 platform = TowedArrayPlatform(
     states=initial_state,
     position_mapping=ship["position_mapping"],
     velocity_mapping=ship["velocity_mapping"],
     transition_models=[ship["transition_model"]],
     transition_times=[timedelta(seconds=sim["sim_length"])],
-    num_sensors=array["num_sensors"],
+    sensor_array=_sensor_array,
     cable_length_m=array["tow_cable_length"],
-    sensor_spacing_m=array["sensor_spacing"],
     array_depth_m=array["array_depth"],
 )
 
@@ -240,8 +245,8 @@ for target_cfg in cfg["targets"]:
 
     gt_relative_bearings = []
     for target_state in target_truth.states:
-        platform_state = platform.get_platform_state_at(target_state.timestamp)
-        ref_sensor_position = np.mean(platform_state.array.state_vector, axis=1)
+        positions = platform.sensor_array.position_matrix_at(target_state.timestamp)
+        ref_sensor_position = np.mean(positions, axis=1)
         target_pos = np.array([target_state.state_vector[0], target_state.state_vector[2]])
         relative_pos = target_pos - ref_sensor_position[:2]
         gt_relative_bearings.append(np.arctan2(relative_pos[1], relative_pos[0]))
@@ -276,7 +281,7 @@ ambient_noise_model = ColouredNoiseSignal(
 
 shading = None
 if bf["shading"] is not None:
-    shading = get_window(bf["shading"], platform.num_sensors)
+    shading = get_window(bf["shading"], platform.sensor_array.num_elements)
 
 if bf["beamformer_type"] == "DAS":
     if bf["domain"] == "broadband_power":
@@ -386,9 +391,7 @@ hypothesiser = PDAHypothesiser(
 )
 data_associator = PDA(hypothesiser=hypothesiser)
 
-initial_bearing = relative_bearing_ground_truth[0].state_vector[0] + rng.normal(
-    0, np.deg2rad(2)
-)
+initial_bearing = relative_bearing_ground_truth[0].state_vector[0] + rng.normal(0, np.deg2rad(2))
 prior_state = GaussianState(
     np.array([initial_bearing, 0]),
     np.diag([np.deg2rad(5) ** 2, np.deg2rad(0.5) ** 2]),
@@ -485,12 +488,8 @@ for i, timestamp in enumerate(timesteps):
 # %%
 fig = go.Figure()
 
-plat_x = []
-plat_y = []
-for timestamp in timesteps:
-    platform_state = platform.get_platform_state_at(timestamp)
-    plat_x.append(platform_state.host.state.state_vector[0] / 1000)
-    plat_y.append(platform_state.host.state.state_vector[2] / 1000)
+plat_x = [float(state.state_vector[0]) / 1000 for state in platform.states]
+plat_y = [float(state.state_vector[2]) / 1000 for state in platform.states]
 
 tgt_x = []
 tgt_y = []

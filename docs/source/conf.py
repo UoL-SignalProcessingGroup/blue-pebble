@@ -208,9 +208,7 @@ def _patch_gallery_index(app: object) -> None:
     gallery_index.write_text(content, encoding="utf-8")
 
 
-_TIMING_ROW_RE = re.compile(
-    r"   \* - :ref:`[^`]+`[^\n]*\n     - [^\n]*\n     - [^\n]*\n"
-)
+_TIMING_ROW_RE = re.compile(r"   \* - :ref:`[^`]+`[^\n]*\n     - [^\n]*\n     - [^\n]*\n")
 _IGNORED_IN_TIMING = re.compile(
     r"comparing_simulators|modelling_acoustic_sources|using_measured_data"
 )

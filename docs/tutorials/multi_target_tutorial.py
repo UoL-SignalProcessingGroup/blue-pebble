@@ -59,6 +59,7 @@ from stonesoup.models.transition.linear import (
 from stonesoup.types.groundtruth import GroundTruthState
 
 from bluepebble.platform import TowedArrayPlatform
+from bluepebble.sensor import Hydrophone, HydrophoneResponse, LinearHydrophoneArray
 
 # Define the platform's initial state and transition model
 platform_start_vector = np.array([-7500.0, 1.15, -2000.0, 0.25, -5.0, 0.0])
@@ -94,7 +95,11 @@ tow_cable_length_m = 100.0
 sensor_spacing_m = 0.5
 array_depth_m = -50.0
 
-# Create the towed array platform and simulate its movement over time
+# Build the sensor array bottom-up, then create the platform
+hydrophone_response = HydrophoneResponse()
+elements = [Hydrophone(response=hydrophone_response) for _ in range(num_sensors)]
+sensor_array = LinearHydrophoneArray(elements=elements, element_spacing_m=sensor_spacing_m)
+
 platform_initial_state = GroundTruthState(platform_start_vector, timestamp=start_time)
 platform = TowedArrayPlatform(
     states=platform_initial_state,
@@ -102,9 +107,8 @@ platform = TowedArrayPlatform(
     velocity_mapping=platform_velocity_mapping,
     transition_models=transition_models,
     transition_times=transition_times,
-    num_sensors=num_sensors,
+    sensor_array=sensor_array,
     cable_length_m=tow_cable_length_m,
-    sensor_spacing_m=sensor_spacing_m,
     array_depth_m=array_depth_m,
 )
 
@@ -398,9 +402,8 @@ relative_bearing_truths = []
 for target_truth in target_truths:
     bearing_states = []
     for state in target_truth:
-        platform_state = platform.get_platform_state_at(state.timestamp)
-        assert platform_state is not None
-        ref_sensor_position = np.mean(platform_state.array.state_vector, axis=1)
+        positions = platform.sensor_array.position_matrix_at(state.timestamp)
+        ref_sensor_position = np.mean(positions, axis=1)
 
         target_xy = np.array([state.state_vector[0], state.state_vector[2]])
         relative_position = target_xy - ref_sensor_position[:2]

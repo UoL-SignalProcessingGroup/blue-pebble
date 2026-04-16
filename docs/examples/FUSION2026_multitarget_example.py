@@ -55,6 +55,7 @@ from bluepebble.detector import CACFARDetector, PassiveSonarDetector, PeakDetect
 from bluepebble.models.environment import FlatBathymetry, Linear
 from bluepebble.models.propagation import rtrsAcousticPropagationModel
 from bluepebble.platform import TowedArrayPlatform
+from bluepebble.sensor import Hydrophone, HydrophoneResponse, LinearHydrophoneArray
 from bluepebble.signal.anthropogenic import SyntheticAnthropogenicSignal
 from bluepebble.signal.random import ColouredNoiseSignal
 from bluepebble.sigproc import (
@@ -256,15 +257,21 @@ transition_times = [leg1_duration_s, turn1_duration_s, leg2_duration_s]
 plat_init_sv = StateVector([-7500, 1.92039757, -2000, 0.269915147, -5.0, 0.0])
 platform_initial_state = State(plat_init_sv, timestamp=cfg["sim"]["start_time"])
 
+_hydrophone_response = HydrophoneResponse()
+_elements = [
+    Hydrophone(response=_hydrophone_response) for _ in range(cfg["array"]["num_sensors"])
+]
+_sensor_array = LinearHydrophoneArray(
+    elements=_elements, element_spacing_m=cfg["array"]["sensor_spacing"]
+)
 platform = TowedArrayPlatform(
     states=platform_initial_state,
     position_mapping=cfg["ship"]["position_mapping"],
     velocity_mapping=cfg["ship"]["velocity_mapping"],
     transition_models=transition_models,
     transition_times=transition_times,
-    num_sensors=cfg["array"]["num_sensors"],
+    sensor_array=_sensor_array,
     cable_length_m=cfg["array"]["tow_cable_length"],
-    sensor_spacing_m=cfg["array"]["sensor_spacing"],
     array_depth_m=cfg["array"]["array_depth"],
 )
 
@@ -312,8 +319,8 @@ for target_cfg in cfg["targets"]:
 
     gt_relative_bearings = []
     for target_state in target_truth.states:
-        platform_state = platform.get_platform_state_at(target_state.timestamp)
-        ref_sensor_position = np.mean(platform_state.array.state_vector, axis=1)
+        positions = platform.sensor_array.position_matrix_at(target_state.timestamp)
+        ref_sensor_position = np.mean(positions, axis=1)
         target_pos = np.array([target_state.state_vector[0], target_state.state_vector[2]])
         relative_pos = target_pos - ref_sensor_position[:2]
         gt_relative_bearings.append(np.arctan2(relative_pos[1], relative_pos[0]))
@@ -354,7 +361,7 @@ ambient_noise_model = ColouredNoiseSignal(
 
 shading = None
 if bf["shading"] is not None:
-    shading = get_window(bf["shading"], platform.num_sensors)
+    shading = get_window(bf["shading"], platform.sensor_array.num_elements)
 
 if bf["beamformer_type"] == "DAS":
     beamformer = DelayAndSumBeamformer(
@@ -555,9 +562,9 @@ for i, timestamp in enumerate(timesteps):
 
     for target_gt in target_ground_truths:
         target_state = target_gt[i]
-        platform_state = platform.get_platform_state_at(timestamp)
+        positions = platform.sensor_array.position_matrix_at(timestamp)
         target_pos = np.array([target_state.state_vector[0], target_state.state_vector[2]])
-        array_center = np.mean(platform_state.array.state_vector, axis=1)
+        array_center = np.mean(positions, axis=1)
         relative_pos = target_pos - array_center[:2]
         absolute_bearing = np.arctan2(relative_pos[1], relative_pos[0])
         true_bearing = np.arctan2(np.sin(absolute_bearing), np.cos(absolute_bearing))
@@ -580,7 +587,7 @@ for i, timestamp in enumerate(timesteps):
             )
 
             if ss_cfg["include_ambiguity"]:
-                array_positions = platform_state.array.state_vector
+                array_positions = platform.sensor_array.position_matrix_at(timestamp)
                 array_head = array_positions[:2, -1]
                 array_tail = array_positions[:2, 0]
                 array_axis = array_head - array_tail
@@ -626,8 +633,8 @@ for i, timestamp in enumerate(timesteps):
 # %%
 num_targets = len(target_ground_truths)
 
-plat_x = [entry.host.state.state_vector[0] / 1000 for entry in platform.platform_history]
-plat_y = [entry.host.state.state_vector[2] / 1000 for entry in platform.platform_history]
+plat_x = [float(state.state_vector[0]) / 1000 for state in platform.states]
+plat_y = [float(state.state_vector[2]) / 1000 for state in platform.states]
 
 tgt_x = [[] for _ in range(num_targets)]
 tgt_y = [[] for _ in range(num_targets)]

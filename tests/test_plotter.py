@@ -351,12 +351,7 @@ def test_plot_world_uses_marker_for_stationary_platform(monkeypatch) -> None:
     """A stationary platform should render as a marker rather than a degenerate line."""
     plotter = _load_plotter(monkeypatch)
     stationary_state = SimpleNamespace(state_vector=np.array([0.0, 0.0, 0.0]))
-    platform = SimpleNamespace(
-        platform_history=[
-            SimpleNamespace(host=SimpleNamespace(state=stationary_state)),
-            SimpleNamespace(host=SimpleNamespace(state=stationary_state)),
-        ]
-    )
+    platform = SimpleNamespace(states=[stationary_state, stationary_state])
     truth_state = SimpleNamespace(state_vector=np.array([10.0, 0.0, 5.0]))
     truths = [[truth_state, truth_state]]
 
@@ -375,12 +370,7 @@ def test_plot_world_hovertemplate_omits_native_metres_when_scale_is_metres(
     t0 = datetime(2026, 1, 1, 0, 0, 0)
     state_a = SimpleNamespace(state_vector=np.array([0.0, 0.0, 0.0]), timestamp=t0)
     state_b = SimpleNamespace(state_vector=np.array([5.0, 0.0, 3.0]), timestamp=t0)
-    platform = SimpleNamespace(
-        platform_history=[
-            SimpleNamespace(host=SimpleNamespace(state=state_a)),
-            SimpleNamespace(host=SimpleNamespace(state=state_b)),
-        ]
-    )
+    platform = SimpleNamespace(states=[state_a, state_b])
     truth_state = SimpleNamespace(state_vector=np.array([10.0, 0.0, 5.0]), timestamp=t0)
     truths = [[truth_state, truth_state]]
 
@@ -408,12 +398,7 @@ def test_plot_world_hovertemplate_uses_km_unit_when_scale_is_km(
     # Coordinates > 1000 m trigger km display scale.
     state_a = SimpleNamespace(state_vector=np.array([0.0, 0.0, 0.0]), timestamp=t0)
     state_b = SimpleNamespace(state_vector=np.array([2000.0, 0.0, 1500.0]), timestamp=t0)
-    platform = SimpleNamespace(
-        platform_history=[
-            SimpleNamespace(host=SimpleNamespace(state=state_a)),
-            SimpleNamespace(host=SimpleNamespace(state=state_b)),
-        ]
-    )
+    platform = SimpleNamespace(states=[state_a, state_b])
     truth_state = SimpleNamespace(state_vector=np.array([3000.0, 0.0, 2000.0]), timestamp=t0)
     truths = [[truth_state, truth_state]]
 
@@ -436,12 +421,7 @@ def test_plot_world_adds_direction_arrows_for_moving_elements(monkeypatch) -> No
     # Platform moves due East: dx > 0, dy == 0 → plotly angle == 90°.
     state_a = SimpleNamespace(state_vector=np.array([0.0, 0.0, 0.0]))
     state_b = SimpleNamespace(state_vector=np.array([10.0, 0.0, 0.0]))
-    platform = SimpleNamespace(
-        platform_history=[
-            SimpleNamespace(host=SimpleNamespace(state=state_a)),
-            SimpleNamespace(host=SimpleNamespace(state=state_b)),
-        ]
-    )
+    platform = SimpleNamespace(states=[state_a, state_b])
     # Truth moves due North: dx == 0, dy > 0 → plotly angle == 0°.
     truth_a = SimpleNamespace(state_vector=np.array([50.0, 0.0, 0.0]))
     truth_b = SimpleNamespace(state_vector=np.array([50.0, 0.0, 10.0]))
@@ -470,9 +450,9 @@ def test_plot_world_adds_direction_arrows_for_moving_elements(monkeypatch) -> No
 def test_plot_world_rejects_empty_platform_history(monkeypatch) -> None:
     """World plotting should fail clearly when no platform states are available."""
     plotter = _load_plotter(monkeypatch)
-    platform = SimpleNamespace(platform_history=[])
+    platform = SimpleNamespace(states=[])
 
-    with pytest.raises(ValueError, match="platform.platform_history is empty"):
+    with pytest.raises(ValueError, match="platform has no recorded states"):
         plotter.plot_world(truths=[], platform=platform)
 
 
@@ -480,9 +460,7 @@ def test_plot_world_rejects_bathymetry_without_get_grid(monkeypatch) -> None:
     """Bathymetry overlays must provide the expected gridding method."""
     plotter = _load_plotter(monkeypatch)
     stationary_state = SimpleNamespace(state_vector=np.array([0.0, 0.0, 0.0]))
-    platform = SimpleNamespace(
-        platform_history=[SimpleNamespace(host=SimpleNamespace(state=stationary_state))]
-    )
+    platform = SimpleNamespace(states=[stationary_state])
     truths = [[SimpleNamespace(state_vector=np.array([10.0, 0.0, 5.0]))]]
 
     with pytest.raises(ValueError, match="must provide get_grid"):

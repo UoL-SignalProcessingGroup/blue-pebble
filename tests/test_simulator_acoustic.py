@@ -158,15 +158,20 @@ class FakePlatform:
 
     def __init__(self, timestamps: list[datetime], num_sensors: int = 2):
         """Store platform timestamps and expose them through the expected API."""
-        self.num_sensors = num_sensors
         self.movement_controller = SimpleNamespace(
             states=[FakeState(timestamp=t) for t in timestamps]
         )
-        self._platform_states = {t: SimpleNamespace(timestamp=t) for t in timestamps}
-
-    def get_platform_state_at(self, timestamp: datetime):
-        """Return the platform state for the requested timestamp."""
-        return self._platform_states[timestamp]
+        self.sensor_array = SimpleNamespace(
+            elements=[SimpleNamespace() for _ in range(num_sensors)],
+            transfer_functions=lambda freqs: np.ones(
+                (num_sensors, len(freqs)), dtype=np.complex128
+            ),
+            position_matrix_at=lambda t: np.zeros((3, num_sensors)),
+            element_states_at=lambda t: [
+                SimpleNamespace(state_vector=np.zeros((3, 1))) for _ in range(num_sensors)
+            ],
+            reference_element_idx=0,
+        )
 
 
 class FakeBroadbandSignalModel:
@@ -249,7 +254,7 @@ def test_passive_generate_sensor_data_combines_targets_noise_and_beamforming(mon
             return np.ones((2, 3), dtype=np.complex128)
 
     class FakeSteeringCalculator:
-        def calculate(self, platform_state):
+        def calculate(self, array, timestamp):
             return np.array([0.0, 0.05])
 
     class FakeBeamformer:
@@ -277,8 +282,8 @@ def test_passive_generate_sensor_data_combines_targets_noise_and_beamforming(mon
     sensor_data = next(iter(generated[0][1]))
 
     expected_raw = np.array([[2.0, 3.0, 4.0], [11.0, 21.0, 31.0]], dtype=np.complex128)
-    np.testing.assert_array_equal(sensor_data.raw_signals, expected_raw)
-    np.testing.assert_array_equal(sensor_data.beamformed_data, expected_raw.sum(axis=0))
+    np.testing.assert_allclose(sensor_data.raw_signals, expected_raw, atol=1e-5)
+    np.testing.assert_allclose(sensor_data.beamformed_data, expected_raw.sum(axis=0), atol=1e-5)
     assert sensor_data.timestamp == timestamp
     assert len(beamformer.calls) == 1
 
@@ -311,7 +316,7 @@ def test_passive_sensor_data_gen_yields_sorted_unique_timestamps(monkeypatch) ->
             return sensor_signals.copy()
 
     class FakeSteeringCalculator:
-        def calculate(self, platform_state):
+        def calculate(self, array, timestamp):
             return np.array([0.0])
 
     path = FakePath(
@@ -391,7 +396,7 @@ def test_passive_generate_sensor_data_uses_zero_signal_when_target_absent(monkey
             return sensor_signals.sum(axis=0)
 
     class FakeSteeringCalculator:
-        def calculate(self, platform_state):
+        def calculate(self, array, timestamp):
             return np.array([0.0, 0.0])
 
     class FakePropagationModel(_spectrum_propagation_base()):
@@ -619,13 +624,15 @@ def test_broadband_truncates_long_noise(monkeypatch) -> None:
     assert noise_model.seen_num_samples == [2, 3]
     first_data = next(iter(generated[0][1]))
     second_data = next(iter(generated[1][1]))
-    np.testing.assert_array_equal(
+    np.testing.assert_allclose(
         first_data.raw_signals,
         np.array([[11.0, 12.0]], dtype=np.complex64),
+        atol=1e-5,
     )
-    np.testing.assert_array_equal(
+    np.testing.assert_allclose(
         second_data.raw_signals,
         np.array([[13.0, 14.0, 15.0]], dtype=np.complex64),
+        atol=1e-5,
     )
     assert first_data.beamformed_data is None
     assert second_data.beamformed_data is None
@@ -656,8 +663,8 @@ def test_broadband_pads_short_noise_and_beamforms_real_part(monkeypatch) -> None
         def __init__(self):
             self.calls = []
 
-        def calculate(self, platform_state):
-            self.calls.append(platform_state.timestamp)
+        def calculate(self, array, timestamp):
+            self.calls.append(timestamp)
             return np.array([0.0])
 
     class RecordingBeamformer:
@@ -689,10 +696,11 @@ def test_broadband_pads_short_noise_and_beamforms_real_part(monkeypatch) -> None
     second_signals, second_delays = beamformer.calls[1]
     np.testing.assert_array_equal(first_delays, np.array([0.0]))
     np.testing.assert_array_equal(second_delays, np.array([0.0]))
-    np.testing.assert_array_equal(first_signals, np.array([[11.0 + 0.0j, 2.0 + 0.0j]]))
-    np.testing.assert_array_equal(
+    np.testing.assert_allclose(first_signals, np.array([[11.0 + 0.0j, 2.0 + 0.0j]]), atol=1e-5)
+    np.testing.assert_allclose(
         second_signals,
         np.array([[13.0 + 0.0j, 14.0 + 0.0j, 5.0 + 0.0j]]),
+        atol=1e-5,
     )
     first_data = next(iter(generated[0][1]))
     second_data = next(iter(generated[1][1]))
@@ -821,7 +829,7 @@ def test_broadband_beamformer_receives_sensors_in_native_array_order(monkeypatch
             return np.array([0.0, 0.0], dtype=float)
 
     class FakeSteeringCalculator:
-        def calculate(self, platform_state):
+        def calculate(self, array, timestamp):
             return np.array([0.0, 0.1])
 
     class RecordingBeamformer:

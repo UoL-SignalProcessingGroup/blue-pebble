@@ -83,12 +83,14 @@ timesteps = np.array([start_time + i * time_interval for i in range(num_steps)],
 # ingredients such as an initial :class:`~stonesoup.types.groundtruth.GroundTruthState`,
 # position/velocity mappings, and :class:`~stonesoup.models.transition.linear.CombinedLinearGaussianTransitionModel`.  # noqa: E501
 #
-# Blue Pebble then adds the array-specific parameters that Stone Soup does not model by default:
+# Blue Pebble then adds the array-specific parameters that Stone Soup does not model by default.
+# The array is built bottom-up before constructing the platform:
 #
-# - `num_sensors`
-# - `cable_length_m`
-# - `sensor_spacing_m`
-# - `array_depth_m`
+# 1. Create a :class:`~.HydrophoneResponse` for each element.
+# 2. Wrap each response in a :class:`~.Hydrophone`.
+# 3. Collect the elements into a :class:`~.LinearHydrophoneArray`.
+# 4. Pass the array to :class:`~.TowedArrayPlatform` alongside ``cable_length_m`` and
+#    ``array_depth_m``.
 #
 # This is a useful mental model for the whole plugin: keep the Stone Soup state and
 # motion abstractions, then add passive-sonar domain detail where it matters. Once
@@ -103,6 +105,7 @@ from stonesoup.models.transition.linear import (
 from stonesoup.types.groundtruth import GroundTruthState
 
 from bluepebble.platform import TowedArrayPlatform
+from bluepebble.sensor import Hydrophone, HydrophoneResponse, LinearHydrophoneArray
 
 # Define the platform's initial state and transition model
 platform_start_vector = np.array([-2000.0, 5.0, 2000.0, 0.0, -5.0, 0.0])
@@ -118,7 +121,11 @@ tow_cable_length_m = 100.0
 sensor_spacing_m = 0.5
 array_depth_m = -50.0
 
-# Create the towed array platform and simulate its movement over time
+# Build the sensor array bottom-up, then create the platform
+hydrophone_response = HydrophoneResponse()
+elements = [Hydrophone(response=hydrophone_response) for _ in range(num_sensors)]
+sensor_array = LinearHydrophoneArray(elements=elements, element_spacing_m=sensor_spacing_m)
+
 platform_initial_state = GroundTruthState(platform_start_vector, timestamp=start_time)
 platform = TowedArrayPlatform(
     states=platform_initial_state,
@@ -126,9 +133,8 @@ platform = TowedArrayPlatform(
     velocity_mapping=platform_velocity_mapping,
     transition_models=[platform_transition_model],
     transition_times=[timedelta(seconds=sim_length_s)],
-    num_sensors=num_sensors,
+    sensor_array=sensor_array,
     cable_length_m=tow_cable_length_m,
-    sensor_spacing_m=sensor_spacing_m,
     array_depth_m=array_depth_m,
 )
 
@@ -427,9 +433,8 @@ fig_btr.update_layout(
 # %%
 bearing_states = []
 for target_state in target_truth:
-    platform_state = platform.get_platform_state_at(target_state.timestamp)
-    assert platform_state is not None
-    ref_sensor_position = np.mean(platform_state.array.state_vector, axis=1)
+    positions = platform.sensor_array.position_matrix_at(target_state.timestamp)
+    ref_sensor_position = np.mean(positions, axis=1)
     target_xy = np.array([target_state.state_vector[0], target_state.state_vector[2]])
     relative_position = target_xy - ref_sensor_position[:2]
     bearing = np.arctan2(relative_position[1], relative_position[0])

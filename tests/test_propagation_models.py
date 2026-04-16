@@ -91,19 +91,26 @@ class FlatNegativeBathymetry:
 
 def _make_platform_and_source():
     """Create a simple two-sensor geometry and a source state."""
-    array_state = np.array(
-        [
-            [3.0, 6.0],
-            [4.0, 8.0],
-            [-10.0, -10.0],
-        ]
+    from datetime import datetime
+
+    from stonesoup.types.array import StateVector
+    from stonesoup.types.state import State
+
+    ts = datetime(2024, 1, 1)
+
+    array_state = np.array([[3.0, 6.0], [4.0, 8.0], [-10.0, -10.0]])
+    el0 = State(state_vector=StateVector([3.0, 4.0, -10.0]), timestamp=ts)
+    el1 = State(state_vector=StateVector([6.0, 8.0, -10.0]), timestamp=ts)
+
+    sensor_array = SimpleNamespace(
+        position_matrix_at=lambda t: array_state,
+        element_states_at=lambda t: [el0, el1],
+        reference_element_idx=0,
     )
-    ref_state = array_state[:, [0]]
-    platform = SimpleNamespace(
-        array=SimpleNamespace(state_vector=array_state, ref_state_vector=ref_state)
-    )
+    platform = SimpleNamespace(sensor_array=sensor_array)
     source = SimpleNamespace(
         state_vector=np.array([[0.0], [0.0], [-10.0]]),
+        timestamp=ts,
         metadata={
             "position_mapping": [0, 1, 2],
             "frequencies_hz": np.array([100.0, 250.0]),
