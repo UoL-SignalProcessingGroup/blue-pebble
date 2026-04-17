@@ -24,6 +24,8 @@ FirstOrderHighPassResponse
     First-order high-pass roll-off model.
 FirstOrderLowPassResponse
     First-order low-pass roll-off model.
+SecondOrderBandPassResponse
+    Second-order band-pass model combining high-pass and low-pass roll-offs.
 HydrophoneResponse
     Combined LTI electro-acoustic response model.
 Hydrophone
@@ -49,7 +51,9 @@ class FrequencyResponse(ABC, Base):
     """Abstract base class for hydrophone frequency response models.
 
     A frequency response model describes how a hydrophone's sensitivity
-    varies with frequency.  Subclasses implement :meth:`evaluate` to return
+    varies with frequency.  These variations are intrinsic physical
+    properties of the transducer and its mechanical structure, not
+    manufacturing defects.  Subclasses implement :meth:`evaluate` to return
     a complex transfer function at a given set of frequencies.
     """
 
@@ -98,6 +102,16 @@ class FlatFrequencyResponse(FrequencyResponse):
 
 class TabulatedFrequencyResponse(FrequencyResponse):
     """Frequency response interpolated from tabulated measurements.
+
+    Represents the measured intrinsic frequency response of a physical
+    hydrophone, typically obtained from manufacturer datasheets or
+    calibration certificates (e.g. per IEC 60565-1).  The tabulated
+    data captures the combined effect of piezoelectric conversion
+    (the transducer's ability to turn pressure into voltage),
+    mechanical resonances (frequencies at which the element's
+    structure vibrates preferentially, amplifying or attenuating the
+    response) and acoustic loading (the coupling between the element
+    and the surrounding water).
 
     Accepts magnitude in dB and optional phase in degrees, matching the
     format commonly found on hydrophone datasheets.  Interpolation is
@@ -158,21 +172,58 @@ class FirstOrderHighPassResponse(FrequencyResponse):
     r"""First-order high-pass frequency response.
 
     Models the low-frequency acoustic coupling cutoff of a hydrophone.
-    Below the cutoff the response rolls off at +20 dB/decade; above it
-    the response is flat (unity magnitude, zero phase).
+    This roll-off is an intrinsic physical property of the transducer:
+    below a minimum frequency, the piezoelectric element cannot
+    efficiently convert incident pressure into voltage. Two physical
+    mechanisms set this limit:
+
+    - **Mechanical compliance**: the element's stiffness (its resistance
+      to deformation) determines the minimum pressure variation that
+      produces a measurable electrical response.  At very low
+      frequencies the acoustic wavelength is so large relative to the
+      element that the resulting strain is negligible.
+    - **Acoustic loading**: the interaction between the element and the
+      surrounding water column.  At low frequencies the element
+      radiates (and therefore receives) inefficiently because it is
+      small compared with the wavelength.
+
+    The cutoff frequency is determined by the element geometry, mounting
+    and backing structure. Below the cutoff the response rolls off at
+    +20 dB/decade; above it the response is flat (unity magnitude, zero
+    phase).
+
+    The model is called "first-order" because the denominator of the
+    transfer function is first-degree in frequency, producing a single
+    20 dB/decade asymptotic slope.  This is a simplified approximation
+    valid away from resonance; hydrophones operating near a mechanical
+    resonance would require higher-order models whose denominators
+    contain higher powers of frequency, producing steeper roll-offs and
+    resonant peaks.
 
     .. math::
 
         H(f) = \frac{j f / f_c}{1 + j f / f_c}
 
+    At :math:`f = f_c` the magnitude evaluates to :math:`1/\sqrt{2}`,
+    which is approximately -3 dB — the half-power point.  This is not
+    an arbitrary convention but a mathematical consequence of the
+    transfer function: at the cutoff frequency the output power is
+    exactly half the passband power.
+
     Parameters
     ----------
     cutoff_hz : float
-        -3 dB cutoff frequency in Hz.
+        Cutoff frequency in Hz.  At this frequency the response
+        magnitude is :math:`1/\sqrt{2}` (-3 dB), i.e. half-power.
 
     """
 
-    cutoff_hz: float = Property(doc="-3 dB cutoff frequency in Hz.")
+    cutoff_hz: float = Property(
+        doc=(
+            "Cutoff frequency in Hz.  At this frequency the response "
+            "magnitude is 1/sqrt(2) (-3 dB), i.e. half-power."
+        ),
+    )
 
     def evaluate(self, frequencies_hz: ArrayLike) -> ComplexArray:
         """Evaluate the high-pass response at the given frequencies.
@@ -196,22 +247,58 @@ class FirstOrderHighPassResponse(FrequencyResponse):
 class FirstOrderLowPassResponse(FrequencyResponse):
     r"""First-order low-pass frequency response.
 
-    Models the high-frequency roll-off of a hydrophone.  Below the cutoff
-    the response is flat (unity magnitude, zero phase); above it the
-    response rolls off at -20 dB/decade.
+    Models the high-frequency roll-off of a hydrophone.  This roll-off is
+    an intrinsic physical property of the transducer arising from two
+    mechanisms:
+
+    - **Mechanical inertia**: the physical mass of the piezoelectric
+      element resists the rapid accelerations required to follow
+      high-frequency pressure variations.  As frequency increases, the
+      element's displacement amplitude decreases for a given pressure
+      amplitude, reducing the generated voltage.
+    - **Thickness-mode resonance**: the natural vibration frequency of
+      the element along its thickness dimension, determined by the
+      element's thickness and the speed of sound in the piezoelectric
+      material.  Well above this resonance the element can no longer
+      respond coherently to the incident pressure wave.
+
+    The cutoff frequency is determined by the element mass, stiffness
+    and acoustic loading.  Below the cutoff the response is flat (unity
+    magnitude, zero phase); above it the response rolls off at
+    -20 dB/decade.
+
+    The model is called "first-order" because the denominator of the
+    transfer function is first-degree in frequency, producing a single
+    20 dB/decade asymptotic slope.  This is a simplified approximation
+    valid away from resonance; hydrophones operating near a mechanical
+    resonance would require higher-order models whose denominators
+    contain higher powers of frequency, producing steeper roll-offs and
+    resonant peaks.
 
     .. math::
 
         H(f) = \frac{1}{1 + j f / f_c}
 
+    At :math:`f = f_c` the magnitude evaluates to :math:`1/\sqrt{2}`,
+    which is approximately -3 dB — the half-power point.  This is not
+    an arbitrary convention but a mathematical consequence of the
+    transfer function: at the cutoff frequency the output power is
+    exactly half the passband power.
+
     Parameters
     ----------
     cutoff_hz : float
-        -3 dB cutoff frequency in Hz.
+        Cutoff frequency in Hz.  At this frequency the response
+        magnitude is :math:`1/\sqrt{2}` (-3 dB), i.e. half-power.
 
     """
 
-    cutoff_hz: float = Property(doc="-3 dB cutoff frequency in Hz.")
+    cutoff_hz: float = Property(
+        doc=(
+            "Cutoff frequency in Hz.  At this frequency the response "
+            "magnitude is 1/sqrt(2) (-3 dB), i.e. half-power."
+        ),
+    )
 
     def evaluate(self, frequencies_hz: ArrayLike) -> ComplexArray:
         """Evaluate the low-pass response at the given frequencies.
@@ -229,6 +316,106 @@ class FirstOrderLowPassResponse(FrequencyResponse):
         """
         f = np.asarray(frequencies_hz, dtype=float)
         return (1.0 / (1.0 + 1j * f / self.cutoff_hz)).astype(np.complex128)
+
+
+class SecondOrderBandPassResponse(FrequencyResponse):
+    r"""Second-order band-pass frequency response.
+
+    Models the usable bandwidth of a hydrophone by combining the
+    low-frequency and high-frequency roll-offs into a single response.
+    Every physical hydrophone has a finite passband bounded at both ends:
+    the low-frequency cutoff arises from mechanical compliance and
+    acoustic loading (see :class:`FirstOrderHighPassResponse`), while the
+    high-frequency cutoff arises from mechanical inertia and proximity to
+    the thickness-mode resonance (see :class:`FirstOrderLowPassResponse`).
+
+    The transfer function is the product of a first-order high-pass and
+    a first-order low-pass:
+
+    .. math::
+
+        H(f) = \frac{j f / f_{\text{lo}}}{1 + j f / f_{\text{lo}}}
+               \cdot
+               \frac{1}{1 + j f / f_{\text{hi}}}
+
+    This gives +20 dB/decade roll-off below :math:`f_{\text{lo}}` and
+    -20 dB/decade roll-off above :math:`f_{\text{hi}}`, with a flat
+    passband between the two when :math:`f_{\text{lo}} \ll f_{\text{hi}}`.
+
+    The model is called "second-order" because the expanded denominator
+    is second-degree in frequency (one first-degree factor from each
+    constituent first-order stage).  Like the constituent models, this
+    is a simplified approximation valid away from resonance; it does
+    not capture resonant peaks or anti-resonances that would require
+    higher-order transfer functions.
+
+    At each cutoff the corresponding first-order factor evaluates to a
+    magnitude of :math:`1/\sqrt{2}` (-3 dB), the half-power point.
+
+    Parameters
+    ----------
+    low_cutoff_hz : float
+        Low-frequency half-power cutoff in Hz (acoustic coupling limit).
+    high_cutoff_hz : float
+        High-frequency half-power cutoff in Hz (mechanical inertia limit).
+
+    Raises
+    ------
+    ValueError
+        If ``low_cutoff_hz`` is not strictly less than ``high_cutoff_hz``.
+
+    """
+
+    low_cutoff_hz: float = Property(
+        doc="Low-frequency half-power (-3 dB) cutoff in Hz (acoustic coupling limit).",
+    )
+    high_cutoff_hz: float = Property(
+        doc="High-frequency half-power (-3 dB) cutoff in Hz (mechanical inertia limit).",
+    )
+
+    def __init__(self, *args: object, **kwargs: object) -> None:
+        """Validate cutoff ordering and initialise.
+
+        Parameters
+        ----------
+        *args : object
+            Positional arguments forwarded to ``Base``.
+        **kwargs : object
+            Keyword arguments forwarded to ``Base``.
+
+        Raises
+        ------
+        ValueError
+            If ``low_cutoff_hz >= high_cutoff_hz``.
+
+        """
+        super().__init__(*args, **kwargs)
+        if self.low_cutoff_hz >= self.high_cutoff_hz:
+            msg = (
+                f"low_cutoff_hz ({self.low_cutoff_hz}) must be strictly less "
+                f"than high_cutoff_hz ({self.high_cutoff_hz})"
+            )
+            raise ValueError(msg)
+
+    def evaluate(self, frequencies_hz: ArrayLike) -> ComplexArray:
+        """Evaluate the band-pass response at the given frequencies.
+
+        Parameters
+        ----------
+        frequencies_hz : ArrayLike
+            Frequencies in Hz at which to evaluate the response.
+
+        Returns
+        -------
+        ComplexArray
+            Complex frequency response, shape ``(num_frequencies,)``.
+
+        """
+        f = np.asarray(frequencies_hz, dtype=float)
+        hp_ratio = 1j * f / self.low_cutoff_hz
+        hp = hp_ratio / (1.0 + hp_ratio)
+        lp = 1.0 / (1.0 + 1j * f / self.high_cutoff_hz)
+        return (hp * lp).astype(np.complex128)
 
 
 class HydrophoneResponse(Base):
@@ -271,7 +458,9 @@ class HydrophoneResponse(Base):
         default=0.0,
         doc=(
             "Constant phase offset in degrees applied across all frequencies. "
-            "Models inter-element phase mismatch from cable or connector variation."
+            "Unlike the frequency response, which models intrinsic transducer "
+            "physics, this offset models per-element manufacturing variation "
+            "such as cable length differences or connector tolerances."
         ),
     )
 

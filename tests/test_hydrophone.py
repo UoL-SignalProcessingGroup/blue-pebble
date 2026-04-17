@@ -248,6 +248,88 @@ class TestFirstOrderLowPassResponse:
 
 
 # ---------------------------------------------------------------------------
+# SecondOrderBandPassResponse
+# ---------------------------------------------------------------------------
+
+
+class TestSecondOrderBandPassResponse:
+    """Tests for SecondOrderBandPassResponse."""
+
+    def test_passband_is_near_unity(self, monkeypatch):
+        """Mid-band frequencies well between cutoffs have near-unity magnitude."""
+        mod = _load_hydrophone_module(monkeypatch)
+        bp = mod.SecondOrderBandPassResponse(low_cutoff_hz=100.0, high_cutoff_hz=10000.0)
+        result = bp.evaluate(np.array([1000.0]))
+        np.testing.assert_allclose(np.abs(result), 1.0, atol=0.02)
+
+    def test_low_cutoff_is_minus_3db(self, monkeypatch):
+        """Magnitude at low cutoff is -3 dB (from the high-pass alone)."""
+        mod = _load_hydrophone_module(monkeypatch)
+        bp = mod.SecondOrderBandPassResponse(low_cutoff_hz=100.0, high_cutoff_hz=100000.0)
+        result = bp.evaluate(np.array([100.0]))
+        mag_db = 20.0 * np.log10(np.abs(result[0]))
+        np.testing.assert_allclose(mag_db, -3.0, atol=0.1)
+
+    def test_high_cutoff_is_minus_3db(self, monkeypatch):
+        """Magnitude at high cutoff is -3 dB (from the low-pass alone)."""
+        mod = _load_hydrophone_module(monkeypatch)
+        bp = mod.SecondOrderBandPassResponse(low_cutoff_hz=1.0, high_cutoff_hz=10000.0)
+        result = bp.evaluate(np.array([10000.0]))
+        mag_db = 20.0 * np.log10(np.abs(result[0]))
+        np.testing.assert_allclose(mag_db, -3.0, atol=0.1)
+
+    def test_low_frequency_rolloff(self, monkeypatch):
+        """Below the low cutoff, response rolls off at +20 dB/decade."""
+        mod = _load_hydrophone_module(monkeypatch)
+        bp = mod.SecondOrderBandPassResponse(low_cutoff_hz=1000.0, high_cutoff_hz=100000.0)
+        result = bp.evaluate(np.array([10.0, 100.0]))
+        mags_db = 20.0 * np.log10(np.abs(result))
+        slope_db_per_decade = mags_db[1] - mags_db[0]
+        np.testing.assert_allclose(slope_db_per_decade, 20.0, atol=0.5)
+
+    def test_high_frequency_rolloff(self, monkeypatch):
+        """Above the high cutoff, response rolls off at -20 dB/decade."""
+        mod = _load_hydrophone_module(monkeypatch)
+        bp = mod.SecondOrderBandPassResponse(low_cutoff_hz=1.0, high_cutoff_hz=100.0)
+        result = bp.evaluate(np.array([10000.0, 100000.0]))
+        mags_db = 20.0 * np.log10(np.abs(result))
+        slope_db_per_decade = mags_db[1] - mags_db[0]
+        np.testing.assert_allclose(slope_db_per_decade, -20.0, atol=0.5)
+
+    def test_matches_product_of_components(self, monkeypatch):
+        """Output matches the product of separate HP and LP evaluations."""
+        mod = _load_hydrophone_module(monkeypatch)
+        freqs = np.array([10.0, 100.0, 1000.0, 5000.0, 20000.0])
+        bp = mod.SecondOrderBandPassResponse(low_cutoff_hz=50.0, high_cutoff_hz=15000.0)
+        hp = mod.FirstOrderHighPassResponse(cutoff_hz=50.0)
+        lp = mod.FirstOrderLowPassResponse(cutoff_hz=15000.0)
+        np.testing.assert_allclose(
+            bp.evaluate(freqs),
+            hp.evaluate(freqs) * lp.evaluate(freqs),
+            atol=1e-12,
+        )
+
+    def test_invalid_cutoff_ordering_raises(self, monkeypatch):
+        """Raises ValueError when low_cutoff_hz >= high_cutoff_hz."""
+        mod = _load_hydrophone_module(monkeypatch)
+        with pytest.raises(ValueError, match="must be strictly less"):
+            mod.SecondOrderBandPassResponse(low_cutoff_hz=1000.0, high_cutoff_hz=100.0)
+
+    def test_equal_cutoffs_raises(self, monkeypatch):
+        """Raises ValueError when low_cutoff_hz == high_cutoff_hz."""
+        mod = _load_hydrophone_module(monkeypatch)
+        with pytest.raises(ValueError, match="must be strictly less"):
+            mod.SecondOrderBandPassResponse(low_cutoff_hz=500.0, high_cutoff_hz=500.0)
+
+    def test_output_dtype_is_complex128(self, monkeypatch):
+        """Output dtype is always complex128."""
+        mod = _load_hydrophone_module(monkeypatch)
+        bp = mod.SecondOrderBandPassResponse(low_cutoff_hz=100.0, high_cutoff_hz=10000.0)
+        result = bp.evaluate(np.array([500.0, 2000.0]))
+        assert result.dtype == np.complex128
+
+
+# ---------------------------------------------------------------------------
 # HydrophoneResponse
 # ---------------------------------------------------------------------------
 

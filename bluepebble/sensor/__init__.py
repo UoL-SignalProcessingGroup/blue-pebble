@@ -8,6 +8,7 @@ from .hydrophone import (
     FrequencyResponse,
     Hydrophone,
     HydrophoneResponse,
+    SecondOrderBandPassResponse,
     TabulatedFrequencyResponse,
 )
 
@@ -17,6 +18,7 @@ __all__ = [
     "TabulatedFrequencyResponse",
     "FirstOrderHighPassResponse",
     "FirstOrderLowPassResponse",
+    "SecondOrderBandPassResponse",
     "HydrophoneResponse",
     "Hydrophone",
     "LinearHydrophoneArray",

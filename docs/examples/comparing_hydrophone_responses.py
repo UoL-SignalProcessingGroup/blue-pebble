@@ -3,12 +3,12 @@
 Comparing Hydrophone Responses
 ==============================
 
-This example compares how four different hydrophone frequency response configurations
+This example compares how five different hydrophone frequency response configurations
 affect the beamformed output and downstream detections when receiving the same acoustic
 scene. The scenario is held fixed throughout: one target radiates three tonal components
 at 30 Hz, 100 Hz, and 200 Hz, propagated to the array under a spherical spreading model.
 Only the :class:`~bluepebble.sensor.HydrophoneResponse` attached to each array element
-changes between the four runs.
+changes between the five runs.
 
 The configurations demonstrate each :class:`~bluepebble.sensor.FrequencyResponse`
 subclass provided by Blue Pebble:
@@ -16,12 +16,17 @@ subclass provided by Blue Pebble:
 1. **Flat** (default) — uniform unity response; all three tonals arrive at equal strength.
 2. **First-order high-pass** — -3 dB at 80 Hz; attenuates the 30 Hz tonal.
 3. **First-order low-pass** — -3 dB at 120 Hz; attenuates the 200 Hz tonal.
-4. **Tabulated** — a resonant peak centred near 100 Hz; emphasises the mid tonal and
+4. **Second-order band-pass** — -3 dB at 50 Hz and 180 Hz; attenuates both the 30 Hz
+   and 200 Hz tonals, passing only the 100 Hz component through the flat passband.
+5. **Tabulated** — a resonant peak centred near 100 Hz; emphasises the mid tonal and
    suppresses both flanking components.
 
 The first figure shows the magnitude of each transfer function across the simulation
 band. The second figure presents a bearing-time record for each configuration in a
-stacked layout so the differential tonal visibility is immediately apparent.
+stacked layout so the differential tonal visibility is immediately apparent. The third
+figure shows the array-averaged received signal spectrogram for each configuration,
+making the spectral shaping applied by each hydrophone response directly visible as a
+function of frequency and time.
 """  # noqa: D205, D212, D400, D415
 
 # %%
@@ -45,13 +50,14 @@ from bluepebble.detector import CACFARDetector, PassiveSonarDetector, PeakDetect
 from bluepebble.models.environment import Constant
 from bluepebble.models.propagation import SphericalAcousticPropagationModel
 from bluepebble.platform import TowedArrayPlatform
-from bluepebble.plotter import apply_shared_colourscale, plot_btr, plot_world
+from bluepebble.plotter import apply_shared_colourscale, plot_btr, plot_spectrogram, plot_world
 from bluepebble.sensor import (
     FirstOrderHighPassResponse,
     FirstOrderLowPassResponse,
     Hydrophone,
     HydrophoneResponse,
     LinearHydrophoneArray,
+    SecondOrderBandPassResponse,
     TabulatedFrequencyResponse,
 )
 from bluepebble.signal.anthropogenic import SyntheticAnthropogenicSignal
@@ -66,7 +72,7 @@ from bluepebble.simulator import ContinuousSTFTPassiveSonarArraySimulator
 # A single shared clock drives all four runs. A 300-second simulation at 5-second
 # intervals keeps runtime manageable while still producing a readable bearing-time record.
 
-seed = 1234
+seed = 42
 bluepebble.set_seed(seed)
 rng = bluepebble.get_rng()
 
@@ -102,7 +108,15 @@ response_lowpass = HydrophoneResponse(
     frequency_response=FirstOrderLowPassResponse(cutoff_hz=120.0),
 )
 
-# 4. Tabulated response with a resonant peak near 100 Hz.
+# 4. Second-order band-pass with cutoffs at 50 Hz and 180 Hz.
+#    The 30 Hz tonal is below the low cutoff and will be attenuated; the 200 Hz tonal
+#    is above the high cutoff and will also be attenuated. Only the 100 Hz tonal
+#    sits in the flat passband.
+response_bandpass = HydrophoneResponse(
+    frequency_response=SecondOrderBandPassResponse(low_cutoff_hz=50.0, high_cutoff_hz=180.0),
+)
+
+# 5. Tabulated response with a resonant peak near 100 Hz.
 #    The shape approximates a hydrophone with elevated mid-band sensitivity
 #    that rolls off at both low and high frequencies.
 _tab_frequencies_hz = np.array([0.0, 20.0, 50.0, 80.0, 100.0, 130.0, 160.0, 200.0, 250.0])
@@ -118,6 +132,7 @@ configs = [
     ("Flat (default)", response_flat),
     ("High-pass  (fc = 80 Hz)", response_highpass),
     ("Low-pass  (fc = 120 Hz)", response_lowpass),
+    ("Band-pass  (50–180 Hz)", response_bandpass),
     ("Tabulated  (peak ≈ 100 Hz)", response_tabulated),
 ]
 
@@ -125,20 +140,35 @@ configs = [
 # Frequency Response Curves
 # --------------------------
 #
-# The magnitude of each transfer function is plotted here. This figure is generated
-# analytically — no simulation is required — and serves as the reference for
-# interpreting the bearing-time records that follow.
+# The magnitude of each transfer function is plotted here in dB as a function of
+# frequency. This figure is generated analytically — no simulation is required — and
+# serves as the reference for interpreting the bearing-time records and spectrograms
+# that follow.
 #
-# Vertical dashed lines mark the three target tonal frequencies so the expected
-# attenuation for each configuration can be read directly from the plot.
+# A flat 0 dB line means the hydrophone passes that frequency without attenuation.
+# Values below 0 dB indicate the hydrophone suppresses that frequency; values above
+# 0 dB indicate amplification (as seen in the tabulated response's resonant peak near
+# 100 Hz). Vertical dashed lines mark the three target tonal frequencies (30, 100 and
+# 200 Hz) so the expected gain or attenuation at each tonal can be read directly.
+#
+# Key observations:
+#
+# - The **flat** response is a horizontal line at 0 dB — all tonals arrive unmodified.
+# - The **high-pass** curve rolls off below its 80 Hz cutoff, strongly attenuating the
+#   30 Hz tonal while leaving 100 Hz and 200 Hz nearly untouched.
+# - The **low-pass** curve rolls off above its 120 Hz cutoff, attenuating the 200 Hz
+#   tonal while preserving 30 Hz and 100 Hz.
+# - The **band-pass** curve combines both roll-offs: it attenuates below 50 Hz and
+#   above 180 Hz, passing only the mid-band where the 100 Hz tonal sits.
+# - The **tabulated** curve provides the most aggressive shaping, with a +3 dB peak
+#   at 100 Hz and steep attenuation at both band edges.
 
 _f_axis = np.linspace(0.5, 250.0, 1000)
 _tonal_freqs_hz = [30.0, 100.0, 200.0]
-_colors = ["#1f77b4", "#ff7f0e", "#2ca02c", "#d62728"]
 
 fig_response = go.Figure()
 
-for (label, response), color in zip(configs, _colors, strict=True):
+for label, response in configs:
     H = response.transfer_function(_f_axis)
     mag_db = 20.0 * np.log10(np.abs(H) + 1e-12)
     fig_response.add_trace(
@@ -146,7 +176,7 @@ for (label, response), color in zip(configs, _colors, strict=True):
             x=_f_axis,
             y=mag_db,
             name=label,
-            line=dict(color=color, width=2),
+            line=dict(width=2),
         )
     )
 
@@ -163,7 +193,7 @@ fig_response.update_layout(
     title="Hydrophone Frequency Response Magnitudes",
     xaxis=dict(title="Frequency (Hz)", range=[0, 250]),
     yaxis=dict(title="Magnitude (dB)", range=[-25, 10]),
-    legend=dict(x=0.01, y=0.01, xanchor="left", yanchor="bottom"),
+    legend=dict(x=0.5, y=-0.25, xanchor="center", yanchor="top", orientation="h"),
     height=400,
 )
 
@@ -179,7 +209,7 @@ straight_model = CombinedLinearGaussianTransitionModel(
     [ConstantVelocity(0.0), ConstantVelocity(0.0), ConstantVelocity(0.0)]
 )
 
-platform_start_vector = np.array([0.0, 2.0, 2000.0, 2.0, -5.0, 0.0])
+platform_start_vector = np.array([0.0, 0.0, 2000.0, 2.0, -5.0, 0.0])
 platform_position_mapping = [0, 2, 4]
 platform_velocity_mapping = [1, 3, 5]
 
@@ -243,9 +273,11 @@ target_transition_model = CombinedLinearGaussianTransitionModel(
     [ConstantVelocity(0.0), ConstantVelocity(0.0), ConstantVelocity(0.0)]
 )
 
-target_amplitudes_upa = np.full(3, 10 ** (90.0 / 20.0))
+target_amplitudes_upa = np.full(3, 10 ** (100.0 / 20.0))
 target_frequencies_hz = np.array([30.0, 100.0, 200.0])
 target_phases_rad = rng.uniform(0, 2 * np.pi, 3)
+target_noise_amplitude_upa = 10 ** (90 / 20)
+target_noise_spectral_exponent = -1.0  # Pink noise
 
 target_states = [
     GroundTruthState(
@@ -257,6 +289,8 @@ target_states = [
             "phases_rad": target_phases_rad,
             "position_mapping": target_position_mapping,
             "velocity_mapping": target_velocity_mapping,
+            "noise_amplitude_upa": target_noise_amplitude_upa,
+            "noise_spectral_exponent": target_noise_spectral_exponent,
         },
     )
 ]
@@ -310,7 +344,7 @@ fig_world = plot_world(
 # Propagation Model
 # -----------------
 #
-# Spherical spreading is used here. It provides realistic per-sensor transfer functions
+# Spherical spreading is used here. It provides per-sensor transfer functions
 # (including inter-element phase delays) without the computational overhead of ray tracing.
 # Because the propagation model is the same for all four runs, any differences in the
 # bearing-time records come solely from the hydrophone response.
@@ -330,7 +364,7 @@ prop_model = SphericalAcousticPropagationModel(ssp=ssp)
 sampling_rate_hz = 500.0
 frame_len = 500
 hop_factor = 2
-fade_in_ms = 500.0
+fade_in_ms = 1000.0
 ambient_amplitude_upa = 10 ** (45.0 / 20.0)
 ambient_spectral_exponent = -1  # pink noise
 
@@ -349,8 +383,9 @@ def _make_signal_model() -> SyntheticAnthropogenicSignal:
         sampling_rate_hz=sampling_rate_hz,
         frame_len=frame_len,
         hop_factor=hop_factor,
-        tonal_bandwidth_hz=1.0,
-        noise_amplitude_upa=0.0,
+        noise_amplitude_upa=target_noise_amplitude_upa,
+        noise_spectral_exponent=target_noise_spectral_exponent,
+        noise_freq_range_hz=(0.0, sampling_rate_hz / 2),
         tonal_noise_is_constant=True,
         noise_is_constant=True,
     )
@@ -379,10 +414,10 @@ steering_calculator = SteeringCalculator(
 # Detector Pipeline Setup
 # -----------------------
 #
-# Four simulators are created — one per hydrophone configuration. Each is paired with its
+# Five simulators are created — one per hydrophone configuration. Each is paired with its
 # own platform so that the correct hydrophone transfer function is applied during signal
 # generation. A shared CA-CFAR + peak-selection detector chain is applied identically to
-# all four outputs so that detection differences can be attributed to the hydrophone
+# all five outputs so that detection differences can be attributed to the hydrophone
 # response alone.
 
 cfar_num_guard_cells = 6
@@ -429,7 +464,7 @@ detectors = [_make_detector(sim) for sim in simulators]
 # Run Detection on Simulated Data
 # --------------------------------
 #
-# All four detector pipelines are executed sequentially. The SNR history and flat
+# All five detector pipelines are executed sequentially. The SNR history and flat
 # detection lists are retained for plotting.
 
 all_detections = []
@@ -449,24 +484,25 @@ steering_azimuths_deg = np.rad2deg(steering_azimuths_rad)
 # Results: Bearing-Time Records by Hydrophone Configuration
 # ----------------------------------------------------------
 #
-# The four SNR maps are stacked vertically. Each row uses the same colour scale so that
+# The five SNR maps are stacked vertically. Each row uses the same colour scale so that
 # tonal brightness can be compared directly across configurations. The vertical layout
 # makes it straightforward to trace how each filter reshapes the three-tonal signature.
 #
 # - **Flat**: all three tonals appear with equal strength.
 # - **High-pass**: the 30 Hz tonal is attenuated or absent; 100 Hz and 200 Hz persist.
 # - **Low-pass**: the 200 Hz tonal is attenuated; 30 Hz and 100 Hz persist.
+# - **Band-pass**: the 30 Hz and 200 Hz tonals are both attenuated; only 100 Hz persists.
 # - **Tabulated**: the 100 Hz tonal is boosted; the flanking components are suppressed.
 
-row_titles = [label for label, _ in configs]
+subplot_titles = [label for label, _ in configs]
 
 fig_btr = make_subplots(
-    rows=4,
+    rows=5,
     cols=1,
     shared_xaxes=True,
     shared_yaxes=True,
-    row_titles=row_titles,
-    vertical_spacing=0.06,
+    subplot_titles=subplot_titles,
+    vertical_spacing=0.04,
 )
 
 for row, (snr_map, detections) in enumerate(zip(snr_maps, all_detections, strict=True), start=1):
@@ -493,14 +529,120 @@ apply_shared_colourscale(
 )
 
 # Remove x-axis labels from all rows except the last.
-for row in range(1, 4):
+for row in range(1, 5):
     fig_btr.update_xaxes(title_text="", row=row, col=1, showticklabels=False)
 
 fig_btr.update_layout(
     template="plotly_white",
     autosize=True,
-    height=900,
+    height=int(np.clip(260 * 5, 700, 2200)),
     showlegend=False,
-    title="SNR Maps: Flat vs High-pass vs Low-pass vs Tabulated Hydrophone Response",
+    title="SNR Maps",
+    margin=dict(r=100),
+)
+
+# %%
+# Results: Received Signal Spectrograms
+# --------------------------------------
+#
+# The spectrogram shows how each hydrophone configuration shapes the received signal
+# spectrum. The DAS beamformer is run across all steering azimuths, and the beamformed
+# outputs are averaged across all beams at each timestep to produce an omnidirectional
+# received waveform. This captures contributions from every direction rather than locking
+# on to the target bearing.
+#
+# The hydrophone response is applied to the raw sensor signals before beamforming, so it
+# shapes both the tonal components and the ambient noise floor. The effect is visible as a
+# change in the spectral envelope across the four panels. Percentile-based colour limits
+# are used to keep the scale sensitive to this spectral variation.
+
+bluepebble.set_seed(seed)
+
+fig_spec = make_subplots(
+    rows=5,
+    cols=1,
+    shared_xaxes=True,
+    shared_yaxes=True,
+    subplot_titles=subplot_titles,
+    vertical_spacing=0.04,
+)
+
+for row, (platform, _) in enumerate(zip(platforms, configs, strict=True), start=1):
+    sim = ContinuousSTFTPassiveSonarArraySimulator(
+        platform=platform,
+        propagation_model=prop_model,
+        signal_models=[_make_signal_model()],
+        noise_model=ambient_noise_model,
+        beamformer=beamformer,
+        steering_calculator=steering_calculator,
+        ground_truth_paths=[target_ground_truth],
+        fade_in_ms=fade_in_ms,
+    )
+
+    # Average the beamformed output across all steering angles to obtain an
+    # omnidirectional received waveform for spectral analysis.
+    chunks = []
+    for _, sensor_data_set in sim.sensor_data_gen():
+        sd = next(iter(sensor_data_set))
+        assert sd.beamformed_data is not None, "Beamformer must be configured"
+        chunks.append(np.mean(np.real(sd.beamformed_data), axis=0))
+    full_signal = np.concatenate(chunks)
+
+    plot_spectrogram(
+        signal=full_signal,
+        sr=int(sampling_rate_hz),
+        n_fft=2048,
+        hop_length=512,
+        y_lim=(0.0, sampling_rate_hz / 2.0),
+        yaxis_format="Hz",
+        db_reference="absolute",
+        showscale=False,
+        fig=fig_spec,
+        row=row,
+        col=1,
+    )
+    for freq in _tonal_freqs_hz:
+        fig_spec.add_hline(
+            y=freq,
+            line=dict(color="white", width=1, dash="dash"),
+            row=row,
+            col=1,
+        )
+
+# Use percentile-based shared limits so the colour scale is sensitive to
+# spectral variation rather than clamped to absolute extremes.
+_all_z = np.concatenate(
+    [
+        np.asarray(t.z, dtype=float).ravel()
+        for t in fig_spec.data
+        if getattr(t, "type", None) == "heatmap"
+    ]
+)
+_finite_z = _all_z[np.isfinite(_all_z)]
+apply_shared_colourscale(
+    fig_spec,
+    zmin=float(np.percentile(_finite_z, 2)),
+    zmax=float(np.percentile(_finite_z, 98)),
+    colorbar=dict(
+        title=dict(text="Intensity (dB)", side="right"),
+        x=1.02,
+        y=0.5,
+        yanchor="middle",
+        len=1.0,
+        thickness=24,
+    ),
+)
+
+# Suppress x-axis labels on all but the bottom row; plot_spectrogram sets
+# "Time (s)" on every row, so only row 5 retains the title.
+for row in range(1, 5):
+    fig_spec.update_xaxes(title_text="", row=row, col=1, showticklabels=False)
+
+fig_spec.update_layout(
+    template="plotly_white",
+    autosize=True,
+    height=int(np.clip(260 * 5, 700, 2200)),
+    showlegend=False,
+    title="Received Spectrograms",
     margin=dict(r=100),
 )
