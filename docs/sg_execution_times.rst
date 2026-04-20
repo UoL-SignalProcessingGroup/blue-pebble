@@ -6,7 +6,7 @@
 
 Computation times
 =================
-**02:29.237** total execution time for 8 files **from all galleries**:
+**01:41.041** total execution time for 9 files **from all galleries**:
 
 .. container::
 
@@ -32,8 +32,8 @@ Computation times
    * - Example
      - Time
      - Mem (MB)
-   * - :ref:`sphx_glr_source_auto_examples_evaluating_detector_metrics.py` (``examples/evaluating_detector_metrics.py``)
-     - 02:29.237
+   * - :ref:`sphx_glr_source_auto_examples_comparing_hydrophone_responses.py` (``examples/comparing_hydrophone_responses.py``)
+     - 01:41.041
      - 0.0
    * - :ref:`sphx_glr_source_auto_examples_FUSION2026_multitarget_example.py` (``examples/FUSION2026_multitarget_example.py``)
      - 00:00.000
@@ -45,6 +45,9 @@ Computation times
      - 00:00.000
      - 0.0
    * - :ref:`sphx_glr_source_auto_examples_designing_narrowband_beamformers.py` (``examples/designing_narrowband_beamformers.py``)
+     - 00:00.000
+     - 0.0
+   * - :ref:`sphx_glr_source_auto_examples_evaluating_detector_metrics.py` (``examples/evaluating_detector_metrics.py``)
      - 00:00.000
      - 0.0
    * - :ref:`sphx_glr_source_auto_examples_simulating_ownship_noise.py` (``examples/simulating_ownship_noise.py``)

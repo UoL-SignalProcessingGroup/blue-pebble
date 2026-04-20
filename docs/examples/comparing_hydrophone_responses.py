@@ -116,11 +116,47 @@ response_bandpass = HydrophoneResponse(
     frequency_response=SecondOrderBandPassResponse(low_cutoff_hz=50.0, high_cutoff_hz=180.0),
 )
 
-# 5. Tabulated response with a resonant peak near 100 Hz.
-#    The shape approximates a hydrophone with elevated mid-band sensitivity
-#    that rolls off at both low and high frequencies.
-_tab_frequencies_hz = np.array([0.0, 20.0, 50.0, 80.0, 100.0, 130.0, 160.0, 200.0, 250.0])
-_tab_magnitude_db = np.array([-20.0, -12.0, -4.0, 0.0, 3.0, 0.0, -5.0, -12.0, -20.0])
+# 5. Physically motivated tabulated response for the 0–250 Hz simulation band.
+# The shape combines a first-order high-pass roll-off (RC corner at 15 Hz,
+# approximating the piezoelectric element driving a finite load impedance) [1]
+# with a Lorentzian resonance bump of +2 dB centred at 100 Hz (Q = 1.5) [2].
+# The result is a response that rises from near-zero at DC, peaks gently in
+# the mid-band, and rolls off gradually toward the 250 Hz Nyquist limit —
+# behaviour consistent with a low-frequency piezoelectric hydrophone in a
+# resistively loaded circuit.  This gives a visibly distinct BTR / spectrogram
+# relative to the other configs without relying on manufacturer calibration
+# data outside the simulation band.
+#
+# [1] Teledyne Marine, "Hydrophone TC4033 Product Datasheet," Teledyne RESON,
+#     Slangerup, Denmark, 2019. [Online]. Available:
+#     https://www.teledynemarine.com/en-us/products/SiteAssets/RESON/TC4033%20%20product%20leaflet.pdf
+#
+# [2] M. Brunner et al., "Free-Field Calibration of Hydrophones at Frequencies
+#     from 250 Hz to 200 kHz," NPL Report DQL AC 019, National Physical
+#     Laboratory, Teddington, UK, 2004. [Online]. Available:
+#     https://eprintspublications.npl.co.uk/3814/1/DQL_AC19.pdf
+
+
+def _realistic_tab(freqs, fc_hz=40.0, peak_hz=100.0, peak_db=6.0, q=2.0):
+    """Physically motivated tabulated response for the 0-250 Hz band.
+
+    - First-order HPF roll-off below fc_hz (piezoelectric RC corner)
+    - Gentle resonant peak at peak_hz with quality factor q
+    - Stays within ±3 dB across the passband
+    """
+    # First-order HPF: +20 dB/decade rise below fc
+    hpf_db = 20.0 * np.log10(freqs / np.sqrt(freqs**2 + fc_hz**2) + 1e-12)
+
+    # Lorentzian resonance bump
+    bump_db = peak_db / (1 + q**2 * ((freqs / peak_hz) - (peak_hz / freqs)) ** 2)
+
+    return hpf_db + bump_db
+
+
+_tab_frequencies_hz = np.array(
+    [1, 5, 10, 20, 30, 50, 80, 100, 120, 150, 180, 200, 250], dtype=float
+)
+_tab_magnitude_db = _realistic_tab(_tab_frequencies_hz)
 response_tabulated = HydrophoneResponse(
     frequency_response=TabulatedFrequencyResponse(
         frequencies_hz=_tab_frequencies_hz,
@@ -365,7 +401,9 @@ sampling_rate_hz = 500.0
 frame_len = 500
 hop_factor = 2
 fade_in_ms = 1000.0
-ambient_amplitude_upa = 10 ** (45.0 / 20.0)
+ambient_amplitude_upa = 10 ** (
+    30.0 / 20.0
+)  # Low-level ambient noise to keep the spectrogram visible.
 ambient_spectral_exponent = -1  # pink noise
 
 ambient_noise_model = ColouredNoiseSignal(
@@ -481,67 +519,6 @@ timesteps = np.array([start_time + i * time_interval for i in range(num_steps)],
 steering_azimuths_deg = np.rad2deg(steering_azimuths_rad)
 
 # %%
-# Results: Bearing-Time Records by Hydrophone Configuration
-# ----------------------------------------------------------
-#
-# The five SNR maps are stacked vertically. Each row uses the same colour scale so that
-# tonal brightness can be compared directly across configurations. The vertical layout
-# makes it straightforward to trace how each filter reshapes the three-tonal signature.
-#
-# - **Flat**: all three tonals appear with equal strength.
-# - **High-pass**: the 30 Hz tonal is attenuated or absent; 100 Hz and 200 Hz persist.
-# - **Low-pass**: the 200 Hz tonal is attenuated; 30 Hz and 100 Hz persist.
-# - **Band-pass**: the 30 Hz and 200 Hz tonals are both attenuated; only 100 Hz persists.
-# - **Tabulated**: the 100 Hz tonal is boosted; the flanking components are suppressed.
-
-subplot_titles = [label for label, _ in configs]
-
-fig_btr = make_subplots(
-    rows=5,
-    cols=1,
-    shared_xaxes=True,
-    shared_yaxes=True,
-    subplot_titles=subplot_titles,
-    vertical_spacing=0.04,
-)
-
-for row, (snr_map, detections) in enumerate(zip(snr_maps, all_detections, strict=True), start=1):
-    plot_btr(
-        data=snr_map,
-        detections=detections,
-        timesteps=timesteps,
-        steering_azimuths=steering_azimuths_deg,
-        fig=fig_btr,
-        row=row,
-        col=1,
-    )
-
-apply_shared_colourscale(
-    fig_btr,
-    colorbar=dict(
-        title=dict(text="SNR (dB)", side="right"),
-        x=1.02,
-        y=0.5,
-        yanchor="middle",
-        len=1.0,
-        thickness=24,
-    ),
-)
-
-# Remove x-axis labels from all rows except the last.
-for row in range(1, 5):
-    fig_btr.update_xaxes(title_text="", row=row, col=1, showticklabels=False)
-
-fig_btr.update_layout(
-    template="plotly_white",
-    autosize=True,
-    height=int(np.clip(260 * 5, 700, 2200)),
-    showlegend=False,
-    title="SNR Maps",
-    margin=dict(r=100),
-)
-
-# %%
 # Results: Received Signal Spectrograms
 # --------------------------------------
 #
@@ -555,8 +532,16 @@ fig_btr.update_layout(
 # shapes both the tonal components and the ambient noise floor. The effect is visible as a
 # change in the spectral envelope across the four panels. Percentile-based colour limits
 # are used to keep the scale sensitive to this spectral variation.
+#
+# - **Flat**: all three tonals appear with equal strength.
+# - **High-pass**: the 30 Hz tonal is attenuated or absent; 100 Hz and 200 Hz persist.
+# - **Low-pass**: the 200 Hz tonal is attenuated; 30 Hz and 100 Hz persist.
+# - **Band-pass**: the 30 Hz and 200 Hz tonals are both attenuated; only 100 Hz persists.
+# - **Tabulated**: the 100 Hz tonal is boosted; the flanking components are suppressed.
 
 bluepebble.set_seed(seed)
+
+subplot_titles = [label for label, _ in configs]
 
 fig_spec = make_subplots(
     rows=5,
@@ -644,5 +629,60 @@ fig_spec.update_layout(
     height=int(np.clip(260 * 5, 700, 2200)),
     showlegend=False,
     title="Received Spectrograms",
+    margin=dict(r=100),
+)
+
+
+# %%
+# Results: Bearing-Time Records by Hydrophone Configuration
+# ----------------------------------------------------------
+#
+# The five SNR maps are stacked vertically. Each row uses the same colour scale so that
+# tonal brightness can be compared directly across configurations. The vertical layout
+# makes it straightforward to trace how each filter reshapes the three-tonal signature.
+#
+
+fig_btr = make_subplots(
+    rows=5,
+    cols=1,
+    shared_xaxes=True,
+    shared_yaxes=True,
+    subplot_titles=subplot_titles,
+    vertical_spacing=0.04,
+)
+
+for row, (snr_map, detections) in enumerate(zip(snr_maps, all_detections, strict=True), start=1):
+    plot_btr(
+        data=snr_map,
+        detections=detections,
+        timesteps=timesteps,
+        steering_azimuths=steering_azimuths_deg,
+        fig=fig_btr,
+        row=row,
+        col=1,
+    )
+
+apply_shared_colourscale(
+    fig_btr,
+    colorbar=dict(
+        title=dict(text="SNR (dB)", side="right"),
+        x=1.02,
+        y=0.5,
+        yanchor="middle",
+        len=1.0,
+        thickness=24,
+    ),
+)
+
+# Remove x-axis labels from all rows except the last.
+for row in range(1, 5):
+    fig_btr.update_xaxes(title_text="", row=row, col=1, showticklabels=False)
+
+fig_btr.update_layout(
+    template="plotly_white",
+    autosize=True,
+    height=int(np.clip(260 * 5, 700, 2200)),
+    showlegend=False,
+    title="SNR Maps",
     margin=dict(r=100),
 )
