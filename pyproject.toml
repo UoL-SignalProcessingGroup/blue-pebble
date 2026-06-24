@@ -49,6 +49,9 @@ dependencies = [
 [project.urls]
 Repository = "https://github.com/jjwakefield/blue-pebble"
 
+[project.entry-points."stonesoup.plugins"]
+bluepebble = "bluepebble"
+
 [project.optional-dependencies]
 dev = [
     "ruff",
