@@ -12,6 +12,10 @@ authors = [
     { name = "Joshua J Wakefield", email = "J.J.Wakefield@liverpool.ac.uk" },
     { name = "Fin Boulton", email = "F.Boulton@liverpool.ac.uk" },
 ]
+maintainers = [
+    { name = "Joshua J Wakefield", email = "J.J.Wakefield@liverpool.ac.uk" },
+    { name = "Fin Boulton", email = "F.Boulton@liverpool.ac.uk" },
+]
 license = "MIT"
 keywords = [
     "blue pebble",
@@ -47,7 +51,9 @@ dependencies = [
 ]
 
 [project.urls]
-Repository = "https://github.com/jjwakefield/blue-pebble"
+Repository = "https://github.com/UoL-SignalProcessingGroup/blue-pebble"
+Documentation = "https://blue-pebble.readthedocs.io"
+"Bug Tracker" = "https://github.com/UoL-SignalProcessingGroup/blue-pebble/issues"
 
 [project.entry-points."stonesoup.plugins"]
 bluepebble = "bluepebble"

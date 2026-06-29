@@ -16,8 +16,8 @@ authors:
   - family-names: Williams
     given-names: Duncan P.
 
-repository-code: "https://github.com/jjwakefield/blue-pebble"
-url: "https://github.com/jjwakefield/blue-pebble"
+repository-code: "https://github.com/UoL-SignalProcessingGroup/blue-pebble"
+url: "https://github.com/UoL-SignalProcessingGroup/blue-pebble"
 
 license: "MIT"
 
