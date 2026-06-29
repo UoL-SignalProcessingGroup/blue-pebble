@@ -329,7 +329,7 @@ class GEBCOBathymetry(Bathymetry):
     Notes
     -----
     - Coordinates are converted from lat/lon to local Cartesian meters.
-    - Internally and at output, depth follows the Nereus convention (``-z`` underwater).
+    - Internally and at output, depth follows the convention ``-z`` underwater.
 
     """
 
@@ -393,7 +393,7 @@ class GEBCOBathymetry(Bathymetry):
         if np.any(np.diff(self._x_m) <= 0.0) or np.any(np.diff(self._y_m) <= 0.0):
             raise ValueError("Converted GEBCO x/y axes must be strictly increasing.")
 
-        # GEBCO elevation: underwater is negative. Nereus convention is -z underwater.
+        # GEBCO elevation: underwater is negative. Convention is -z underwater.
         self._z_grid_yx = np.minimum(elev_m, 0.0)
         self._is_loaded = True
 
@@ -446,7 +446,7 @@ class GEBCOBathymetry(Bathymetry):
         return np.where(choose_left, idx - 1, idx)
 
     def get_depth(self, x: float, y: float) -> float:
-        """Get nearest-neighbour GEBCO depth at ``(x, y)`` in meters (Nereus ``-z``)."""
+        """Get nearest-neighbour GEBCO depth at ``(x, y)`` in meters (``-z``)."""
         self._ensure_loaded()
         ix = int(self._nearest_indices(self._x_m, np.asarray([x], dtype=float))[0])
         iy = int(self._nearest_indices(self._y_m, np.asarray([y], dtype=float))[0])
