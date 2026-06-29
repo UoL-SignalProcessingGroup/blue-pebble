@@ -346,7 +346,7 @@ class LeroyCopernicusSoundSpeedProfile(SoundSpeedProfile):
     Notes
     -----
     - Copernicus depth is expected in oceanographic convention (``+z`` downward).
-    - ``calculate`` accepts Nereus depth inputs and internally uses ``abs(depth)``.
+    - ``calculate`` accepts ``-z`` depth inputs and internally uses ``abs(depth)``.
     - ``get_3d_grid`` returns ``z_grid`` in RTRS convention (``+z`` downward).
 
     """
@@ -640,7 +640,7 @@ class LeroyCopernicusSoundSpeedProfile(SoundSpeedProfile):
     def _normalise_z_range_to_positive(z_range: tuple[float, float]) -> tuple[float, float]:
         z0, z1 = float(z_range[0]), float(z_range[1])
         if z0 <= 0.0 and z1 <= 0.0:
-            # Nereus convention input (-z underwater).
+            # -z for underwater.
             return min(abs(z0), abs(z1)), max(abs(z0), abs(z1))
 
         if z0 >= 0.0 and z1 >= 0.0:
