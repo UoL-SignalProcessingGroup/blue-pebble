@@ -82,7 +82,7 @@ myst_enable_extensions = [
 _plotly_scraper = PlotlyScraper()
 
 sphinx_gallery_conf = {
-    "examples_dirs": ["examples", "tutorials"],
+    "examples_dirs": ["examples", "../tutorials"],
     "gallery_dirs": ["source/auto_examples", "source/auto_tutorials"],
     "filename_pattern": r"\.py",
     # Exclude scripts that require external data not bundled with the repository.
