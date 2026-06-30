@@ -41,3 +41,7 @@ docs/examples/measured_data
 
 # Generated PDF figures
 *.pdf
+
+# Generated Sphinx-Gallery figures (large, rebuilt during docs build)
+docs/source/_static/acoustic_source_figs/
+docs/source/_static/measured_data_figs/
