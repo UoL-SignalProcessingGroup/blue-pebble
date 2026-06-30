@@ -75,18 +75,10 @@ This installs the core framework with built-in propagation models.
 
 Blue Pebble supports ray traced propagation via the rtrs package.
 
-rtrs is currently private, but will be made public in the near future. In the meantime, provided you have access it can be installed as follows.
-
 #### Installing rtrs
 
-Clone the repository:
 ```bash
-git clone https://github.com/fincb/rtrs.git
-```
-
-With a Blue Pebble virtual environment activated, install with pip:
-```bash
-pip install -e /path/to/rtrs
+pip install blue-pebble[rtrs]
 ```
 
 ## Development

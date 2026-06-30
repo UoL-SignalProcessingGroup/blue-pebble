@@ -59,6 +59,9 @@ Documentation = "https://blue-pebble.readthedocs.io"
 bluepebble = "bluepebble"
 
 [project.optional-dependencies]
+rtrs = [
+    "rtrs>=0.2.3",
+]
 dev = [
     "ruff",
     "pytest",
