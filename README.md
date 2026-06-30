@@ -63,22 +63,8 @@ Implemented capabilities include:
 
 ## Installation
 
-### Basic Installation (Core Models Only)
-
 ```bash
 pip install blue-pebble
-```
-
-This installs the core framework with built-in propagation models.
-
-### Optional: Ray Tracing with rtrs
-
-Blue Pebble supports ray traced propagation via the rtrs package.
-
-#### Installing rtrs
-
-```bash
-pip install blue-pebble[rtrs]
 ```
 
 ## Development

@@ -48,6 +48,7 @@ dependencies = [
     "dash>=4.0.0",
     "cmocean>=4.0.3",
     "netCDF4>=1.7.4",
+    "rtrs>=0.2.3",
 ]
 
 [project.urls]
@@ -59,9 +60,6 @@ Documentation = "https://blue-pebble.readthedocs.io"
 bluepebble = "bluepebble"
 
 [project.optional-dependencies]
-rtrs = [
-    "rtrs>=0.2.3",
-]
 dev = [
     "ruff",
     "pytest",
