@@ -151,7 +151,7 @@ reportAssignmentType = "none"
 reportArgumentType = "none"
 
 [tool.setuptools]
-include_package_data = false
+include-package-data = false
 
 [tool.setuptools.packages.find]
 where = ["."]
