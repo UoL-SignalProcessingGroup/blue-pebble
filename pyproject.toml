@@ -48,6 +48,7 @@ dependencies = [
     "dash>=4.0.0",
     "cmocean>=4.0.3",
     "netCDF4>=1.7.4",
+    "rtrs>=0.2.3",
 ]
 
 [project.urls]
