@@ -94,12 +94,6 @@ cd blue-pebble
 code .
 ```
 
-To include the optional rtrs backend, set `RTRS_URL` in your shell before opening VS Code:
-```bash
-export RTRS_URL="https://<token>@github.com/fincb/rtrs.git"
-code .
-```
-
 When prompted, select **"Reopen in Container."**
 
 VS Code will:
@@ -110,8 +104,7 @@ VS Code will:
 
 This provides a fully configured development environment including:
 - Python
-- Required build dependencies
-- Optional propagation model backends (e.g., rtrs)
+- All required build dependencies including rtrs
 
 #### Using the Container Without VS Code (CLI Workflow)
 
@@ -124,11 +117,6 @@ docker run -it --rm -v $(pwd):/workspace blue-pebble-dev
 On Windows PowerShell:
 ```bash
 docker run -it --rm -v ${PWD}:/workspace blue-pebble-dev
-```
-
-To include the optional rtrs backend, pass its URL as a build argument:
-```bash
-docker build --build-arg RTRS_URL="https://<token>@github.com/fincb/rtrs.git" -t blue-pebble-dev .
 ```
 
 This starts an interactive shell inside the container.
@@ -156,7 +144,7 @@ See `LICENSE` and `NOTICE.md` for details.
 
 ## Third-Party Components
 
-**Software:** The optional rtrs backend is licensed under the MIT licence and is not distributed with Blue Pebble. Users are responsible for installing it separately.
+**Software:** Blue Pebble depends on [rtrs](https://pypi.org/project/rtrs/), which is licensed under the MIT licence and installed automatically as a dependency.
 
 **Data:** Blue Pebble does not distribute external data in its PyPI package. Users are responsible for complying with the licences of any external data they utilise.
 
