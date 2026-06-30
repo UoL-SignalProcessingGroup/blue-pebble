@@ -3,7 +3,7 @@ requires = ["setuptools>=64", "setuptools_scm>=8", "wheel"]
 build-backend = "setuptools.build_meta"
 
 [project]
-name = "blue-pebble"
+name = "bluepebble"
 dynamic = ["version"]
 description = "A Stone Soup plugin for underwater acoustic sensing."
 readme = "README.md"

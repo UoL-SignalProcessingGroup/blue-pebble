@@ -1,9 +1,8 @@
 # Blue Pebble
 
-[![PyPI version](https://img.shields.io/pypi/v/blue-pebble.svg)](https://pypi.org/project/blue-pebble/)
-[![Python versions](https://img.shields.io/pypi/pyversions/blue-pebble.svg)](https://pypi.org/project/blue-pebble/)
-[![Coverage](https://codecov.io/gh/jjwakefield/blue-pebble/branch/main/graph/badge.svg)](https://codecov.io/gh/jjwakefield/blue-pebble)
-[![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](https://github.com/jjwakefield/blue-pebble/blob/main/LICENSE)
+[![PyPI version](https://img.shields.io/pypi/v/bluepebble.svg)](https://pypi.org/project/bluepebble/)
+[![Python versions](https://img.shields.io/pypi/pyversions/bluepebble.svg)](https://pypi.org/project/bluepebble/)
+[![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](https://github.com/UoL-SignalProcessingGroup/blue-pebble/blob/main/LICENSE)
 
 **Blue Pebble** is a research-oriented simulation framework for underwater acoustic sensing, currently focused on passive sonar signal processing, acoustic propagation modelling, beamforming, detection, and multi-target tracking.
 
@@ -18,7 +17,7 @@ Designed as a plugin for [Stone Soup](https://stonesoup.rtfd.io/), Blue Pebble s
 
 Blue Pebble provides modular acoustic propagation backends, ranging from analytical spreading laws to external ray-tracing solvers (e.g., rtrs), enabling trade-offs between physical fidelity and computational efficiency.
 
-> **Naming conventions:** The project is referred to as **Blue Pebble** throughout documentation. The repository and PyPI package use the hyphenated form **blue-pebble** (e.g., `pip install blue-pebble`). Within Python code, the package is imported as **bluepebble** (e.g., `import bluepebble`).
+> **Naming conventions:** The project is referred to as **Blue Pebble** throughout documentation. The PyPI package and import name are both **bluepebble** (e.g., `pip install bluepebble`, `import bluepebble`).
 
 ## Research Applications
 
@@ -66,7 +65,7 @@ Implemented capabilities include:
 ### Basic Installation (Core Models Only)
 
 ```bash
-pip install blue-pebble
+pip install bluepebble
 ```
 
 This installs the core framework with built-in propagation models.
@@ -105,7 +104,7 @@ Optional:
 
 Clone the repository:
 ```bash
-git clone https://github.com/jjwakefield/blue-pebble.git
+git clone https://github.com/UoL-SignalProcessingGroup/blue-pebble.git
 ```
 
 #### Using the Dev Container (VS Code Workflow)
