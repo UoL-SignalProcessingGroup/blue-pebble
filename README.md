@@ -2,8 +2,8 @@
 
 [![PyPI version](https://img.shields.io/pypi/v/blue-pebble.svg)](https://pypi.org/project/blue-pebble/)
 [![Python versions](https://img.shields.io/pypi/pyversions/blue-pebble.svg)](https://pypi.org/project/blue-pebble/)
-[![Coverage](https://codecov.io/gh/jjwakefield/blue-pebble/branch/main/graph/badge.svg)](https://codecov.io/gh/jjwakefield/blue-pebble)
-[![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](https://github.com/jjwakefield/blue-pebble/blob/main/LICENSE)
+[![Coverage](https://codecov.io/gh/UoL-SignalProcessingGroup/blue-pebble/branch/main/graph/badge.svg)](https://codecov.io/gh/UoL-SignalProcessingGroup/blue-pebble)
+[![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](https://github.com/UoL-SignalProcessingGroup/blue-pebble/blob/main/LICENSE)
 
 **Blue Pebble** is a research-oriented simulation framework for underwater acoustic sensing, currently focused on passive sonar signal processing, acoustic propagation modelling, beamforming, detection, and multi-target tracking.
 
