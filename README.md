@@ -105,7 +105,7 @@ Optional:
 
 Clone the repository:
 ```bash
-git clone https://github.com/jjwakefield/blue-pebble.git
+git clone https://github.com/UoL-SignalProcessingGroup/blue-pebble.git
 ```
 
 #### Using the Dev Container (VS Code Workflow)
