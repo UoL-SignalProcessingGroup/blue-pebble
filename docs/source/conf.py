@@ -25,7 +25,7 @@ project = "Blue Pebble"
 author = "Joshua J Wakefield and Finley Boulton"
 copyright = "2026, Joshua J Wakefield and Finley Boulton"
 release = __version__
-root_doc = "source/index"
+root_doc = "index"
 
 extensions = [
     "sphinx.ext.autodoc",
@@ -56,8 +56,8 @@ exclude_patterns = [
     # Exclude RST stubs for WAV-dependent scripts that are in ignore_pattern.
     # These files may persist from earlier builds and would otherwise cause
     # toc.not_included warnings.
-    "source/auto_examples/comparing_simulators.rst",
-    "source/auto_examples/modelling_acoustic_sources.rst",
+    "auto_examples/comparing_simulators.rst",
+    "auto_examples/modelling_acoustic_sources.rst",
 ]
 
 autodoc_member_order = "bysource"
@@ -83,7 +83,7 @@ _plotly_scraper = PlotlyScraper()
 
 sphinx_gallery_conf = {
     "examples_dirs": ["examples", "../tutorials"],
-    "gallery_dirs": ["source/auto_examples", "source/auto_tutorials"],
+    "gallery_dirs": ["auto_examples", "auto_tutorials"],
     "filename_pattern": r"\.py",
     # Exclude scripts that require external data not bundled with the repository.
     # These examples have hand-written RST pages under docs/source/examples/.
@@ -141,10 +141,10 @@ the scripts.
 
 .. only:: html
 
-  .. image:: /source/_static/acoustic_source_figs/modelling_acoustic_sources_whale.png
+  .. image:: /_static/acoustic_source_figs/modelling_acoustic_sources_whale.png
     :alt:
 
-  :doc:`/source/examples/modelling_acoustic_sources`
+  :doc:`/examples/modelling_acoustic_sources`
 
 .. raw:: html
 
@@ -157,10 +157,10 @@ the scripts.
 
 .. only:: html
 
-  .. image:: /source/_static/measured_data_figs/using_measured_data_world.png
+  .. image:: /_static/measured_data_figs/using_measured_data_world.png
     :alt:
 
-  :doc:`/source/examples/using_measured_data`
+  :doc:`/examples/using_measured_data`
 
 .. raw:: html
 
@@ -178,8 +178,8 @@ the scripts.
 .. toctree::
    :hidden:
 
-   /source/examples/modelling_acoustic_sources
-   /source/examples/using_measured_data
+   /examples/modelling_acoustic_sources
+   /examples/using_measured_data
 
 
 """
@@ -192,7 +192,7 @@ def _patch_gallery_index(app: object) -> None:
     to h2 (-) so that both sub-sections nest correctly under "Examples" in the
     sidebar navigation.
     """
-    gallery_index = Path(app.srcdir) / "source" / "auto_examples" / "index.rst"  # type: ignore[attr-defined]
+    gallery_index = Path(app.srcdir) / "auto_examples" / "index.rst"  # type: ignore[attr-defined]
     if not gallery_index.exists():
         return
     content = gallery_index.read_text(encoding="utf-8")
@@ -224,8 +224,8 @@ def _patch_timing_files(app: object) -> None:
     This hook strips those rows after SG has written the files.
     """
     candidates = [
-        Path(app.srcdir) / "source" / "auto_examples" / "sg_execution_times.rst",  # type: ignore[attr-defined]
-        Path(app.srcdir) / "source" / "auto_tutorials" / "sg_execution_times.rst",  # type: ignore[attr-defined]
+        Path(app.srcdir) / "auto_examples" / "sg_execution_times.rst",  # type: ignore[attr-defined]
+        Path(app.srcdir) / "auto_tutorials" / "sg_execution_times.rst",  # type: ignore[attr-defined]
         Path(app.srcdir) / "sg_execution_times.rst",  # type: ignore[attr-defined]
     ]
     for timing_file in candidates:
