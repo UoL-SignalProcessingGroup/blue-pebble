@@ -8,7 +8,7 @@ Install the core package with pip:
 pip install blue-pebble
 ```
 
-This installs the core framework with the built-in propagation models.
+This installs the core framework including all propagation backends (analytical models and ray tracing via rtrs).
 
 ## Development install
 
@@ -27,18 +27,3 @@ If you are working with the published notebooks or building the documentation lo
 python3 -m pip install -e ".[docs,examples]"
 ```
 
-## Optional: Ray Tracing with rtrs
-
-Blue Pebble supports ray traced propagation via the rtrs package.
-
-rtrs is currently private, but will be made public in the near future. In the meantime, provided you have access it can be installed as follows.
-
-Clone the repository:
-```bash
-git clone https://github.com/fincb/rtrs.git
-```
-
-With a Blue Pebble virtual environment activated, install with pip:
-```bash
-pip install -e /path/to/rtrs
-```

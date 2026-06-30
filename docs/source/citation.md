@@ -21,6 +21,6 @@ See `LICENSE` and `NOTICE.md` for details.
 
 ## Third-party components
 
-**Software:** The optional rtrs backend is licensed under the MIT licence and is not distributed with Blue Pebble. Users are responsible for installing it separately.
+**Software:** Blue Pebble depends on [rtrs](https://pypi.org/project/rtrs/), which is licensed under the MIT licence and installed automatically as a dependency.
 
 **Data:** Blue Pebble does not distribute external data in its PyPI package. Users are responsible for complying with the licences of any external data they utilise.
