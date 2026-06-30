@@ -39,7 +39,7 @@ Optional:
 Clone the repository and open it in Visual Studio Code:
 
 ```bash
-git clone https://github.com/jjwakefield/blue-pebble.git
+git clone https://github.com/UoL-SignalProcessingGroup/blue-pebble.git
 cd blue-pebble
 code .
 ```

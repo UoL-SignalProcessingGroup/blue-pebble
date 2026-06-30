@@ -169,10 +169,6 @@ To inspect the currently collected test inventory:
 pytest --collect-only -q
 ```
 
-Some propagation tests are optional:
-
-- real `rtrs` tests run only when the `rtrs` package is installed
-
 Useful targeted runs:
 
 ```bash
