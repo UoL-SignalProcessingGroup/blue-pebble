@@ -150,8 +150,12 @@ root = "bluepebble/types"
 reportAssignmentType = "none"
 reportArgumentType = "none"
 
+[tool.setuptools]
+include_package_data = false
+
 [tool.setuptools.packages.find]
 where = ["."]
+exclude = ["docs*", "tests*", "external_tools*"]
 
 [tool.coverage.run]
 source = ["bluepebble"]
