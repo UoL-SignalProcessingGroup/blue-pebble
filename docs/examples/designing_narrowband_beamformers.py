@@ -263,7 +263,7 @@ fig_world = plot_world(truths=target_ground_truths, platform=platform).update_la
     width=None,
     height=None,
 )
-fig_world.show()
+# fig_world.show()
 
 # %%
 # Acoustic Environment and Signal Models
@@ -530,7 +530,7 @@ fig_bands.update_layout(
     title=f"N={band_count} band beamformer, with per band detections",
     legend=dict(x=0.5, y=-0.2, xanchor="center", yanchor="top", orientation="h"),
 )
-fig_bands.show()
+# fig_bands.show()
 
 # %%
 # Key Takeaways
