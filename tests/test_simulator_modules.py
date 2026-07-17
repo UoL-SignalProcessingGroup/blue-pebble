@@ -273,6 +273,86 @@ def test_base_beamform_if_configured_and_make_sensor_data(monkeypatch) -> None:
     np.testing.assert_array_equal(payload.beamformed_data, beamformed)
     assert payload.timestamp == timestamp
     assert type(payload).__module__ == "bluepebble.types.sensordata"
+    assert payload.band_labels is None
+
+
+def test_base_beamform_if_configured_wires_mirror_plan_through(monkeypatch) -> None:
+    """A mirror_half_plane steering calculator should get its plan passed to beamform()."""
+    _base, discrete, _continuous = _load_simulator_modules(monkeypatch)
+
+    timestamp = datetime(2026, 1, 1, 12, 0, 0)
+    simulator = discrete.DiscretePassiveSonarArraySimulator(
+        platform=_FakePlatform([timestamp], num_sensors=1)
+    )
+    sensor_signals = np.array([[1.0 + 0.0j]], dtype=np.complex64)
+
+    class MirroringSteering:
+        mirror_half_plane = True
+
+        def __init__(self):
+            self.calculate_calls = []
+            self.mirror_plan_calls = []
+
+        def calculate(self, platform_state):
+            self.calculate_calls.append(platform_state)
+            return np.array([0.1])
+
+        def mirror_plan(self, platform_state):
+            self.mirror_plan_calls.append(platform_state)
+            return "sentinel-plan"
+
+    class MirroringBeamformer:
+        def __init__(self):
+            self.calls = []
+
+        def beamform(self, signals, delays, mirror_plan=None):
+            self.calls.append((signals.copy(), delays.copy(), mirror_plan))
+            return np.array([42.0 + 0.0j], dtype=np.complex64)
+
+    steering = MirroringSteering()
+    beamformer = MirroringBeamformer()
+    simulator.steering_calculator = steering
+    simulator.beamformer = beamformer
+
+    simulator._beamform_if_configured(timestamp, sensor_signals)
+
+    assert len(steering.mirror_plan_calls) == 1
+    assert beamformer.calls[0][2] == "sentinel-plan"
+
+
+def test_base_band_labels_follow_the_configured_beamformer(monkeypatch) -> None:
+    """Band labels should be read off the beamformer and attached to the payload."""
+    _base, discrete, _continuous = _load_simulator_modules(monkeypatch)
+
+    timestamp = datetime(2026, 1, 1, 12, 0, 0)
+    simulator = discrete.DiscretePassiveSonarArraySimulator(
+        platform=_FakePlatform([timestamp], num_sensors=1)
+    )
+
+    # No beamformer at all, and a beamformer predating bands, both mean single-band output.
+    assert simulator._band_labels() is None
+    simulator.beamformer = SimpleNamespace(beamform=lambda signals, delays: signals)
+    assert simulator._band_labels() is None
+
+    simulator.beamformer = SimpleNamespace(
+        beamform=lambda signals, delays: signals,
+        bands=[
+            SimpleNamespace(label="70-80 Hz"),
+            SimpleNamespace(label="95-105 Hz"),
+        ],
+    )
+    assert simulator._band_labels() == ["70-80 Hz", "95-105 Hz"]
+
+    payload = simulator._make_sensor_data(
+        timestamp,
+        np.ones((1, 4), dtype=np.complex64),
+        np.zeros((2, 3, 4), dtype=np.float64),
+    )
+    assert payload.band_labels == ["70-80 Hz", "95-105 Hz"]
+
+    # Without beamformer output there is nothing to label, even with bands configured.
+    payload = simulator._make_sensor_data(timestamp, np.ones((1, 4), dtype=np.complex64), None)
+    assert payload.band_labels is None
 
 
 def test_discrete_source_signal_resolution_and_validation_errors(monkeypatch) -> None:

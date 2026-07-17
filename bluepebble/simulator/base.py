@@ -13,7 +13,8 @@ from stonesoup.simulator.base import SensorSimulator
 from ..models.propagation import AcousticPropagationModel
 from ..platform import TowedArrayPlatform
 from ..signal.random import RandomSignal
-from ..sigproc.beamformer import Beamformer, SteeringCalculator
+from ..sigproc.base import Beamformer
+from ..sigproc.steering import SteeringCalculator
 from ..types.sensordata import PassiveSonarSensorData
 
 if TYPE_CHECKING:
@@ -214,7 +215,9 @@ class PassiveSonarArraySimulatorBase(SensorSimulator):
         -------
         object or None
             Beamformer output when both beamformer and steering calculator are configured;
-            otherwise ``None``.
+            otherwise ``None``. When the steering calculator has ``mirror_half_plane`` set,
+            this is already expanded to the full steering grid -- the halved computation is
+            transparent to callers.
 
         """
         if not (self.beamformer and self.steering_calculator):
@@ -222,15 +225,42 @@ class PassiveSonarArraySimulatorBase(SensorSimulator):
 
         platform_state = self.platform.get_platform_state_at(timestamp)
         steering_delays_s = self.steering_calculator.calculate(platform_state)
+
+        # Only pass mirror_plan when mirroring is actually enabled, so beamformers that
+        # predate this parameter (custom subclasses, test doubles) are unaffected -- the
+        # non-mirrored call shape is exactly what it was before mirror_half_plane existed.
+        if getattr(self.steering_calculator, "mirror_half_plane", False):
+            mirror_plan = self.steering_calculator.mirror_plan(platform_state)
+            return self.beamformer.beamform(sensor_signals, steering_delays_s, mirror_plan)
+
         return self.beamformer.beamform(sensor_signals, steering_delays_s)
 
-    @staticmethod
+    def _band_labels(self) -> list[str] | None:
+        """Return the configured beamformer's band labels.
+
+        Returns
+        -------
+        list of str or None
+            One label per band when the beamformer is configured for multiband output;
+            ``None`` for single-band beamformers, for those that do not support bands at
+            all, and when no beamformer is configured.
+
+        """
+        bands = getattr(self.beamformer, "bands", None)
+        if not bands:
+            return None
+        return [band.label for band in bands]
+
     def _make_sensor_data(
+        self,
         timestamp: datetime,
         sensor_signals: ComplexArray,
         beamformed_data: object | None,
     ) -> PassiveSonarSensorData:
         """Build a passive-sonar sensor-data payload.
+
+        Band labels are taken from the configured beamformer rather than the caller, so a
+        multiband beamformer's output arrives downstream already keyed by band.
 
         Parameters
         ----------
@@ -251,6 +281,7 @@ class PassiveSonarArraySimulatorBase(SensorSimulator):
             raw_signals=sensor_signals,
             beamformed_data=beamformed_data,
             timestamp=timestamp,
+            band_labels=self._band_labels() if beamformed_data is not None else None,
         )
 
     @abstractmethod

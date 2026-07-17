@@ -106,7 +106,7 @@ def test_run_detection_chain_passes_sparse_intermediate_output(monkeypatch) -> N
             return np.array([[best, data[best]]], dtype=float)
 
     final_stage = MaxStage()
-    result = metrics._run_detection_chain(
+    result = metrics.run_detection_chain(
         detection_chain=[ThresholdStage(threshold=1.0), final_stage],
         snr_vector=np.array([0.0, 10.0, 5.0]),
     )
@@ -210,3 +210,184 @@ def test_sweep_detection_parameter_accumulates_counts_for_synthetic_chain(monkey
     np.testing.assert_array_equal(result.fn, np.array([0, 2]))
     np.testing.assert_array_equal(result.tn, np.array([4, 4]))
     np.testing.assert_allclose(result.recall, np.array([1.0, 0.0]))
+
+
+@dataclass
+class _ThresholdStage:
+    """Minimal detection stage selecting cells strictly above a threshold."""
+
+    threshold: float
+
+    def detect(self, data: np.ndarray) -> np.ndarray:
+        """Return ``[index, value]`` rows for cells above the threshold."""
+        indices = np.where(data > self.threshold)[0]
+        if indices.size == 0:
+            return np.empty((0, 2))
+        return np.column_stack((indices, data[indices]))
+
+
+@dataclass
+class _FakeState:
+    state_vector: np.ndarray
+
+
+@dataclass
+class _FakePath:
+    states: list
+
+
+def _multiband_spec(metrics, threshold=0.0, param_values=(1.0, 10.0)):
+    """Build a sweep spec over a threshold stage."""
+    return metrics.SweepSpec(
+        detection_chain=[_ThresholdStage(threshold=threshold)],
+        algorithm_index=0,
+        param_name="threshold",
+        param_values=np.array(param_values),
+        label="threshold sweep",
+    )
+
+
+def test_multiband_sweep_with_one_band_matches_the_single_band_sweep(monkeypatch) -> None:
+    """A one-band multiband sweep must reproduce the existing single-band sweep exactly."""
+    _algorithms, metrics = _load_detector_modules(monkeypatch)
+
+    snr_map = np.array([[0.0, 5.0, 0.0], [0.0, 0.0, 5.0]])
+    steering = np.array([0.0, 1.0, 2.0])
+    paths = [_FakePath(states=[_FakeState(np.array([1.0])), _FakeState(np.array([2.0]))])]
+
+    single = metrics.sweep_detection_parameter(
+        snr_map=snr_map,
+        sweep_specs=[_multiband_spec(metrics)],
+        ground_truth_paths=paths,
+        steering_azimuths_rad=steering,
+        association_threshold_rad=0.01,
+    )[0]
+    multi = metrics.sweep_detection_parameter_multiband(
+        snr_maps={"only": snr_map},
+        sweep_specs={"only": _multiband_spec(metrics)},
+        ground_truth_paths=paths,
+        steering_azimuths_rad=steering,
+        association_threshold_rad=0.01,
+    )
+
+    for field in ("tp", "fp", "fn", "tn"):
+        np.testing.assert_array_equal(getattr(multi, field), getattr(single, field))
+    np.testing.assert_array_equal(multi.param_values, single.param_values)
+
+
+def test_multiband_sweep_unions_bands_and_deduplicates_shared_beams(monkeypatch) -> None:
+    """A beam found in two bands must count once, not as a detection plus a false alarm."""
+    _algorithms, metrics = _load_detector_modules(monkeypatch)
+
+    # Both bands see the target in beam 1; only band 'b' also raises beam 2 (a false alarm).
+    band_a = np.array([[0.0, 5.0, 0.0]])
+    band_b = np.array([[0.0, 5.0, 5.0]])
+    steering = np.array([0.0, 1.0, 2.0])
+    paths = [_FakePath(states=[_FakeState(np.array([1.0]))])]
+
+    specs = {label: _multiband_spec(metrics, param_values=(1.0,)) for label in ("a", "b")}
+    result = metrics.sweep_detection_parameter_multiband(
+        snr_maps={"a": band_a, "b": band_b},
+        sweep_specs=specs,
+        ground_truth_paths=paths,
+        steering_azimuths_rad=steering,
+        association_threshold_rad=0.01,
+    )
+
+    # Beam 1 is detected by both bands but scores a single TP; beam 2 is one FP.
+    assert result.tp[0] == 1
+    assert result.fp[0] == 1
+    assert result.fn[0] == 0
+    # The FP denominator stays in beam space: (num_beams - num_targets) - fp.
+    assert result.tn[0] == 1
+
+
+def test_multiband_sweep_uses_each_bands_own_chain(monkeypatch) -> None:
+    """Per-band geometry lives in each band's chain, so bands can differ in sensitivity."""
+    _algorithms, metrics = _load_detector_modules(monkeypatch)
+
+    band_a = np.array([[0.0, 5.0, 0.0]])
+    band_b = np.array([[0.0, 0.0, 3.0]])
+    steering = np.array([0.0, 1.0, 2.0])
+    paths = [_FakePath(states=[_FakeState(np.array([1.0]))])]
+
+    # Band 'b' has a base stage that rejects its own peak once the swept value exceeds it.
+    result = metrics.sweep_detection_parameter_multiband(
+        snr_maps={"a": band_a, "b": band_b},
+        sweep_specs={
+            "a": _multiband_spec(metrics, param_values=(1.0, 4.0)),
+            "b": _multiband_spec(metrics, param_values=(1.0, 4.0)),
+        },
+        ground_truth_paths=paths,
+        steering_azimuths_rad=steering,
+        association_threshold_rad=0.01,
+    )
+
+    # At threshold 1.0 both bands fire: TP on beam 1, FP on beam 2.
+    assert (result.tp[0], result.fp[0]) == (1, 1)
+    # At 4.0 only band 'a' still fires, so the false alarm from 'b' disappears.
+    assert (result.tp[1], result.fp[1]) == (1, 0)
+
+
+def test_multiband_sweep_rejects_mismatched_bands(monkeypatch) -> None:
+    """Maps and specs must describe the same bands."""
+    _algorithms, metrics = _load_detector_modules(monkeypatch)
+    snr_map = np.array([[0.0, 5.0, 0.0]])
+    paths = [_FakePath(states=[_FakeState(np.array([1.0]))])]
+
+    with pytest.raises(ValueError, match="must cover the same bands"):
+        metrics.sweep_detection_parameter_multiband(
+            snr_maps={"a": snr_map, "b": snr_map},
+            sweep_specs={"a": _multiband_spec(metrics)},
+            ground_truth_paths=paths,
+            steering_azimuths_rad=np.array([0.0, 1.0, 2.0]),
+            association_threshold_rad=0.01,
+        )
+
+
+def test_multiband_sweep_rejects_mismatched_param_values(monkeypatch) -> None:
+    """Combining bands swept at different operating points would be meaningless."""
+    _algorithms, metrics = _load_detector_modules(monkeypatch)
+    snr_map = np.array([[0.0, 5.0, 0.0]])
+    paths = [_FakePath(states=[_FakeState(np.array([1.0]))])]
+
+    with pytest.raises(ValueError, match="identical param_values"):
+        metrics.sweep_detection_parameter_multiband(
+            snr_maps={"a": snr_map, "b": snr_map},
+            sweep_specs={
+                "a": _multiband_spec(metrics, param_values=(1.0, 2.0)),
+                "b": _multiband_spec(metrics, param_values=(1.0, 3.0)),
+            },
+            ground_truth_paths=paths,
+            steering_azimuths_rad=np.array([0.0, 1.0, 2.0]),
+            association_threshold_rad=0.01,
+        )
+
+
+def test_multiband_sweep_rejects_mismatched_map_shapes(monkeypatch) -> None:
+    """Bands must share a timestep and beam grid."""
+    _algorithms, metrics = _load_detector_modules(monkeypatch)
+    paths = [_FakePath(states=[_FakeState(np.array([1.0]))])]
+
+    with pytest.raises(ValueError, match="share one SNR map shape"):
+        metrics.sweep_detection_parameter_multiband(
+            snr_maps={"a": np.zeros((1, 3)), "b": np.zeros((1, 4))},
+            sweep_specs={label: _multiband_spec(metrics) for label in ("a", "b")},
+            ground_truth_paths=paths,
+            steering_azimuths_rad=np.array([0.0, 1.0, 2.0]),
+            association_threshold_rad=0.01,
+        )
+
+
+def test_multiband_sweep_rejects_empty_snr_maps(monkeypatch) -> None:
+    """An empty band set is a configuration error."""
+    _algorithms, metrics = _load_detector_modules(monkeypatch)
+
+    with pytest.raises(ValueError, match="at least one band"):
+        metrics.sweep_detection_parameter_multiband(
+            snr_maps={},
+            sweep_specs={},
+            ground_truth_paths=[],
+            steering_azimuths_rad=np.array([0.0]),
+            association_threshold_rad=0.01,
+        )

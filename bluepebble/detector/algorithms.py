@@ -1,6 +1,7 @@
 """Signal detection algorithms for 1D time-series and beamformed data."""
 
 from abc import ABC, abstractmethod
+from collections.abc import Sequence
 from typing import Any, TypeAlias
 
 import numpy as np
@@ -24,6 +25,53 @@ def _stack_detections(indices: IntArray, data: ArrayLike) -> DetectionArray:
     if indices.size == 0:
         return _empty_detections()
     return np.column_stack((indices, data_array[indices])).astype(np.float64, copy=False)
+
+
+def run_detection_chain(
+    detection_chain: Sequence["DetectionAlgorithm"],
+    snr_vector: ArrayLike,
+) -> DetectionArray:
+    """Run a chain of detection algorithms over a single data map.
+
+    Each algorithm is applied in sequence. The detections produced by one stage become a
+    sparse input map for the next, with every non-detected cell set to ``-inf``, so later
+    stages can only ever narrow the survivors of earlier ones. An empty result at any stage
+    short-circuits the chain.
+
+    Parameters
+    ----------
+    detection_chain : Sequence[DetectionAlgorithm]
+        Ordered algorithms to apply. An empty chain produces no detections.
+    snr_vector : ArrayLike
+        One-dimensional data map (for example SNR in dB) with shape ``(num_beams,)``.
+
+    Returns
+    -------
+    DetectionArray
+        Detections with shape ``(N, 2)`` and columns ``[index, value]``, or an empty
+        ``(0, 2)`` array when no detections survive the full chain.
+
+    """
+    snr_vector_array = np.asarray(snr_vector, dtype=np.float64)
+    if not detection_chain:
+        return _empty_detections()
+
+    input_data = snr_vector_array.copy()
+    final_detections = _empty_detections()
+
+    for algorithm in detection_chain:
+        current_detections = algorithm.detect(input_data)
+
+        if current_detections.size == 0:
+            return _empty_detections()
+
+        final_detections = current_detections
+
+        # Build a sparse input for the next stage: set non-detected cells to -inf
+        input_data = np.full(len(snr_vector_array), -np.inf, dtype=np.float64)
+        input_data[final_detections[:, 0].astype(int)] = final_detections[:, 1]
+
+    return np.asarray(final_detections, dtype=np.float64)
 
 
 class DetectionAlgorithm(Base, ABC):

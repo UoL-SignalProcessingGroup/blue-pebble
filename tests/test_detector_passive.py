@@ -66,9 +66,6 @@ def _install_fake_passive_dependencies(monkeypatch) -> None:
     stonesoup_module.reader = reader_module
     stonesoup_module.types = types_module
 
-    algorithms_module = ModuleType("bluepebble.detector.algorithms")
-    algorithms_module.DetectionAlgorithm = type("DetectionAlgorithm", (), {})
-
     monkeypatch.setitem(
         sys.modules,
         "stonesoup.buffered_generator",
@@ -79,7 +76,6 @@ def _install_fake_passive_dependencies(monkeypatch) -> None:
     monkeypatch.setitem(sys.modules, "stonesoup.types", types_module)
     monkeypatch.setitem(sys.modules, "stonesoup.types.detection", detection_module)
     monkeypatch.setitem(sys.modules, "stonesoup.types.sensordata", sensordata_module)
-    monkeypatch.setitem(sys.modules, "bluepebble.detector.algorithms", algorithms_module)
 
     # Stub bluepebble.types.sensordata so that loading passive.py does not import
     # the real module against the fake Stone Soup environment.  Left in sys.modules
@@ -94,10 +90,19 @@ def _install_fake_passive_dependencies(monkeypatch) -> None:
 
 
 def _load_passive_detector_module(monkeypatch):
-    """Load ``detector/passive.py`` with lightweight dependency scaffolding."""
+    """Load ``detector/passive.py`` with lightweight dependency scaffolding.
+
+    ``algorithms.py`` is loaded for real rather than stubbed: it needs nothing from Stone
+    Soup beyond ``Base``/``Property``, and the detection-chain behaviour it provides is
+    what several tests below actually assert on.
+    """
     _install_fake_passive_dependencies(monkeypatch)
     install_repo_package(monkeypatch, "bluepebble", "bluepebble")
     install_repo_package(monkeypatch, "bluepebble.detector", "bluepebble/detector")
+    load_package_module_from_repo(
+        "bluepebble/detector/algorithms.py",
+        "bluepebble.detector.algorithms",
+    )
     return load_package_module_from_repo(
         "bluepebble/detector/passive.py",
         "bluepebble.detector.passive",
