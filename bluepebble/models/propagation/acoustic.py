@@ -18,7 +18,7 @@ FloatArray: TypeAlias = NDArray[np.float64]
 ComplexArray: TypeAlias = NDArray[np.complexfloating[Any, Any]]
 PropagationLoss: TypeAlias = float | FloatArray
 PropagationResult: TypeAlias = tuple[PropagationLoss, float]
-SpectrumResult: TypeAlias = tuple[ComplexArray, float]
+SpectrumResult: TypeAlias = tuple[ComplexArray, FloatArray]
 
 
 def _as_scalar_float(value: object, name: str) -> float:
@@ -209,8 +209,9 @@ class SpectrumPropagationModel(ABC):
         Returns
         -------
         SpectrumResult
-            Tuple ``(H_sensors, propagation_time_s)`` where ``H_sensors`` has
-            shape ``(num_sensors, num_frequencies)``.
+            Tuple ``(H_sensors, sensor_delays_s)`` where ``H_sensors`` has
+            shape ``(num_sensors, num_frequencies)`` and ``sensor_delays_s`` is
+            a ``(num_sensors,)`` array of per-sensor arrival delays in seconds.
 
         """
         ...
@@ -287,23 +288,17 @@ class CylindricalAcousticPropagationModel(AcousticPropagationModel, SpectrumProp
         Returns
         -------
         SpectrumResult
-            ``(H_sensors, propagation_time_s)``, where ``H_sensors`` is a complex
+            ``(H_sensors, sensor_delays_s)``, where ``H_sensors`` is a complex
             transfer-function array with shape ``(num_sensors, num_frequencies)``
-            and ``propagation_time_s`` is the propagation time from the source to
-            the reference sensor in seconds.
+            and ``sensor_delays_s`` is a ``(num_sensors,)`` array of per-sensor
+            arrival delays in seconds.
 
         """
         source_position = _get_source_position(source)
         array_position = platform.array.state_vector
-        array_ref_position = platform.array.ref_state_vector
 
         # Calculate distances for each sensor. Shape: (num_sensors,)
         distances = np.linalg.norm(source_position - array_position, axis=0)
-
-        # Calculate reference distance and propagation time
-        reference_distance = np.linalg.norm(source_position - array_ref_position)
-        speed = _as_scalar_float(self.ssp.calculate(array_ref_position[2]), "sound speed")
-        propagation_time_s = float(reference_distance / speed)
 
         # Calculate cylindrical spreading loss: TL = 10*log10(r) + alpha*r
         # where alpha is attenuation in dB/km
@@ -332,7 +327,7 @@ class CylindricalAcousticPropagationModel(AcousticPropagationModel, SpectrumProp
             amplitude_scaling[:, np.newaxis] * phase_shifts, dtype=np.complex128
         )
 
-        return H_sensors, float(propagation_time_s)
+        return H_sensors, np.asarray(time_delays, dtype=float)
 
 
 class SphericalAcousticPropagationModel(AcousticPropagationModel, SpectrumPropagationModel):
@@ -406,26 +401,20 @@ class SphericalAcousticPropagationModel(AcousticPropagationModel, SpectrumPropag
         Returns
         -------
         SpectrumResult
-            ``(H_sensors, propagation_time_s)``, where ``H_sensors`` is a complex
+            ``(H_sensors, sensor_delays_s)``, where ``H_sensors`` is a complex
             transfer-function array with shape ``(num_sensors, num_frequencies)``
-            and ``propagation_time_s`` is the propagation time from the source to
-            the reference sensor in seconds.
+            and ``sensor_delays_s`` is a ``(num_sensors,)`` array of per-sensor
+            arrival delays in seconds.
 
         """
         source_position = _get_source_position(source)
         array_position = platform.array.state_vector
-        array_ref_position = platform.array.ref_state_vector
 
         # Calculate distances for each sensor
         distances = np.linalg.norm(
             source_position - array_position,
             axis=0,
         )  # Shape: (num_sensors,)
-
-        # Calculate reference distance and propagation time
-        reference_distance = np.linalg.norm(source_position - array_ref_position)
-        speed = _as_scalar_float(self.ssp.calculate(array_ref_position[2]), "sound speed")
-        propagation_time_s = float(reference_distance / speed)
 
         # Calculate spherical spreading loss: TL = 20*log10(r) + alpha*r
         # where alpha is attenuation in dB/km
@@ -454,7 +443,7 @@ class SphericalAcousticPropagationModel(AcousticPropagationModel, SpectrumPropag
             amplitude_scaling[:, np.newaxis] * phase_shifts, dtype=np.complex128
         )
 
-        return H_sensors, float(propagation_time_s)
+        return H_sensors, np.asarray(time_delays, dtype=float)
 
 
 class rtrsAcousticPropagationModel(AcousticPropagationModel, SpectrumPropagationModel):
@@ -830,7 +819,8 @@ class rtrsAcousticPropagationModel(AcousticPropagationModel, SpectrumPropagation
         SpectrumResult
             - ``transfer_functions`` : Complex array of shape (num_sensors, num_frequencies)
                 containing H(f).
-            - ``propagation_time_s`` : Mean travel time in seconds.
+            - ``sensor_delays_s`` : ``(num_sensors,)`` array of per-sensor earliest
+                arrival delays in seconds, as reported by rtrs.
 
         """
         run_simulation = _get_rtrs_run_simulation()
@@ -956,8 +946,19 @@ class rtrsAcousticPropagationModel(AcousticPropagationModel, SpectrumPropagation
         # simulation convention (e^{-i\omega t})
         transfer_functions = np.asarray(np.conj(transfer_functions), dtype=np.complex128)
 
-        # Calculate mean travel time
-        speed = _as_scalar_float(self.ssp.calculate(array_ref_pos[2]), "sound speed")
-        propagation_time_s = float(distance / speed)
+        # Extract rtrs per-sensor earliest arrival delays (one value per receiver).
+        # shape == (num_frequencies, num_sensors, 1, 1), so num_sensors == shape[1].
+        num_sensors = shape[1]
+        if "delay_s" not in pf:
+            msg = "rtrs pressure_field is missing 'delay_s'; cannot report per-sensor delays"
+            raise KeyError(msg)
 
-        return transfer_functions, propagation_time_s
+        sensor_delays_s = np.asarray(pf["delay_s"], dtype=float).reshape(-1)
+        if sensor_delays_s.size != num_sensors:
+            msg = (
+                f"rtrs delay_s reported {sensor_delays_s.size} values but expected "
+                f"{num_sensors} (one earliest-arrival delay per sensor)"
+            )
+            raise ValueError(msg)
+
+        return transfer_functions, sensor_delays_s

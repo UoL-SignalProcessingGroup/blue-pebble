@@ -45,6 +45,10 @@ class DiscretePassiveSonarArraySimulator(PassiveSonarArraySimulatorBase):
     - No overlap-add or continuity smoothing is applied between emitted chunks.
     - Timestamp boundaries that produce zero-length chunks are clamped to a
       minimum one-sample snapshot to keep FFT processing valid.
+    - **No Doppler is modelled**: chunks are rendered independently with no cross-timestep
+      continuity. Use
+      :class:`~bluepebble.simulator.continuous.ContinuousFractionalDelayPassiveSonarArraySimulator`
+      when Doppler matters.
 
     Tradeoffs
     ---------

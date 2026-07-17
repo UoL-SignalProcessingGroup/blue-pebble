@@ -198,5 +198,3 @@ def test_reverb_wet_dry_mix_zero_is_passthrough(monkeypatch) -> None:
         signal, sampling_rate_hz=8
     )
     np.testing.assert_array_equal(reverbed, signal)
-
-

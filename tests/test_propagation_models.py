@@ -148,7 +148,7 @@ def test_cylindrical_propagate_spectrum_returns_expected_shape_and_amplitude(mon
         attenuation_factor=0.0,
     )
 
-    transfer, travel_time = model.propagate_spectrum(
+    transfer, sensor_delays_s = model.propagate_spectrum(
         platform,
         source,
         frequencies_hz=np.array([0.0, 100.0]),
@@ -160,7 +160,7 @@ def test_cylindrical_propagate_spectrum_returns_expected_shape_and_amplitude(mon
         np.array([1 / np.sqrt(5.0), 1 / np.sqrt(10.0)]),
     )
     np.testing.assert_allclose(transfer[:, 0].imag, np.array([0.0, 0.0]))
-    assert travel_time == pytest.approx(5.0 / 1500.0)
+    np.testing.assert_allclose(sensor_delays_s, np.array([5.0 / 1500.0, 10.0 / 1500.0]))
 
 
 def test_spherical_propagate_matches_analytic_formula(monkeypatch) -> None:
@@ -377,6 +377,7 @@ def test_rtrs_propagate_spectrum_transposes_and_conjugates_transfer_functions(
                 "shape": [2, 2, 1, 1],
                 "pressure_re": [1.0, 2.0, 3.0, 4.0],
                 "pressure_im": [10.0, 20.0, 30.0, 40.0],
+                "delay_s": [0.01, 0.02],
             }
         }
 
@@ -389,7 +390,7 @@ def test_rtrs_propagate_spectrum_transposes_and_conjugates_transfer_functions(
         bathymetry=FlatNegativeBathymetry(-200.0),
     )
 
-    transfer, travel_time = model.propagate_spectrum(
+    transfer, sensor_delays_s = model.propagate_spectrum(
         platform,
         source,
         frequencies_hz=np.array([100.0, 250.0]),
@@ -405,7 +406,7 @@ def test_rtrs_propagate_spectrum_transposes_and_conjugates_transfer_functions(
             ]
         ),
     )
-    assert travel_time == pytest.approx(5.0 / 1500.0)
+    np.testing.assert_array_equal(sensor_delays_s, np.array([0.01, 0.02]))
     env_config = captured["env_config"]
     assert env_config["receivers"]["x_rcvr_m"] == [3.0, 6.0]
     assert env_config["receivers"]["z_rcvr_m"] == [10.0, 10.0]
@@ -460,7 +461,7 @@ def test_rtrs_propagate_spectrum_runs_with_real_backend(monkeypatch) -> None:
         bathymetry=FlatNegativeBathymetry(-200.0),
     )
 
-    transfer, travel_time = model.propagate_spectrum(
+    transfer, sensor_delays_s = model.propagate_spectrum(
         platform,
         source,
         frequencies_hz=np.array([100.0, 250.0]),
@@ -469,4 +470,6 @@ def test_rtrs_propagate_spectrum_runs_with_real_backend(monkeypatch) -> None:
     assert transfer.shape == (2, 2)
     assert np.isfinite(transfer).all()
     assert np.any(np.abs(transfer) > 0.0)
-    assert travel_time == pytest.approx(5.0 / 1500.0)
+    assert sensor_delays_s.shape == (2,)
+    assert np.isfinite(sensor_delays_s).all()
+    assert np.all(sensor_delays_s > 0.0)

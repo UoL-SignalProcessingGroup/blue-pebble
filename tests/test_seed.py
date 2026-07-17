@@ -384,7 +384,10 @@ def test_mixed_signal_types_all_reproducible_from_single_set_seed():
             spectral_exponent=-1.0, amplitude_upa=1.0, duration_s=0.01, sampling_rate_hz=1000
         )
         synth = SyntheticAnthropogenicSignal(
-            duration_s=0.1, sampling_rate_hz=500, frame_len=50, hop_factor=4,
+            duration_s=0.1,
+            sampling_rate_hz=500,
+            frame_len=50,
+            hop_factor=4,
             noise_amplitude_upa=1.0,
         )
         reverb = Reverb(duration_s=0.01, wet_dry_mix=0.3)
