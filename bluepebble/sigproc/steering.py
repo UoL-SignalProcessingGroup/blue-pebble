@@ -28,8 +28,8 @@ class SteeringCalculator(Base):
         "so only one half-plane needs to be steered directly. When True, "
         "calculate returns delays for aprox half of steering_azimuths_rad,"
         "and mirror_plan returns the bookkeeping to expand a beamformer's "
-        "output back to the full grid via 'Beamformer.expand_mirrored'. " 
-        "Requires 'steering_azimuths_rad' to be a uniform, full-circle grid," 
+        "output back to the full grid via 'Beamformer.expand_mirrored'. "
+        "Requires 'steering_azimuths_rad' to be a uniform, full-circle grid,"
         "e.g. np.linspace(-pi, pi, N, endpoint=False). This is Exact while "
         "the array is linear (straight) and only approximate while it bends "
         "(e.g. during a turn).",

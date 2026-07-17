@@ -392,7 +392,7 @@ simulator = ContinuousSTFTPassiveSonarArraySimulator(
         bands=view_bands,
     ),
     steering_calculator=SteeringCalculator(
-        ssp=ssp, 
+        ssp=ssp,
         steering_azimuths_rad=steering_azimuths_rad,
         mirror_half_plane=True,
         ),
