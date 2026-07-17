@@ -1,24 +1,82 @@
 """Defines a passive sonar detector that processes beamformed sensor data."""
 
+from collections import defaultdict, deque
 from collections.abc import Generator, Iterable
 from datetime import datetime
 from typing import TypeAlias
 
 import numpy as np
 from numpy.typing import ArrayLike, NDArray
-from stonesoup.base import Property
+from stonesoup.base import Base, Property
 from stonesoup.buffered_generator import BufferedGenerator
 from stonesoup.reader.base import DetectionReader
 from stonesoup.types.detection import Detection
 from tqdm import tqdm
 
 from ..types.sensordata import PassiveSonarSensorData
-from .algorithms import DetectionAlgorithm
+from .algorithms import DetectionAlgorithm, run_detection_chain
 
 FloatArray: TypeAlias = NDArray[np.float64]
 DetectionArray: TypeAlias = NDArray[np.float64]
 SensorDataStep: TypeAlias = tuple[datetime, Iterable["PassiveSonarSensorData"]]
 DetectionBatch: TypeAlias = tuple[datetime, set[Detection]]
+_BandedStep: TypeAlias = tuple[datetime, dict[str, set[Detection]]]
+
+
+def snr_from_beamformed_data(
+    beamformed_data: ArrayLike,
+    output_type: str = "snr_percentile",
+    percentile: int = 10,
+) -> FloatArray:
+    """Reduce a beamformed power map to a per-beam detection map.
+
+    Directional power is averaged over frames, then normalised according to ``output_type``.
+    The percentile- and median-based options express each beam relative to an estimate of
+    the noise floor taken across beams, which makes the result comparable between snapshots
+    whose absolute levels differ.
+
+    Parameters
+    ----------
+    beamformed_data : ArrayLike
+        Beamformer output with shape ``(num_beams, num_frames)``.
+    output_type : str, optional
+        Normalisation to apply. One of ``"snr_percentile"`` (default), ``"median_power"``,
+        ``"log_power"``, or ``"power"``.
+    percentile : int, optional
+        Percentile of directional power used as the noise estimate when ``output_type`` is
+        ``"snr_percentile"`` (default is 10).
+
+    Returns
+    -------
+    FloatArray
+        Per-beam map with shape ``(num_beams,)``. In dB for every ``output_type``
+        except ``"power"``, which is linear.
+
+    Raises
+    ------
+    ValueError
+        If ``output_type`` is not one of the supported options.
+
+    """
+    data = np.asarray(beamformed_data)
+
+    if output_type == "power":
+        return np.mean(np.abs(data) ** 2, axis=1)
+
+    if output_type == "log_power":
+        return 10 * np.log10(np.mean(np.abs(data) ** 2, axis=1))
+
+    if output_type in ("snr_percentile", "median_power"):
+        directional_power = np.mean(np.abs(data) ** 2, axis=1)
+        if output_type == "snr_percentile":
+            # More stable than the minimum: avoids outliers and division by zero.
+            noise_power_estimate = np.percentile(directional_power, percentile)
+        else:
+            noise_power_estimate = np.median(directional_power)
+        epsilon = np.finfo(float).eps
+        return 10 * np.log10((directional_power + epsilon) / (noise_power_estimate + epsilon))
+
+    raise ValueError(f"Unsupported beamformer_output_type: {output_type}")
 
 
 class PassiveSonarDetector(DetectionReader):
@@ -123,34 +181,11 @@ class PassiveSonarDetector(DetectionReader):
                 if beamformed_data is None or beamformed_data.size == 0:
                     continue
 
-                if beamformer_output_type == "snr_percentile":
-                    # Calculate directional power for each beam
-                    directional_power = np.mean(np.abs(beamformed_data) ** 2, axis=1)
-
-                    # Estimate noise power as the 10th percentile of directional power
-                    # More stable than minimum, avoids outliers and division by zero
-                    noise_power_estimate = np.percentile(directional_power, snr_percentile_val)
-
-                    # Calculate SNR
-                    epsilon = np.finfo(float).eps
-                    snr = 10 * np.log10(
-                        (directional_power + epsilon) / (noise_power_estimate + epsilon)
-                    )
-                elif beamformer_output_type == "median_power":
-                    directional_power = np.mean(np.abs(beamformed_data) ** 2, axis=1)
-                    noise_power_estimate = np.median(directional_power)
-                    epsilon = np.finfo(float).eps
-                    snr = 10 * np.log10(
-                        (directional_power + epsilon) / (noise_power_estimate + epsilon)
-                    )
-                elif beamformer_output_type == "log_power":
-                    snr = 10 * np.log10(np.mean(np.abs(beamformed_data) ** 2, axis=1))
-                elif beamformer_output_type == "power":
-                    snr = np.mean(np.abs(beamformed_data) ** 2, axis=1)
-                else:
-                    raise ValueError(
-                        f"Unsupported beamformer_output_type: {beamformer_output_type}"
-                    )
+                snr = snr_from_beamformed_data(
+                    beamformed_data,
+                    output_type=beamformer_output_type,
+                    percentile=snr_percentile_val,
+                )
 
                 # Run the detection chain on the SNR map
                 raw_detections: DetectionArray = self._run_detection_chain(snr)
@@ -194,24 +229,340 @@ class PassiveSonarDetector(DetectionReader):
             array if no detections are found at any stage.
 
         """
-        initial_snr_map_array = np.asarray(initial_snr_map, dtype=np.float64)
-        if not self.detection_chain:
-            return np.empty((0, 2), dtype=np.float64)
+        return run_detection_chain(self.detection_chain, initial_snr_map)
 
-        input_data_map = initial_snr_map_array
-        final_detections = np.empty((0, 2), dtype=np.float64)
 
-        for algorithm in self.detection_chain:
-            current_detections = algorithm.detect(input_data_map)
+class BandDetector(Base):
+    """Detection chain and normalisation for one frequency band.
 
-            if current_detections.size == 0:
-                return np.empty((0, 2), dtype=np.float64)
+    Each band of a multiband beamformer gets its own instance, so bands can differ in
+    sensitivity and in how their power map is normalised. Bands are matched to detectors by
+    label; see :class:`MultibandPassiveSonarDetector`.
+    """
 
-            final_detections = current_detections
+    detection_chain: list[DetectionAlgorithm] = Property(
+        doc="Detection algorithms applied in sequence to this band's map.",
+    )
+    output_type: str = Property(
+        default="snr_percentile",
+        doc="Normalisation applied to this band's power map. One of 'snr_percentile', "
+        "'median_power', 'log_power', or 'power'.",
+    )
+    snr_percentile_val: int = Property(
+        default=10,
+        doc="Percentile of directional power used as the noise estimate when 'output_type' "
+        "is 'snr_percentile'.",
+    )
 
-            input_data_map = np.full(len(initial_snr_map_array), -np.inf, dtype=np.float64)
-            indices = final_detections[:, 0].astype(int)
-            values = final_detections[:, 1]
-            input_data_map[indices] = values
+    def detect(self, beamformed_data: ArrayLike) -> tuple[FloatArray, DetectionArray]:
+        """Reduce this band's beamformed data to an SNR map and run its detection chain.
 
-        return np.asarray(final_detections, dtype=np.float64)
+        Parameters
+        ----------
+        beamformed_data : ArrayLike
+            This band's beamformer output, with shape ``(num_beams, num_frames)``.
+
+        Returns
+        -------
+        tuple[FloatArray, DetectionArray]
+            The band's SNR map, and the detections found in it (see
+            :func:`run_detection_chain`).
+
+        """
+        snr = snr_from_beamformed_data(
+            beamformed_data,
+            output_type=self.output_type,
+            percentile=self.snr_percentile_val,
+        )
+        return snr, run_detection_chain(self.detection_chain, snr)
+
+
+class _SensorDataPump:
+    """Step a source generator once and fan each result out to every subscriber.
+
+    A sensor-data generator can only be consumed once, but a multiband detector and its
+    per-band readers all need the same stream. Each subscriber gets its own queue; whichever
+    one runs dry first advances the shared source and appends the result to every queue.
+    That keeps K band readers on one simulation pass.
+    """
+
+    def __init__(self, source: "Generator[_BandedStep, None, None]") -> None:
+        """Wrap a source generator that yields per-band detection batches."""
+        self._source = source
+        self._queues: list[deque[_BandedStep]] = []
+        self._started = False
+
+    def subscribe(self) -> int:
+        """Register a new subscriber and return its identifier.
+
+        Returns
+        -------
+        int
+            Queue index for the new subscriber.
+
+        Raises
+        ------
+        RuntimeError
+            If the source has already been advanced, since the new subscriber would
+            silently miss everything consumed so far.
+
+        """
+        if self._started:
+            raise RuntimeError(
+                "Cannot subscribe after iteration has started: this reader would miss "
+                "every timestep already consumed. Create all band readers before "
+                "iterating any of them."
+            )
+        self._queues.append(deque())
+        return len(self._queues) - 1
+
+    def stream(self, subscriber_id: int) -> "Generator[_BandedStep, None, None]":
+        """Yield every step for one subscriber, advancing the source only when needed.
+
+        Parameters
+        ----------
+        subscriber_id : int
+            Identifier returned by :meth:`subscribe`.
+
+        Yields
+        ------
+        _BandedStep
+            The next timestep for this subscriber.
+
+        """
+        queue = self._queues[subscriber_id]
+        while True:
+            while not queue:
+                self._started = True
+                try:
+                    item = next(self._source)
+                except StopIteration:
+                    return
+                for each in self._queues:
+                    each.append(item)
+            yield queue.popleft()
+
+
+class MultibandPassiveSonarDetector(DetectionReader):
+    """Detect independently in each band of a multiband beamformer's output.
+
+    This detector consumes the three-dimensional ``beamformed_data`` produced by a
+    beamformer configured with :class:`~.FrequencyBand` objects, and applies a separate
+    :class:`BandDetector` to each band's power map. Bands are matched to detectors by the
+    labels carried on the sensor data, so a band's ``label`` must appear in
+    ``band_detectors`` unless a ``default_detector`` is set.
+
+    Separate or combined tracking
+    -----------------------------
+    Iterating this detector yields the **union** of all bands' detections per timestep, so it
+    is a drop-in :class:`~stonesoup.reader.base.DetectionReader` for a single tracker. Every
+    detection carries its originating band in ``metadata['band']``, so provenance survives
+    into a track's associated detections.
+
+    For per-band tracking, :meth:`band_reader` returns a reader restricted to one band,
+    suitable for feeding one tracker per band. All readers share a single pass over the
+    sensor data, so K trackers cost one simulation. Create every band reader before
+    iterating any of them.
+
+    Each reader may be iterated once, as the underlying sensor-data generator is consumed.
+    """
+
+    band_detectors: dict[str, BandDetector] = Property(
+        doc="Detector per band, keyed by the band's label.",
+    )
+    sensor_data_gen: Generator[SensorDataStep, None, None] = Property(
+        doc="Generator that yields PassiveSonarSensorData objects",
+    )
+    steering_azimuths_rad: FloatArray = Property(
+        doc="Array of steering azimuth angles in radians.",
+    )
+    default_detector: BandDetector | None = Property(
+        default=None,
+        doc="Detector for bands with no entry in 'band_detectors'. When None, an "
+        "unrecognised band label is an error.",
+    )
+
+    def __init__(self, *args: object, **kwargs: object) -> None:
+        """Initialise the multiband detector."""
+        super().__init__(*args, **kwargs)
+        self._snr_history: dict[str, list[FloatArray]] = defaultdict(list)
+        self._pump = _SensorDataPump(self._banded_steps())
+        self._subscriber_id: int | None = None
+
+    @property
+    def snr_history(self) -> dict[str, FloatArray]:
+        """Recorded SNR history per band.
+
+        Returns
+        -------
+        dict of str to FloatArray
+            Maps each band label to an array of shape ``(num_timesteps, num_beams)``.
+            Bands are present only once they have been processed, so this is empty before
+            iteration begins.
+
+        """
+        return {
+            label: np.asarray(rows, dtype=np.float64) for label, rows in self._snr_history.items()
+        }
+
+    def band_reader(self, band_label: str) -> "_BandDetectionReader":
+        """Return a detection reader restricted to a single band.
+
+        Parameters
+        ----------
+        band_label : str
+            Label of the band to read, matching a :class:`~.FrequencyBand` label.
+
+        Returns
+        -------
+        _BandDetectionReader
+            A reader yielding only this band's detections, sharing the parent's single pass
+            over the sensor data.
+
+        Raises
+        ------
+        RuntimeError
+            If iteration has already started (see :meth:`_SensorDataPump.subscribe`).
+
+        """
+        return _BandDetectionReader(
+            parent=self,
+            band_label=band_label,
+            subscriber_id=self._pump.subscribe(),
+        )
+
+    def _detector_for(self, band_label: str) -> BandDetector:
+        """Return the detector configured for a band.
+
+        Parameters
+        ----------
+        band_label : str
+            Band label taken from the sensor data.
+
+        Returns
+        -------
+        BandDetector
+            The band's own detector, or ``default_detector`` when it has no entry.
+
+        Raises
+        ------
+        KeyError
+            If the band has no detector and no ``default_detector`` is configured.
+
+        """
+        detector = self.band_detectors.get(band_label, self.default_detector)
+        if detector is None:
+            raise KeyError(
+                f"No detector for band {band_label!r} and no default_detector is set. "
+                f"Configured bands: {sorted(self.band_detectors)}"
+            )
+        return detector
+
+    def _banded_steps(self) -> "Generator[_BandedStep, None, None]":
+        """Process each sensor-data step into per-band detection sets.
+
+        This runs exactly once per timestep no matter how many readers are attached, and is
+        where SNR history is recorded.
+
+        Yields
+        ------
+        tuple of (datetime, dict)
+            Timestamp and a mapping of band label to that band's detections.
+
+        Raises
+        ------
+        ValueError
+            If the beamformed data is not three-dimensional with band labels, which means
+            the beamformer was not configured with bands.
+
+        """
+        for timestamp, sensor_data_set in self.sensor_data_gen:
+            detections_by_band: dict[str, set[Detection]] = defaultdict(set)
+
+            for sensor_data in sensor_data_set:
+                beamformed_data = sensor_data.beamformed_data
+                if beamformed_data is None or beamformed_data.size == 0:
+                    continue
+
+                data = np.asarray(beamformed_data)
+                band_labels = sensor_data.band_labels
+                if band_labels is None or data.ndim != 3:
+                    raise ValueError(
+                        "MultibandPassiveSonarDetector requires beamformed data with a "
+                        f"band axis, but got {data.ndim}D data with band_labels="
+                        f"{band_labels!r}. Configure the beamformer with 'bands', or use "
+                        "PassiveSonarDetector for single-band output."
+                    )
+
+                for band_idx, band_label in enumerate(band_labels):
+                    band_detector = self._detector_for(band_label)
+                    snr, raw_detections = band_detector.detect(data[band_idx])
+                    self._snr_history[band_label].append(snr)
+
+                    for raw_det in raw_detections:
+                        detections_by_band[band_label].add(
+                            Detection(
+                                state_vector=[[self.steering_azimuths_rad[int(raw_det[0])]]],
+                                timestamp=sensor_data.timestamp,
+                                metadata={"band": band_label, "snr_db": float(raw_det[1])},
+                            )
+                        )
+
+            yield timestamp, dict(detections_by_band)
+
+    @BufferedGenerator.generator_method
+    def detections_gen(
+        self,
+        progress_bar: bool = False,
+        total_timesteps: int | None = None,
+    ) -> Generator[DetectionBatch, None, None]:
+        """Generate the union of every band's detections for each timestep.
+
+        Parameters
+        ----------
+        progress_bar : bool, optional
+            If True, wrap iteration with a progress bar (default is False).
+        total_timesteps : int, optional
+            Total number of timesteps for the progress bar.
+
+        Yields
+        ------
+        tuple
+            A tuple of ``(timestamp, set[Detection])`` combining all bands, where each
+            detection records its band in ``metadata['band']``.
+
+        """
+        if self._subscriber_id is None:
+            self._subscriber_id = self._pump.subscribe()
+
+        steps: Iterable[_BandedStep] = self._pump.stream(self._subscriber_id)
+        if progress_bar:
+            steps = tqdm(steps, desc="Generating Detections", total=total_timesteps)
+
+        for timestamp, detections_by_band in steps:
+            combined: set[Detection] = set()
+            for band_detections in detections_by_band.values():
+                combined |= band_detections
+            yield timestamp, combined
+
+
+class _BandDetectionReader(DetectionReader):
+    """Detections for one band of a parent :class:`MultibandPassiveSonarDetector`."""
+
+    parent: MultibandPassiveSonarDetector = Property(doc="Detector producing the bands.")
+    band_label: str = Property(doc="Label of the band this reader is restricted to.")
+    subscriber_id: int = Property(doc="Identifier of this reader's queue on the parent pump.")
+
+    @BufferedGenerator.generator_method
+    def detections_gen(self) -> Generator[DetectionBatch, None, None]:
+        """Generate this band's detections for each timestep.
+
+        Yields
+        ------
+        tuple
+            A tuple of ``(timestamp, set[Detection])`` for this band alone. The set is
+            empty for timesteps where the band produced no detections.
+
+        """
+        for timestamp, detections_by_band in self.parent._pump.stream(self.subscriber_id):
+            yield timestamp, detections_by_band.get(self.band_label, set())
