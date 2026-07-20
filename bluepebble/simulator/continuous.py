@@ -49,6 +49,36 @@ class _STFTTargetHistory:
     tau_hist: FloatArray
 
 
+def _hold_last_finite_delays(delay_history_s: FloatArray) -> FloatArray:
+    """Replace non-finite per-sensor delays by holding the nearest finite delay in time.
+
+    A non-finite delay marks a sensor with no arrival (zero channel gain already silences
+    it), but left in place it would poison the synthesis phase term
+    ``exp(-2j * pi * tau * f)`` with NaN, including into neighbouring interpolated knots.
+    Holding the nearest finite delay keeps the trajectory physical across the gap without
+    disturbing the zero gain that does the actual silencing.
+    """
+    delays = np.asarray(delay_history_s, dtype=np.float64).copy()
+    finite = np.isfinite(delays)
+    if finite.all():
+        return delays
+
+    n_steps, n_sensors = delays.shape
+    step_idx = np.arange(n_steps)[:, np.newaxis]
+    sensor_idx = np.arange(n_sensors)[np.newaxis, :]
+
+    # Index of the nearest finite knot at or before each entry (-1 if there is none)...
+    forward = np.maximum.accumulate(np.where(finite, step_idx, -1), axis=0)
+    # ...and at or after it (n_steps if there is none).
+    backward = np.minimum.accumulate(np.where(finite, step_idx, n_steps)[::-1], axis=0)[::-1]
+
+    source = np.where(forward >= 0, forward, backward)
+    has_source = (forward >= 0) | (backward < n_steps)
+    held = delays[np.clip(source, 0, n_steps - 1), sensor_idx]
+
+    return np.where(finite, delays, np.where(has_source, held, 0.0))
+
+
 class ContinuousSTFTPassiveSonarArraySimulator(PassiveSonarArraySimulatorBase):
     """Continuous broadband passive-sonar simulator with selectable STFT synthesis mode.
 
@@ -79,6 +109,15 @@ class ContinuousSTFTPassiveSonarArraySimulator(PassiveSonarArraySimulatorBase):
     In practice, each method produces largely similar results. The default ``stft_interp``
     and ``wola_interp`` methods are recommended. The ``cola`` method can produce
     interference artefacts, but is good as a fast baseline.
+
+    Doppler
+    -------
+    Doppler emerges from the time-varying delay ``tau(t) = range(t) / c``, carried here as a
+    per-frame phase term. It's only correct below the frame-rate Nyquist limit
+    ``max_freq * max|v_radial| / c < fs / (2 * hop)``; above that it aliases silently. Raise
+    ``hop_factor`` to lift the limit, or use
+    :class:`ContinuousFractionalDelayPassiveSonarArraySimulator` (no frame-rate limit). See the
+    ``doppler_cpa`` gallery example.
     """
 
     signal_models: list[AnthropogenicSignal] = Property(
@@ -320,24 +359,19 @@ class ContinuousSTFTPassiveSonarArraySimulator(PassiveSonarArraySimulatorBase):
                 if target_state is None:
                     continue
 
-                H_sensors, prop_time_s = spectrum_propagation_model.propagate_spectrum(
+                H_sensors, sensor_delays_s = spectrum_propagation_model.propagate_spectrum(
                     platform_state,
                     target_state,
                     ctx.frequencies,
                 )
                 H_hist[step_idx, :, :] = np.asarray(H_sensors, dtype=np.complex64)
-
-                sensor_delays_s = self.propagation_model.compute_sensor_delays(
-                    platform_state,
-                    target_state,
-                )
-                tau_hist[step_idx, :] = np.asarray(prop_time_s + sensor_delays_s, dtype=np.float64)
+                tau_hist[step_idx, :] = np.asarray(sensor_delays_s, dtype=np.float64)
 
             targets_data.append(
                 _STFTTargetHistory(
                     source_stft=target_source_stft,
                     H_hist=H_hist,
-                    tau_hist=tau_hist,
+                    tau_hist=_hold_last_finite_delays(tau_hist),
                 )
             )
 
@@ -833,7 +867,12 @@ class ContinuousFractionalDelayPassiveSonarArraySimulator(PassiveSonarArraySimul
     Tradeoffs
     ---------
     - Strong arrival-time fidelity under fast geometry changes.
-    - Lower spectral-detail fidelity than full complex frame-wise synthesis.
+    - **Doppler-faithful**: time-scaling via ``x(n - tau[n]*fs)`` reproduces the frequency shift
+      with no frame-rate limit, unlike the STFT modes. Recommended for Doppler-critical work; see
+      the ``doppler_cpa`` gallery example.
+    - Lower spectral-detail fidelity than full complex frame-wise synthesis: the per-sensor channel
+      is collapsed to a single broadband RMS gain (frequency-flat), so frequency-dependent
+      transmission loss and multipath colour in ``H(f)`` are not reproduced.
     """
 
     signal_models: list[AnthropogenicSignal] = Property(
@@ -962,23 +1001,21 @@ class ContinuousFractionalDelayPassiveSonarArraySimulator(PassiveSonarArraySimul
                 if target_state is None:
                     continue
 
-                H_sensors, prop_time_s = spectrum_propagation_model.propagate_spectrum(
+                H_sensors, sensor_delays_s = spectrum_propagation_model.propagate_spectrum(
                     platform_state,
                     target_state,
                     frequencies_hz,
                 )
-                sensor_delays_s = self.propagation_model.compute_sensor_delays(
-                    platform_state,
-                    target_state,
-                )
 
                 sensor_delay_history_s[step_idx, :] = np.asarray(
-                    prop_time_s + sensor_delays_s,
+                    sensor_delays_s,
                     dtype=np.float64,
                 )
 
                 H_abs = np.abs(np.asarray(H_sensors, dtype=np.complex64))
                 broadband_rms[step_idx, :] = np.sqrt(np.mean(H_abs**2, axis=1)).astype(np.float64)
+
+            sensor_delay_history_s = _hold_last_finite_delays(sensor_delay_history_s)
 
             for sensor_idx in range(num_sensors):
                 amp_s = np.interp(
