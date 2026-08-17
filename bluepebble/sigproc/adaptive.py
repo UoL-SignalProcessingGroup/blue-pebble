@@ -35,14 +35,15 @@ def _framed_and_windowed(x_array: np.ndarray, nfft: int, overlap: int) -> np.nda
     return np.ascontiguousarray(frames * window)
 
 
-@njit(cache=True, parallel=True)
-def _fft_frames(frames: np.ndarray) -> np.ndarray:
+def _fft_frames_impl(frames: np.ndarray) -> np.ndarray:
     """Compute the discrete Fourier transform of every (sensor, frame) row of ``frames``.
 
     ``frames`` has shape ``(num_sensors, num_time_frames, nfft)``. As the transform for
-    each sensor is independent of that for every other, the computation is parallelised
-    over the sensor axis via ``prange``. The rocket-fft package is required for
-    ``np.fft.fft`` to be invoked at all within numba's ``nopython`` compilation mode.
+    each sensor is independent of that for every other, the computation may be
+    parallelised over the sensor axis via ``prange``; see the module-level
+    ``_fft_frames_parallel``/``_fft_frames_sequential`` compiled variants. The rocket-fft
+    package is required for ``np.fft.fft`` to be invoked at all within numba's
+    ``nopython`` compilation mode.
     """
     num_sensors, num_time_frames, nfft = frames.shape
     out = np.empty((num_sensors, num_time_frames, nfft), dtype=np.complex128)
@@ -52,8 +53,11 @@ def _fft_frames(frames: np.ndarray) -> np.ndarray:
     return out
 
 
-@njit(cache=True, parallel=True)
-def _steering_matrices(freqs: np.ndarray, sd_array: np.ndarray) -> np.ndarray:
+_fft_frames_parallel = njit(cache=True, parallel=True)(_fft_frames_impl)
+_fft_frames_sequential = njit(cache=True, parallel=False)(_fft_frames_impl)
+
+
+def _steering_matrices_impl(freqs: np.ndarray, sd_array: np.ndarray) -> np.ndarray:
     """Compute the per-bin steering matrices ``exp(-2j*pi*f*sd)``, parallelised over bins.
 
     ``freqs`` has shape ``(num_active_bins,)`` and ``sd_array`` has shape
@@ -67,8 +71,9 @@ def _steering_matrices(freqs: np.ndarray, sd_array: np.ndarray) -> np.ndarray:
     accounting for approximately 45 per cent of total execution time and substantially
     exceeding the cost of the Cholesky-based solve, which had previously been assumed to
     dominate. The cosine/sine decomposition alone, prior to parallelisation, was already
-    found to outperform ``np.exp`` on a complex-valued array; the addition of
-    ``parallel=True`` here yields a further, substantial reduction in execution time.
+    found to outperform ``np.exp`` on a complex-valued array; parallelisation over bins
+    (see the module-level ``_steering_matrices_parallel``/``_steering_matrices_sequential``
+    compiled variants) yields a further, substantial reduction in execution time.
     """
     num_bins = freqs.shape[0]
     num_directions, num_sensors = sd_array.shape
@@ -82,22 +87,27 @@ def _steering_matrices(freqs: np.ndarray, sd_array: np.ndarray) -> np.ndarray:
     return out
 
 
-@njit(cache=True, parallel=True)
-def _mvdr_bin_power(
+_steering_matrices_parallel = njit(cache=True, parallel=True)(_steering_matrices_impl)
+_steering_matrices_sequential = njit(cache=True, parallel=False)(_steering_matrices_impl)
+
+
+def _mvdr_bin_power_impl(
     S_batch: np.ndarray, R_batch: np.ndarray, A_batch: np.ndarray
 ) -> np.ndarray:
-    """Compute per-bin MVDR weights and beamformed power, parallelised over frequency bins.
+    """Compute per-bin MVDR weights and beamformed power.
 
     ``S_batch`` (signal snapshots), ``R_batch`` (the diagonally-loaded covariance
     matrices), and ``A_batch`` (steering matrices) share a common leading bin axis. As
     the weight solve for each frequency bin is independent of that for every other, the
-    computation is parallelised over the bin axis via ``prange``. The general-purpose
-    ``np.linalg.solve`` is used in preference to a Cholesky-based solve, numba providing
-    no batched analogue to scipy's ``cho_solve``. Although the general solve is less
-    efficient per bin than the Cholesky-based alternative, empirical benchmarking against
-    the sequential, scipy-Cholesky implementation showed a net improvement in
-    performance, attributable to concurrent execution across all available processor
-    cores rather than sequential processing of individual bins.
+    computation may be parallelised over the bin axis via ``prange``; see the
+    module-level ``_mvdr_bin_power_parallel``/``_mvdr_bin_power_sequential`` compiled
+    variants. The general-purpose ``np.linalg.solve`` is used in preference to a
+    Cholesky-based solve, numba providing no batched analogue to scipy's ``cho_solve``.
+    Although the general solve is less efficient per bin than the Cholesky-based
+    alternative, empirical benchmarking against the sequential, scipy-Cholesky
+    implementation showed a net improvement in performance, attributable to concurrent
+    execution across all available processor cores rather than sequential processing of
+    individual bins.
     """
     num_bins, num_sensors, num_frames = S_batch.shape
     num_directions = A_batch.shape[2]
@@ -126,6 +136,10 @@ def _mvdr_bin_power(
                 power[bi, d, f] = abs(acc) ** 2
 
     return power
+
+
+_mvdr_bin_power_parallel = njit(cache=True, parallel=True)(_mvdr_bin_power_impl)
+_mvdr_bin_power_sequential = njit(cache=True, parallel=False)(_mvdr_bin_power_impl)
 
 
 class MinimumVarianceDistortionlessResponseBeamformer(_STFTBeamformer):
@@ -254,11 +268,13 @@ class MinimumVarianceDistortionlessResponseBeamformer(_STFTBeamformer):
         ``bands`` is set on the beamformer they are ignored in favour of the band edges.
 
         The independence of the per-bin covariance solve across frequency bins (detailed
-        further in :func:`_mvdr_bin_power`) is exploited by the numba-parallelised helper
-        functions employed within this module: the Fourier transform, steering-matrix
-        construction, and per-bin solve stages are each parallelised over a distinct,
-        embarrassingly parallel axis -- sensors, bins, and bins, respectively -- rather
-        than executed as a single sequential loop over frequency bins.
+        further in :func:`_mvdr_bin_power_impl`) is exploited by the numba-accelerated
+        helper functions employed within this module: the Fourier transform,
+        steering-matrix construction, and per-bin solve stages each admit parallelisation
+        over a distinct, embarrassingly parallel axis -- sensors, bins, and bins,
+        respectively -- rather than execution as a single sequential loop over frequency
+        bins. Whether they are actually run multi-threaded is controlled per instance by
+        the beamformer's ``parallelise`` property.
 
         """
         # x: (M, T), sd: (Ndir, M)
@@ -269,8 +285,16 @@ class MinimumVarianceDistortionlessResponseBeamformer(_STFTBeamformer):
         if nfft / fs < (np.max(sd_array) - np.min(sd_array)):
             raise ValueError("nfft too small for this array")
 
+        fft_frames = _fft_frames_parallel if self.parallelise else _fft_frames_sequential
+        steering_matrices = (
+            _steering_matrices_parallel if self.parallelise else _steering_matrices_sequential
+        )
+        mvdr_bin_power = (
+            _mvdr_bin_power_parallel if self.parallelise else _mvdr_bin_power_sequential
+        )
+
         frames = _framed_and_windowed(x_array, nfft, overlap)
-        X = _fft_frames(frames)  # (M, n_frames, nfft)
+        X = fft_frames(frames)  # (M, n_frames, nfft)
         M, n_frames, nfft_actual = X.shape
 
         # frequency bins (full complex spectrum as signal is complex/baseband)
@@ -299,8 +323,8 @@ class MinimumVarianceDistortionlessResponseBeamformer(_STFTBeamformer):
         idx = np.arange(M)
         R_batch[:, idx, idx] += diagonal_load[:, None]
 
-        A_batch = _steering_matrices(freqs, sd_array)  # (num_active_bins, M, Ndir)
-        bin_power_batch = _mvdr_bin_power(S_batch, R_batch, A_batch)
+        A_batch = steering_matrices(freqs, sd_array)  # (num_active_bins, M, Ndir)
+        bin_power_batch = mvdr_bin_power(S_batch, R_batch, A_batch)
 
         for bi, bin_idx in enumerate(active_bins):
             for band_idx in bins_to_bands[int(bin_idx)]:
