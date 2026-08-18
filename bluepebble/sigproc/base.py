@@ -296,17 +296,6 @@ class _STFTBeamformer(Beamformer):
         doc="Divide each band's power by its number of active frequency bins, making "
         "bands of differing width directly comparable in level.",
     )
-    parallelise: bool = Property(
-        default=True,
-        doc="Whether the numba-accelerated inner kernels use multiple threads. Numba's "
-        "parallel=True is fixed at compile time, so each kernel affected by this flag is "
-        "compiled once in a multi-threaded form and once in a single-threaded form, and "
-        "this property selects between the two per instance -- no global numba or thread "
-        "pool state is touched. Set to False when an outer parallel loop (for example a "
-        "sensitivity-analysis harness distributing work across processes) already "
-        "saturates the available cores, to avoid oversubscription from nested "
-        "parallelism.",
-    )
 
     def __init__(self, *args: object, **kwargs: object) -> None:
         """Initialise the beamformer and validate any configured bands.

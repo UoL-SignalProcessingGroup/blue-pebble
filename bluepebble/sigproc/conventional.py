@@ -165,18 +165,14 @@ class DelayAndSumBeamformer(_STFTBeamformer):
 
         direction_axis = 0
         if self.domain == "time":
-            time_das = _time_das_parallel if self.parallelise else _time_das_sequential
-            output: BeamformerOutput = time_das(
+            output: BeamformerOutput = _time_das(
                 sensor_signals_array,
                 steering_delays_array,
                 shading_weights,
                 self.sampling_rate_hz,
             )
         elif self.domain == "frequency":
-            frequency_das = (
-                _frequency_das_parallel if self.parallelise else _frequency_das_sequential
-            )
-            output = frequency_das(
+            output = _frequency_das(
                 sensor_signals_array,
                 steering_delays_array,
                 shading_weights,
@@ -295,15 +291,18 @@ class DelayAndSumBeamformer(_STFTBeamformer):
         return self._finalise_band_power(P, per_band_bins)
 
 
-_TIME_DAS_SIGNATURE = (
-    types.Array(types.complex128, 2, "C"),
-    types.Array(types.float64, 2, "C"),
-    types.Array(types.float64, 1, "C"),
-    types.float64,
+@njit(
+    (
+        types.Array(types.complex128, 2, "C"),
+        types.Array(types.float64, 2, "C"),
+        types.Array(types.float64, 1, "C"),
+        types.float64,
+    ),
+    cache=True,
+    parallel=True,
+    fastmath=True,
 )
-
-
-def _time_das_impl(
+def _time_das(
     sensor_signals: ComplexArray,
     steering_delays_s: FloatArray,
     shading_weights: FloatArray,
@@ -327,13 +326,6 @@ def _time_das_impl(
     ComplexArray
         Complex beamformed signals with shape
         ``(num_directions, num_samples_or_cropped_samples)``.
-
-    Notes
-    -----
-    Compiled into both a multi-threaded and a single-threaded variant (see
-    ``_time_das_parallel``/``_time_das_sequential`` below); the direction loop below,
-    written with ``prange``, degrades to a plain sequential loop under the
-    single-threaded compilation.
 
     """
     num_directions = steering_delays_s.shape[0]
@@ -378,23 +370,18 @@ def _time_das_impl(
         return beamformed_signals
 
 
-_time_das_parallel = njit(
-    _TIME_DAS_SIGNATURE, cache=True, parallel=True, fastmath=True
-)(_time_das_impl)
-_time_das_sequential = njit(
-    _TIME_DAS_SIGNATURE, cache=True, parallel=False, fastmath=True
-)(_time_das_impl)
-
-
-_FREQUENCY_DAS_SIGNATURE = (
-    types.Array(types.complex128, 2, "C"),
-    types.Array(types.float64, 2, "C"),
-    types.Array(types.float64, 1, "C"),
-    types.float64,
+@njit(
+    (
+        types.Array(types.complex128, 2, "C"),
+        types.Array(types.float64, 2, "C"),
+        types.Array(types.float64, 1, "C"),
+        types.float64,
+    ),
+    cache=True,
+    parallel=True,
+    fastmath=True,
 )
-
-
-def _frequency_das_impl(
+def _frequency_das(
     sensor_signals: ComplexArray,
     steering_delays_s: FloatArray,
     shading_weights: FloatArray,
@@ -417,13 +404,6 @@ def _frequency_das_impl(
     -------
     ComplexArray
         Complex beamformed signals with shape ``(num_directions, num_samples)``.
-
-    Notes
-    -----
-    Compiled into both a multi-threaded and a single-threaded variant (see
-    ``_frequency_das_parallel``/``_frequency_das_sequential`` below); the direction loop
-    below, written with ``prange``, degrades to a plain sequential loop under the
-    single-threaded compilation.
 
     """
     num_directions, num_sensors = steering_delays_s.shape
@@ -450,11 +430,3 @@ def _frequency_das_impl(
     beamformed_signals = np.fft.ifft(beamformed_f, axis=1)
 
     return beamformed_signals
-
-
-_frequency_das_parallel = njit(
-    _FREQUENCY_DAS_SIGNATURE, cache=True, parallel=True, fastmath=True
-)(_frequency_das_impl)
-_frequency_das_sequential = njit(
-    _FREQUENCY_DAS_SIGNATURE, cache=True, parallel=False, fastmath=True
-)(_frequency_das_impl)
