@@ -3,7 +3,7 @@
 from collections.abc import Sequence
 from dataclasses import dataclass
 from datetime import datetime
-from typing import Protocol, TypeAlias, cast
+from typing import TYPE_CHECKING, Protocol, TypeAlias, cast
 
 import numpy as np
 from numpy.typing import NDArray
@@ -14,6 +14,9 @@ from stonesoup.types.groundtruth import GroundTruthState
 from stonesoup.types.state import State
 
 from .base import ArrayState, Sensor
+
+if TYPE_CHECKING:
+    from ..platform.base import HostPlatform
 
 FloatArray: TypeAlias = NDArray[np.float64]
 
@@ -30,6 +33,17 @@ class _StateVectorCarrier(Protocol):
     state_vector: StateVector
 
 
+class _PositionCarrier(Protocol):
+    """Protocol for objects exposing a live ``.position``.
+
+    This is all a :class:`_FollowerModel` actually needs from its leader -- satisfied by a real
+    :class:`~stonesoup.movable.movable.MovingMovable` (later elements following the one ahead)
+    or by a virtual :class:`_TowPoint` (the first element following the host's tow point).
+    """
+
+    position: StateVector
+
+
 class _FollowerModel(Base):
     """A transition model that causes a movable to follow another movable.
 
@@ -38,14 +52,17 @@ class _FollowerModel(Base):
 
     Attributes
     ----------
-    leader : MovingMovable
-        The leader platform that the follower will follow.
+    leader : MovingMovable or _PositionCarrier
+        The leader that the follower will follow.
     offset : float
         The distance the follower should maintain from the leader in 3D space.
 
     """
 
-    leader: MovingMovable = Property(doc="The leader movable that the next movable will follow.")
+    leader: "MovingMovable | _PositionCarrier" = Property(
+        doc="The leader (a movable, or a virtual point such as a tow point) that this "
+        "follower tracks."
+    )
     offset: float = Property(doc="The distance the follower should maintain from the leader.")
 
     def function(self, state: State, **kwargs: object) -> StateVector:
@@ -98,7 +115,7 @@ class _TowedArrayFollowerModel(_FollowerModel):
 
     array_depth_m: float = Property(
         doc="The fixed depth at which the follower should be maintained."
-    )
+        )
 
     def function(self, state: State, **kwargs: object) -> StateVector:
         """Calculate the new position in 2D while keeping the depth fixed.
@@ -142,6 +159,43 @@ class _TowedArrayFollowerModel(_FollowerModel):
 
         new_position = np.vstack([new_position_xy, [[self.array_depth_m]]])
         return StateVector(new_position)
+
+
+class _TowPoint:
+    """A virtual point astern of the host that the first towed element follows.
+
+    Exposes only ``.position`` -- all a :class:`_FollowerModel` needs from a leader --
+    computed as the host's current position, displaced ``offset_m`` behind it along the
+    host's current heading. This keeps the actual tow attachment point (typically near the
+    stern) distinct from the host's own reference point (typically the bow, where
+    :class:`~bluepebble.sensors.bow_array.BowArraySensor` is centred), without needing a real
+    stonesoup ``Movable``. Recomputed live on every access, so it tracks the host through
+    turns rather than being fixed at its initial heading.
+    """
+
+    def __init__(self, host: "HostPlatform", offset_m: float) -> None:
+        self._host = host
+        self._offset_m = offset_m
+
+    @property
+    def position(self) -> StateVector:
+        """Return the host's current position, displaced aft by ``offset_m``."""
+        velocity_mapping = self._host.resolved_velocity_mapping()
+        velocity_xy = self._host.state.state_vector[velocity_mapping[:2]]
+        vel_norm = np.linalg.norm(velocity_xy)
+        if vel_norm > 0:
+            backwards_xy = -velocity_xy / vel_norm
+        else:
+            backwards_xy = StateVector([[-1.0], [0.0]])
+
+        host_position = self._host.position
+        return StateVector(
+            [
+                host_position[0, 0] + self._offset_m * backwards_xy[0, 0],
+                host_position[1, 0] + self._offset_m * backwards_xy[1, 0],
+                host_position[2, 0],
+            ]
+        )
 
 
 @dataclass
@@ -218,6 +272,10 @@ class TowedArraySensor(Sensor):
         Depth at which the array is towed in meters.
     reference_sensor_idx : int, optional
         Index of the reference sensor. Defaults to 0.
+    towed_array_bow_offset_m : float, optional
+        Horizontal distance from the host's reference point (typically the bow, where
+        :class:`~bluepebble.sensors.bow_array.BowArraySensor` is centred) to the tow point the
+        cable actually starts from (typically the stern), in metres. Defaults to 10.0.
 
     Attributes
     ----------
@@ -233,6 +291,11 @@ class TowedArraySensor(Sensor):
     sensor_spacing_m: float = Property(doc="Spacing between sensors in meters")
     array_depth_m: float = Property(doc="Depth at which the array is towed in meters")
     reference_sensor_idx: int = Property(default=0, doc="Index of the reference sensor")
+    towed_array_bow_offset_m: float = Property(
+        default=10.0,
+        doc="Horizontal distance from the host's reference point (typically the bow) to the "
+        "tow point the cable actually starts from (typically the stern), in metres.",
+    )
 
     def __init__(self, *args: object, **kwargs: object) -> None:
         """Initialise the TowedArraySensor.
@@ -290,7 +353,9 @@ class TowedArraySensor(Sensor):
             backwards_heading_xy = StateVector([[-1.0], [0.0]])
 
         towed_sensors = []
-        leader_node = self.host.movement_controller
+        leader_node: MovingMovable | _TowPoint = _TowPoint(
+            self.host, self.towed_array_bow_offset_m
+        )
 
         def get_position_from_object(obj: object) -> StateVector:
             """Extract position from a generic object."""
@@ -306,7 +371,7 @@ class TowedArraySensor(Sensor):
 
             raise AttributeError(f"Object {obj} doesn't have accessible position")
 
-        cumulative_horizontal_dist = 0.0
+        cumulative_horizontal_dist = self.towed_array_bow_offset_m
         for i in range(self.num_sensors):
             offset = self.cable_length_m if i == 0 else self.sensor_spacing_m
 
@@ -314,8 +379,8 @@ class TowedArraySensor(Sensor):
                 leader=leader_node, offset=offset, array_depth_m=self.array_depth_m
             )
 
-            if leader_node is self.host.movement_controller:
-                leader_pos_3d = host_pos_3d
+            if isinstance(leader_node, _TowPoint):
+                leader_pos_3d = leader_node.position
             else:
                 leader_pos_3d = get_position_from_object(leader_node)
 

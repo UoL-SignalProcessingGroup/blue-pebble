@@ -51,7 +51,6 @@ from bluepebble.sensors import TowedArraySensor
 from bluepebble.signal.anthropogenic import SyntheticAnthropogenicSignal
 from bluepebble.signal.random import ColouredNoiseSignal
 from bluepebble.sigproc import (
-    BearingOnlyTargetMotionAnalysis,
     DelayAndSumBeamformer,
     MinimumVarianceDistortionlessResponseBeamformer,
     SteeringCalculator,
@@ -403,20 +402,6 @@ prior_state = GaussianState(
 
 track = Track([prior_state])
 
-# %%
-# Seed the bearing-only TMA particle filter from the first bearing detection.
-
-first_timestamp, first_detections = all_detections[0]
-first_detection = next(iter(first_detections))
-theta_0 = float(first_detection.state_vector[0])
-
-tma = BearingOnlyTargetMotionAnalysis(
-    start_time=sim_params["start_time"],
-    platform=platform,
-    theta_0=theta_0,
-)
-tma.tma_pf_init()
-
 for timestamp, detections in all_detections:
     hypotheses = data_associator.associate({track}, detections, timestamp)[track]
 
@@ -442,35 +427,6 @@ for timestamp, detections in all_detections:
             hypotheses[0].measurement.timestamp,
         )
     )
-
-    tma.tma_pf_step(detections, timestamp)
-
-# %%
-# Align the TMA track and ground truth by timestamp, then compute the
-# position RMSE over x and y.
-
-gt_xy_by_timestamp = {
-    state.timestamp: (float(state.state_vector[0]), float(state.state_vector[2]))
-    for state in target_ground_truths[0]
-}
-
-tma_squared_errors = []
-for state in tma.track.states:
-    gt = gt_xy_by_timestamp.get(state.timestamp)
-    if gt is None:
-        continue
-
-    # Extract x, y from the particle state mean [x, xdot, y, ydot].
-    est_x = float(state.mean[0])
-    est_y = float(state.mean[2])
-
-    gt_x, gt_y = gt
-    error_sq = (est_x - gt_x) ** 2 + (est_y - gt_y) ** 2
-    tma_squared_errors.append(error_sq)
-
-rmse_m = float(np.sqrt(np.mean(tma_squared_errors)))
-
-print(f"TMA Position RMSE: {rmse_m:.1f} m")
 
 deg_std = 0.5
 
