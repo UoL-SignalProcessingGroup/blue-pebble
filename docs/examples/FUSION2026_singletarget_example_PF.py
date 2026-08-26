@@ -25,22 +25,20 @@ import plotly.graph_objects as go
 from plotly.subplots import make_subplots
 from scipy.signal import get_window
 from scipy.stats import uniform
-from stonesoup.dataassociator.probability import PDA
-from stonesoup.functions import gm_reduce_single
-from stonesoup.hypothesiser.probability import PDAHypothesiser
 from stonesoup.models.measurement.linear import LinearGaussian
 from stonesoup.models.transition.linear import (
     CombinedLinearGaussianTransitionModel,
     ConstantVelocity,
 )
-from stonesoup.predictor.kalman import KalmanPredictor
+from stonesoup.predictor.particle import ParticlePredictor
+from stonesoup.resampler.particle import SystematicResampler
 from stonesoup.types.array import StateVectors
 from stonesoup.types.detection import Detection
 from stonesoup.types.groundtruth import GroundTruthPath, GroundTruthState
-from stonesoup.types.state import GaussianState
+from stonesoup.types.hypothesis import SingleHypothesis
+from stonesoup.types.state import ParticleState
 from stonesoup.types.track import Track
-from stonesoup.types.update import GaussianStateUpdate
-from stonesoup.updater.kalman import ExtendedKalmanUpdater
+from stonesoup.updater.particle import ParticleUpdater
 
 import bluepebble
 from bluepebble.detector import CACFARDetector, PassiveSonarDetector, PeakDetector
@@ -51,7 +49,6 @@ from bluepebble.sensors import TowedArraySensor
 from bluepebble.signal.anthropogenic import SyntheticAnthropogenicSignal
 from bluepebble.signal.random import ColouredNoiseSignal
 from bluepebble.sigproc import (
-    BearingOnlyTargetMotionAnalysis,
     DelayAndSumBeamformer,
     MinimumVarianceDistortionlessResponseBeamformer,
     SteeringCalculator,
@@ -154,6 +151,15 @@ det_params = {
     },
 }
 
+# Number of particles for the particle filter
+pf_params = {
+    "num_particles": 10000,
+    "process_noise": 0.001,   # ConstantVelocity q parameter
+    "meas_noise_deg": 1.0,       # 1-sigma measurement noise in degrees
+    "init_bearing_std_deg": 5.0, # Initial bearing uncertainty (degrees)
+    "init_rate_std_deg": 0.5,    # Initial bearing-rate uncertainty (deg/s)
+}
+
 cfg = {
     "seed": seed,
     "num_targets": num_targets,
@@ -166,6 +172,7 @@ cfg = {
     "propagation": prop_params,
     "beamforming": bf_params,
     "detection": det_params,
+    "particle_filter": pf_params,
     "total_duration_s": total_duration_s,
 }
 
@@ -359,7 +366,6 @@ detector = PassiveSonarDetector(
 )
 
 all_detections = list(detector.detections_gen(progress_bar=False))
-
 snr_map = detector.snr_history
 
 timesteps = [
@@ -368,110 +374,101 @@ timesteps = [
 ]
 
 # %%
-# Tracking and Stone Soup Baseline Detections
-# -------------------------------------------
-
+# Particle Filter Tracking
+# ------------------------
+#
+# State vector: [bearing (rad), bearing_rate (rad/s)]
+#
+# The filter bypasses Stone Soup's updater entirely and implements the
+# predict-weight-resample cycle directly:
+#   1. Propagate particles forward with the ConstantVelocity process model.
+#   2. Compute the summed Gaussian likelihood across all detections for each
+#      particle. No association step — the full detection set is used and
+#      the particle distribution resolves ambiguity naturally.
+#   3. Reweight, normalise, then resample via ESSResampler.
 # %%
+
 relative_bearing_ground_truth = relative_bearing_ground_truths[0]
 
-transition_model = ConstantVelocity(0.000001)
-predictor = KalmanPredictor(transition_model)
+pf = cfg["particle_filter"]
 
-measurement_model = LinearGaussian(
-    ndim_state=2,
-    mapping=[0],
-    noise_covar=np.array([[np.deg2rad(1) ** 2]]),
-)
-updater = ExtendedKalmanUpdater(measurement_model=measurement_model)
+from stonesoup.resampler.particle import ESSResampler
+from stonesoup.types.numeric import Probability
 
-hypothesiser = PDAHypothesiser(
-    predictor=predictor,
-    updater=updater,
-    clutter_spatial_density=5 / np.pi,
-    prob_detect=0.95,
-)
-data_associator = PDA(hypothesiser=hypothesiser)
+transition_model = ConstantVelocity(pf["process_noise"])
+predictor = ParticlePredictor(transition_model)
+resampler = ESSResampler()
 
-initial_bearing = relative_bearing_ground_truth[0].state_vector[0] + rng.normal(
+sigma2 = np.deg2rad(pf["meas_noise_deg"]) ** 2
+
+# Initialise particles by sampling from a Gaussian approximation to the prior.
+initial_bearing = float(relative_bearing_ground_truth[0].state_vector[0]) + rng.normal(
     0, np.deg2rad(2)
 )
-prior_state = GaussianState(
-    np.array([initial_bearing, 0]),
-    np.diag([np.deg2rad(5) ** 2, np.deg2rad(0.5) ** 2]),
+init_cov = np.diag(
+    [np.deg2rad(pf["init_bearing_std_deg"]) ** 2, np.deg2rad(pf["init_rate_std_deg"]) ** 2]
+)
+particle_samples = rng.multivariate_normal(
+    mean=np.array([initial_bearing, 0.0]),
+    cov=init_cov,
+    size=pf["num_particles"],
+)
+prior_state = ParticleState(
+    state_vector=StateVectors(particle_samples.T),
+    weight=np.array([Probability(1.0 / pf["num_particles"])] * pf["num_particles"]),
     timestamp=cfg["sim"]["start_time"],
 )
 
 track = Track([prior_state])
 
-# %%
-# Seed the bearing-only TMA particle filter from the first bearing detection.
-
-first_timestamp, first_detections = all_detections[0]
-first_detection = next(iter(first_detections))
-theta_0 = float(first_detection.state_vector[0])
-
-tma = BearingOnlyTargetMotionAnalysis(
-    start_time=sim_params["start_time"],
-    platform=platform,
-    theta_0=theta_0,
-)
-tma.tma_pf_init()
-
 for timestamp, detections in all_detections:
-    hypotheses = data_associator.associate({track}, detections, timestamp)[track]
+    # Step 1: predict
+    prediction = predictor.predict(track.states[-1], timestamp=timestamp)
 
-    posterior_states = []
-    posterior_state_weights = []
-    for hypothesis in hypotheses:
-        if not hypothesis:
-            posterior_states.append(hypothesis.prediction)
+    if detections:
+        # Step 2: compute per-particle likelihoods directly from the
+        # prediction state vector — no updater, no hypothesis object.
+        detection_bearings = np.array(
+            [float(d.state_vector[0, 0]) for d in detections]
+        )  # (D,)
+        particle_bearings = prediction.state_vector[0, :]  # (N,)
+
+        # Bearing-wrapped difference: (D, N)
+        diff = particle_bearings[None, :] - detection_bearings[:, None]
+        diff = (diff + np.pi) % (2 * np.pi) - np.pi
+
+        # Sum Gaussian likelihoods across all detections for each particle
+        likelihoods = np.sum(np.exp(-0.5 * diff ** 2 / sigma2), axis=0)  # (N,)
+
+        # Step 3: reweight and normalise
+        raw_weights = np.array(prediction.weight) * likelihoods
+        total = raw_weights.sum()
+        if total > 0:
+            normalised = raw_weights / total
         else:
-            posterior_states.append(updater.update(hypothesis))
-        posterior_state_weights.append(hypothesis.probability)
+            # Filter has lost the target — reset to uniform
+            normalised = np.full(pf["num_particles"], 1.0 / pf["num_particles"])
 
-    means = StateVectors([state.state_vector for state in posterior_states])
-    covars = np.stack([state.covar for state in posterior_states], axis=2)
-    weights = np.asarray(posterior_state_weights)
-    post_mean, post_covar = gm_reduce_single(means, covars, weights)
-
-    track.append(
-        GaussianStateUpdate(
-            post_mean,
-            post_covar,
-            hypotheses,
-            hypotheses[0].measurement.timestamp,
+        weighted_state = ParticleState(
+            state_vector=prediction.state_vector,
+            weight=np.array([Probability(w) for w in normalised]),
+            timestamp=timestamp,
         )
-    )
 
-    tma.tma_pf_step(detections, timestamp)
+        # Step 4: resample only when ESS drops below threshold
+        posterior = resampler.resample(weighted_state)
+
+    else:
+        # No detections this scan — carry prediction forward unmodified
+        posterior = prediction
+
+    track.append(posterior)
 
 # %%
-# Align the TMA track and ground truth by timestamp, then compute the
-# position RMSE over x and y.
+# Stone Soup Baseline Detections
+# ------------------------------
 
-gt_xy_by_timestamp = {
-    state.timestamp: (float(state.state_vector[0]), float(state.state_vector[2]))
-    for state in target_ground_truths[0]
-}
-
-tma_squared_errors = []
-for state in tma.track.states:
-    gt = gt_xy_by_timestamp.get(state.timestamp)
-    if gt is None:
-        continue
-
-    # Extract x, y from the particle state mean [x, xdot, y, ydot].
-    est_x = float(state.mean[0])
-    est_y = float(state.mean[2])
-
-    gt_x, gt_y = gt
-    error_sq = (est_x - gt_x) ** 2 + (est_y - gt_y) ** 2
-    tma_squared_errors.append(error_sq)
-
-rmse_m = float(np.sqrt(np.mean(tma_squared_errors)))
-
-print(f"TMA Position RMSE: {rmse_m:.1f} m")
-
+# %%
 deg_std = 0.5
 
 detection_measurement_model = LinearGaussian(
@@ -526,12 +523,15 @@ for i, timestamp in enumerate(timesteps):
 
     stone_soup_detections.append((timestamp, detections_at_time))
 
+    # %%
+# Tracking MSE
+# ------------
 
-    
 # %%
 # Align track and ground truth by timestamp, then compute MSE over the
 # bearing dimension. The prior state (index 0) has no corresponding update
 # so we skip it and start from index 1.
+print(f"N particles: {pf_params['num_particles']}")
 
 gt_by_timestamp = {
     state.timestamp: float(state.state_vector[0])
@@ -640,7 +640,9 @@ for _, detections in all_detections:
         det_x.append(np.rad2deg(det.state_vector[0]))
         det_y.append(det.timestamp)
 
-track_x = [np.rad2deg(state.state_vector[0]) for state in track]
+# Extract the weighted-mean bearing estimate from each ParticleState.
+# ParticleState.mean returns the weighted mean as an (ndim, 1) array.
+track_x = [np.rad2deg(float(state.mean[0, 0])) for state in track]
 track_y = [state.timestamp for state in track]
 
 gt_x = [np.rad2deg(state.state_vector[0]) for state in relative_bearing_ground_truth]
@@ -715,7 +717,7 @@ fig.add_trace(
         x=track_x,
         y=track_y,
         mode="lines",
-        name="Track",
+        name="Track (PF)",
         line=dict(color="#1f77b4", width=4),
         hovertemplate="Bearing: %{x:.1f}°<br>Time: %{y|%H:%M:%S}<extra></extra>",
     ),
@@ -908,9 +910,9 @@ plugin_vs_ss_fig = fig
 
 # %%
 figures = {
-    "st_world_picture.pdf": world_fig,
-    "st_bf_tracker.pdf": tracker_fig,
-    "st_plugin_vs_ss.pdf": plugin_vs_ss_fig,
+    "st_world_picture_PF.pdf": world_fig,
+    "st_bf_tracker_PF.pdf": tracker_fig,
+    "st_plugin_vs_ss_PF.pdf": plugin_vs_ss_fig,
 }
 output_dir = "figs"
 scale = 1.0
@@ -947,6 +949,7 @@ print(
 print(f"Steering Directions: {len(cfg['beamforming']['steering_azimuths_rad'])}")
 array_length_m = cfg["array"]["num_sensors"] * cfg["array"]["sensor_spacing"]
 print(f"Array length: {array_length_m} m")
+print(f"Particle Filter: {cfg['particle_filter']['num_particles']} particles")
 
 print()
 print("Platform Initial State:")

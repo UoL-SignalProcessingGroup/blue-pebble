@@ -43,8 +43,9 @@ from stonesoup.types.groundtruth import GroundTruthPath, GroundTruthState
 import bluepebble
 from bluepebble.models.environment import Constant
 from bluepebble.models.propagation import CylindricalAcousticPropagationModel
-from bluepebble.platform import TowedArrayPlatform
+from bluepebble.platform import HostPlatform
 from bluepebble.plotter import plot_spectrogram, plot_world
+from bluepebble.sensors import TowedArraySensor
 from bluepebble.signal.anthropogenic import (
     RecordedAnthropogenicSignal,
     SyntheticAnthropogenicSignal,
@@ -97,12 +98,15 @@ sensor_to_analyse = num_sensors // 2
 
 initial_state = GroundTruthState(platform_start_vector, timestamp=sim_start_time)
 
-platform = TowedArrayPlatform(
+host = HostPlatform(
     states=[initial_state],
     position_mapping=platform_position_mapping,
     velocity_mapping=platform_velocity_mapping,
     transition_models=[platform_transition_model],
     transition_times=[timedelta(seconds=total_duration_s)],
+)
+platform = TowedArraySensor(
+    host=host,
     num_sensors=num_sensors,
     cable_length_m=tow_cable_length_m,
     sensor_spacing_m=sensor_spacing_m,

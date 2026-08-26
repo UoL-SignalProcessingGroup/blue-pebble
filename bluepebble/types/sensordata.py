@@ -12,6 +12,28 @@ ComplexArray: TypeAlias = NDArray[np.complexfloating[Any, Any]]
 BeamformedData: TypeAlias = NDArray[np.floating[Any]] | NDArray[np.complexfloating[Any, Any]]
 
 
+class ActiveSonarSensorData(SensorData):
+    """Sensor data produced by one active sonar ping.
+
+    Attributes
+    ----------
+    received_waveform : ComplexArray
+        Complex analytic received waveform of shape ``(n_receive_samples,)``.
+        Contains the sum of all eigenray-weighted, delayed copies of the
+        transmit pulse returned from all targets.
+    transmit_pulse : ComplexArray
+        The transmitted pulse of shape ``(n_pulse_samples,)``, retained for
+        matched filtering downstream.
+    timestamp : datetime
+        Time at which the ping was transmitted.
+
+    """
+
+    received_waveform: ComplexArray = Property(doc="Complex received echo waveform")
+    transmit_pulse: ComplexArray = Property(doc="Transmitted pulse waveform")
+    timestamp: datetime = Property(doc="Ping transmission timestamp")
+
+
 class PassiveSonarSensorData(SensorData):
     """Custom sensor data for passive sonar arrays.
 

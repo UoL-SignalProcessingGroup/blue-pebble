@@ -54,7 +54,8 @@ import bluepebble
 from bluepebble.detector import CACFARDetector, PassiveSonarDetector, PeakDetector
 from bluepebble.models.environment import FlatBathymetry, Linear
 from bluepebble.models.propagation import rtrsAcousticPropagationModel
-from bluepebble.platform import TowedArrayPlatform
+from bluepebble.platform import HostPlatform
+from bluepebble.sensors import TowedArraySensor
 from bluepebble.signal.anthropogenic import SyntheticAnthropogenicSignal
 from bluepebble.signal.random import ColouredNoiseSignal
 from bluepebble.sigproc import (
@@ -256,12 +257,15 @@ transition_times = [leg1_duration_s, turn1_duration_s, leg2_duration_s]
 plat_init_sv = StateVector([-7500, 1.92039757, -2000, 0.269915147, -5.0, 0.0])
 platform_initial_state = State(plat_init_sv, timestamp=cfg["sim"]["start_time"])
 
-platform = TowedArrayPlatform(
+host = HostPlatform(
     states=platform_initial_state,
     position_mapping=cfg["ship"]["position_mapping"],
     velocity_mapping=cfg["ship"]["velocity_mapping"],
     transition_models=transition_models,
     transition_times=transition_times,
+)
+platform = TowedArraySensor(
+    host=host,
     num_sensors=cfg["array"]["num_sensors"],
     cable_length_m=cfg["array"]["tow_cable_length"],
     sensor_spacing_m=cfg["array"]["sensor_spacing"],

@@ -334,21 +334,6 @@ class SyntheticAnthropogenicSignal(AnthropogenicSignal):
         set by ``bluepebble.set_seed()`` if called, otherwise non-deterministic. Provide an
         integer for a reproducible independent stream.
 
-    Examples
-    --------
-    Merchant vessel with propeller tonals and machinery noise:
-
-    >>> signal_model = SyntheticAnthropogenicSignal(
-    ...     duration_s=60.0,
-    ...     sampling_rate_hz=500.0,
-    ...     frame_len=500,
-    ...     hop_factor=4,
-    ...     tonal_bandwidth_hz=3.0,  # Broader tonals
-    ...     noise_amplitude_upa=10**(50/20),  # 50 dB re 1 µPa background
-    ...     noise_spectral_exponent=-1.0,  # Pink noise
-    ...     noise_freq_range_hz=(30.0, 150.0)
-    ... )
-
     """
 
     tonal_bandwidth_hz: float = Property(default=2.0, doc="Bandwidth of each tonal component (Hz)")

@@ -1,4 +1,4 @@
-"""Defines a towed array platform."""
+"""Defines a towed array sensor: a linear array trailing behind a host on a tow cable."""
 
 from collections.abc import Sequence
 from dataclasses import dataclass
@@ -9,10 +9,11 @@ import numpy as np
 from numpy.typing import NDArray
 from stonesoup.base import Base, Property
 from stonesoup.movable.movable import MovingMovable
-from stonesoup.platform.base import MultiTransitionMovingPlatform
-from stonesoup.types.array import StateVector, StateVectors
+from stonesoup.types.array import StateVector
 from stonesoup.types.groundtruth import GroundTruthState
 from stonesoup.types.state import State
+
+from .base import ArrayState, Sensor
 
 FloatArray: TypeAlias = NDArray[np.float64]
 
@@ -145,12 +146,13 @@ class _TowedArrayFollowerModel(_FollowerModel):
 
 @dataclass
 class HostState:
-    """A container for the host vehicle's state.
+    """A snapshot of the host vehicle's state, captured alongside an array state.
 
     Parameters
     ----------
     state : GroundTruthState
-        The ground truth state of the host vehicle.
+        The ground truth state of the host vehicle, taken directly from the host's own
+        recorded history (not a copy).
     heading_rad : float
         The heading of the host vehicle in radians.
 
@@ -161,28 +163,8 @@ class HostState:
 
 
 @dataclass
-class ArrayState:
-    """A container for the towed array's state and properties.
-
-    Parameters
-    ----------
-    num_sensors : int
-        The total number of sensors in the array.
-    state_vector : StateVectors
-        The combined state vector of all sensors.
-    ref_state_vector : StateVector
-        The state vector of the reference sensor.
-
-    """
-
-    num_sensors: int
-    state_vector: StateVectors
-    ref_state_vector: StateVector
-
-
-@dataclass
 class PlatformState:
-    """A data class to hold the state of the entire platform at one timestamp.
+    """A data class to hold the state of the host + towed array at one timestamp.
 
     Parameters
     ----------
@@ -212,14 +194,20 @@ class PlatformState:
         return StateVector(self.host.state.state_vector[[0, 2, 4]])
 
 
-class TowedArrayPlatform(MultiTransitionMovingPlatform):
-    """A Stone Soup compliant platform that can tow an array of sensors.
+class TowedArraySensor(Sensor):
+    """A linear array of sensors towed behind a host on a cable.
 
-    This platform models a host vehicle towing a linear array of sensors. The sensors follow the
-    host (or the sensor ahead of them) based on a defined cable length and sensor spacing.
+    Each element follows the one ahead of it (or the host, for the first element) based on a
+    defined cable length and sensor spacing, maintaining a fixed 3D distance but otherwise
+    free to lag -- which is what produces the array's characteristic "bend" through a turn.
+    That per-element lag means (unlike :class:`~bluepebble.sensors.bow_array.BowArraySensor`)
+    the array's shape depends on the host's trajectory up to the current time, not just its
+    instantaneous state, so this sensor keeps its own per-timestep history.
 
     Parameters
     ----------
+    host : HostPlatform
+        The platform this array is towed behind.
     num_sensors : int
         Number of sensors in the array.
     cable_length_m : float
@@ -228,18 +216,15 @@ class TowedArrayPlatform(MultiTransitionMovingPlatform):
         Spacing between subsequent sensors in meters.
     array_depth_m : float
         Depth at which the array is towed in meters.
-    velocity_mapping : Sequence[int], optional
-        Indices for velocity in the state vector. If not set, defaults to ``position_mapping``
-        indices + 1.
     reference_sensor_idx : int, optional
         Index of the reference sensor. Defaults to 0.
 
     Attributes
     ----------
     towed_sensors : list[MovingMovable]
-        A list of the simulated sensor objects trailing the platform.
+        A list of the simulated sensor objects trailing the host.
     platform_history : list[PlatformState]
-        A history of the platform's composite state over time.
+        A history of the host + array's composite state over time.
 
     """
 
@@ -247,15 +232,10 @@ class TowedArrayPlatform(MultiTransitionMovingPlatform):
     cable_length_m: float = Property(doc="Length of the main tow cable in meters")
     sensor_spacing_m: float = Property(doc="Spacing between sensors in meters")
     array_depth_m: float = Property(doc="Depth at which the array is towed in meters")
-    velocity_mapping: Sequence[int] | None = Property(
-        default=None,
-        doc="Indices for velocity in the state vector. If not set, defaults to "
-        "position_mapping indices + 1",
-    )
     reference_sensor_idx: int = Property(default=0, doc="Index of the reference sensor")
 
     def __init__(self, *args: object, **kwargs: object) -> None:
-        """Initialise the TowedArrayPlatform.
+        """Initialise the TowedArraySensor.
 
         Parameters
         ----------
@@ -267,25 +247,14 @@ class TowedArrayPlatform(MultiTransitionMovingPlatform):
         """
         super().__init__(*args, **kwargs)
 
-        if self.velocity_mapping is None:
-            self._property_velocity_mapping = [p + 1 for p in self.position_mapping]
-
-        super().__setattr__("platform_history", [])
+        super(Base, self).__setattr__("platform_history", [])
 
         self._initialise_sensor_array()
 
-        if self.states:
-            self._capture_platform_state(self.states[0].timestamp)
+        if self.host.states:
+            self._capture_platform_state(self.host.states[0].timestamp)
 
-    def _resolved_velocity_mapping(self) -> Sequence[int]:
-        """Return a guaranteed velocity mapping sequence.
-
-        Falls back to ``position_mapping + 1`` when ``velocity_mapping`` is unset.
-        """
-        velocity_mapping = self.velocity_mapping
-        if velocity_mapping is None:
-            velocity_mapping = [p + 1 for p in self.position_mapping]
-        return velocity_mapping
+        self.host.attach(self)
 
     def _initialise_sensor_array(self) -> None:
         """Initialise the towed sensor array's geometry and follower models.
@@ -296,7 +265,7 @@ class TowedArrayPlatform(MultiTransitionMovingPlatform):
         Raises
         ------
         ValueError
-            If the platform does not have a valid initial state, or if the
+            If the host does not have a valid initial state, or if the
             cable/sensor spacing is physically impossible given the depth
             difference.
         AttributeError
@@ -304,13 +273,13 @@ class TowedArrayPlatform(MultiTransitionMovingPlatform):
 
         """
         try:
-            velocity_mapping = self._resolved_velocity_mapping()
-            host_state = self.states[0]
-            host_pos_3d = host_state.state_vector[self.position_mapping]
+            velocity_mapping = self.host.resolved_velocity_mapping()
+            host_state = self.host.states[0]
+            host_pos_3d = host_state.state_vector[self.host.position_mapping]
             host_vel_xy = host_state.state_vector[velocity_mapping[:2]]
         except (IndexError, AttributeError, KeyError) as e:
             raise ValueError(
-                f"Platform must have an initial state with accessible "
+                f"Host must have an initial state with accessible "
                 f"state_vector and position/velocity mappings: {e}"
             ) from e
 
@@ -321,7 +290,7 @@ class TowedArrayPlatform(MultiTransitionMovingPlatform):
             backwards_heading_xy = StateVector([[-1.0], [0.0]])
 
         towed_sensors = []
-        leader_node = self.movement_controller
+        leader_node = self.host.movement_controller
 
         def get_position_from_object(obj: object) -> StateVector:
             """Extract position from a generic object."""
@@ -345,7 +314,7 @@ class TowedArrayPlatform(MultiTransitionMovingPlatform):
                 leader=leader_node, offset=offset, array_depth_m=self.array_depth_m
             )
 
-            if leader_node is self.movement_controller:
+            if leader_node is self.host.movement_controller:
                 leader_pos_3d = host_pos_3d
             else:
                 leader_pos_3d = get_position_from_object(leader_node)
@@ -388,7 +357,7 @@ class TowedArrayPlatform(MultiTransitionMovingPlatform):
         self.towed_sensors = towed_sensors
 
     def _capture_platform_state(self, timestamp: datetime) -> None:
-        """Capture and store the state of the entire platform at a timestamp.
+        """Capture and store the state of the host + array at a timestamp.
 
         Parameters
         ----------
@@ -403,7 +372,7 @@ class TowedArrayPlatform(MultiTransitionMovingPlatform):
             return
 
         # Calculate heading from velocity
-        velocity_mapping = self._resolved_velocity_mapping()
+        velocity_mapping = self.host.resolved_velocity_mapping()
         host_vel_xy = host_state.state_vector[velocity_mapping[:2]]
         heading_rad = float(np.arctan2(host_vel_xy[1, 0], host_vel_xy[0, 0]))
 
@@ -423,26 +392,27 @@ class TowedArrayPlatform(MultiTransitionMovingPlatform):
             )
         )
 
-    def move(self, timestamp: datetime, **kwargs) -> None:
-        """Move the platform and all sensor followers.
+    def _on_host_moved(self, timestamp: datetime, **kwargs: object) -> None:
+        """Advance every towed follower and record the new combined state.
+
+        Called by :meth:`~bluepebble.platform.base.HostPlatform.move` once the host itself
+        has already moved to ``timestamp``.
 
         Parameters
         ----------
         timestamp : datetime
-            The new timestamp to move the platform to.
+            The timestamp the host was just moved to.
         **kwargs : dict
-            Additional arguments passed to the transition models.
+            Additional arguments passed to the followers' transition models.
 
         """
-        self.movement_controller.move(timestamp, **kwargs)
-
         for sensor in self.towed_sensors:
             sensor.move(timestamp, **kwargs)
 
         self._capture_platform_state(timestamp)
 
     def get_platform_state_at(self, timestamp: datetime) -> PlatformState | None:
-        """Get the platform state at a specific timestamp.
+        """Get the combined host + array state at a specific timestamp.
 
         Parameters
         ----------
@@ -474,10 +444,7 @@ class TowedArrayPlatform(MultiTransitionMovingPlatform):
             The host state if found, otherwise None.
 
         """
-        for state in self.movement_controller:
-            if state.timestamp == timestamp:
-                return state
-        return None
+        return self.host.get_state_at(timestamp)
 
     def get_sensor_states_at(self, timestamp: datetime) -> list[GroundTruthState] | None:
         """Get the states of all towed sensors at a specific timestamp.
@@ -518,10 +485,11 @@ class TowedArrayPlatform(MultiTransitionMovingPlatform):
             Returns ``None`` if no states exist.
 
         """
-        if not self.states:
+        if not self.host.states:
             return None
+        position_mapping = self.host.position_mapping
         return np.array(
-            [state.state_vector[self.position_mapping].flatten() for state in self.states]
+            [state.state_vector[position_mapping].flatten() for state in self.host.states]
         )
 
     @property
@@ -542,20 +510,20 @@ class TowedArrayPlatform(MultiTransitionMovingPlatform):
                 sensor_path = np.array([state.state_vector.flatten() for state in sensor.states])
                 paths.append(sensor_path)
             else:
-                paths.append(np.array([]).reshape(0, len(self.position_mapping)))
+                paths.append(np.array([]).reshape(0, len(self.host.position_mapping)))
         return paths
 
     def __repr__(self) -> str:
-        """Return string representation of the platform.
+        """Return string representation of the sensor.
 
         Returns
         -------
         str
-            A string describing the configured platform parameters.
+            A string describing the configured array parameters.
 
         """
         return (
-            f"TowedArrayPlatform(num_sensors={self.num_sensors}, "
+            f"TowedArraySensor(num_sensors={self.num_sensors}, "
             f"cable_length_m={self.cable_length_m}, "
             f"sensor_spacing_m={self.sensor_spacing_m}, "
             f"array_depth_m={self.array_depth_m})"

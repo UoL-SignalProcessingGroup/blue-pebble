@@ -1,7 +1,7 @@
 """Beamforming algorithms for processing signals from an array of sensors."""
 
 from abc import ABC, abstractmethod
-from typing import TYPE_CHECKING, Literal, TypeAlias
+from typing import TYPE_CHECKING, Literal, Protocol, TypeAlias
 
 import numpy as np
 from numba import njit, prange, types
@@ -12,12 +12,25 @@ from stonesoup.base import Base, Property
 from ..models.environment import SoundSpeedProfile
 
 if TYPE_CHECKING:
-    from stonesoup.platform.base import Platform
+    from ..sensors.base import ArrayState
 
 ComplexArray: TypeAlias = NDArray[np.complex128]
 FloatArray: TypeAlias = NDArray[np.float64]
 BeamformerOutput: TypeAlias = ComplexArray | FloatArray
 DomainType: TypeAlias = Literal["time", "frequency", "broadband_power"]
+
+
+class _ArrayCarrier(Protocol):
+    """Anything exposing `.array` (a Sensor, a PlatformState snapshot, or a Platform).
+
+    Duck-typed on purpose: `SteeringCalculator.calculate` is called with a bare
+    `Sensor` (e.g. `BowArraySensor`) in some places and a `PlatformState`-style
+    snapshot (e.g. `TowedArraySensor.get_platform_state_at()`) in others -- neither is
+    a real stonesoup `Platform`, so this protocol names the actual shared contract.
+    """
+
+    @property
+    def array(self) -> "ArrayState": ...
 
 
 class Beamformer(Base, ABC):
@@ -707,7 +720,7 @@ class MinimumVarianceDistortionlessResponseBeamformer(Beamformer):
 
 
 class SteeringCalculator(Base):
-    """Compute steering delays for a horizontal sensor array."""
+    """Compute steering delays for a sensor array, over a grid of azimuth/elevation directions."""
 
     ssp: SoundSpeedProfile = Property(
         doc="Sound speed profile for calculating delays",
@@ -715,24 +728,36 @@ class SteeringCalculator(Base):
     steering_azimuths_rad: FloatArray = Property(
         doc="Azimuth angles for steering, in radians",
     )
+    steering_elevations_rad: FloatArray = Property(
+        default=np.array([0.0]),
+        doc="Elevation angles for steering, in radians. Defaults to a single 0.0 entry, "
+        "i.e. horizontal-only steering, for arrays with no vertical aperture.",
+    )
 
-    def calculate(self, platform: "Platform") -> FloatArray:
+    def calculate(self, platform: "_ArrayCarrier") -> FloatArray:
         """Calculate per-direction per-sensor steering delays.
 
-        This method assumes the platform has an `array` attribute which is an object with
-        `state_vector` and `ref_state_vector` attributes, such as the one configured by
-        `TowedArrayPlatform`.
+        This method assumes ``platform`` has an `array` attribute which is an object with
+        `state_vector` and `ref_state_vector` attributes -- e.g. a `Sensor` such as
+        `BowArraySensor`/`TowedArraySensor` directly, or a snapshot object such as
+        `TowedArraySensor.get_platform_state_at()`'s `PlatformState` return value.
+
+        Directions are the full grid of `steering_azimuths_rad` x `steering_elevations_rad`
+        (every azimuth paired with every elevation), flattened in row-major order (azimuth
+        varying fastest). Callers that need to map delay-matrix rows back to (azimuth,
+        elevation) pairs should rebuild the same grid via
+        ``np.meshgrid(self.steering_azimuths_rad, self.steering_elevations_rad)``.
 
         Parameters
         ----------
-        platform : Platform
-            The platform containing the sensor array.
+        platform : _ArrayCarrier
+            The sensor (or sensor-state snapshot) containing the array.
 
         Returns
         -------
         FloatArray
             Steering-delay matrix in seconds with shape
-            ``(num_directions, num_sensors)``.
+            ``(num_azimuths * num_elevations, num_sensors)``.
 
         """
         # Get sensor positions - these are 3D positions [x, y, z] for each sensor
@@ -742,13 +767,19 @@ class SteeringCalculator(Base):
         reference_position = platform.array.ref_state_vector  # Shape: (3, 1)
         sensor_positions_relative = sensor_positions - reference_position
 
-        # Calculate the 2D direction vectors for each steering direction
-        # Elevation = 0 for horizontal array, so only x-y components
+        # Build the full azimuth x elevation grid, flattened (azimuth varies fastest)
+        azimuth_grid, elevation_grid = np.meshgrid(
+            self.steering_azimuths_rad, self.steering_elevations_rad
+        )
+        azimuths = azimuth_grid.ravel()
+        elevations = elevation_grid.ravel()
+
+        # Calculate the 3D direction vector for each steering direction
         direction_vectors = np.array(
             [
-                np.cos(self.steering_azimuths_rad),  # x component
-                np.sin(self.steering_azimuths_rad),  # y component
-                np.zeros_like(self.steering_azimuths_rad),  # z component (always 0)
+                np.cos(elevations) * np.cos(azimuths),  # x component
+                np.cos(elevations) * np.sin(azimuths),  # y component
+                np.sin(elevations),  # z component
             ]
         )  # Shape: (3, num_directions)
 
@@ -758,8 +789,8 @@ class SteeringCalculator(Base):
             direction_vectors.T, sensor_positions_relative
         )  # Shape: (num_directions, num_sensors)
 
-        # Get average sound speed at array depth
-        array_depth = sensor_positions[2, 0]  # z-coordinate of first sensor
+        # Get average sound speed at the array's reference depth
+        array_depth = reference_position[2, 0]
         sound_speed = self.ssp.calculate(array_depth)
 
         # Convert distances to time delays

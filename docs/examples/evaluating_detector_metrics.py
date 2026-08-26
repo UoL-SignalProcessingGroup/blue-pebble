@@ -36,8 +36,9 @@ from bluepebble.detector import CACFARDetector, OSCFARDetector, PassiveSonarDete
 from bluepebble.detector.metrics import SweepSpec, sweep_detection_parameter
 from bluepebble.models.environment import FlatBathymetry, Linear
 from bluepebble.models.propagation import rtrsAcousticPropagationModel
-from bluepebble.platform import TowedArrayPlatform
+from bluepebble.platform import HostPlatform
 from bluepebble.plotter import plot_btr, plot_roc_pr, plot_world
+from bluepebble.sensors import TowedArraySensor
 from bluepebble.signal.anthropogenic import SyntheticAnthropogenicSignal
 from bluepebble.signal.random import ColouredNoiseSignal
 from bluepebble.sigproc import DelayAndSumBeamformer, SteeringCalculator
@@ -105,12 +106,15 @@ sensor_spacing_m = 0.5
 array_depth_m = -50.0
 
 platform_initial_state = GroundTruthState(platform_start_vector, timestamp=start_time)
-platform = TowedArrayPlatform(
+host = HostPlatform(
     states=platform_initial_state,
     position_mapping=platform_position_mapping,
     velocity_mapping=platform_velocity_mapping,
     transition_models=transition_models,
     transition_times=transition_times,
+)
+platform = TowedArraySensor(
+    host=host,
     num_sensors=num_sensors,
     cable_length_m=tow_cable_length_m,
     sensor_spacing_m=sensor_spacing_m,

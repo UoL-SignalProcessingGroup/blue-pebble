@@ -37,8 +37,9 @@ import bluepebble
 from bluepebble.detector import CACFARDetector, PassiveSonarDetector, PeakDetector
 from bluepebble.models.environment import FlatBathymetry, Linear
 from bluepebble.models.propagation import rtrsAcousticPropagationModel
-from bluepebble.platform import TowedArrayPlatform
+from bluepebble.platform import HostPlatform
 from bluepebble.plotter import apply_shared_colourscale, deduplicate_legend, plot_btr, plot_world
+from bluepebble.sensors import TowedArraySensor
 from bluepebble.signal.anthropogenic import SyntheticAnthropogenicSignal
 from bluepebble.signal.random import ColouredNoiseSignal
 from bluepebble.sigproc import MinimumVarianceDistortionlessResponseBeamformer, SteeringCalculator
@@ -150,12 +151,15 @@ manoeuvre_models, manoeuvre_durations, manoeuvre_descriptions = _generate_random
 )
 
 initial_state = GroundTruthState(platform_start_vector, timestamp=start_time)
-platform = TowedArrayPlatform(
+host = HostPlatform(
     states=[initial_state],
     position_mapping=platform_position_mapping,
     velocity_mapping=platform_velocity_mapping,
     transition_models=manoeuvre_models,
     transition_times=manoeuvre_durations,
+)
+platform = TowedArraySensor(
+    host=host,
     num_sensors=num_sensors,
     cable_length_m=tow_cable_length_m,
     sensor_spacing_m=sensor_spacing_m,

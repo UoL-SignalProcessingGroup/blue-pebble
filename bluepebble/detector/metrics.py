@@ -421,44 +421,6 @@ def sweep_detection_parameter(
     list[SweepResult]
         One result per :class:`SweepSpec`, in the same order.
 
-    Examples
-    --------
-    >>> import numpy as np
-    >>> from bluepebble.detector.algorithms import CACFARDetector, OSCFARDetector, PeakDetector
-    >>> from bluepebble.detector.metrics import SweepSpec, sweep_detection_parameter
-    >>> from bluepebble.plotter import plot_roc_pr
-    >>>
-    >>> specs = [
-    ...     SweepSpec(
-    ...         detection_chain=[
-    ...             CACFARDetector(num_guard_cells=2, num_training_cells=10, threshold_factor=1.1),
-    ...             PeakDetector(distance=3),
-    ...         ],
-    ...         algorithm_index=0,
-    ...         param_name="threshold_factor",
-    ...         param_values=np.linspace(0.7, 2.5, 80),
-    ...         label="CA-CFAR",
-    ...     ),
-    ...     SweepSpec(
-    ...         detection_chain=[
-    ...             OSCFARDetector(num_guard_cells=2, num_training_cells=10, threshold_factor=1.1),
-    ...             PeakDetector(distance=3),
-    ...         ],
-    ...         algorithm_index=0,
-    ...         param_name="threshold_factor",
-    ...         param_values=np.linspace(0.7, 2.5, 80),
-    ...         label="OS-CFAR",
-    ...     ),
-    ... ]
-    >>> results = sweep_detection_parameter(
-    ...     snr_map=detector.snr_history,
-    ...     sweep_specs=specs,
-    ...     ground_truth_paths=relative_bearing_ground_truths,
-    ...     steering_azimuths_rad=BF_PARAMS["steering_azimuths_rad"],
-    ...     association_threshold_rad=np.deg2rad(3.0),
-    ... )
-    >>> plot_roc_pr(results).show()
-
     """
     snr_map_array = np.asarray(snr_map, dtype=np.float64)
     steering_azimuths = np.asarray(steering_azimuths_rad, dtype=np.float64)

@@ -21,13 +21,6 @@ def set_seed(seed: int) -> None:
     seed : int
         Integer seed passed to :class:`numpy.random.SeedSequence`.
 
-    Examples
-    --------
-    >>> import bluepebble
-    >>> bluepebble.set_seed(42)
-    >>> rng = bluepebble.get_rng()
-    >>> rng.uniform(0, 1)  # deterministic draw
-
     """
     global _seed_sequence, _global_rng
     _seed_sequence = np.random.SeedSequence(seed)

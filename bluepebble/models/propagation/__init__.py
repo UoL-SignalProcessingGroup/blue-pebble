@@ -2,7 +2,9 @@
 
 from .acoustic import (
     AcousticPropagationModel,
+    BellhopArrivalsModel,
     CylindricalAcousticPropagationModel,
+    Eigenray,
     SpectrumPropagationModel,
     SphericalAcousticPropagationModel,
     rtrsAcousticPropagationModel,
@@ -10,7 +12,9 @@ from .acoustic import (
 
 __all__ = [
     "AcousticPropagationModel",
+    "BellhopArrivalsModel",
     "CylindricalAcousticPropagationModel",
+    "Eigenray",
     "SpectrumPropagationModel",
     "rtrsAcousticPropagationModel",
     "SphericalAcousticPropagationModel",

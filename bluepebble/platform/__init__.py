@@ -1,5 +1,6 @@
 """Platform models public API."""
 
-from .towedarray import TowedArrayPlatform
+from .base import HostPlatform
+from .sonobuoy import OmniSonobuoyPlatform
 
-__all__ = ["TowedArrayPlatform"]
+__all__ = ["HostPlatform", "OmniSonobuoyPlatform"]

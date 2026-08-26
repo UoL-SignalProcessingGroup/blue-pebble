@@ -11,7 +11,7 @@ from stonesoup.base import Property
 from stonesoup.simulator.base import SensorSimulator
 
 from ..models.propagation import AcousticPropagationModel
-from ..platform import TowedArrayPlatform
+from ..sensors import TowedArraySensor
 from ..signal.random import RandomSignal
 from ..sigproc.beamformer import Beamformer, SteeringCalculator
 from ..types.sensordata import PassiveSonarSensorData
@@ -32,7 +32,7 @@ class PassiveSonarArraySimulatorBase(SensorSimulator):
     discrete-time and continuous broadband simulator implementations.
     """
 
-    platform: TowedArrayPlatform = Property(doc="Towed array platform")
+    platform: TowedArraySensor = Property(doc="Towed array sensor")
     propagation_model: AcousticPropagationModel = Property(
         doc="Acoustic propagation model",
     )
@@ -84,7 +84,7 @@ class PassiveSonarArraySimulatorBase(SensorSimulator):
 
         """
         return sorted(
-            list(set(state.timestamp for state in self.platform.movement_controller.states))
+            list(set(state.timestamp for state in self.platform.host.states))
         )
 
     @staticmethod

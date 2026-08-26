@@ -1,7 +1,12 @@
 """Defines acoustic propagation models for simulating sound propagation."""
 
+import subprocess
+import tempfile
 from abc import ABC, abstractmethod
 from collections.abc import Mapping
+from dataclasses import dataclass
+from pathlib import Path
+from shutil import which
 from typing import TYPE_CHECKING, Any, Protocol, TypeAlias, cast
 
 import numpy as np
@@ -18,7 +23,7 @@ FloatArray: TypeAlias = NDArray[np.float64]
 ComplexArray: TypeAlias = NDArray[np.complexfloating[Any, Any]]
 PropagationLoss: TypeAlias = float | FloatArray
 PropagationResult: TypeAlias = tuple[PropagationLoss, float]
-SpectrumResult: TypeAlias = tuple[ComplexArray, float]
+SpectrumResult: TypeAlias = tuple[ComplexArray, float | FloatArray]
 
 
 def _as_scalar_float(value: object, name: str) -> float:
@@ -210,7 +215,10 @@ class SpectrumPropagationModel(ABC):
         -------
         SpectrumResult
             Tuple ``(H_sensors, propagation_time_s)`` where ``H_sensors`` has
-            shape ``(num_sensors, num_frequencies)``.
+            shape ``(num_sensors, num_frequencies)``. ``propagation_time_s`` is
+            a scalar for analytic models, or a per-sensor array (shape
+            ``(num_sensors,)``) for ray-traced models that can resolve a
+            distinct earliest-arrival time per sensor.
 
         """
         ...
@@ -830,7 +838,9 @@ class rtrsAcousticPropagationModel(AcousticPropagationModel, SpectrumPropagation
         SpectrumResult
             - ``transfer_functions`` : Complex array of shape (num_sensors, num_frequencies)
                 containing H(f).
-            - ``propagation_time_s`` : Mean travel time in seconds.
+            - ``propagation_time_s`` : Real per-sensor earliest-arrival travel time in seconds,
+                shape (num_sensors,), as computed by rtrs's ray tracing (not a straight-line
+                distance/speed estimate).
 
         """
         run_simulation = _get_rtrs_run_simulation()
@@ -956,8 +966,239 @@ class rtrsAcousticPropagationModel(AcousticPropagationModel, SpectrumPropagation
         # simulation convention (e^{-i\omega t})
         transfer_functions = np.asarray(np.conj(transfer_functions), dtype=np.complex128)
 
-        # Calculate mean travel time
-        speed = _as_scalar_float(self.ssp.calculate(array_ref_pos[2]), "sound speed")
-        propagation_time_s = float(distance / speed)
+        # Real per-receiver earliest-arrival delay from rtrs's own ray tracing (frequency-
+        # independent, shape (num_receivers,)) -- not a distance/speed straight-line estimate.
+        propagation_time_s = np.asarray(pf["delay_s"], dtype=np.float64)
 
         return transfer_functions, propagation_time_s
+
+
+@dataclass(frozen=True)
+class Eigenray:
+    """A single eigenray returned by Bellhop in arrivals mode.
+
+    Attributes
+    ----------
+    amplitude : float
+        Linear pressure amplitude (not dB) for this ray path.
+    delay_s : float
+        One-way travel time in seconds.
+    src_angle_deg : float
+        Ray departure angle at the source in degrees (positive = downward).
+    rcv_angle_deg : float
+        Ray arrival angle at the receiver in degrees.
+    n_surface_bounces : int
+        Number of surface (top) reflections along this path.
+    n_bottom_bounces : int
+        Number of bottom reflections along this path.
+
+    """
+
+    amplitude: float
+    delay_s: float
+    src_angle_deg: float
+    rcv_angle_deg: float
+    n_surface_bounces: int
+    n_bottom_bounces: int
+
+
+class BellhopArrivalsModel(Base):
+    """Acoustic propagation model using Bellhop in arrivals (eigenray) mode.
+
+    Writes a Bellhop ``.env`` file, invokes ``bellhopcxx``, and parses the
+    resulting ``.arr`` ASCII file to return a list of :class:`Eigenray` objects
+    for a given source–receiver geometry.
+
+    This is a one-way model: call it once for each leg of the active sonar
+    round trip (sonar → target, then target → sonar).
+
+    Parameters
+    ----------
+    ssp : SoundSpeedProfile
+        Sound speed profile describing the water column.
+    bathymetry : Bathymetry
+        Bathymetry model providing the water depth. For 2D runs the depth is
+        sampled at the origin ``(0, 0)``; flat bathymetry is assumed.
+    exe_path : str
+        Name or full path of the ``bellhopcxx`` executable. Resolved lazily
+        from ``PATH`` on the first call to :meth:`compute_eigenrays`.
+    n_ssp_samples : int
+        Number of depth samples used to build the SSP table written to the
+        ``.env`` file.
+
+    """
+
+    ssp: SoundSpeedProfile = Property(doc="Sound speed profile for the water column")
+    bathymetry: Bathymetry = Property(doc="Bathymetry model (water depth)")
+    exe_path: str = Property(
+        default="bellhopcxx",
+        doc="Name or full path of the bellhopcxx executable",
+    )
+    n_ssp_samples: int = Property(
+        default=50,
+        doc="Number of depth points in the SSP table written to the Bellhop env file",
+    )
+
+
+    def compute_eigenrays(
+        self,
+        source_depth_m: float,
+        receiver_depth_m: float,
+        range_m: float,
+        frequency_hz: float,
+    ) -> list[Eigenray]:
+        """Run Bellhop for one source–receiver pair and return eigenrays.
+
+        Parameters
+        ----------
+        source_depth_m : float
+            Depth of the acoustic source in metres (positive downward).
+        receiver_depth_m : float
+            Depth of the receiver in metres (positive downward).
+        range_m : float
+            Horizontal range between source and receiver in metres.
+        frequency_hz : float
+            Centre frequency of the pulse in Hz.
+
+        Returns
+        -------
+        list[Eigenray]
+            All eigenrays found by Bellhop for this geometry. An empty list
+            means Bellhop found no valid ray paths.
+
+        Raises
+        ------
+        FileNotFoundError
+            If ``bellhopcxx`` is not found on ``PATH``.
+        RuntimeError
+            If ``bellhopcxx`` exits with a non-zero return code.
+
+        """
+        exe = self._resolve_exe()
+        with tempfile.TemporaryDirectory() as tmp:
+            stem = Path(tmp) / "bp"
+            self._write_env(stem, source_depth_m, receiver_depth_m, range_m, frequency_hz)
+            self._run_bellhopcxx(exe, stem)
+            return self._parse_arr(stem.with_suffix(".arr"))
+
+    # ------------------------------------------------------------------
+    # Private helpers
+    # ------------------------------------------------------------------
+
+    def _resolve_exe(self) -> str:
+        cached = getattr(self, "_exe_resolved", None)
+        if cached is None:
+            resolved = which(self.exe_path)
+            if resolved is None:
+                raise FileNotFoundError(
+                    f"bellhopcxx executable '{self.exe_path}' not found on PATH. "
+                    "Install bellhopcxx and ensure it is accessible."
+                )
+            object.__setattr__(self, "_exe_resolved", resolved)
+            cached = resolved
+        return cached
+
+    def _water_depth_m(self) -> float:
+        """Return positive water depth from the bathymetry model."""
+        return abs(float(self.bathymetry.get_depth(0.0, 0.0)))
+
+    def _write_env(
+        self,
+        stem: Path,
+        source_depth_m: float,
+        receiver_depth_m: float,
+        range_m: float,
+        frequency_hz: float,
+    ) -> None:
+        """Write a Bellhop arrivals-mode ``.env`` file."""
+        water_depth = self._water_depth_m()
+        depths = np.linspace(0.0, water_depth, self.n_ssp_samples)
+        speeds = [float(self.ssp.calculate(d)) for d in depths]
+        pairs = zip(depths, speeds, strict=True)
+        ssp_lines = "\n".join(f"  {d:.2f}  {c:.4f}  /" for d, c in pairs)
+
+        range_km = range_m / 1000.0
+        depth_box = water_depth * 1.05
+        range_box = range_km * 1.05
+
+        env = "\n".join([
+            "'BellhopArrivals'",
+            f"{frequency_hz:.4f}",
+            "1",
+            "'SVW'",
+            f"0 0.0 {water_depth:.2f}",
+            ssp_lines,
+            "'A' 0.0",
+            f"{water_depth:.2f}  1700.0  0.0  1.5  0.5  /",
+            "1",
+            f"{source_depth_m:.4f} /",
+            "1",
+            f"{receiver_depth_m:.4f} /",
+            "1",
+            f"{range_km:.6f} /",
+            "'AG'",
+            "0",
+            "-89.0 89.0 /",
+            f"0.0 {depth_box:.2f} {range_box:.6f}",
+        ])
+        stem.with_suffix(".env").write_text(env)
+
+    @staticmethod
+    def _run_bellhopcxx(exe: str, stem: Path) -> None:
+        """Invoke bellhopcxx and raise on failure."""
+        try:
+            subprocess.run(
+                [exe, str(stem)],
+                capture_output=True,
+                check=True,
+                text=True,
+            )
+        except subprocess.CalledProcessError as e:
+            raise RuntimeError(
+                f"bellhopcxx failed (exit {e.returncode}).\n"
+                f"env file: {stem}.env\n"
+                f"stdout: {e.stdout}\n"
+                f"stderr: {e.stderr}"
+            ) from e
+
+    @staticmethod
+    def _parse_arr(arr_path: Path) -> list[Eigenray]:
+        """Parse a bellhopcxx ASCII arrivals file and return eigenrays.
+
+        The bellhopcxx 2D ``.arr`` format (run type ``'AG'``) is::
+
+            '2D'
+            frequency
+            NSD  sd1 [sd2 ...]
+            NRD  rd1 [rd2 ...]
+            NR   r1  [r2  ...]   (ranges in metres)
+            N_max                (pre-allocation hint — discarded)
+            (repeated NSD × NRD × NR times):
+                N_arrivals
+                amp  phase  delay  0.0  src_angle  rcv_angle  n_top  n_bot
+
+        """
+        eigenrays: list[Eigenray] = []
+        with open(arr_path) as f:
+            f.readline()  # '2D'
+            f.readline()  # frequency
+            nsd = int(f.readline().split()[0])
+            nrd = int(f.readline().split()[0])
+            nr  = int(f.readline().split()[0])
+            f.readline()  # N_max pre-allocation hint — discard
+            for _ in range(nsd * nrd * nr):
+                n_arrivals = int(f.readline())
+                for _ in range(n_arrivals):
+                    parts = f.readline().split()
+                    # format: amp phase delay 0.0 src_angle rcv_angle n_top n_bot
+                    eigenrays.append(
+                        Eigenray(
+                            amplitude=float(parts[0]),
+                            delay_s=float(parts[2]),
+                            src_angle_deg=float(parts[4]),
+                            rcv_angle_deg=float(parts[5]),
+                            n_surface_bounces=int(parts[6]),
+                            n_bottom_bounces=int(parts[7]),
+                        )
+                    )
+        return eigenrays

@@ -246,6 +246,17 @@ class OSCFARDetector(DetectionAlgorithm):
         default=1.0,
         doc="A scaling factor (alpha) to apply to the k-th rank value.",
     )
+    mode: str = Property(
+        default="wrap",
+        doc=(
+            "Boundary handling mode. ``'wrap'`` (default) pads circularly so every "
+            "cell gets a full training window — but can produce false alarms at range "
+            "boundaries where the wrapped cells are quiet. ``'valid'`` only detects "
+            "where a full training window fits without padding, eliminating boundary "
+            "artefacts at the cost of a blind zone of ``num_guard_cells + "
+            "num_training_cells`` samples at each end."
+        ),
+    )
 
     def __init__(self, *args: object, **kwargs: object):
         """Initialise the OS-CFAR detector and validate parameters."""
@@ -258,6 +269,8 @@ class OSCFARDetector(DetectionAlgorithm):
                 f"Rank ({self.rank}) must be between 1 and "
                 f"2 * num_training_cells ({self.num_training_total})"
             )
+        if self.mode not in ("wrap", "valid"):
+            raise ValueError(f"mode must be 'wrap' or 'valid', got {self.mode!r}")
 
     def detect(self, data: ArrayLike) -> DetectionArray:
         """Detect signals in the data array using the OS-CFAR algorithm.
@@ -287,35 +300,31 @@ class OSCFARDetector(DetectionAlgorithm):
         one_sided_window = self.num_guard_cells + self.num_training_cells
         window_size = 2 * one_sided_window + 1
 
-        # Pad the power array by wrapping the ends for circular processing
-        # This creates a 'wrap' mode, consistent with the CA-CFAR
-        padded_power = np.pad(power, pad_width=one_sided_window, mode="wrap")
+        if self.mode == "valid":
+            # No padding — only process cells that have a full training window.
+            # The first and last `one_sided_window` samples form a blind zone;
+            # this is much smaller than the min_range cutoff applied downstream.
+            windows = sliding_window_view(power, window_size)
+            # windows shape: (N - 2*one_sided_window, window_size)
+            leading_cells = windows[:, : self.num_training_cells]
+            lagging_cells = windows[:, -self.num_training_cells :]
+            training_cells = np.concatenate((leading_cells, lagging_cells), axis=1)
+            training_cells.sort(axis=1)
+            noise_estimate = training_cells[:, int(self.rank) - 1]
+            threshold = self.threshold_factor * noise_estimate
+            cut_power = power[one_sided_window : len(power) - one_sided_window]
+            local_indices = np.where(cut_power > threshold)[0]
+            indices = local_indices + one_sided_window
+        else:
+            # Pad the power array by wrapping the ends for circular processing.
+            padded_power = np.pad(power, pad_width=one_sided_window, mode="wrap")
+            windows = sliding_window_view(padded_power, window_size)
+            leading_cells = windows[:, : self.num_training_cells]
+            lagging_cells = windows[:, -self.num_training_cells :]
+            training_cells = np.concatenate((leading_cells, lagging_cells), axis=1)
+            training_cells.sort(axis=1)
+            noise_estimate = training_cells[:, int(self.rank) - 1]
+            threshold = self.threshold_factor * noise_estimate
+            indices = np.where(power > threshold)[0]
 
-        # Create a sliding window view over the padded data.
-        # This creates a 2D array where each row is a window.
-        # Shape will be (len(data), window_size)
-        windows = sliding_window_view(padded_power, window_size)
-
-        # Extract the leading and lagging training cells from all windows
-        # at once (vectorized).
-        leading_cells = windows[:, : self.num_training_cells]
-        lagging_cells = windows[:, -self.num_training_cells :]
-
-        # Concatenate into a single array of training cells for each CUT
-        # Shape: (len(data), 2 * num_training_cells)
-        training_cells = np.concatenate((leading_cells, lagging_cells), axis=1)
-
-        # Sort the training cells for each row
-        training_cells.sort(axis=1)
-
-        # Select the k-th rank value as the noise estimate.
-        # We use `self.rank - 1` for 0-based indexing.
-        # Cast to int to guard against float injection from parameter sweeps.
-        noise_estimate = training_cells[:, int(self.rank) - 1]
-
-        # The adaptive threshold is the noise estimate scaled by the factor.
-        threshold = self.threshold_factor * noise_estimate
-
-        # Find indices where the original signal power exceeds the threshold
-        indices = np.where(power > threshold)[0]
         return _stack_detections(indices, data_array)
