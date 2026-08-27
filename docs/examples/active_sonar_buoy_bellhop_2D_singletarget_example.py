@@ -66,7 +66,7 @@ sim_params = {
     "start_time": start_time,
     "ping_interval_s": 30.0,
     "n_pings": 5,
-    "amplitude_cutoff": 0.005,  # fraction of max eigenray amplitude below which rays are discarded
+    "amplitude_cutoff": 0.005,
 }
 
 ping_timestamps = [
@@ -77,8 +77,8 @@ ping_timestamps = [
 env_params = {
     "water_depth_m": 200.0,
     "sound_speed_ms": 1500.0,
-    'sound_speed_uncertainty_ms': 0,   # configure depending on SSP
-    'nominal_range_m': 2000            # estimated range, use with SSP uncertainty to estimate range uncertainty
+    "sound_speed_uncertainty_ms": 0,
+    "nominal_range_m": 2000,
 }
 
 buoy_params = {
@@ -96,7 +96,7 @@ signal_params = {
     "sampling_rate_hz": 10_000,
 }
 
-# Target: starts 2 km away, moves at 3 m/s — state vector: [x, vx, y, vy, z, vz]
+# Target starts 2 km away and moves at 3 m/s. State vector: [x, vx, y, vy, z, vz].
 target_params = {
     "start_vector": np.array([2000.0, 3.0, 0.0, 0.0, -150.0, 0.0]),
     "position_mapping": [0, 2, 4],
@@ -112,14 +112,14 @@ det_params = {
     "min_range_m": 100.0,
     "receive_duration_s": 4.0,
     "cfar_detector": {
-        "num_guard_cells": 25,   # = 1 range resolution cell (c/2B = 1.875 m = 25 samples at 10 kHz)
+        "num_guard_cells": 25,
         "num_training_cells": 50,
-        "rank": 75,              # 75th percentile of 100 training cells
+        "rank": 75,
         "threshold_factor": 8,
     },
-    "min_amplitude_db": -40.0,   # dB re MF peak; rejects noise sidelobes well below target echo
+    "min_amplitude_db": -40.0,
     "peak_detector": {
-        "distance": 3000,        # ~225 m at c=1500, fs=10000 — collapses multipath cluster
+        "distance": 3000,
     },
 }
 
@@ -279,8 +279,8 @@ for (ts, dets), gt_r in zip(all_detections, gt_ranges):
         print(f"  {ts.strftime('%H:%M:%S')}  no detection  (GT {gt_r:.1f} m)")
 
 # %%
-# Tracking — nearest-neighbour Kalman filter on range detections
-# --------------------------------------------------------------
+# Tracking
+# --------
 
 # %%
 B = cfg['signal']['freq_max_hz'] - cfg['signal']['freq_min_hz']
@@ -338,64 +338,48 @@ for state in track:
 # ---------------------------
 
 # %%
-# Only valid for a constant SSP where TL = 20·log10(R) (spherical spreading).
-# Skipped automatically when a non-constant SSP (e.g. Munk) is used, because
-# refraction, ducting, and convergence zones break the spherical-spreading
-# assumption and the comparison would be meaningless.
+# Only valid for a constant SSP, where TL = 20*log10(R) (spherical spreading); skipped
+# automatically for a non-constant SSP (e.g. Munk), where refraction breaks that assumption.
 
-SL = signal_params["source_level_db"]  # dB re 1 µPa @ 1 m
-TS = cfg["target"]["target_strength_db"]  # dB
-c  = env_params["sound_speed_ms"]
+SL = signal_params["source_level_db"]
+TS = cfg["target"]["target_strength_db"]
+c = env_params["sound_speed_ms"]
 fs = signal_params["sampling_rate_hz"]
 
 sonar_eq_rows = []
 fig_sonar_eq = None
 
 if isinstance(ssp, Constant):
-    # The monostatic active sonar equation predicts the received echo level (EL):
-    #
-    #   EL = SL - 2·TL + TS
-    #
-    # SL  Source Level [dB re 1 µPa @ 1 m] — set by ``source_level_db``
-    # TL  One-way Transmission Loss [dB]   — 20·log10(R) for spherical spreading
-    # TS  Target Strength [dB]             — set by ``target_strength_db``
-    #
-    # Bellhop's 2-D model applies the 3-D point-source correction internally, so
-    # the direct-path eigenray amplitude scales as 1/R (spherical), not 1/sqrt(R).
-    #
-    # EL_meas is derived from the unnormalised matched-filter peak at the expected
-    # direct-path round-trip delay, divided by the pulse energy.  This isolates the
-    # direct-path echo from multipath arrivals: the LFM bandwidth B = 400 Hz gives
-    # range resolution c/(2B) ≈ 1.9 m, resolving the direct path from the nearest
-    # surface/bottom bounce which arrives ~7.5 m later in slant range.
+    # Monostatic active sonar equation for the received echo level:
+    #   EL = SL - 2*TL + TS   (SL source level, TL one-way loss, TS target strength)
+    # Bellhop's 2-D model applies the 3-D point-source correction internally, so the
+    # direct-path eigenray amplitude scales as 1/R. EL_meas is taken from the unnormalised
+    # matched-filter output at the exact direct-path round-trip sample, divided by the
+    # pulse energy.
     for i, (_, sensor_data_set) in enumerate(all_sensor_data):
-        R        = gt_ranges[i]
-        TL_geom  = 20.0 * np.log10(R)           # spherical spreading, one-way
-        EL_pred  = SL - 2.0 * TL_geom + TS     # sonar equation prediction
+        R = gt_ranges[i]
+        TL_geom = 20.0 * np.log10(R)
+        EL_pred = SL - 2.0 * TL_geom + TS
 
-        sd           = next(iter(sensor_data_set))
+        sd = next(iter(sensor_data_set))
         pulse_energy = float(np.sum(np.abs(sd.transmit_pulse) ** 2))
 
-        # Unnormalised matched filter
-        n_fft   = len(sd.received_waveform) + len(sd.transmit_pulse) - 1
-        mf_raw  = np.abs(np.fft.ifft(
+        n_fft = len(sd.received_waveform) + len(sd.transmit_pulse) - 1
+        mf_raw = np.abs(np.fft.ifft(
             np.fft.fft(sd.received_waveform, n_fft)
             * np.conj(np.fft.fft(sd.transmit_pulse, n_fft)),
             n_fft,
         ))[: len(sd.received_waveform)]
 
-        # Evaluate the unnormalised MF at the expected direct-path round-trip sample.
-        # Using the exact sample avoids picking up the higher MF peak from the
-        # direct × surface-bounce coherent pair which arrives ~2.7 ms later.
+        # Sample the MF at the exact direct-path round-trip delay, not its peak, which the
+        # direct x surface-bounce coherent pair pulls ~2.7 ms late.
         expected_sample = min(int(2.0 * R / c * fs), len(mf_raw) - 1)
-        mf_at_direct    = float(mf_raw[expected_sample])
+        mf_at_direct = float(mf_raw[expected_sample])
 
-        # A_received = Bellhop_out × Bellhop_back × A_target (no A_signal factor).
-        # Multiply by A_signal (= 10^(SL/20)) via the SL term below.
+        # A_received omits the A_signal factor; it is restored via the SL term below.
         A_received = mf_at_direct / pulse_energy
-        EL_meas    = SL + 20.0 * np.log10(max(A_received, 1e-30))
+        EL_meas = SL + 20.0 * np.log10(max(A_received, 1e-30))
 
-        # TL implied by the simulation (inverted sonar equation)
         TL_implied = (SL - EL_meas + TS) / 2.0
 
         sonar_eq_rows.append(dict(
@@ -429,7 +413,7 @@ else:
 # -------------
 
 # %%
-# --- Figure 1: World picture ---
+# World picture
 fig_world = go.Figure()
 
 fig_world.add_trace(go.Scatter(
@@ -481,7 +465,7 @@ fig_world.update_yaxes(
 )
 
 # %%
-# --- Figure 2: Range detections vs ground truth ---
+# Range detections vs ground truth
 det_times, det_ranges = [], []
 for ts, dets in all_detections:
     for d in dets:
@@ -532,7 +516,7 @@ fig_range.update_yaxes(
 )
 
 # %%
-# --- Figure 3: MF envelope waterfall (all pings stacked) ---
+# MF envelope waterfall, all pings stacked
 fs = signal_params["sampling_rate_hz"]
 c  = env_params["sound_speed_ms"]
 n_receive = int((signal_params["duration_s"] + det_params["receive_duration_s"]) * fs)
@@ -584,10 +568,8 @@ fig_mf.update_xaxes(
 fig_mf.update_yaxes(title="Ping time", autorange="reversed")
 
 # %%
-# --- Figure 4: MF scatter plot (per-sample, colored by ping) ---
-# Each dot is one MF output sample above the noise floor, coloured by ping
-# time.  Unlike the waterfall heatmap (which averages within a row pixel),
-# this view shows the realistic spread of returns across multipath arrivals.
+# MF scatter, per-sample coloured by ping. Each dot is one MF output sample above the
+# noise floor; unlike the waterfall heatmap it shows the spread of returns across multipath.
 _db_floor = -50.0
 _ping_colors = ["#1f77b4", "#ff7f0e", "#2ca02c", "#d62728", "#9467bd",
                 "#8c564b", "#e377c2", "#7f7f7f", "#bcbd22", "#17becf"]
@@ -644,7 +626,7 @@ fig_mf_scatter.update_yaxes(
 )
 
 # %%
-# --- Figure 5: Sonar equation verification (constant SSP only) ---
+# Sonar equation verification, constant SSP only
 if isinstance(ssp, Constant):
     r_axis = np.linspace(0.85 * min(gt_ranges), 1.20 * max(gt_ranges), 300)
     EL_curve = SL - 2.0 * 20.0 * np.log10(r_axis) + TS

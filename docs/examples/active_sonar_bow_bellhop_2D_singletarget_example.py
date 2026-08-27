@@ -37,6 +37,7 @@ from datetime import datetime, timedelta
 import numpy as np
 import plotly.graph_objects as go
 from plotly.subplots import make_subplots
+from scipy.signal import get_window
 from stonesoup.models.transition.linear import CombinedLinearGaussianTransitionModel, ConstantVelocity
 from stonesoup.types.groundtruth import GroundTruthPath, GroundTruthState
 
@@ -48,7 +49,11 @@ from bluepebble.models.environment import Constant, Munk, FlatBathymetry, Seamou
 from bluepebble.models.propagation import BellhopArrivalsModel
 from bluepebble.platform import HostPlatform
 from bluepebble.sensors import BowArraySensor
-from bluepebble.sigproc.beamformer import DelayAndSumBeamformer, SteeringCalculator
+from bluepebble.sigproc import (
+    DelayAndSumBeamformer,
+    MinimumVarianceDistortionlessResponseBeamformer,
+    SteeringCalculator,
+)
 from bluepebble.signal.active import LFMSignal
 from bluepebble.simulator import BellhopActiveSonarSimulatorArray, BellhopActiveSonarSimulatorArrayPerElement
 from bluepebble.types.sensordata import ActiveSonarSensorData
@@ -79,7 +84,7 @@ sim_params = {
     "start_time": start_time,
     "ping_interval_s": 30.0,
     "n_pings": 5,
-    "amplitude_cutoff": 0.005,  # fraction of max eigenray amplitude below which rays are discarded
+    "amplitude_cutoff": 0.005,
 }
 
 ping_timestamps = [
@@ -90,8 +95,8 @@ ping_timestamps = [
 env_params = {
     "water_depth_m": 200.0,
     "sound_speed_ms": 1500.0,
-    'sound_speed_uncertainty_ms': 0,   # configure depending on SSP
-    'nominal_range_m': 2000            # estimated range, use with SSP uncertainty to estimate range uncertainty
+    "sound_speed_uncertainty_ms": 0,
+    "nominal_range_m": 2000,
 }
 
 signal_params = {
@@ -107,18 +112,17 @@ bow_params = {
     "x_m": 0.0,
     "y_m": 0.0,
     "depth_m": 50.0,
-    "speed_ms": 5.0,        # ship transit speed (~10 knots), heading +x
+    "speed_ms": 5.0,
     "heading_rad": 0.0,
     "dome_radius_m": 2.5,
     "azimuth_extent_rad": np.radians(90.0),
     "elevation_extent_rad": np.radians(90.0),
-    "element_spacing_m": 0.10,   # must be <= lambda_min/2 at freq_max_hz (0.625 m here)
+    "element_spacing_m": 0.10,
     "element_size_m": 0.05,
 }
 
-# Target (submarine): starts 2 km ahead of the ship, moving at 3 m/s on the reciprocal
-# heading (-x, i.e. towards the ship) — ship and submarine close head-on over the run.
-# state vector: [x, vx, y, vy, z, vz]
+# Target submarine starts 2 km ahead of the ship on the reciprocal heading, so the two
+# close head-on over the run. State vector: [x, vx, y, vy, z, vz].
 target_params = {
     "start_vector": np.array([2000.0, -3.0, 0.0, 0.0, -150.0, 0.0]),
     "position_mapping": [0, 2, 4],
@@ -130,18 +134,24 @@ ambient_noise_params = {
     "spectral_exponent": -1,
 }
 
+bf_params = {
+    "beamformer_type": "DAS",
+    "shading": None,
+    "domain": "time",
+}
+
 det_params = {
     "min_range_m": 100.0,
     "receive_duration_s": 4.0,
     "cfar_detector": {
-        "num_guard_cells": 25,   # = 1 range resolution cell (c/2B = 1.875 m = 25 samples at 10 kHz)
+        "num_guard_cells": 25,
         "num_training_cells": 50,
-        "rank": 75,              # 75th percentile of 100 training cells
+        "rank": 75,
         "threshold_factor": 8,
     },
-    "min_amplitude_db": -40.0,   # dB re MF peak; rejects noise sidelobes well below target echo
+    "min_amplitude_db": -40.0,
     "peak_detector": {
-        "distance": 3000,        # ~225 m at c=1500, fs=10000 — collapses multipath cluster
+        "distance": 3000,
     },
 }
 
@@ -153,6 +163,7 @@ cfg = {
     "signal": signal_params,
     "target": target_params,
     "ambient_noise": ambient_noise_params,
+    "beamforming": bf_params,
     "detection": det_params
 }
 
@@ -170,10 +181,8 @@ print(f"Ambient noise level: {20 * np.log10(ambient_noise_params['amplitude_upa'
 # --------------
 
 # %%
-# Ship (host) + bow array — a real constant-velocity transition model, so the host is
-# genuinely under way. It is driven to each ping's timestamp explicitly further below
-# (before the simulator runs), so its position/orientation are correct at every ping,
-# not just the initial one.
+# Ship host with a real constant-velocity transition model. It is driven to each ping
+# timestamp explicitly below, before the simulator runs.
 transition_model = CombinedLinearGaussianTransitionModel(
     [ConstantVelocity(0), ConstantVelocity(0), ConstantVelocity(0)]
 )
@@ -208,9 +217,8 @@ bow_array = BowArraySensor(
 num_elements = bow_array.array.num_sensors
 print(f"\nShip (bow array): {num_elements} elements, {bow_params['dome_radius_m']:.1f} m dome radius")
 
-# Moving target (submarine) — generate one state per ping timestamp. Shares the same
-# zero-process-noise transition model as the ship, for a deterministic reciprocal-course
-# scenario.
+# Moving submarine, one ground-truth state per ping timestamp, sharing the ship's
+# zero-noise transition model.
 target_states = [
     GroundTruthState(target_params["start_vector"], timestamp=start_time)
 ]
@@ -222,16 +230,14 @@ for ts in ping_timestamps[1:]:
 target_truth = GroundTruthPath(target_states)
 
 # %%
-# Beamforming setup
-# -----------------
-# Delay-and-sum the per-element echoes toward the target bearing. Since this script's
-# purpose is to verify the simulation + detection chain (not bearing search), we steer
-# exactly at the ground-truth bearing computed from the ping-0 geometry (ship and
-# submarine both at their initial states, before either has moved). Both platforms hold
-# a constant straight-line heading, so the array's *relative* element geometry (and
-# hence these steering delays) doesn't change as the ship transits — only the true
-# bearing to the submarine drifts slightly as the two close, which this single fixed
-# steering direction approximates.
+# Beamforming
+# -----------
+
+# %%
+bf = cfg["beamforming"]
+
+# This example verifies the detection chain rather than searching bearing, so the beam is
+# steered once, at the ground-truth az/el from the ping-0 geometry.
 array_ref = bow_array.array.ref_state_vector.flatten()
 first_target_xyz = np.array([
     float(target_states[0].state_vector[target_params["position_mapping"][0]]),
@@ -245,6 +251,26 @@ print(f"Steering bow array beam to bearing az={np.degrees(bearing_az_rad):.1f} d
       f"el={np.degrees(bearing_el_rad):.1f} deg")
 
 ssp = Munk()
+
+shading = None
+if bf["shading"] is not None:
+    shading = get_window(bf["shading"], num_elements)
+
+if bf["beamformer_type"] == "DAS":
+    beamformer = DelayAndSumBeamformer(
+        sampling_rate_hz=signal_params["sampling_rate_hz"],
+        shading=shading,
+        domain=bf["domain"],
+    )
+elif bf["beamformer_type"] == "MVDR":
+    beamformer = MinimumVarianceDistortionlessResponseBeamformer(
+        sampling_rate_hz=signal_params["sampling_rate_hz"],
+        fmin=bf.get("fmin"),
+        fmax=bf.get("fmax"),
+    )
+else:
+    raise ValueError(f"Unknown beamformer type: {bf['beamformer_type']}")
+
 steering_calculator = SteeringCalculator(
     ssp=ssp,
     steering_azimuths_rad=np.array([bearing_az_rad]),
@@ -253,10 +279,8 @@ steering_calculator = SteeringCalculator(
 steering_delays_s = steering_calculator.calculate(bow_array)
 
 # %%
-# Drive the host to every ping timestamp up front — BellhopActiveSonarSimulatorArray no
-# longer advances its platform internally (a host may carry sensors driven by other
-# simulators too), so the caller is now responsible for this, exactly like the target's
-# ground-truth track above. host.move() advances host.states 1:1 with ping_timestamps.
+# Drive the host to every ping timestamp up front — the simulator no longer advances its
+# platform internally, so the caller must. host.move() advances host.states 1:1 with pings.
 for ts in ping_timestamps[1:]:
     host.move(ts)
 
@@ -265,7 +289,6 @@ for ts in ping_timestamps[1:]:
 # ----------
 
 # %%
-# ssp already built above (Munk, for beamforming's sound-speed lookup too)
 # ssp = Constant(speed=env_params["sound_speed_ms"])
 # bathymetry = FlatBathymetry(depth=-env_params["water_depth_m"])
 bathymetry = SeamountBathymetry()
@@ -307,11 +330,10 @@ print(f"Generated {len(all_array_sensor_data)} pings, "
       f"{next(iter(all_array_sensor_data[0][1])).received_waveform.shape[0]} elements/ping.")
 
 # %%
-# Ground-truth ranges (post-simulation)
-# --------------------------------------
-# The ship is genuinely under way: it was driven above (host.move() per ping timestamp)
-# before the simulation ran, so host.states now holds the ship's own ping-by-ping track
-# (1:1 with ping_timestamps), just like target_truth does for the submarine.
+# Ground-Truth Ranges
+# -------------------
+# host.states holds the ship's own ping-by-ping track (driven above), 1:1 with the
+# submarine's ground truth.
 
 # %%
 gt_ranges = []
@@ -329,17 +351,10 @@ for ts, r in zip(ping_timestamps, gt_ranges, strict=True):
     print(f"  {ts.strftime('%H:%M:%S')}  {r:.1f} m  (round-trip delay {expected_delay:.3f} s)")
 
 # %%
-# Beamforming
-# -----------
-# Delay-and-sum the per-element echoes using the fixed steering direction computed above
-# (from ping-0 geometry).
+# Beamform Echoes
+# ---------------
 
 # %%
-beamformer = DelayAndSumBeamformer(
-    sampling_rate_hz=signal_params["sampling_rate_hz"],
-    domain="time",
-)
-
 all_sensor_data = []
 for ts, data_set in all_array_sensor_data:
     element_data = next(iter(data_set))
@@ -352,8 +367,7 @@ for ts, data_set in all_array_sensor_data:
         timestamp=ts,
     )}))
 
-# DAS crops a few samples of shift artefact at the edges — recover the true post-beamform
-# sample count rather than assume it matches signal.duration_s + receive_duration_s exactly.
+# DAS crops a few edge samples, so read the true post-beamform sample count back.
 n_receive = next(iter(all_sensor_data[0][1])).received_waveform.shape[0]
 
 # %%
@@ -400,8 +414,8 @@ for (ts, dets), gt_r in zip(all_detections, gt_ranges):
         print(f"  {ts.strftime('%H:%M:%S')}  no detection  (GT {gt_r:.1f} m)")
 
 # %%
-# Tracking — nearest-neighbour Kalman filter on range detections
-# --------------------------------------------------------------
+# Tracking
+# --------
 
 # %%
 B = cfg['signal']['freq_max_hz'] - cfg['signal']['freq_min_hz']
@@ -459,66 +473,49 @@ for state in track:
 # ---------------------------
 
 # %%
-# Only valid for a constant SSP where TL = 20·log10(R) (spherical spreading).
-# Skipped automatically when a non-constant SSP (e.g. Munk) is used, because
-# refraction, ducting, and convergence zones break the spherical-spreading
-# assumption and the comparison would be meaningless.
+# Only valid for a constant SSP, where TL = 20*log10(R) (spherical spreading); skipped
+# automatically for a non-constant SSP (e.g. Munk), where refraction breaks that assumption.
 
-SL = signal_params["source_level_db"]  # dB re 1 µPa @ 1 m
-TS = cfg["target"]["target_strength_db"]  # dB
-c  = env_params["sound_speed_ms"]
+SL = signal_params["source_level_db"]
+TS = cfg["target"]["target_strength_db"]
+c = env_params["sound_speed_ms"]
 fs = signal_params["sampling_rate_hz"]
 
 sonar_eq_rows = []
 fig_sonar_eq = None
 
 if isinstance(ssp, Constant):
-    # The monostatic active sonar equation predicts the received echo level (EL):
-    #
-    #   EL = SL - 2·TL + TS
-    #
-    # SL  Source Level [dB re 1 µPa @ 1 m] — set by ``source_level_db``
-    # TL  One-way Transmission Loss [dB]   — 20·log10(R) for spherical spreading
-    # TS  Target Strength [dB]             — set by ``target_strength_db``
-    #
-    # Bellhop's 2-D model applies the 3-D point-source correction internally, so
-    # the direct-path eigenray amplitude scales as 1/R (spherical), not 1/sqrt(R).
-    # EL here is measured on the beamformed (array-gain-boosted) waveform, so it is
-    # not directly comparable to the single-hydrophone EL from the Omni example.
-    #
-    # EL_meas is derived from the unnormalised matched-filter peak at the expected
-    # direct-path round-trip delay, divided by the pulse energy.  This isolates the
-    # direct-path echo from multipath arrivals: the LFM bandwidth B = 400 Hz gives
-    # range resolution c/(2B) ≈ 1.9 m, resolving the direct path from the nearest
-    # surface/bottom bounce which arrives ~7.5 m later in slant range.
+    # Monostatic active sonar equation for the received echo level:
+    #   EL = SL - 2*TL + TS   (SL source level, TL one-way loss, TS target strength)
+    # Bellhop's 2-D model applies the 3-D point-source correction internally, so the
+    # direct-path eigenray amplitude scales as 1/R. EL is measured on the beamformed
+    # waveform here, so it carries array gain and is not comparable to the omni example.
+    # EL_meas is taken from the unnormalised matched-filter output at the exact direct-path
+    # round-trip sample, divided by the pulse energy.
     for i, (_, sensor_data_set) in enumerate(all_sensor_data):
-        R        = gt_ranges[i]
-        TL_geom  = 20.0 * np.log10(R)           # spherical spreading, one-way
-        EL_pred  = SL - 2.0 * TL_geom + TS     # sonar equation prediction
+        R = gt_ranges[i]
+        TL_geom = 20.0 * np.log10(R)
+        EL_pred = SL - 2.0 * TL_geom + TS
 
-        sd           = next(iter(sensor_data_set))
+        sd = next(iter(sensor_data_set))
         pulse_energy = float(np.sum(np.abs(sd.transmit_pulse) ** 2))
 
-        # Unnormalised matched filter
-        n_fft   = len(sd.received_waveform) + len(sd.transmit_pulse) - 1
-        mf_raw  = np.abs(np.fft.ifft(
+        n_fft = len(sd.received_waveform) + len(sd.transmit_pulse) - 1
+        mf_raw = np.abs(np.fft.ifft(
             np.fft.fft(sd.received_waveform, n_fft)
             * np.conj(np.fft.fft(sd.transmit_pulse, n_fft)),
             n_fft,
         ))[: len(sd.received_waveform)]
 
-        # Evaluate the unnormalised MF at the expected direct-path round-trip sample.
-        # Using the exact sample avoids picking up the higher MF peak from the
-        # direct × surface-bounce coherent pair which arrives ~2.7 ms later.
+        # Sample the MF at the exact direct-path round-trip delay, not its peak, which the
+        # direct x surface-bounce coherent pair pulls ~2.7 ms late.
         expected_sample = min(int(2.0 * R / c * fs), len(mf_raw) - 1)
-        mf_at_direct    = float(mf_raw[expected_sample])
+        mf_at_direct = float(mf_raw[expected_sample])
 
-        # A_received = Bellhop_out × Bellhop_back × A_target (no A_signal factor).
-        # Multiply by A_signal (= 10^(SL/20)) via the SL term below.
+        # A_received omits the A_signal factor; it is restored via the SL term below.
         A_received = mf_at_direct / pulse_energy
-        EL_meas    = SL + 20.0 * np.log10(max(A_received, 1e-30))
+        EL_meas = SL + 20.0 * np.log10(max(A_received, 1e-30))
 
-        # TL implied by the simulation (inverted sonar equation)
         TL_implied = (SL - EL_meas + TS) / 2.0
 
         sonar_eq_rows.append(dict(
@@ -552,7 +549,7 @@ else:
 # -------------
 
 # %%
-# --- Figure 1: World picture ---
+# World picture
 fig_world = go.Figure()
 
 ship_x_km = [float(s.state_vector[0]) / 1000 for s in host.states]
@@ -607,7 +604,7 @@ fig_world.update_yaxes(
 )
 
 # %%
-# --- Figure 2: Range detections vs ground truth ---
+# Range detections vs ground truth
 det_times, det_ranges = [], []
 for ts, dets in all_detections:
     for d in dets:
@@ -658,9 +655,9 @@ fig_range.update_yaxes(
 )
 
 # %%
-# --- Figure 3: MF envelope waterfall (all pings stacked) ---
+# MF envelope waterfall, all pings stacked
 fs = signal_params["sampling_rate_hz"]
-c  = env_params["sound_speed_ms"]
+c = env_params["sound_speed_ms"]
 range_axis = np.arange(n_receive) / fs * c / 2.0  # two-way delay → range
 
 mf_matrix = []
@@ -709,10 +706,8 @@ fig_mf.update_xaxes(
 fig_mf.update_yaxes(title="Ping time", autorange="reversed")
 
 # %%
-# --- Figure 4: MF scatter plot (per-sample, colored by ping) ---
-# Each dot is one MF output sample above the noise floor, coloured by ping
-# time.  Unlike the waterfall heatmap (which averages within a row pixel),
-# this view shows the realistic spread of returns across multipath arrivals.
+# MF scatter, per-sample coloured by ping. Each dot is one MF output sample above the
+# noise floor; unlike the waterfall heatmap it shows the spread of returns across multipath.
 _db_floor = -50.0
 _ping_colors = ["#1f77b4", "#ff7f0e", "#2ca02c", "#d62728", "#9467bd",
                 "#8c564b", "#e377c2", "#7f7f7f", "#bcbd22", "#17becf"]
@@ -769,7 +764,7 @@ fig_mf_scatter.update_yaxes(
 )
 
 # %%
-# --- Figure 5: Sonar equation verification (constant SSP only) ---
+# Sonar equation verification, constant SSP only
 if isinstance(ssp, Constant):
     r_axis = np.linspace(0.85 * min(gt_ranges), 1.20 * max(gt_ranges), 300)
     EL_curve = SL - 2.0 * 20.0 * np.log10(r_axis) + TS

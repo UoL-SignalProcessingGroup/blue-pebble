@@ -80,26 +80,18 @@ signal_params = {
 
 target_strength_db = 15.0
 
-# Five static targets at nominal horizontal ranges, all at the same depth.
-# Spread in different azimuth directions (degrees from East, CCW) to produce
-# a recognisable "fan" in the world-picture plot.
+# Five static targets at nominal horizontal ranges, spread across azimuth (degrees from
+# East, CCW) to make a recognisable fan in the world picture.
 NOMINAL_RANGES_M = [500.0, 1000.0, 1500.0, 2000.0, 2500.0]
 AZIMUTHS_DEG = [0.0, 60.0, 120.0, 180.0, 270.0]
 TARGET_DEPTH_M = 100.0
 
-POSITION_MAPPING = [0, 2, 4]  # state vector layout: [x, vx, y, vy, z, vz]
+POSITION_MAPPING = [0, 2, 4]
 
 detector_params = {
-    # Low threshold: this is a noiseless timing-verification run, not an
-    # operational detector.  Farther targets are weaker by (R_near/R_far)^2;
-    # at 500 m vs 2 500 m that ratio is 0.04, so -30 dB (ratio 0.0316) catches
-    # everything.
     "detection_threshold_db": -30.0,
     "min_range_m": 200.0,
-    # 150 m keeps the five direct-path echoes (500 m apart) separate while
-    # suppressing nearby surface/bottom multipath within each target cluster.
     "peak_separation_m": 150.0,
-    # 3.5 s listen window → max range = (1 + 3.5) * 1500 / 2 = 3 375 m.
     "receive_duration_s": 4,
 }
 
@@ -122,8 +114,7 @@ buoy = OmniSonobuoyPlatform(
     hydrophone_depth_m=buoy_params["hydrophone_depth_m"],
 )
 
-# Build one stationary GroundTruthPath per target.
-# Each path repeats the same state at every ping timestamp (zero velocity).
+# One stationary GroundTruthPath per target, repeating the same state at every ping.
 target_paths = []
 target_positions_xyz = []
 
@@ -131,7 +122,7 @@ for nominal_r, az_deg in zip(NOMINAL_RANGES_M, AZIMUTHS_DEG):
     az_rad = np.deg2rad(az_deg)
     tx = nominal_r * np.cos(az_rad)
     ty = nominal_r * np.sin(az_rad)
-    tz = -TARGET_DEPTH_M  # negative z = below surface (project convention)
+    tz = -TARGET_DEPTH_M
 
     states = [
         GroundTruthState(np.array([tx, 0.0, ty, 0.0, tz, 0.0]), timestamp=ts)
@@ -200,8 +191,7 @@ def _replay(data):
 fs = signal_params["sampling_rate_hz"]
 c = env_params["sound_speed_ms"]
 
-# Peak-picker distance in samples (round-trip), from the physical separation
-# above: samples = peak_separation_m * 2 * fs / c.
+# Peak-picker distance in round-trip samples: peak_separation_m * 2 * fs / c.
 peak_distance_samples = max(1, round(detector_params["peak_separation_m"] * 2 * fs / c))
 
 detection_chain: list[DetectionAlgorithm] = [
@@ -224,29 +214,15 @@ all_detections = list(detector.detections_gen())
 # ------------------------
 
 # %%
-# For each target and each ping, evaluate the MF at the exact expected
-# direct-path sample index — mirroring the approach in the single-target
-# sonar equation verification.
-#
-# expected_idx = int(2 * slant_r / c * fs)
-#
-# This mirrors the simulator's own int() truncation for the integer sample
-# shift, so the measured delay is evaluated at the same point the simulator
-# placed the echo.  No window search is needed and there is no risk of
-# argmax landing on a multipath peak.
-#
-# Pass criterion: ΔR < c/(2B) = 1.88 m  (one range-resolution cell).
-#
-# Residual errors here arise from rtrs's own ray-tracing angular resolution
-# (azimuth_resolution / elevation_resolution) in resolving each target's
-# exact bearing, not from the round-trip delay placement — RTRS is queried
-# directly at every native FFT bin in the pulse's occupied band, so each
-# target's ray-traced delay is embedded exactly in H(f)'s phase at native
-# resolution with no frequency-domain interpolation involved.
+# For each target and ping, evaluate the MF at the exact expected direct-path sample index,
+# expected_idx = int(2 * slant_r / c * fs). This matches the simulator's own int() sample
+# truncation, so no window search is needed and argmax cannot land on a multipath peak.
+# Pass criterion: |ΔR| < c/(2B), one range-resolution cell. Residuals come from rtrs's
+# ray-tracing angular resolution, not from the round-trip delay placement.
 
-sample_res_m = c / (2.0 * fs)               # range per sample
+sample_res_m = c / (2.0 * fs)
 range_res_m = c / (2.0 * (signal_params["freq_max_hz"] - signal_params["freq_min_hz"]))
-PASS_THRESHOLD_M = range_res_m              # one resolution cell
+PASS_THRESHOLD_M = range_res_m
 
 timing_rows = []
 
@@ -307,7 +283,7 @@ else:
 # -------------
 
 # %%
-# --- Figure 1: World picture ---
+# World picture
 COLORS = ["#1f77b4", "#ff7f0e", "#2ca02c", "#d62728", "#9467bd"]
 TARGET_LABELS = [f"T{i+1} ({int(r)} m)" for i, r in enumerate(NOMINAL_RANGES_M)]
 
@@ -356,11 +332,8 @@ fig_world.update_yaxes(
 )
 
 # %%
-# --- Figure 2: MF envelope for ping 1 ---
-# Shows the normalised matched-filter output vs slant range.
-# Vertical dashed lines mark each target's expected direct-path range.
-# All five peaks should align with their markers.
-
+# MF envelope for ping 1. Dashed lines mark each target's expected direct-path range;
+# all five peaks should align with their markers.
 first_sd = next(iter(all_sensor_data[0][1]))
 n_receive = len(first_sd.received_waveform)
 range_axis_m = np.arange(n_receive) / fs * c / 2.0
@@ -406,10 +379,8 @@ fig_env.update_yaxes(
 )
 
 # %%
-# --- Figure 3: MF waterfall (all pings) ---
-# Since targets are stationary, each column of peaks should be perfectly
-# vertical — confirming consistency across pings.
-
+# MF waterfall, all pings. Targets are stationary, so each column of peaks should be
+# vertical, confirming consistency across pings.
 mf_matrix = []
 for _, sensor_data_set in all_sensor_data:
     sd = next(iter(sensor_data_set))
@@ -449,10 +420,8 @@ fig_waterfall.update_yaxes(
 )
 
 # %%
-# --- Figure 4: Detection accuracy — detected vs expected range ---
-# Each detection is matched to the nearest expected slant range.
-# Points should lie on the y = x diagonal if timing is correct.
-
+# Detection accuracy, detected vs expected range. Each detection is matched to the nearest
+# expected slant range; points should lie on the y = x diagonal if timing is correct.
 det_expected_km, det_found_km = [], []
 for _, dets in all_detections:
     for d in dets:
