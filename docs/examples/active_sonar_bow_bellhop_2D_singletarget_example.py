@@ -49,11 +49,8 @@ from bluepebble.models.environment import Constant, Munk, FlatBathymetry, Seamou
 from bluepebble.models.propagation import BellhopArrivalsModel
 from bluepebble.platform import HostPlatform
 from bluepebble.sensors import BowArraySensor
-from bluepebble.sigproc import (
-    DelayAndSumBeamformer,
-    MinimumVarianceDistortionlessResponseBeamformer,
-    SteeringCalculator,
-)
+from bluepebble.sigproc import DelayAndSumBeamformer, SteeringCalculator
+# from bluepebble.sigproc import MinimumVarianceDistortionlessResponseBeamformer  # see MVDR branch
 from bluepebble.signal.active import LFMSignal
 from bluepebble.simulator import BellhopActiveSonarSimulatorArray, BellhopActiveSonarSimulatorArrayPerElement
 from bluepebble.types.sensordata import ActiveSonarSensorData
@@ -263,10 +260,15 @@ if bf["beamformer_type"] == "DAS":
         domain=bf["domain"],
     )
 elif bf["beamformer_type"] == "MVDR":
-    beamformer = MinimumVarianceDistortionlessResponseBeamformer(
-        sampling_rate_hz=signal_params["sampling_rate_hz"],
-        fmin=bf.get("fmin"),
-        fmax=bf.get("fmax"),
+    # MVDR returns a direction/time power map, not an echo waveform, so the matched-filter
+    # detection chain here needs DAS. Construction kept for reference:
+    #   beamformer = MinimumVarianceDistortionlessResponseBeamformer(
+    #       sampling_rate_hz=signal_params["sampling_rate_hz"],
+    #       fmin=bf.get("fmin"),
+    #       fmax=bf.get("fmax"),
+    #   )
+    raise NotImplementedError(
+        "MVDR is not wired into this example's matched-filter chain; use DAS."
     )
 else:
     raise ValueError(f"Unknown beamformer type: {bf['beamformer_type']}")
