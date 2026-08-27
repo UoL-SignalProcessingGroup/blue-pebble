@@ -49,8 +49,7 @@ from bluepebble.models.environment import Constant, Munk, FlatBathymetry, Seamou
 from bluepebble.models.propagation import BellhopArrivalsModel
 from bluepebble.platform import HostPlatform
 from bluepebble.sensors import BowArraySensor
-from bluepebble.sigproc import DelayAndSumBeamformer, SteeringCalculator
-# from bluepebble.sigproc import MinimumVarianceDistortionlessResponseBeamformer  # see MVDR branch
+from bluepebble.sigproc import DelayAndSumBeamformer, SteeringCalculator, MinimumVarianceDistortionlessResponseBeamformer
 from bluepebble.signal.active import LFMSignal
 from bluepebble.simulator import BellhopActiveSonarSimulatorArray, BellhopActiveSonarSimulatorArrayPerElement
 from bluepebble.types.sensordata import ActiveSonarSensorData
