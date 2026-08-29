@@ -543,4 +543,4 @@ fig_bands.update_layout(
 # * **Detectors must be sized to their band.** A CFAR window is a fixed number of beams,
 #   but a mainlobe is a fixed angle whose width in beams changes across 50-240 Hz. Sizing
 #   guard and training cells per band is the point of :class:`~.BandDetector`.
-# * **Downstream tracking could be on detections from one band, or the union of all bands.
+# * **Downstream tracking could be on detections from one band, or the union of all bands.**
