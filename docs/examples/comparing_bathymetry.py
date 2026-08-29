@@ -32,7 +32,7 @@ from stonesoup.models.transition.linear import (
 from stonesoup.types.groundtruth import GroundTruthPath, GroundTruthState
 
 import bluepebble
-from bluepebble.detector import CACFARDetector, PassiveSonarDetector, PeakDetector
+from bluepebble.detector import CACFARDetector, PassiveSonarDetector
 from bluepebble.models.environment import Constant, FlatBathymetry, SeamountBathymetry
 from bluepebble.models.propagation import rtrsAcousticPropagationModel
 from bluepebble.platform import TowedArrayPlatform
@@ -437,29 +437,33 @@ steering_calculator = SteeringCalculator(
 # - flat bathymetry
 # - seamount bathymetry
 #
-# Both use the same detector chain, CA-CFAR followed by peak selection. That means any
+# Both use the same detector, CA-CFAR with wrap-aware peak consolidation. That means any
 # difference in the final output should come from the seabed model rather than from a
 # different detection policy.
 
 cfar_num_guard_cells = 6
 cfar_num_training_cells = 10
-cfar_threshold_factor = 1.05
-cfar_mode = "wrap"
+# Preserves this example's pre-refactor operating point: the old threshold_factor=1.05 was
+# alpha applied to the training-cell mean, and CA-CFAR's single-look Pfa = (1 + alpha/N)^-N
+# with N = 2 * num_training_cells inverts it exactly. It is a deliberately permissive
+# threshold -- peak consolidation, not the threshold, does most of the rejection here.
+cfar_target_pfa = 0.3594
+cfar_circular = True
 peak_distance = 8
 
 
 def _make_detector(simulator: ContinuousSTFTPassiveSonarArraySimulator) -> PassiveSonarDetector:
-    """Create a PassiveSonarDetector with a CACFARDetector followed by a PeakDetector."""
+    """Create a PassiveSonarDetector driven by a single CA-CFAR detector."""
     cfar_detector = CACFARDetector(
         num_guard_cells=cfar_num_guard_cells,
         num_training_cells=cfar_num_training_cells,
-        threshold_factor=cfar_threshold_factor,
-        mode=cfar_mode,
+        target_pfa=cfar_target_pfa,
+        peak_distance=peak_distance,
+        circular=cfar_circular,
     )
-    peak_detector = PeakDetector(distance=peak_distance)
 
     return PassiveSonarDetector(
-        detection_chain=[cfar_detector, peak_detector],
+        detector=cfar_detector,
         sensor_data_gen=simulator.sensor_data_gen(),
         steering_azimuths_rad=steering_azimuths_rad,
     )

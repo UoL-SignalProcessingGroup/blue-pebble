@@ -34,7 +34,7 @@ from stonesoup.models.transition.linear import (
 from stonesoup.types.groundtruth import GroundTruthPath, GroundTruthState
 
 import bluepebble
-from bluepebble.detector import CACFARDetector, PassiveSonarDetector, PeakDetector
+from bluepebble.detector import CACFARDetector, PassiveSonarDetector
 from bluepebble.models.environment import GEBCOBathymetry, LeroyCopernicusSoundSpeedProfile
 from bluepebble.models.propagation import rtrsAcousticPropagationModel
 from bluepebble.platform import TowedArrayPlatform
@@ -435,14 +435,16 @@ steering_calculator = SteeringCalculator(
 # -----------------------
 #
 # CA-CFAR with `mode='wrap'` is chosen because the azimuth grid is circular, so
-# training cells should wrap around the ±180° boundary without a gap. Peak selection
+# training cells should wrap around the ±180° boundary without a gap. Peak consolidation
 # then retains only the strongest local maximum within each cluster of threshold
 # crossings, suppressing duplicates at adjacent bearing bins.
 
 cfar_num_guard_cells = 2
 cfar_num_training_cells = 5
-cfar_threshold_factor = 1.75
-cfar_mode = "wrap"
+# Reproduces the pre-refactor threshold_factor=1.75 exactly, via CA-CFAR's single-look
+# Pfa = (1 + alpha/N)^-N with N = 2 * num_training_cells.
+cfar_target_pfa = 0.1994
+cfar_circular = True
 peak_distance = 3
 
 simulator = ContinuousSTFTPassiveSonarArraySimulator(
@@ -459,13 +461,13 @@ simulator = ContinuousSTFTPassiveSonarArraySimulator(
 cfar_detector = CACFARDetector(
     num_guard_cells=cfar_num_guard_cells,
     num_training_cells=cfar_num_training_cells,
-    threshold_factor=cfar_threshold_factor,
-    mode=cfar_mode,
+    target_pfa=cfar_target_pfa,
+    circular=cfar_circular,
+    peak_distance=peak_distance,
 )
-peak_detector = PeakDetector(distance=peak_distance)
 
 detector = PassiveSonarDetector(
-    detection_chain=[cfar_detector, peak_detector],
+    detector=cfar_detector,
     sensor_data_gen=simulator.sensor_data_gen(),
     steering_azimuths_rad=steering_azimuths_rad,
 )

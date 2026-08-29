@@ -35,7 +35,6 @@ from bluepebble.detector import (
     BandDetector,
     CACFARDetector,
     MultibandPassiveSonarDetector,
-    PeakDetector,
 )
 from bluepebble.models.environment import FlatBathymetry, Linear
 from bluepebble.models.propagation import CylindricalAcousticPropagationModel
@@ -352,25 +351,29 @@ def _tonals_in_band(band: FrequencyBand) -> str:
 
 guard_scale = 2.0
 train_scale = 4.0
-threshold_factor = 1.75
+# Calibrating on Pfa rather than a raw threshold multiplier matters more here than in the
+# single-band examples: because each band sizes its own training window, the shared
+# threshold_factor=1.75 this example used previously actually gave every band a slightly
+# different false-alarm rate (0.176 at the widest window, 0.190 at the narrowest). Asking
+# for a Pfa instead gives every band the same detection policy, whatever its window size.
+# 0.18 sits in the middle of that old spread, so the bands behave much as they did before.
+target_pfa = 0.18
 
 
-def _band_detection_chain(band: FrequencyBand) -> list:
-    """Build a CFAR + peak chain sized to a band's widest mainlobe."""
+def _band_detector(band: FrequencyBand) -> CACFARDetector:
+    """Build a CFAR detector sized to a band's widest mainlobe."""
     mainlobe_beams = _beamwidth_deg(band.fmin) / beam_spacing_deg
     guard = max(1, math.ceil(guard_scale * mainlobe_beams / 2))
     training = max(2, math.ceil(train_scale * guard))
-    return [
-        CACFARDetector(
-            num_guard_cells=guard,
-            num_training_cells=training,
-            threshold_factor=threshold_factor,
-        ),
-        PeakDetector(distance=max(1, math.ceil(mainlobe_beams))),
-    ]
+    return CACFARDetector(
+        num_guard_cells=guard,
+        num_training_cells=training,
+        target_pfa=target_pfa,
+        peak_distance=max(1, math.ceil(mainlobe_beams)),
+    )
 
 
-chains = {band.label: _band_detection_chain(band) for band in view_bands}
+band_cfar_detectors = {band.label: _band_detector(band) for band in view_bands}
 
 # %%
 # Running the Simulation
@@ -415,7 +418,10 @@ labels = [band.label for band in view_bands]
 # tonal picked up by two bands still counts as two detections, one per band, not merged into
 # one. ``snr_history`` records the per-band SNR maps as a side effect of the same pass.
 
-band_detectors = {label: BandDetector(detection_chain=chain) for label, chain in chains.items()}
+band_detectors = {
+    label: BandDetector(detector=cfar)
+    for label, cfar in band_cfar_detectors.items()
+}
 
 detector = MultibandPassiveSonarDetector(
     band_detectors=band_detectors,

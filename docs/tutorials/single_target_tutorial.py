@@ -38,7 +38,7 @@ Single Target Passive-Sonar Tracking Tutorial
 # - A towed array platform.
 # - A single target truth path with plugin-specific acoustic metadata.
 # - A cylindrical acoustic propagation model and broadband signal/noise models.
-# - A broadband passive-sonar simulator, beamformer, and detector chain.
+# - A broadband passive-sonar simulator, beamformer, and detector.
 # - A Stone Soup bearing tracker driven by Blue Pebble detections.
 
 # %%

@@ -265,12 +265,13 @@ signal_models = [_make_signal_model() for _ in target_truths]
 # calculator to produce beamformed output over time.
 #
 # :class:`~.PassiveSonarDetector` then turns that output into discrete detections using a
-# sonar-specific chain of thresholding and peak selection. In multi-target scenes, this
-# stage is where overlapping bearing structure, sidelobes, and clutter begin to
+# single CFAR-family detector, which applies a false-alarm-calibrated threshold and
+# consolidates the surviving cells into one detection per source. In multi-target scenes,
+# this stage is where overlapping bearing structure, sidelobes, and clutter begin to
 # influence the tracking problem downstream.
 
 # %%
-from bluepebble.detector import CACFARDetector, PassiveSonarDetector, PeakDetector
+from bluepebble.detector import CACFARDetector, PassiveSonarDetector
 from bluepebble.plotter import apply_shared_colourscale, plot_btr
 from bluepebble.sigproc import (
     DelayAndSumBeamformer,
@@ -304,15 +305,19 @@ simulator = ContinuousSTFTPassiveSonarArraySimulator(
     fade_in_ms=fade_in_ms,
 )
 
+# target_pfa=0.3594 reproduces the pre-refactor threshold_factor=1.05 exactly, via
+# CA-CFAR's single-look Pfa = (1 + alpha/N)^-N with N = 2 * num_training_cells. It is a
+# permissive threshold: peak consolidation does most of the rejection in this scenario.
 cfar_detector = CACFARDetector(
-    num_guard_cells=6, num_training_cells=10, threshold_factor=1.05, mode="wrap"
+    num_guard_cells=6,
+    num_training_cells=10,
+    target_pfa=0.3594,
+    peak_distance=8,
+    circular=True,
 )
-peak_detector = PeakDetector(distance=8)
-
-detection_chain = [cfar_detector, peak_detector]
 
 detector = PassiveSonarDetector(
-    detection_chain=detection_chain,
+    detector=cfar_detector,
     sensor_data_gen=simulator.sensor_data_gen(),
     steering_azimuths_rad=steering_azimuths_rad,
 )

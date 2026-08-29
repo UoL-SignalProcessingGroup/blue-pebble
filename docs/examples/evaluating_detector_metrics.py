@@ -12,7 +12,7 @@ In passive sonar, detector tuning is always a compromise between missed detectio
 false alarms. Visual inspection of one scenario can suggest whether a detector looks
 plausible, but it does not quantify how operating point changes affect performance.
 ROC and precision-recall curves are especially useful when comparing operating points
-across parameter settings or detector chains.
+across parameter settings or detector configurations.
 """  # noqa: D205, D212, D400, D415
 
 # %%
@@ -32,7 +32,7 @@ from stonesoup.models.transition.linear import (
 from stonesoup.types.groundtruth import GroundTruthPath, GroundTruthState
 
 import bluepebble
-from bluepebble.detector import CACFARDetector, OSCFARDetector, PassiveSonarDetector, PeakDetector
+from bluepebble.detector import CACFARDetector, OSCFARDetector, PassiveSonarDetector
 from bluepebble.detector.metrics import SweepSpec, sweep_detection_parameter
 from bluepebble.models.environment import FlatBathymetry, Linear
 from bluepebble.models.propagation import rtrsAcousticPropagationModel
@@ -205,7 +205,7 @@ fig_world = plot_world(truths=target_truths, platform=platform).update_layout(
 # -----------------
 #
 # The acoustic environment and propagation model are held fixed across all detector
-# configurations so that ROC/PR differences reflect detector chain behaviour rather
+# configurations so that ROC/PR differences reflect detector behaviour rather
 # than environmental changes.
 
 ssp = Linear(surface_speed=1500.0, gradient=0.2)
@@ -267,16 +267,20 @@ signal_models = [_make_signal_model() for _ in target_truths]
 # Beamformer and Detector Pipeline Setup
 # ---------------------------------------
 #
-# A broadband delay-and-sum beamformer is used as the baseline. The baseline
-# detector run produces the SNR map that the parameter sweep reuses, so all
-# sweep configurations operate on the same acoustic data.
+# A broadband delay-and-sum beamformer is used as the baseline. ``'broadband_power'``
+# integrates each STFT frame's bins into a real-valued beam power map, which is the per-look
+# quantity a CFAR detector expects; the ``'frequency'`` domain would instead hand it one
+# complex amplitude per frequency bin. That distinction matters here, because a detector
+# calibrated on a false-alarm rate assumes each look is a power sample. The baseline detector
+# run and the parameter sweep both consume these same frames, so every configuration is
+# compared on identical acoustic data.
 
 steering_azimuths_rad = np.linspace(-np.pi, np.pi, 361)
 
 beamformer = DelayAndSumBeamformer(
     sampling_rate_hz=sampling_rate_hz,
     shading=None,
-    domain="frequency",
+    domain="broadband_power",
 )
 
 steering_calculator = SteeringCalculator(
@@ -299,20 +303,33 @@ simulator = ContinuousSTFTPassiveSonarArraySimulator(
 
 cfar_num_guard_cells = 6
 cfar_num_training_cells = 10
-cfar_threshold_factor = 1.05
+# Reproduces the pre-refactor threshold_factor=1.05 exactly, via CA-CFAR's single-look
+# Pfa = (1 + alpha/N)^-N with N = 2 * num_training_cells.
+cfar_target_pfa = 0.3594
 peak_distance = 8
 
 cfar_detector = CACFARDetector(
     num_guard_cells=cfar_num_guard_cells,
     num_training_cells=cfar_num_training_cells,
-    threshold_factor=cfar_threshold_factor,
-    mode="wrap",
+    target_pfa=cfar_target_pfa,
+    peak_distance=peak_distance,
+    circular=True,
 )
-peak_detector = PeakDetector(distance=peak_distance)
+
+# The sweep needs the raw beamformed frames, which PassiveSonarDetector does not retain after
+# detecting, so the simulator is drained once here and the collected steps are replayed into
+# the detector. That keeps this to a single simulation pass while giving the sweep the raw
+# data it needs.
+sensor_steps = list(simulator.sensor_data_gen())
+beamformed_data = [
+    sensor_data.beamformed_data
+    for _, sensor_data_set in sensor_steps
+    for sensor_data in sensor_data_set
+]
 
 detector = PassiveSonarDetector(
-    detection_chain=[cfar_detector, peak_detector],
-    sensor_data_gen=simulator.sensor_data_gen(),
+    detector=cfar_detector,
+    sensor_data_gen=sensor_steps,
     steering_azimuths_rad=steering_azimuths_rad,
 )
 
@@ -320,9 +337,9 @@ detector = PassiveSonarDetector(
 # Run Detection on Simulated Data
 # -------------------------------
 #
-# The baseline detector is executed once to produce the SNR map and a flattened set
-# of detections. The SNR map is passed directly to the parameter sweep, avoiding a
-# second simulation run.
+# The baseline detector is executed once over the collected frames to produce its SNR map
+# and a flattened set of detections. The same collected frames feed the parameter sweep, so
+# no second simulation run is needed.
 
 all_detections = list(detector.detections_gen(progress_bar=False))
 snr_map = detector.snr_history
@@ -362,63 +379,88 @@ fig_btr = plot_btr(
 # Sweep Configurations
 # --------------------
 #
-# Four detector configurations are swept over ``threshold_factor`` to produce ROC and
-# PR curves. The first two (CA-CFAR and OS-CFAR alone) show how the choice of CFAR
-# variant affects the underlying threshold-to-performance mapping. The second two add
-# a :class:`~.PeakDetector` stage, which clusters nearby detections into single peaks
-# after thresholding. Because the sweep steps ``algorithm_index=0`` (the CFAR stage)
-# while the peak-clustering distance is held fixed, the peak variants produce a
-# fundamentally different sweep trajectory — see the Detection Metrics Results cell
-# for details. ``target_fpr`` marks the operating point printed in the summary table.
+# Four detector configurations are swept over ``target_pfa`` to produce ROC and PR curves.
+# Sweeping the requested false-alarm rate rather than a raw threshold multiplier means the
+# x-axis asks the same question of every configuration, even though CA-CFAR and OS-CFAR need
+# quite different multipliers to answer it.
+#
+# All four differ in how they estimate the local noise floor, which is the choice that
+# actually separates CFAR variants: two CA-CFAR windows of different widths, and two OS-CFAR
+# ranks over the same window. Peak consolidation is held fixed at ``peak_distance`` across
+# all four, since it is now intrinsic to the detector rather than a separate chained stage;
+# on this scenario the frame integration already leaves surviving cells isolated, so varying
+# it changes almost nothing and would only obscure the comparison that matters.
+# ``target_fpr`` marks the operating point printed in the summary table.
 
 target_fpr = 0.05
 
+# Spanning four decades of Pfa gives the ROC curve enough spread to be informative at both
+# ends. Fewer points than the old threshold sweep used: each point is a full pass over every
+# timestep, and Pfa is the meaningful axis, so log spacing covers the interesting range far
+# more efficiently than 400 linear steps did.
+pfa_values = np.logspace(-4, np.log10(0.9), 60)
+
+
 specs = [
-    # Just CA-CFAR
+    # Narrow CA-CFAR window: reacts quickly to a changing background, but estimates the noise
+    # floor from few cells, so the estimate itself is noisy.
     SweepSpec(
-        detection_chain=[
-            CACFARDetector(num_guard_cells=2, num_training_cells=5, threshold_factor=1.1),
-        ],
-        algorithm_index=0,
-        param_name="threshold_factor",
-        param_values=np.linspace(0.0, 5.0, 400),
-        label="CA-CFAR",
+        detector=CACFARDetector(
+            num_guard_cells=2,
+            num_training_cells=5,
+            target_pfa=float(pfa_values[0]),
+            peak_distance=peak_distance,
+            circular=True,
+        ),
+        param_name="target_pfa",
+        param_values=pfa_values,
+        label="CA-CFAR (5 train)",
     ),
-    # Just OS-CFAR
+    # Wider CA-CFAR window: a steadier noise estimate, at the cost of averaging across more
+    # bearing structure.
     SweepSpec(
-        detection_chain=[
-            OSCFARDetector(
-                num_guard_cells=3, num_training_cells=12, rank=24, threshold_factor=1.1
-            ),
-        ],
-        algorithm_index=0,
-        param_name="threshold_factor",
-        param_values=np.linspace(0.0, 5.0, 400),
-        label="OS-CFAR",
+        detector=CACFARDetector(
+            num_guard_cells=3,
+            num_training_cells=12,
+            target_pfa=float(pfa_values[0]),
+            peak_distance=peak_distance,
+            circular=True,
+        ),
+        param_name="target_pfa",
+        param_values=pfa_values,
+        label="CA-CFAR (12 train)",
     ),
-    # CA-CFAR with Peak Detection clustering
+    # OS-CFAR at a high rank sits near the top of the sorted training cells, so its noise
+    # estimate behaves much like the cell average.
     SweepSpec(
-        detection_chain=[
-            CACFARDetector(num_guard_cells=2, num_training_cells=5, threshold_factor=1.1),
-            PeakDetector(distance=3),
-        ],
-        algorithm_index=0,
-        param_name="threshold_factor",
-        param_values=np.linspace(0.0, 5.0, 400),
-        label="CA-CFAR + Peak",
+        detector=OSCFARDetector(
+            num_guard_cells=3,
+            num_training_cells=12,
+            rank=24,
+            target_pfa=float(pfa_values[0]),
+            peak_distance=peak_distance,
+            circular=True,
+            rng=np.random.default_rng(seed + 1),
+        ),
+        param_name="target_pfa",
+        param_values=pfa_values,
+        label="OS-CFAR (rank 24)",
     ),
-    # OS-CFAR with Peak Detection clustering
+    # A lower rank ignores the largest training cells, which is what makes OS-CFAR robust when
+    # a second target or sidelobe leaks into the window.
     SweepSpec(
-        detection_chain=[
-            OSCFARDetector(
-                num_guard_cells=3, num_training_cells=12, rank=15, threshold_factor=1.1
-            ),
-            PeakDetector(distance=3),
-        ],
-        algorithm_index=0,
-        param_name="threshold_factor",
-        param_values=np.linspace(0.0, 5.0, 400),
-        label="OS-CFAR + Peak",
+        detector=OSCFARDetector(
+            num_guard_cells=3,
+            num_training_cells=12,
+            rank=15,
+            target_pfa=float(pfa_values[0]),
+            peak_distance=peak_distance,
+            circular=True,
+            rng=np.random.default_rng(seed + 2),
+        ),
+        param_name="target_pfa",
+        param_values=pfa_values,
+        label="OS-CFAR (rank 15)",
     ),
 ]
 
@@ -426,12 +468,13 @@ specs = [
 # Run Detection Metrics Sweep
 # ---------------------------
 #
-# The sweep runs each configuration against the pre-computed SNR map, so no second
-# simulation pass is required. Each :class:`~.SweepSpec` steps through
-# ``param_values`` and records ROC and PR statistics at every operating point.
+# The sweep runs each configuration against the beamformed frames collected above, so no
+# second simulation pass is required. Each :class:`~.SweepSpec` steps through
+# ``param_values``, deep-copying its detector and recalibrating it at every operating point,
+# and records ROC and PR statistics for each.
 
 results = sweep_detection_parameter(
-    snr_map=snr_map,
+    beamformed_data=beamformed_data,
     sweep_specs=specs,
     ground_truth_paths=relative_bearing_truths,
     steering_azimuths_rad=steering_azimuths_rad,
@@ -442,17 +485,24 @@ results = sweep_detection_parameter(
 # Detection Metrics Results
 # -------------------------
 #
-# The summary table and curves highlight two main results. First, CA-CFAR gives
-# the strongest ROC performance (AUC-ROC = 0.8593), while OS-CFAR gives the best
-# PR performance among the non-peak variants (AUC-PR = 0.1175), confirming that
-# detector ranking depends on the metric used. Second, adding peak clustering
-# yields the highest PR score for CA-CFAR + Peak (AUC-PR = 0.1347), but both
-# peak-augmented variants produce near-zero AUC-ROC values. This suggests that
-# sweeping the CFAR threshold alone, while holding the clustering distance fixed,
-# produces a non-standard ROC trajectory: at low thresholds, many raw detections
-# are merged into a smaller set of peaks, so false-positive and true-positive
-# behaviour no longer evolves monotonically with threshold. As a result, PR is the
-# more reliable summary metric for the peak-augmented configurations in this sweep.
+# Read the ranking off the printed table below rather than from fixed numbers here: the
+# figures move with the scenario, the seed, and the swept range, and quoting them in prose
+# only guarantees they go stale.
+#
+# Two things are worth looking for. The first is that ROC and PR need not rank the detectors
+# the same way, which is the whole reason for reporting both. Positives are rare here -- only
+# a handful of the 361 beams hold a target at any timestep -- and PR is far more sensitive to
+# that imbalance than ROC is, so a configuration that looks competitive on one can be clearly
+# worse on the other.
+#
+# The second is the span each curve actually covers. A detector whose achieved FPR saturates
+# short of 1.0 has not been measured across the full ROC box, and
+# :attr:`~.SweepResult.auc_roc` extends its curve to ``(0, 0)`` and ``(1, 1)`` before
+# integrating so that the comparison stays meaningful. Without that extension a saturating
+# detector scores near zero purely because it stopped early -- an artefact of the sweep, not
+# a property of the detector. It does mean that when a sweep covers only part of the range,
+# much of the area comes from the extension rather than from measured points, so check
+# :attr:`~.SweepResult.fpr` before reading much into a small gap between two AUC values.
 
 headers = [
     "Detector",
@@ -494,18 +544,23 @@ fig_roc_pr = plot_roc_pr(results).update_layout(
 # Key Takeaways
 # -------------
 #
-# * **ROC and PR can rank detectors differently** - CA-CFAR achieves the highest
-#   AUC-ROC (0.8491), while CA-CFAR + Peak achieves the highest AUC-PR (0.1907).
-#   Among the non-peak variants, OS-CFAR has the stronger AUC-PR (0.1655). This is
-#   why both ROC and PR curves should be reported.
-# * **Peak clustering changes how the ROC sweep behaves** - sweeping only the CFAR
-#   threshold while holding ``PeakDetector.distance`` fixed produces a non-standard
-#   ROC trajectory for the peak-augmented chains, yielding near-zero AUC-ROC despite
-#   competitive AUC-PR values. In this setting, PR is the more interpretable summary
-#   metric for the peak configurations.
-# * **Sweep only the stage you want to characterise** - ``algorithm_index=0`` sweeps
-#   the CFAR threshold while peak clustering remains fixed. To characterise the peak
-#   stage itself, set ``algorithm_index=1`` and sweep ``PeakDetector.distance``.
-# * **The SNR map is computed once and reused** - ``sweep_detection_parameter``
-#   operates on the pre-computed ``snr_map``, so adding more sweep configurations
+# * **ROC and PR can rank detectors differently** - positives are rare in a bearing-time
+#   map, so the two metrics weigh false alarms very differently. Report both, and read the
+#   values off the table rather than assuming one ordering carries over to the other.
+# * **Sweep the quantity that means something** - ``target_pfa`` is a false-alarm rate, so
+#   the same swept value asks the same question of CA-CFAR and OS-CFAR even though they need
+#   different threshold multipliers to answer it. A raw multiplier is not comparable across
+#   detector families.
+# * **The noise-floor estimator is the real design choice** - window width for CA-CFAR, rank
+#   for OS-CFAR. Both shape what the detector treats as background, and both move the curves
+#   more than peak consolidation does on this scenario.
+# * **Clustering is now a detector parameter** - consolidation happens inside the detector, so
+#   ``peak_distance`` is swept or held fixed like any other parameter. There is no separate
+#   stage to index into.
+# * **Watch the FPR span before comparing AUCs** - a detector whose achieved FPR saturates
+#   early covers only part of the ROC box. ``auc_roc`` extends curves to the corners to keep
+#   the comparison honest, but a narrow span still rests mostly on that extension. Check
+#   :attr:`~.SweepResult.fpr` before reading much into small gaps.
+# * **The beamformed frames are collected once and reused** - ``sweep_detection_parameter``
+#   operates on the frames gathered for the baseline run, so adding more sweep configurations
 #   does not require rerunning the simulator.

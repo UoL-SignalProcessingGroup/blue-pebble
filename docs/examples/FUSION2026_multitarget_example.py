@@ -51,7 +51,7 @@ from stonesoup.types.update import GaussianStateUpdate
 from stonesoup.updater.kalman import ExtendedKalmanUpdater
 
 import bluepebble
-from bluepebble.detector import CACFARDetector, PassiveSonarDetector, PeakDetector
+from bluepebble.detector import CACFARDetector, PassiveSonarDetector
 from bluepebble.models.environment import FlatBathymetry, Linear
 from bluepebble.models.propagation import rtrsAcousticPropagationModel
 from bluepebble.platform import TowedArrayPlatform
@@ -185,11 +185,11 @@ det_params = {
     "cfar_detector": {
         "num_guard_cells": 6,
         "num_training_cells": 10,
-        "threshold_factor": 1.05,
-        "mode": "wrap",
-    },
-    "peak_detector": {
-        "distance": 3,
+        # Reproduces the pre-refactor threshold_factor exactly, via CA-CFAR's single-look
+        # Pfa = (1 + alpha/N)^-N with N = 2 * num_training_cells.
+        "target_pfa": 0.3594,
+        "circular": True,
+        "peak_distance": 3,
     },
 }
 
@@ -405,19 +405,19 @@ simulator = ContinuousSTFTPassiveSonarArraySimulator(
     fade_in_ms=signal["fade_in_ms"],
 )
 
-print("Running detection chain...")
+print("Running detector...")
 
 det = cfg["detection"]
 cfar_detector = CACFARDetector(
     num_guard_cells=det["cfar_detector"]["num_guard_cells"],
     num_training_cells=det["cfar_detector"]["num_training_cells"],
-    threshold_factor=det["cfar_detector"]["threshold_factor"],
-    mode=det["cfar_detector"]["mode"],
+    target_pfa=det["cfar_detector"]["target_pfa"],
+    circular=det["cfar_detector"]["circular"],
+    peak_distance=det["cfar_detector"]["peak_distance"],
 )
-peak_detector = PeakDetector(distance=det["peak_detector"]["distance"])
 
 detector = PassiveSonarDetector(
-    detection_chain=[cfar_detector, peak_detector],
+    detector=cfar_detector,
     sensor_data_gen=simulator.sensor_data_gen(),
     steering_azimuths_rad=cfg["beamforming"]["steering_azimuths_rad"],
 )

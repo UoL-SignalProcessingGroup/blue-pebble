@@ -32,7 +32,7 @@ from stonesoup.models.transition.linear import (
 from stonesoup.types.groundtruth import GroundTruthPath, GroundTruthState
 
 import bluepebble
-from bluepebble.detector import CACFARDetector, PassiveSonarDetector, PeakDetector
+from bluepebble.detector import CACFARDetector, PassiveSonarDetector
 from bluepebble.models.environment import FlatBathymetry, Linear
 from bluepebble.models.propagation import rtrsAcousticPropagationModel
 from bluepebble.platform import TowedArrayPlatform
@@ -398,7 +398,11 @@ steering_calculator = SteeringCalculator(
 
 cfar_num_guard_cells = 6
 cfar_num_training_cells = 10
-cfar_threshold_factor = 1.05
+# Preserves this example's pre-refactor operating point: the old threshold_factor=1.05 was
+# alpha applied to the training-cell mean, and CA-CFAR's single-look Pfa = (1 + alpha/N)^-N
+# with N = 2 * num_training_cells inverts it exactly. It is a deliberately permissive
+# threshold -- peak consolidation, not the threshold, does most of the rejection here.
+cfar_target_pfa = 0.3594
 peak_distance = 8
 
 
@@ -406,13 +410,13 @@ def _make_detector(simulator: ContinuousSTFTPassiveSonarArraySimulator) -> Passi
     cfar_detector = CACFARDetector(
         num_guard_cells=cfar_num_guard_cells,
         num_training_cells=cfar_num_training_cells,
-        threshold_factor=cfar_threshold_factor,
-        mode="wrap",
+        target_pfa=cfar_target_pfa,
+        peak_distance=peak_distance,
+        circular=True,
     )
-    peak_detector = PeakDetector(distance=peak_distance)
 
     return PassiveSonarDetector(
-        detection_chain=[cfar_detector, peak_detector],
+        detector=cfar_detector,
         sensor_data_gen=simulator.sensor_data_gen(),
         steering_azimuths_rad=steering_azimuths_rad,
     )
@@ -477,7 +481,7 @@ print(f"Total no. of detections w/ ownship noise: {len(detections_with_ownship_n
 # --------------------------------------
 #
 # A two-row comparison grid highlights how ownship self-noise changes the raw
-# SNR field and corresponding detection overlays under the same detector chain.
+# SNR field and corresponding detection overlays under the same detector.
 # In the ambient-only row the three target tracks are cleanly resolved, with
 # detections following each line closely. In the ownship-noise row the same
 # tracks remain present but a wideband elevation appears concentrated around
