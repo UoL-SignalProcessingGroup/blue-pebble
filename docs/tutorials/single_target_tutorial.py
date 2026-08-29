@@ -406,7 +406,6 @@ fig_btr.update_layout(
     yaxis2=dict(title=""),
 )
 
-fig_btr.show()
 
 # %%
 # Feed Blue Pebble Detections into a Stone Soup Tracker

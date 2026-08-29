@@ -433,7 +433,7 @@ fig_btr = plot_btr(
     autosize=True,
     width=None,
     height=None,
-).show()
+)
 
 # %%
 # Theoretical Curves
@@ -602,7 +602,7 @@ fig_roc = plot_roc([empirical_result, rayleigh_result, nonfluct_result]).update_
     autosize=True,
     width=None,
     height=None,
-).update_xaxes(title="Achieved Pfa").update_yaxes(title="Pd").show()
+).update_xaxes(title="Achieved Pfa").update_yaxes(title="Pd")
 
 # %%
 # Cumulative Probability of Detection
@@ -736,5 +736,5 @@ fig_cumulative.update_layout(
     autosize=True,
     width=None,
     height=None,
-).show()
+)
 
