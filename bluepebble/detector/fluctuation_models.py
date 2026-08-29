@@ -371,21 +371,21 @@ class RayleighFluctuation(FluctuationModel):
 
         References
         ----------
-        .. [1] Finn, H.M. and Johnson, R.S. "Adaptive detection mode with threshold control as a
+        .. [CA1] Finn, H.M. and Johnson, R.S. "Adaptive detection mode with threshold control as a
                function of spatially sampled clutter level estimates." RCA Review, 29, 414-464,
                1968.
-        .. [2] Gandhi, P.P. and Kassam, S.A. "Analysis of CFAR Processors in Nonhomogeneous
+        .. [CA2] Gandhi, P.P. and Kassam, S.A. "Analysis of CFAR Processors in Nonhomogeneous
                Background." IEEE Transactions on Aerospace and Electronic Systems, 24(4), 427-445,
                1988. Equations (13)-(14) give this exact single-look Pd/Pfa pair for a Swerling I
                target, using a SUM-based threshold (Z = sum of N cells, threshold = T*Z) rather
                than this module's MEAN-based alpha (threshold = alpha*mean(N cells)). The two
                conventions reconcile exactly via alpha = N*T -- validated numerically to 6 decimal
                places across several (N, T) pairs, not just algebraically.
-        .. [3] Chalabi, I. "Application of CFAR detection to multiple pulses for gamma distributed
-               clutter." Remote Sensing Letters, 13(10), 1011-1019, 2022.
+        .. [CA3] Chalabi, I. "Application of CFAR detection to multiple pulses for gamma
+               distributed clutter." Remote Sensing Letters, 13(10), 1011-1019, 2022.
 
         The multi-look (M > 1) generalisation implemented here, via the Gamma/Beta scale-sharing
-        relationship, is independently confirmed by [3], which derives the same multi-look
+        relationship, is independently confirmed by [CA3]_, which derives the same multi-look
         CA-CFAR Pfa (their eq. 8, general Gamma clutter shape; our exponential case is their shape
         parameter = 1) via direct numerical integration rather than the Beta-function
         simplification used here. Validated numerically: their formula and this module's exact
@@ -458,18 +458,18 @@ class RayleighFluctuation(FluctuationModel):
 
         References
         ----------
-        .. [1] Rohling, H. "Radar CFAR Thresholding in Clutter and Multiple Target Situations."
+        .. [OS1] Rohling, H. "Radar CFAR Thresholding in Clutter and Multiple Target Situations."
                IEEE Transactions on Aerospace and Electronic Systems, AES-19(4), 608-621, 1983.
                Motivates OS-CFAR's use in multi-target situations, which is also why no closed
                form exists for Pd here the way it does for CA-CFAR.
-        .. [2] Gandhi, P.P. and Kassam, S.A. "Analysis of CFAR Processors in Nonhomogeneous
+        .. [OS2] Gandhi, P.P. and Kassam, S.A. "Analysis of CFAR Processors in Nonhomogeneous
                Background." IEEE Transactions on Aerospace and Electronic Systems, 24(4), 427-445,
                1988. Equation (37) gives the single-look closed form used here for a Swerling I
                target model, independently derived there; matches the rescaling derivation here
                and direct Monte Carlo simulation to within sampling noise (validated numerically).
-        .. [3] Renyi, A. "On the theory of order statistics." Acta Mathematica Academiae
+        .. [OS3] Renyi, A. "On the theory of order statistics." Acta Mathematica Academiae
                Scientiarum Hungaricae, 4(3-4), 191-231, 1953.
-        .. [4] Chalabi, I. "Application of CFAR detection to multiple pulses for gamma
+        .. [OS4] Chalabi, I. "Application of CFAR detection to multiple pulses for gamma
                distributed clutter." Remote Sensing Letters, 13(10), 1011-1019, 2022.
                Independently derives the same multi-frame OS-CFAR problem (their eq. 15-20:
                order statistic across N reference cells, each an M-frame-integrated
@@ -478,7 +478,7 @@ class RayleighFluctuation(FluctuationModel):
                matching the multi-look rationale above. Validated numerically: their eq. 20
                (shape=1) and this Monte Carlo path agree to within sampling noise across four
                threshold values. This Monte Carlo procedure independently reproduces the
-               numerical approach [4] uses for the same problem, rather than being drawn from a
+               numerical approach [OS4]_ uses for the same problem, rather than being drawn from a
                single specific published method.
 
         """
@@ -525,7 +525,7 @@ class NonFluctuating(FluctuationModel):
         """M-frame-averaged CUT power under H1 for a non-fluctuating target.
 
         Each signal-bearing look's complex voltage is a fixed signal (the phase is irrelevant,
-        since only |signal + noise|**2 is used, and is therefore fixed at 0 without loss of
+        since only ``|signal + noise|**2`` is used, and is therefore fixed at 0 without loss of
         generality) plus independent unit-power circularly-symmetric complex Gaussian noise --
         the same physical noise model used elsewhere in this module, with a deterministic
         (rather than random) signal added on top. One such look has power
