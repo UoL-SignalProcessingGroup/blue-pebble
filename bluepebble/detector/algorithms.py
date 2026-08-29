@@ -686,6 +686,22 @@ class OSCFARDetector(_CFARDetectorBase):
         fresh randomness each time. Defaults to a fresh unseeded Generator per calibration when
         unset.
 
+    Notes
+    -----
+    Alpha is memoised per ``num_frames``, so calibration is paid once per distinct frame count
+    per detector instance rather than on every :meth:`detect` call. Subsequent calls at the same
+    frame count cost microseconds.
+
+    ``num_frames == 1`` with ``effective_looks_per_frame == 1`` uses the closed form and is
+    effectively free. Every other case falls back to Monte Carlo, which draws arrays sized
+    ``(mc_trials, 2 * num_training_cells, num_frames)``. At the default 200,000 trials that is a
+    few tenths of a second and around 0.8 GiB peak at ``num_training_cells=16, num_frames=8``,
+    growing linearly in all three factors -- wide training windows at high frame counts can want
+    several GiB. Reduce ``mc_trials`` if that is too much, accepting a noisier alpha.
+
+    :func:`~.metrics.sweep_detection_parameter` deep-copies the detector per swept value, so a
+    sweep pays calibration once per point. Pass a seeded ``rng`` to make those reproducible.
+
     """
 
     rank: int = Property(
