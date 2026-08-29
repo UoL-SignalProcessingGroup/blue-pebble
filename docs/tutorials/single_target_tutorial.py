@@ -59,6 +59,7 @@ from datetime import datetime, timedelta
 import numpy as np
 
 import bluepebble
+from bluepebble.detector.algorithms import OSCFARDetector
 
 # Random seed for reproducibility
 seed = 42
@@ -113,7 +114,7 @@ platform_transition_model = CombinedLinearGaussianTransitionModel(
 )
 
 # Define the towed array parameters
-num_sensors = 50
+num_sensors = 64
 tow_cable_length_m = 100.0
 sensor_spacing_m = 0.5
 array_depth_m = -50.0
@@ -274,26 +275,22 @@ signal_model = SyntheticAnthropogenicSignal(
 )
 
 # %%
-# Run the Blue Pebble Simulator, Beamformer, and Detector Chain
-# --------------------------------------------------------------
+# Run the Blue Pebble Simulator, Beamformer, and Detector
+# ---------------------------------------------------------
 #
 # This section is the core plugin workflow. :class:`~.ContinuousSTFTPassiveSonarArraySimulator`
 # brings together the platform, propagation model, source/noise models, steering
 # calculation, and beamformer to produce beamformed sonar output over time.
 #
-# Once the simulator is in place, :class:`~.PassiveSonarDetector` applies a passive-sonar
-# detection chain to those outputs. Here that chain is CA-CFAR followed by peak
-# picking. The important usage pattern is that Blue Pebble handles the
-# signal-processing and detection side, then returns timestamped detections that can
-# be analysed directly or passed into Stone Soup tracking components.
+# Once the simulator is in place, :class:`~.PassiveSonarDetector` applies a single CFAR-family
+# ``detector`` (here, :class:`~.CACFARDetector`) directly to those outputs. Thresholding and
+# wrap-aware peak consolidation both happen inside the detector's own ``detect()`` call, so no
+# separate peak-picking stage is needed. The important usage pattern is that Blue Pebble handles
+# the signal-processing and detection side, then returns timestamped detections that can be
+# analysed directly or passed into Stone Soup tracking components.
 
 # %%
-from bluepebble.detector import (
-    CACFARDetector,
-    DetectionAlgorithm,
-    PassiveSonarDetector,
-    PeakDetector,
-)
+from bluepebble.detector import PassiveSonarDetector
 from bluepebble.plotter import apply_shared_colourscale, plot_btr
 from bluepebble.sigproc import (
     MinimumVarianceDistortionlessResponseBeamformer,
@@ -330,21 +327,21 @@ simulator = ContinuousSTFTPassiveSonarArraySimulator(
 )
 
 num_guard_cells = 2
-num_training_cells = 16
-threshold_factor = 1.5
+num_training_cells = 10
+target_pfa = 0.05
+rank = 15
 peak_distance = 3
 
-cfar_detector = CACFARDetector(
+cfar_detector = OSCFARDetector(
     num_guard_cells=num_guard_cells,
     num_training_cells=num_training_cells,
-    threshold_factor=threshold_factor,
+    rank=rank,
+    target_pfa=target_pfa,
+    peak_distance=peak_distance,
 )
-detection_chain: list[DetectionAlgorithm] = [cfar_detector]
-if peak_distance > 0:
-    detection_chain.append(PeakDetector(distance=peak_distance))
 
 detector = PassiveSonarDetector(
-    detection_chain=detection_chain,
+    detector=cfar_detector,
     sensor_data_gen=simulator.sensor_data_gen(),
     steering_azimuths_rad=steering_azimuths_rad,
 )
@@ -371,6 +368,7 @@ plot_btr(
     timesteps=timesteps,
     steering_azimuths=np.rad2deg(steering_azimuths_rad),
     fig=fig_btr,
+    colorscale="Viridis",
     row=1,
     col=1,
 )
@@ -380,6 +378,7 @@ plot_btr(
     timesteps=timesteps,
     steering_azimuths=np.rad2deg(steering_azimuths_rad),
     fig=fig_btr,
+    colorscale="Viridis",
     row=1,
     col=2,
 )
@@ -406,6 +405,8 @@ fig_btr.update_layout(
     margin=dict(r=80),
     yaxis2=dict(title=""),
 )
+
+fig_btr.show()
 
 # %%
 # Feed Blue Pebble Detections into a Stone Soup Tracker
@@ -524,5 +525,5 @@ plot_btr(
 #
 # 1. Build a Stone Soup platform and truth model.
 # 2. Add Blue Pebble array, propagation, source, and noise components.
-# 3. Run passive sonar simulator and a passive-sonar detection chain.
+# 3. Run the passive sonar simulator and a CFAR-family passive-sonar detector.
 # 4. Pass the resulting detections into a Stone Soup tracker.
