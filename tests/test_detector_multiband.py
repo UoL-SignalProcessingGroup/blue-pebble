@@ -41,31 +41,39 @@ def _detector(passive, band_detectors, source=None, default_detector=None, num_s
     )
 
 
-class _ThresholdOnly:
-    """Minimal detection algorithm selecting cells strictly above a threshold."""
+class _ThresholdDetector:
+    """Minimal CFAR-like detector: raw mean power, thresholded directly (no dB scaling)."""
 
     def __init__(self, threshold):
         self.threshold = threshold
 
-    def detect(self, data):
-        """Return ``[index, value]`` rows for cells above the threshold."""
-        indices = np.nonzero(np.asarray(data) > self.threshold)[0]
+    def snr_map(self, beamformed_data):
+        """Return raw mean power per beam."""
+        data = np.asarray(beamformed_data)
+        return np.mean(np.abs(data) ** 2, axis=1)
+
+    def detect(self, beamformed_data):
+        """Return ``[index, power]`` rows for cells whose power exceeds the threshold."""
+        power = self.snr_map(beamformed_data)
+        indices = np.nonzero(power > self.threshold)[0]
         if indices.size == 0:
             return np.empty((0, 2), dtype=np.float64)
-        return np.column_stack((indices, np.asarray(data)[indices])).astype(np.float64)
+        return np.column_stack((indices, power[indices])).astype(np.float64)
 
 
-def test_per_band_chains_are_applied_independently(monkeypatch) -> None:
-    """Each band should be detected with its own chain, not a shared one."""
+def _band_detector(passive, threshold):
+    """Build a BandDetector wrapping a _ThresholdDetector at the given power threshold."""
+    return passive.BandDetector(detector=_ThresholdDetector(threshold))
+
+
+def test_per_band_detectors_are_applied_independently(monkeypatch) -> None:
+    """Each band should be detected with its own detector, not a shared one."""
     passive = _load_passive_detector_module(monkeypatch)
 
-    # Normalised, 'low' peaks at 18.06 dB and 'high' at 9.54 dB, so 12 dB separates them.
+    # 'low' peaks at power 64 (8.0**2), 'high' at power 9 (3.0**2).
     detector = _detector(
         passive,
-        {
-            "low": passive.BandDetector(detection_chain=[_ThresholdOnly(12.0)]),
-            "high": passive.BandDetector(detection_chain=[_ThresholdOnly(12.0)]),
-        },
+        {"low": _band_detector(passive, 16.0), "high": _band_detector(passive, 16.0)},
     )
     detections = [d for _, batch in detector.detections_gen() for d in batch]
     assert [d.metadata["band"] for d in detections] == ["low"]
@@ -73,10 +81,7 @@ def test_per_band_chains_are_applied_independently(monkeypatch) -> None:
     # Lowering only the 'high' band's threshold must bring its peak in, and nothing else.
     detector = _detector(
         passive,
-        {
-            "low": passive.BandDetector(detection_chain=[_ThresholdOnly(12.0)]),
-            "high": passive.BandDetector(detection_chain=[_ThresholdOnly(6.0)]),
-        },
+        {"low": _band_detector(passive, 16.0), "high": _band_detector(passive, 4.0)},
     )
     detections = [d for _, batch in detector.detections_gen() for d in batch]
     assert sorted(d.metadata["band"] for d in detections) == ["high", "low"]
@@ -87,8 +92,8 @@ def test_detections_carry_band_and_snr_metadata(monkeypatch) -> None:
     passive = _load_passive_detector_module(monkeypatch)
     detector = _detector(
         passive,
-        {"low": passive.BandDetector(detection_chain=[_ThresholdOnly(12.0)])},
-        default_detector=passive.BandDetector(detection_chain=[_ThresholdOnly(12.0)]),
+        {"low": _band_detector(passive, 16.0)},
+        default_detector=_band_detector(passive, 16.0),
     )
 
     detections = [d for _, batch in detector.detections_gen() for d in batch]
@@ -97,7 +102,7 @@ def test_detections_carry_band_and_snr_metadata(monkeypatch) -> None:
     detection = detections[0]
     assert detection.metadata["band"] == "low"
     assert isinstance(detection.metadata["snr_db"], float)
-    assert detection.metadata["snr_db"] == pytest.approx(18.06, abs=0.01)
+    assert detection.metadata["snr_db"] == pytest.approx(64.0)
     # The peak sits in beam index 2 of the 'low' band.
     assert detection.state_vector[0][0] == pytest.approx(0.5)
 
@@ -106,8 +111,8 @@ def test_union_equals_the_sum_of_per_band_readers(monkeypatch) -> None:
     """The squashed view must contain exactly what the separate views do."""
     passive = _load_passive_detector_module(monkeypatch)
     band_detectors = {
-        "low": passive.BandDetector(detection_chain=[_ThresholdOnly(6.0)]),
-        "high": passive.BandDetector(detection_chain=[_ThresholdOnly(3.0)]),
+        "low": _band_detector(passive, 4.0),
+        "high": _band_detector(passive, 4.0),
     }
 
     union_detector = _detector(passive, band_detectors, num_steps=3)
@@ -139,10 +144,7 @@ def test_band_readers_share_one_pass_over_the_sensor_data(monkeypatch) -> None:
 
     detector = _detector(
         passive,
-        {
-            "low": passive.BandDetector(detection_chain=[_ThresholdOnly(6.0)]),
-            "high": passive.BandDetector(detection_chain=[_ThresholdOnly(3.0)]),
-        },
+        {"low": _band_detector(passive, 4.0), "high": _band_detector(passive, 4.0)},
         source=counting_source(),
     )
     low_reader = detector.band_reader("low")
@@ -163,10 +165,7 @@ def test_interleaved_band_readers_stay_aligned(monkeypatch) -> None:
     passive = _load_passive_detector_module(monkeypatch)
     detector = _detector(
         passive,
-        {
-            "low": passive.BandDetector(detection_chain=[_ThresholdOnly(6.0)]),
-            "high": passive.BandDetector(detection_chain=[_ThresholdOnly(3.0)]),
-        },
+        {"low": _band_detector(passive, 4.0), "high": _band_detector(passive, 4.0)},
         num_steps=3,
     )
     low_gen = detector.band_reader("low").detections_gen()
@@ -185,10 +184,7 @@ def test_subscribing_after_iteration_starts_is_rejected(monkeypatch) -> None:
     passive = _load_passive_detector_module(monkeypatch)
     detector = _detector(
         passive,
-        {
-            "low": passive.BandDetector(detection_chain=[_ThresholdOnly(6.0)]),
-            "high": passive.BandDetector(detection_chain=[_ThresholdOnly(3.0)]),
-        },
+        {"low": _band_detector(passive, 4.0), "high": _band_detector(passive, 4.0)},
         num_steps=3,
     )
     low_gen = detector.band_reader("low").detections_gen()
@@ -201,10 +197,7 @@ def test_subscribing_after_iteration_starts_is_rejected(monkeypatch) -> None:
 def test_unknown_band_without_default_detector_raises(monkeypatch) -> None:
     """An unrecognised band label must not be silently dropped."""
     passive = _load_passive_detector_module(monkeypatch)
-    detector = _detector(
-        passive,
-        {"low": passive.BandDetector(detection_chain=[_ThresholdOnly(6.0)])},
-    )
+    detector = _detector(passive, {"low": _band_detector(passive, 4.0)})
 
     with pytest.raises(KeyError, match="No detector for band 'high'"):
         list(detector.detections_gen())
@@ -215,8 +208,8 @@ def test_default_detector_covers_unlisted_bands(monkeypatch) -> None:
     passive = _load_passive_detector_module(monkeypatch)
     detector = _detector(
         passive,
-        {"low": passive.BandDetector(detection_chain=[_ThresholdOnly(6.0)])},
-        default_detector=passive.BandDetector(detection_chain=[_ThresholdOnly(3.0)]),
+        {"low": _band_detector(passive, 4.0)},
+        default_detector=_band_detector(passive, 4.0),
     )
 
     detections = [d for _, batch in detector.detections_gen() for d in batch]
@@ -228,10 +221,7 @@ def test_snr_history_is_keyed_by_band(monkeypatch) -> None:
     passive = _load_passive_detector_module(monkeypatch)
     detector = _detector(
         passive,
-        {
-            "low": passive.BandDetector(detection_chain=[_ThresholdOnly(6.0)]),
-            "high": passive.BandDetector(detection_chain=[_ThresholdOnly(3.0)]),
-        },
+        {"low": _band_detector(passive, 4.0), "high": _band_detector(passive, 4.0)},
         num_steps=4,
     )
 
@@ -248,23 +238,36 @@ def test_snr_history_is_keyed_by_band(monkeypatch) -> None:
     assert history["low"][0].max() > history["high"][0].max()
 
 
-def test_per_band_output_type_changes_normalisation(monkeypatch) -> None:
-    """Each band's own output_type must drive its normalisation."""
+def test_each_band_uses_its_own_detectors_snr_scale(monkeypatch) -> None:
+    """Per-band SNR history must reflect that band's own detector, not a shared scale."""
     passive = _load_passive_detector_module(monkeypatch)
+
+    class DbDetector:
+        """A detector reporting SNR in dB relative to the mean, instead of raw power."""
+
+        def snr_map(self, beamformed_data):
+            power = np.mean(np.abs(np.asarray(beamformed_data)) ** 2, axis=1)
+            eps = np.finfo(float).eps
+            return 10 * np.log10((power + eps) / (np.mean(power) + eps))
+
+        def detect(self, beamformed_data):
+            return np.empty((0, 2), dtype=np.float64)
+
     detector = _detector(
         passive,
         {
-            "low": passive.BandDetector(detection_chain=[], output_type="power"),
-            "high": passive.BandDetector(detection_chain=[], output_type="snr_percentile"),
+            "low": passive.BandDetector(detector=_ThresholdDetector(threshold=1e9)),
+            "high": passive.BandDetector(detector=DbDetector()),
         },
     )
     list(detector.detections_gen())
     history = detector.snr_history
 
-    # 'power' is linear and un-normalised, so the raw 8.0 peak survives untouched.
+    # 'low' uses raw linear power, so the 8.0 peak survives as 64.0 untouched.
     np.testing.assert_allclose(history["low"][0], [1.0, 1.0, 64.0, 1.0])
-    # 'snr_percentile' is in dB relative to the noise floor, so the flat cells sit at 0 dB.
-    np.testing.assert_allclose(history["high"][0], [0.0, 9.542425, 0.0, 0.0], atol=1e-5)
+    # 'high' uses dB-relative-to-mean, so its flat non-peak cells sit below 0 dB.
+    assert history["high"][0][0] < 0.0
+    assert history["high"][0][1] > history["high"][0][0]
 
 
 def test_rejects_single_band_beamformed_data(monkeypatch) -> None:
@@ -285,7 +288,7 @@ def test_rejects_single_band_beamformed_data(monkeypatch) -> None:
 
     detector = _detector(
         passive,
-        {"low": passive.BandDetector(detection_chain=[_ThresholdOnly(6.0)])},
+        {"low": _band_detector(passive, 4.0)},
         source=single_band_source(),
     )
 
@@ -312,7 +315,7 @@ def test_skips_empty_and_missing_beamformed_data(monkeypatch) -> None:
 
     detector = _detector(
         passive,
-        {"low": passive.BandDetector(detection_chain=[_ThresholdOnly(6.0)])},
+        {"low": _band_detector(passive, 4.0)},
         source=sparse_source(),
     )
 

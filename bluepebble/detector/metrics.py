@@ -1,10 +1,10 @@
 """Detection performance metrics for passive sonar systems.
 
-This module provides tools to evaluate one or more detection chains by sweeping
-a scalar parameter (e.g. CFAR ``threshold_factor``) over a pre-computed SNR map and
-comparing the resulting detections against ground-truth bearings.
+This module provides tools to evaluate one or more CFAR-family detectors by sweeping
+a scalar parameter (e.g. ``target_pfa``) over raw beamformed data and comparing the
+resulting detections against ground-truth bearings.
 
-Each chain to evaluate is described by a :class:`SweepSpec`; passing a list of them
+Each detector to evaluate is described by a :class:`SweepSpec`; passing a list of them
 to :func:`sweep_detection_parameter` produces a parallel list of :class:`SweepResult`
 objects that can be plotted together for comparison. See :func:`sweep_detection_parameter`
 for a full runnable example.
@@ -20,8 +20,6 @@ from typing import TYPE_CHECKING, Protocol, TypeAlias, TypeVar
 import numpy as np
 from numpy.typing import ArrayLike, NDArray
 
-from .algorithms import run_detection_chain
-
 if TYPE_CHECKING:
     from .algorithms import DetectionAlgorithm
 
@@ -29,7 +27,7 @@ FloatArray: TypeAlias = NDArray[np.float64]
 IntArray: TypeAlias = NDArray[np.int64]
 DetectionArray: TypeAlias = NDArray[np.float64]
 
-_ChainState = TypeVar("_ChainState")
+_DetectorState = TypeVar("_DetectorState")
 
 
 class _BearingStateLike(Protocol):
@@ -46,18 +44,15 @@ class _GroundTruthPathLike(Protocol):
 
 @dataclass
 class SweepSpec:
-    """Specification for a single detection-chain parameter sweep.
+    """Specification for a single detector parameter sweep.
 
     Attributes
     ----------
-    detection_chain : list[DetectionAlgorithm]
-        The base detection chain.  Deep-copied for each parameter value so the
-        original is never mutated.
-    algorithm_index : int
-        Index into ``detection_chain`` selecting the algorithm whose parameter
-        is swept (0-based).
+    detector : DetectionAlgorithm
+        The base detector (e.g. a configured :class:`~.CACFARDetector`).  Deep-copied
+        for each parameter value so the original is never mutated.
     param_name : str
-        Attribute name to sweep (e.g. ``"threshold_factor"``).
+        Attribute name to sweep (e.g. ``"target_pfa"``).
     param_values : ArrayLike
         Sequence of values to evaluate, ordered from most permissive to most
         strict so ROC / PR curves trace in the canonical direction.
@@ -67,8 +62,7 @@ class SweepSpec:
 
     """
 
-    detection_chain: Sequence[DetectionAlgorithm]
-    algorithm_index: int
+    detector: DetectionAlgorithm
     param_name: str
     param_values: ArrayLike
     label: str | None = None
@@ -106,7 +100,7 @@ def _compute_timestep_metrics(
     association_threshold_rad : float
         Maximum angular distance (rad) for a detection to be counted as a TP.
     num_beam_cells : int
-        Total number of beam cells in the SNR vector (used to estimate TN).
+        Total number of beam cells (used to estimate TN).
 
     Returns
     -------
@@ -282,18 +276,23 @@ class SweepResult:
         best = candidates[np.argmax(self.tpr[candidates])]
         return float(self.param_values[best])
 
-
-def _clone_chain_with_param(spec: SweepSpec, value: float) -> list[DetectionAlgorithm]:
-    """Deep-copy a spec's detection chain with its swept parameter set to ``value``."""
-    chain_copy = copy.deepcopy(list(spec.detection_chain))
-    setattr(chain_copy[spec.algorithm_index], spec.param_name, float(value))
-    return chain_copy
+def _clone_detector_with_param(spec: SweepSpec, value: float) -> DetectionAlgorithm:
+    """Deep-copy a spec's detector with its swept parameter set to ``value``."""
+    detector_copy = copy.deepcopy(spec.detector)
+    setattr(detector_copy, spec.param_name, float(value))
+    # A CFAR detector's alpha is memoized per num_frames (see _CFARDetectorBase). Deep-copying
+    # a detector that was already used to detect() carries that stale cache along with it, so
+    # the clone would keep reusing an alpha calibrated for the OLD parameter value instead of
+    # recalibrating for `value`. Not every DetectionAlgorithm has this cache, hence the guard.
+    if hasattr(detector_copy, "_alpha_cache"):
+        detector_copy._alpha_cache = {}
+    return detector_copy
 
 
 def _sweep_confusion_counts(
     param_values: FloatArray,
-    chain_factory: Callable[[float], _ChainState],
-    detected_beams_at_t: Callable[[_ChainState, int], IntArray],
+    detector_factory: Callable[[float], _DetectorState],
+    detected_beams_at_t: Callable[[_DetectorState, int], IntArray],
     gt_bearings_per_t: list[FloatArray],
     steering_azimuths: FloatArray,
     association_threshold_rad: float,
@@ -304,19 +303,19 @@ def _sweep_confusion_counts(
 
     Shared by :func:`sweep_detection_parameter` and
     :func:`sweep_detection_parameter_multiband`; the two differ only in how a parameter
-    value becomes chain state (``chain_factory``) and how that state and a timestep become
-    detected beam indices (``detected_beams_at_t``).
+    value becomes detector state (``detector_factory``) and how that state and a timestep
+    become detected beam indices (``detected_beams_at_t``).
 
     Parameters
     ----------
     param_values : FloatArray
         Swept parameter values, shape ``(P,)``.
-    chain_factory : Callable[[float], _ChainState]
-        Builds whatever chain state ``detected_beams_at_t`` needs for one parameter value.
-        Called once per parameter value, not once per timestep.
-    detected_beams_at_t : Callable[[_ChainState, int], IntArray]
-        Returns the detected beam indices for a timestep, given the chain state built for
-        the current parameter value.
+    detector_factory : Callable[[float], _DetectorState]
+        Builds whatever detector state ``detected_beams_at_t`` needs for one parameter
+        value.  Called once per parameter value, not once per timestep.
+    detected_beams_at_t : Callable[[_DetectorState, int], IntArray]
+        Returns the detected beam indices for a timestep, given the detector state built
+        for the current parameter value.
     gt_bearings_per_t : list[FloatArray]
         Ground-truth bearings per timestep, as returned by
         :func:`_bearings_from_ground_truth_paths`.
@@ -341,14 +340,12 @@ def _sweep_confusion_counts(
     tn_arr: IntArray = np.zeros(len(param_values), dtype=np.int64)
 
     for p_idx, p_val in enumerate(param_values):
-        chain_state = chain_factory(float(p_val))
+        detector_state = detector_factory(float(p_val))
 
         for t_idx in range(num_timesteps):
-            beam_idx = detected_beams_at_t(chain_state, t_idx)
+            beam_idx = detected_beams_at_t(detector_state, t_idx)
             det_bearings = (
-                steering_azimuths[beam_idx]
-                if beam_idx.size > 0
-                else np.empty(0, dtype=np.float64)
+                steering_azimuths[beam_idx] if beam_idx.size > 0 else np.empty(0, dtype=np.float64)
             )
 
             m = _compute_timestep_metrics(
@@ -367,40 +364,43 @@ def _sweep_confusion_counts(
 
 
 def sweep_detection_parameter(
-    snr_map: ArrayLike,
+    beamformed_data: Sequence[ArrayLike],
     sweep_specs: Sequence[SweepSpec],
     ground_truth_paths: Sequence[_GroundTruthPathLike],
     steering_azimuths_rad: ArrayLike,
     association_threshold_rad: float,
     bearing_state_index: int = 0,
 ) -> list[SweepResult]:
-    """Sweep parameters for one or more detection chains and compute ROC / PR metrics.
+    """Sweep parameters for one or more detectors and compute ROC / PR metrics.
 
     For each :class:`SweepSpec` and each value in its ``param_values`` the function:
 
-    1. Deep-copies the detection chain (the originals are never mutated).
-    2. Sets ``chain[algorithm_index].<param_name>`` to the current sweep value.
-    3. Runs the modified chain over every row of ``snr_map``.
+    1. Deep-copies the detector (the original is never mutated).
+    2. Sets ``detector.<param_name>`` to the current sweep value.
+    3. Runs the modified detector's ``detect()`` over every timestep's raw beamformed
+       data, letting it compute its own noise floor and threshold from scratch.
     4. Associates detections with ground-truth bearings via greedy nearest-neighbour
        matching and accumulates TP / FP / FN / TN counts.
 
     The returned :class:`SweepResult` objects expose precision, recall, TPR, FPR,
     F1 and AUC values as properties.  Pass the list directly to
-    :func:`~bluepebble.plotter.plot_roc_pr` to compare all chains in one figure.
+    :func:`~bluepebble.plotter.plot_roc_pr` to compare all detectors in one figure.
 
     Parameters
     ----------
-    snr_map : ArrayLike
-        Pre-computed SNR map of shape ``(T, N_beams)`` — typically
-        ``PassiveSonarDetector.snr_history`` after running a simulation.
+    beamformed_data : Sequence[ArrayLike]
+        Raw beamformed data, one entry per timestep, each of shape
+        ``(num_beams, num_frames)`` — the same input a detector's own ``detect()``
+        expects.  Since :class:`~.PassiveSonarDetector` doesn't retain raw frames after
+        detecting, collect this separately, e.g. by saving
+        ``sensor_data.beamformed_data`` while iterating ``simulator.sensor_data_gen()``.
     sweep_specs : Sequence[SweepSpec]
-        One :class:`SweepSpec` per detection chain to evaluate.  Each spec
-        carries its own chain, algorithm index, parameter name, sweep range,
-        and optional legend label.
+        One :class:`SweepSpec` per detector to evaluate.  Each spec carries its own
+        detector, parameter name, sweep range, and optional legend label.
     ground_truth_paths : Sequence[_GroundTruthPathLike]
         Stone Soup ground-truth paths whose state vectors carry bearing values —
         typically ``relative_bearing_ground_truths`` from the simulation workflow.
-        The number of timesteps is inferred from ``snr_map``.
+        The number of timesteps is inferred from ``beamformed_data``.
     steering_azimuths_rad : ArrayLike
         Beam steering angles in radians, shape ``(N_beams,)``.  Maps a detection
         index back to a physical bearing.
@@ -419,34 +419,36 @@ def sweep_detection_parameter(
     Examples
     --------
     >>> import numpy as np
-    >>> from bluepebble.detector.algorithms import CACFARDetector, OSCFARDetector, PeakDetector
+    >>> from bluepebble.detector.algorithms import CACFARDetector, OSCFARDetector
     >>> from bluepebble.detector.metrics import SweepSpec, sweep_detection_parameter
     >>> from bluepebble.plotter import plot_roc_pr
     >>>
+    >>> beamformed_data = [
+    ...     sensor_data.beamformed_data
+    ...     for _, sensor_data_set in simulator.sensor_data_gen()
+    ...     for sensor_data in sensor_data_set
+    ... ]
+    >>>
     >>> specs = [
     ...     SweepSpec(
-    ...         detection_chain=[
-    ...             CACFARDetector(num_guard_cells=2, num_training_cells=10, threshold_factor=1.1),
-    ...             PeakDetector(distance=3),
-    ...         ],
-    ...         algorithm_index=0,
-    ...         param_name="threshold_factor",
-    ...         param_values=np.linspace(0.7, 2.5, 80),
+    ...         detector=CACFARDetector(
+    ...             num_guard_cells=2, num_training_cells=10, target_pfa=1e-2, peak_distance=3
+    ...         ),
+    ...         param_name="target_pfa",
+    ...         param_values=np.geomspace(1e-1, 1e-5, 80),
     ...         label="CA-CFAR",
     ...     ),
     ...     SweepSpec(
-    ...         detection_chain=[
-    ...             OSCFARDetector(num_guard_cells=2, num_training_cells=10, threshold_factor=1.1),
-    ...             PeakDetector(distance=3),
-    ...         ],
-    ...         algorithm_index=0,
-    ...         param_name="threshold_factor",
-    ...         param_values=np.linspace(0.7, 2.5, 80),
+    ...         detector=OSCFARDetector(
+    ...             num_guard_cells=2, num_training_cells=10, target_pfa=1e-2, peak_distance=3
+    ...         ),
+    ...         param_name="target_pfa",
+    ...         param_values=np.geomspace(1e-1, 1e-5, 80),
     ...         label="OS-CFAR",
     ...     ),
     ... ]
     >>> results = sweep_detection_parameter(
-    ...     snr_map=detector.snr_history,
+    ...     beamformed_data=beamformed_data,
     ...     sweep_specs=specs,
     ...     ground_truth_paths=relative_bearing_ground_truths,
     ...     steering_azimuths_rad=BF_PARAMS["steering_azimuths_rad"],
@@ -455,9 +457,10 @@ def sweep_detection_parameter(
     >>> plot_roc_pr(results).show()
 
     """
-    snr_map_array = np.asarray(snr_map, dtype=np.float64)
     steering_azimuths = np.asarray(steering_azimuths_rad, dtype=np.float64)
-    num_timesteps, num_beams = snr_map_array.shape
+    num_beams = steering_azimuths.shape[0]
+    num_timesteps = len(beamformed_data)
+    frames = [np.asarray(d) for d in beamformed_data]
     gt_bearings_per_t = _bearings_from_ground_truth_paths(
         ground_truth_paths, num_timesteps, bearing_state_index
     )
@@ -468,18 +471,18 @@ def sweep_detection_parameter(
         param_values = np.asarray(spec.param_values, dtype=np.float64)
 
         def _detected_beams_at_t(
-            chain: list[DetectionAlgorithm],
+            detector: DetectionAlgorithm,
             t_idx: int,
-            _snr_map_array: FloatArray = snr_map_array,
+            _frames: list[FloatArray] = frames,
         ) -> IntArray:
-            raw_dets = run_detection_chain(chain, _snr_map_array[t_idx])
+            raw_dets = detector.detect(_frames[t_idx])
             return (
                 raw_dets[:, 0].astype(np.intp) if raw_dets.size > 0 else np.empty(0, dtype=np.intp)
             )
 
         tp_arr, fp_arr, fn_arr, tn_arr = _sweep_confusion_counts(
             param_values=param_values,
-            chain_factory=lambda p_val, _spec=spec: _clone_chain_with_param(_spec, p_val),
+            detector_factory=lambda p_val, _spec=spec: _clone_detector_with_param(_spec, p_val),
             detected_beams_at_t=_detected_beams_at_t,
             gt_bearings_per_t=gt_bearings_per_t,
             steering_azimuths=steering_azimuths,
@@ -503,45 +506,47 @@ def sweep_detection_parameter(
 
 
 def _validate_multiband_sweep_inputs(
-    snr_maps: dict[str, FloatArray],
+    beamformed_data: dict[str, Sequence[ArrayLike]],
     sweep_specs: dict[str, SweepSpec],
-) -> tuple[FloatArray, int, int]:
-    """Check that per-band maps and specs describe one coherent sweep.
+) -> tuple[FloatArray, int]:
+    """Check that per-band data and specs describe one coherent sweep.
 
     Parameters
     ----------
-    snr_maps : dict[str, FloatArray]
-        Per-band SNR maps keyed by band label.
+    beamformed_data : dict[str, Sequence[ArrayLike]]
+        Per-band raw beamformed data keyed by band label.
     sweep_specs : dict[str, SweepSpec]
         Per-band sweep specifications keyed by band label.
 
     Returns
     -------
-    tuple of (FloatArray, int, int)
-        The shared parameter values, the timestep count, and the beam count.
+    tuple of (FloatArray, int)
+        The shared parameter values and the timestep count.
 
     Raises
     ------
     ValueError
-        If no bands are given, if the band labels of ``snr_maps`` and
-        ``sweep_specs`` disagree, if the maps differ in shape, or if the specs
-        do not all sweep the same parameter values.
+        If no bands are given, if the band labels of ``beamformed_data`` and
+        ``sweep_specs`` disagree, if the bands cover different numbers of
+        timesteps, or if the specs do not all sweep the same parameter values.
 
     """
-    if not snr_maps:
-        raise ValueError("snr_maps must contain at least one band")
+    if not beamformed_data:
+        raise ValueError("beamformed_data must contain at least one band")
 
-    if set(snr_maps) != set(sweep_specs):
-        missing = sorted(set(snr_maps) - set(sweep_specs))
-        extra = sorted(set(sweep_specs) - set(snr_maps))
+    if set(beamformed_data) != set(sweep_specs):
+        missing = sorted(set(beamformed_data) - set(sweep_specs))
+        extra = sorted(set(sweep_specs) - set(beamformed_data))
         raise ValueError(
-            "snr_maps and sweep_specs must cover the same bands; "
+            "beamformed_data and sweep_specs must cover the same bands; "
             f"bands with no spec: {missing}, specs with no band: {extra}"
         )
 
-    shapes = {label: np.asarray(m).shape for label, m in snr_maps.items()}
-    if len(set(shapes.values())) != 1:
-        raise ValueError(f"All bands must share one SNR map shape, got {shapes}")
+    timestep_counts = {label: len(d) for label, d in beamformed_data.items()}
+    if len(set(timestep_counts.values())) != 1:
+        raise ValueError(
+            f"All bands must share the same number of timesteps, got {timestep_counts}"
+        )
 
     reference_label = next(iter(sweep_specs))
     param_values = np.asarray(sweep_specs[reference_label].param_values, dtype=np.float64)
@@ -556,12 +561,11 @@ def _validate_multiband_sweep_inputs(
                 f"{reference_label!r}."
             )
 
-    num_timesteps, num_beams = shapes[reference_label]
-    return param_values, num_timesteps, num_beams
+    return param_values, timestep_counts[reference_label]
 
 
 def sweep_detection_parameter_multiband(
-    snr_maps: dict[str, FloatArray],
+    beamformed_data: dict[str, Sequence[ArrayLike]],
     sweep_specs: dict[str, SweepSpec],
     ground_truth_paths: Sequence[_GroundTruthPathLike],
     steering_azimuths_rad: ArrayLike,
@@ -571,8 +575,8 @@ def sweep_detection_parameter_multiband(
 ) -> SweepResult:
     """Sweep a detection parameter across several bands, scoring their combined output.
 
-    Each band is detected independently with its own chain, then the detections from every
-    band are combined into a single set per timestep and scored once. This is the
+    Each band is detected independently with its own detector, then the detections from
+    every band are combined into a single set per timestep and scored once. This is the
     "squashed" multiband configuration: the output a single tracker would consume.
 
     Bands are combined by taking the **union of detected beam indices**, so a bearing found
@@ -583,19 +587,19 @@ def sweep_detection_parameter_multiband(
     bands are not merged; resolving those is a tracker's job.
 
     Per-band detector geometry (CFAR guard and training cells, peak separation) belongs in
-    each band's own ``detection_chain``, since it should scale with the band's frequency.
-    Only the swept parameter is shared, and it must be, since combining bands at different
-    operating points would be meaningless.
+    each band's own detector, since it should scale with the band's frequency. Only the
+    swept parameter is shared, and it must be, since combining bands at different operating
+    points would be meaningless.
 
     Parameters
     ----------
-    snr_maps : dict[str, FloatArray]
-        Per-band SNR maps keyed by band label, each of shape
-        ``(num_timesteps, num_beams)``. Matches
-        :attr:`~.MultibandPassiveSonarDetector.snr_history`.
+    beamformed_data : dict[str, Sequence[ArrayLike]]
+        Per-band raw beamformed data keyed by band label, one entry per timestep, each of
+        shape ``(num_beams, num_frames)``. Bands may have different ``num_frames`` (e.g.
+        different STFT settings), but must share ``num_beams`` and timestep count.
     sweep_specs : dict[str, SweepSpec]
-        One :class:`SweepSpec` per band, keyed by the same labels as ``snr_maps``. Every
-        spec must sweep the same ``param_values``.
+        One :class:`SweepSpec` per band, keyed by the same labels as ``beamformed_data``.
+        Every spec must sweep the same ``param_values``.
     ground_truth_paths : Sequence
         Bearing ground-truth paths used to score detections.
     steering_azimuths_rad : ArrayLike
@@ -613,40 +617,39 @@ def sweep_detection_parameter_multiband(
         Metrics for the combined output, one entry per swept parameter value.
 
     """
-    param_values, num_timesteps, num_beams = _validate_multiband_sweep_inputs(
-        snr_maps, sweep_specs
-    )
+    param_values, num_timesteps = _validate_multiband_sweep_inputs(beamformed_data, sweep_specs)
     steering_azimuths = np.asarray(steering_azimuths_rad, dtype=np.float64)
+    num_beams = steering_azimuths.shape[0]
     gt_bearings_per_t = _bearings_from_ground_truth_paths(
         ground_truth_paths, num_timesteps, bearing_state_index
     )
     band_labels = list(sweep_specs)
-    band_maps = {
-        band_label: np.asarray(snr_maps[band_label], dtype=np.float64)
+    band_frames = {
+        band_label: [np.asarray(d) for d in beamformed_data[band_label]]
         for band_label in band_labels
     }
 
-    def _chain_factory(p_val: float) -> dict[str, list[DetectionAlgorithm]]:
-        # Clone each band's chain once per parameter value, not once per timestep.
+    def _detector_factory(p_val: float) -> dict[str, DetectionAlgorithm]:
+        # Clone each band's detector once per parameter value, not once per timestep.
         return {
-            band_label: _clone_chain_with_param(sweep_specs[band_label], p_val)
+            band_label: _clone_detector_with_param(sweep_specs[band_label], p_val)
             for band_label in band_labels
         }
 
     def _detected_beams_at_t(
-        chains: dict[str, list[DetectionAlgorithm]],
+        detectors: dict[str, DetectionAlgorithm],
         t_idx: int,
     ) -> IntArray:
         detected_beams: set[int] = set()
         for band_label in band_labels:
-            raw_dets = run_detection_chain(chains[band_label], band_maps[band_label][t_idx])
+            raw_dets = detectors[band_label].detect(band_frames[band_label][t_idx])
             if raw_dets.size > 0:
                 detected_beams.update(raw_dets[:, 0].astype(int).tolist())
         return np.array(sorted(detected_beams), dtype=np.intp)
 
     tp_arr, fp_arr, fn_arr, tn_arr = _sweep_confusion_counts(
         param_values=param_values,
-        chain_factory=_chain_factory,
+        detector_factory=_detector_factory,
         detected_beams_at_t=_detected_beams_at_t,
         gt_bearings_per_t=gt_bearings_per_t,
         steering_azimuths=steering_azimuths,

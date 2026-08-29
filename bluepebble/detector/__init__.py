@@ -4,9 +4,6 @@ from .algorithms import (
     CACFARDetector,
     DetectionAlgorithm,
     OSCFARDetector,
-    PeakDetector,
-    ThresholdDetector,
-    run_detection_chain,
 )
 from .metrics import (
     SweepResult,
@@ -27,12 +24,9 @@ __all__ = [
     "DetectionAlgorithm",
     "MultibandPassiveSonarDetector",
     "OSCFARDetector",
-    "PeakDetector",
     "PassiveSonarDetector",
     "SweepResult",
     "SweepSpec",
-    "ThresholdDetector",
-    "run_detection_chain",
     "snr_from_beamformed_data",
     "sweep_detection_parameter",
     "sweep_detection_parameter_multiband",

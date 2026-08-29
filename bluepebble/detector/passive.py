@@ -14,7 +14,7 @@ from stonesoup.types.detection import Detection
 from tqdm import tqdm
 
 from ..types.sensordata import PassiveSonarSensorData
-from .algorithms import DetectionAlgorithm, run_detection_chain
+from .algorithms import _CFARDetectorBase, _directional_power
 
 FloatArray: TypeAlias = NDArray[np.float64]
 DetectionArray: TypeAlias = NDArray[np.float64]
@@ -28,12 +28,13 @@ def snr_from_beamformed_data(
     output_type: str = "snr_percentile",
     percentile: int = 10,
 ) -> FloatArray:
-    """Reduce a beamformed power map to a per-beam detection map.
+    """Reduce a beamformed power map to a per-beam map, using a single global normalisation.
 
-    Directional power is averaged over frames, then normalised according to ``output_type``.
-    The percentile- and median-based options express each beam relative to an estimate of
-    the noise floor taken across beams, which makes the result comparable between snapshots
-    whose absolute levels differ.
+    Not used internally by :class:`PassiveSonarDetector` or :class:`BandDetector` -- those now
+    get per-beam SNR from their CFAR detector's own local (per-bearing) noise-floor estimate via
+    ``detector.snr_map()``, which is more representative of what actually drove each detection
+    decision. Kept as a standalone utility for cases that want a quick global-normalised view
+    (e.g. debugging or plotting) without needing a configured CFAR detector.
 
     Parameters
     ----------
@@ -61,15 +62,14 @@ def snr_from_beamformed_data(
     data = np.asarray(beamformed_data)
 
     if output_type == "power":
-        return np.mean(np.abs(data) ** 2, axis=1)
+        return np.mean(_directional_power(data), axis=1)
 
     if output_type == "log_power":
-        return 10 * np.log10(np.mean(np.abs(data) ** 2, axis=1))
+        return 10 * np.log10(np.mean(_directional_power(data), axis=1))
 
     if output_type in ("snr_percentile", "median_power"):
-        directional_power = np.mean(np.abs(data) ** 2, axis=1)
+        directional_power = np.mean(_directional_power(data), axis=1)
         if output_type == "snr_percentile":
-            # More stable than the minimum: avoids outliers and division by zero.
             noise_power_estimate = np.percentile(directional_power, percentile)
         else:
             noise_power_estimate = np.median(directional_power)
@@ -82,18 +82,17 @@ def snr_from_beamformed_data(
 class PassiveSonarDetector(DetectionReader):
     """A passive sonar detector that processes beamformed sensor data.
 
-    This detector takes ``PassiveSonarSensorData`` as input, extracts the beamformed power map,
-    calculates the Signal-to-Noise Ratio (SNR) for each beam, and then runs a chain of detection
-    algorithms to find targets.
-
-    The SNR is calculated by estimating noise power as the 10th-percentile of directional power
-    (robust to outliers). Detections are produced with bearing values derived from the provided
-    steering azimuths.
+    This detector takes ``PassiveSonarSensorData`` as input and runs a single CFAR-family
+    ``detector`` directly against each frame's raw beamformed power map. Frame integration,
+    local noise-floor estimation, and wrap-aware peak consolidation are all handled internally
+    by the detector (see :mod:`.algorithms`). Detections are produced with bearing values
+    derived from the provided steering azimuths.
 
     Attributes
     ----------
-    detection_chain : list[DetectionAlgorithm]
-        A list of detection algorithms to apply sequentially to the SNR map.
+    detector : _CFARDetectorBase
+        The CFAR detector (e.g. :class:`~.algorithms.OSCFARDetector`) applied to each frame's
+        raw beamformed data.
     sensor_data_gen : Generator[SensorDataStep, None, None]
         Generator yielding sensor-data batches.
     steering_azimuths_rad : FloatArray
@@ -101,8 +100,8 @@ class PassiveSonarDetector(DetectionReader):
 
     """
 
-    detection_chain: list[DetectionAlgorithm] = Property(
-        doc="A list of detection algorithms to apply sequentially.",
+    detector: _CFARDetectorBase = Property(
+        doc="CFAR detector applied to each frame's raw beamformed data.",
     )
     sensor_data_gen: Generator[SensorDataStep, None, None] = Property(
         doc="Generator that yields PassiveSonarSensorData objects",
@@ -136,14 +135,12 @@ class PassiveSonarDetector(DetectionReader):
         self,
         progress_bar: bool = False,
         total_timesteps: int | None = None,
-        beamformer_output_type: str = "snr_percentile",
-        snr_percentile_val: int = 10,
     ) -> Generator[DetectionBatch, None, None]:
         """Generate detections from sensor data.
 
-        The generator iterates through ``sensor_data_gen``, computes an SNR map for each beamformed
-        frame, runs the configured ``detection_chain`` and yields Stone Soup ``Detection`` objects
-        (bearing-only measurements).
+        Iterates through ``sensor_data_gen`` and runs ``detector`` directly against each
+        frame's raw beamformed data, yielding Stone Soup ``Detection`` objects (bearing-only
+        measurements).
 
         Parameters
         ----------
@@ -151,11 +148,6 @@ class PassiveSonarDetector(DetectionReader):
             If True, wrap the input generator with a progress bar (default is False).
         total_timesteps : int, optional
             Total number of timesteps for the progress bar. Required if `progress_bar` is True.
-        beamformer_output_type : str, optional
-            Type of beamformer output to use for detection. Options are "snr_percentile" (default),
-            "log_power", "power", or "median_power".
-        snr_percentile_val : int, optional
-            Percentile to use for noise power estimation when calculating SNR (default is 10).
 
         Yields
         ------
@@ -173,29 +165,22 @@ class PassiveSonarDetector(DetectionReader):
             detections: set[Detection] = set()
             snr: FloatArray = np.array([], dtype=np.float64)
 
-            # Process each sensor data object in the set
             for sensor_data in sensor_data_set:
-                # Extract the beamformed data from the sensor data
                 beamformed_data = sensor_data.beamformed_data
 
                 if beamformed_data is None or beamformed_data.size == 0:
                     continue
 
-                snr = snr_from_beamformed_data(
-                    beamformed_data,
-                    output_type=beamformer_output_type,
-                    percentile=snr_percentile_val,
-                )
+                # snr_map() and detect() each estimate the noise floor independently -- a
+                # modest redundant computation in exchange for keeping "report the full
+                # picture" and "decide detections" as separate concerns. Worth revisiting if
+                # this shows up in profiling.
+                snr = self.detector.snr_map(beamformed_data)
+                raw_detections: DetectionArray = self.detector.detect(beamformed_data)
 
-                # Run the detection chain on the SNR map
-                raw_detections: DetectionArray = self._run_detection_chain(snr)
-
-                # Create Stone Soup Detections from the raw results
                 if raw_detections.size > 0:
                     for raw_det in raw_detections:
                         detection_index = int(raw_det[0])
-
-                        # Convert detection index to bearing angle in radians
                         bearing_rad = self.steering_azimuths_rad[detection_index]
 
                         detections.add(
@@ -210,52 +195,21 @@ class PassiveSonarDetector(DetectionReader):
 
             yield timestamp, detections
 
-    def _run_detection_chain(self, initial_snr_map: ArrayLike) -> DetectionArray:
-        """Process a data map through a sequential chain of detection algorithms.
-
-        Each algorithm in ``detection_chain`` is applied in sequence; the set of detections
-        produced by one stage is converted to a sparse input map for the next stage (non-detected
-        indices set to -inf).
-
-        Parameters
-        ----------
-        initial_snr_map : ArrayLike
-            The initial 1D data map (for example, SNR in dB) to be processed.
-
-        Returns
-        -------
-        DetectionArray
-            A 2D array of final detections where each row is ``[index, value]``. Returns an empty
-            array if no detections are found at any stage.
-
-        """
-        return run_detection_chain(self.detection_chain, initial_snr_map)
-
 
 class BandDetector(Base):
-    """Detection chain and normalisation for one frequency band.
+    """CFAR detector for one frequency band.
 
     Each band of a multiband beamformer gets its own instance, so bands can differ in
-    sensitivity and in how their power map is normalised. Bands are matched to detectors by
-    label; see :class:`MultibandPassiveSonarDetector`.
+    sensitivity (guard/training cell sizing, target Pfa, etc). Bands are matched to detectors
+    by label; see :class:`MultibandPassiveSonarDetector`.
     """
 
-    detection_chain: list[DetectionAlgorithm] = Property(
-        doc="Detection algorithms applied in sequence to this band's map.",
-    )
-    output_type: str = Property(
-        default="snr_percentile",
-        doc="Normalisation applied to this band's power map. One of 'snr_percentile', "
-        "'median_power', 'log_power', or 'power'.",
-    )
-    snr_percentile_val: int = Property(
-        default=10,
-        doc="Percentile of directional power used as the noise estimate when 'output_type' "
-        "is 'snr_percentile'.",
+    detector: _CFARDetectorBase = Property(
+        doc="CFAR detector applied to this band's raw beamformed data.",
     )
 
     def detect(self, beamformed_data: ArrayLike) -> tuple[FloatArray, DetectionArray]:
-        """Reduce this band's beamformed data to an SNR map and run its detection chain.
+        """Run this band's detector against its raw beamformed data.
 
         Parameters
         ----------
@@ -265,16 +219,12 @@ class BandDetector(Base):
         Returns
         -------
         tuple[FloatArray, DetectionArray]
-            The band's SNR map, and the detections found in it (see
-            :func:`run_detection_chain`).
+            The band's full per-beam SNR map, and the detections found in it.
 
         """
-        snr = snr_from_beamformed_data(
-            beamformed_data,
-            output_type=self.output_type,
-            percentile=self.snr_percentile_val,
-        )
-        return snr, run_detection_chain(self.detection_chain, snr)
+        snr = self.detector.snr_map(beamformed_data)
+        detections = self.detector.detect(beamformed_data)
+        return snr, detections
 
 
 class _SensorDataPump:

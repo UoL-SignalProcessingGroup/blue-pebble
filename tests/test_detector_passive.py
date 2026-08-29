@@ -92,9 +92,8 @@ def _install_fake_passive_dependencies(monkeypatch) -> None:
 def _load_passive_detector_module(monkeypatch):
     """Load ``detector/passive.py`` with lightweight dependency scaffolding.
 
-    ``algorithms.py`` is loaded for real rather than stubbed: it needs nothing from Stone
-    Soup beyond ``Base``/``Property``, and the detection-chain behaviour it provides is
-    what several tests below actually assert on.
+    ``algorithms.py`` is loaded for real rather than stubbed, since ``passive.py``
+    imports ``_CFARDetectorBase`` from it as a type annotation.
     """
     _install_fake_passive_dependencies(monkeypatch)
     install_repo_package(monkeypatch, "bluepebble", "bluepebble")
@@ -109,54 +108,101 @@ def _load_passive_detector_module(monkeypatch):
     )
 
 
-def test_run_detection_chain_uses_sparse_map_between_algorithms(monkeypatch) -> None:
-    """Each chain stage should only pass forward detected indices and values."""
+class _FakeDetector:
+    """Minimal stand-in for a ``_CFARDetectorBase``: independent detect()/snr_map()."""
+
+    def __init__(self, detect_fn, snr_fn=None):
+        self._detect_fn = detect_fn
+        self._snr_fn = snr_fn or (lambda data: np.zeros(np.asarray(data).shape[0]))
+
+    def detect(self, beamformed_data):
+        return self._detect_fn(np.asarray(beamformed_data))
+
+    def snr_map(self, beamformed_data):
+        return self._snr_fn(np.asarray(beamformed_data))
+
+
+# --------------------------------------------------------------------------
+# snr_from_beamformed_data (standalone utility)
+# --------------------------------------------------------------------------
+
+
+def test_snr_from_beamformed_data_power_mode_returns_linear_mean_power(monkeypatch) -> None:
+    """'power' mode should return the raw mean power per beam, unnormalised."""
     passive = _load_passive_detector_module(monkeypatch)
+    data = np.array([[1.0 + 0.0j], [3.0 + 0.0j]])
 
-    class FirstStage:
-        def detect(self, data_map):
-            return np.array([[1.0, data_map[1]], [3.0, data_map[3]]])
+    result = passive.snr_from_beamformed_data(data, output_type="power")
 
-    class SecondStage:
-        def detect(self, data_map):
-            np.testing.assert_array_equal(
-                np.isneginf(data_map),
-                np.array([True, False, True, False]),
-            )
-            np.testing.assert_allclose(data_map[[1, 3]], np.array([10.0, 5.0]))
-            return np.array([[3.0, data_map[3]]])
+    np.testing.assert_allclose(result, [1.0, 9.0])
 
-    detector = passive.PassiveSonarDetector(
-        detection_chain=[FirstStage(), SecondStage()],
-        sensor_data_gen=iter(()),
-        steering_azimuths_rad=np.array([], dtype=float),
+
+def test_snr_from_beamformed_data_log_power_mode_returns_db_power(monkeypatch) -> None:
+    """'log_power' mode should return 10*log10(mean power) directly."""
+    passive = _load_passive_detector_module(monkeypatch)
+    data = np.array([[2.0 + 0.0j, 2.0 + 0.0j]])
+
+    result = passive.snr_from_beamformed_data(data, output_type="log_power")
+
+    np.testing.assert_allclose(result, [10 * np.log10(4.0)], rtol=1e-6)
+
+
+def test_snr_from_beamformed_data_median_power_mode_uses_median_noise_floor(
+    monkeypatch,
+) -> None:
+    """'median_power' mode should normalise every beam to 0 dB when powers are equal."""
+    passive = _load_passive_detector_module(monkeypatch)
+    data = np.array([[2.0 + 0.0j], [2.0 + 0.0j], [2.0 + 0.0j]])
+
+    result = passive.snr_from_beamformed_data(data, output_type="median_power")
+
+    np.testing.assert_allclose(result, np.zeros(3), atol=1e-6)
+
+
+def test_snr_from_beamformed_data_snr_percentile_mode_uses_percentile_noise_floor(
+    monkeypatch,
+) -> None:
+    """A higher percentile should give a higher noise floor and lower reported SNR."""
+    passive = _load_passive_detector_module(monkeypatch)
+    data = np.array(
+        [[1.0 + 0.0j], [np.sqrt(2) + 0.0j], [np.sqrt(3) + 0.0j], [2.0 + 0.0j]]
     )
 
-    final_detections = detector._run_detection_chain(np.array([1.0, 10.0, 2.0, 5.0]))
+    low_percentile = passive.snr_from_beamformed_data(data, output_type="snr_percentile", percentile=10)
+    high_percentile = passive.snr_from_beamformed_data(data, output_type="snr_percentile", percentile=50)
 
-    np.testing.assert_array_equal(final_detections, np.array([[3.0, 5.0]]))
+    assert high_percentile.max() < low_percentile.max()
 
 
-def test_detections_gen_power_mode_emits_bearing_detections(monkeypatch) -> None:
-    """Power mode should create detections at the expected steering index."""
+def test_snr_from_beamformed_data_rejects_unknown_output_type(monkeypatch) -> None:
+    """Unsupported output modes should raise a clear validation error."""
+    passive = _load_passive_detector_module(monkeypatch)
+    data = np.array([[1.0 + 0.0j]])
+
+    with pytest.raises(ValueError, match="Unsupported beamformer_output_type"):
+        passive.snr_from_beamformed_data(data, output_type="unknown")
+
+
+# --------------------------------------------------------------------------
+# PassiveSonarDetector
+# --------------------------------------------------------------------------
+
+
+def test_detections_gen_emits_bearing_detections_with_snr_metadata(monkeypatch) -> None:
+    """A detection at beam index 1 should map to steering_azimuths_rad[1] and carry its SNR."""
     passive = _load_passive_detector_module(monkeypatch)
     timestamp = datetime(2026, 1, 1, 12, 0, 0)
     sensor_data = SimpleNamespace(
         beamformed_data=np.array([[1.0 + 0.0j, 1.0 + 0.0j], [2.0 + 0.0j, 2.0 + 0.0j]]),
         timestamp=timestamp,
     )
-
-    class SelectSecondBeam:
-        def detect(self, data_map):
-            return np.array([[1.0, data_map[1]]])
-
     detector = passive.PassiveSonarDetector(
-        detection_chain=[SelectSecondBeam()],
+        detector=_FakeDetector(detect_fn=lambda data: np.array([[1.0, 4.0]])),
         sensor_data_gen=iter([(timestamp, [sensor_data])]),
         steering_azimuths_rad=np.array([0.1, 0.5]),
     )
 
-    generated = list(detector.detections_gen(beamformer_output_type="power"))
+    generated = list(detector.detections_gen())
 
     assert len(generated) == 1
     yielded_timestamp, detections = generated[0]
@@ -167,112 +213,6 @@ def test_detections_gen_power_mode_emits_bearing_detections(monkeypatch) -> None
     assert detection.timestamp == timestamp
     assert float(detection.state_vector[0, 0]) == pytest.approx(0.5)
     assert detection.metadata["snr_db"] == pytest.approx(4.0)
-    np.testing.assert_allclose(detector.snr_history, np.array([[1.0, 4.0]]))
-
-
-def test_detections_gen_rejects_unknown_output_type(monkeypatch) -> None:
-    """Unsupported beamformer output modes should raise a clear validation error."""
-    passive = _load_passive_detector_module(monkeypatch)
-    timestamp = datetime(2026, 1, 1, 12, 0, 0)
-    sensor_data = SimpleNamespace(
-        beamformed_data=np.array([[1.0 + 0.0j, 1.0 + 0.0j]]),
-        timestamp=timestamp,
-    )
-
-    detector = passive.PassiveSonarDetector(
-        detection_chain=[],
-        sensor_data_gen=iter([(timestamp, [sensor_data])]),
-        steering_azimuths_rad=np.array([0.1]),
-    )
-
-    with pytest.raises(ValueError, match="Unsupported beamformer_output_type"):
-        next(detector.detections_gen(beamformer_output_type="unknown"))
-
-
-def test_detections_gen_snr_percentile_mode_uses_percentile_noise_floor(monkeypatch) -> None:
-    """snr_percentile mode should estimate noise from the configured percentile."""
-    passive = _load_passive_detector_module(monkeypatch)
-    timestamp = datetime(2026, 1, 1, 12, 0, 0)
-    # Two beams: power [1, 9]. 10th-percentile noise ≈ 1. SNR ≈ [0, ~9.5] dB.
-    beamformed_data = np.array([[1.0 + 0.0j], [3.0 + 0.0j]])
-    sensor_data = SimpleNamespace(beamformed_data=beamformed_data, timestamp=timestamp)
-
-    all_detections_class = []
-
-    class CaptureAll:
-        def detect(self, data_map):
-            all_detections_class.append(data_map.copy())
-            return np.array([[1.0, data_map[1]]])
-
-    detector = passive.PassiveSonarDetector(
-        detection_chain=[CaptureAll()],
-        sensor_data_gen=iter([(timestamp, [sensor_data])]),
-        steering_azimuths_rad=np.array([0.1, 0.5]),
-    )
-
-    list(detector.detections_gen(beamformer_output_type="snr_percentile", snr_percentile_val=10))
-
-    assert len(all_detections_class) == 1
-    snr_map = all_detections_class[0]
-    # Beam 1 (power=9) should have higher SNR than beam 0 (power=1)
-    assert snr_map[1] > snr_map[0]
-    # snr_history should contain one row with two values
-    assert detector.snr_history.shape == (1, 2)
-
-
-def test_detections_gen_median_power_mode_uses_median_noise_floor(monkeypatch) -> None:
-    """median_power mode should estimate noise from the median directional power."""
-    passive = _load_passive_detector_module(monkeypatch)
-    timestamp = datetime(2026, 1, 1, 12, 0, 0)
-    # Three beams with equal power — SNR should be ~0 dB for all.
-    beamformed_data = np.array([[2.0 + 0.0j], [2.0 + 0.0j], [2.0 + 0.0j]])
-    sensor_data = SimpleNamespace(beamformed_data=beamformed_data, timestamp=timestamp)
-
-    captured = []
-
-    class Capture:
-        def detect(self, data_map):
-            captured.append(data_map.copy())
-            return np.empty((0, 2))
-
-    detector = passive.PassiveSonarDetector(
-        detection_chain=[Capture()],
-        sensor_data_gen=iter([(timestamp, [sensor_data])]),
-        steering_azimuths_rad=np.array([0.1, 0.2, 0.3]),
-    )
-
-    list(detector.detections_gen(beamformer_output_type="median_power"))
-
-    assert len(captured) == 1
-    # All beams have the same power so SNR should be ~0 dB for all
-    np.testing.assert_allclose(captured[0], np.zeros(3), atol=1e-6)
-
-
-def test_detections_gen_log_power_mode_returns_log_power_directly(monkeypatch) -> None:
-    """log_power mode should pass 10*log10(mean power) directly to the detection chain."""
-    passive = _load_passive_detector_module(monkeypatch)
-    timestamp = datetime(2026, 1, 1, 12, 0, 0)
-    # Single beam, two samples: mean power = (4+4)/2 = 4 → 10*log10(4) ≈ 6.02 dB
-    beamformed_data = np.array([[2.0 + 0.0j, 2.0 + 0.0j]])
-    sensor_data = SimpleNamespace(beamformed_data=beamformed_data, timestamp=timestamp)
-
-    captured = []
-
-    class Capture:
-        def detect(self, data_map):
-            captured.append(data_map.copy())
-            return np.empty((0, 2))
-
-    detector = passive.PassiveSonarDetector(
-        detection_chain=[Capture()],
-        sensor_data_gen=iter([(timestamp, [sensor_data])]),
-        steering_azimuths_rad=np.array([0.0]),
-    )
-
-    list(detector.detections_gen(beamformer_output_type="log_power"))
-
-    assert len(captured) == 1
-    np.testing.assert_allclose(captured[0], [10 * np.log10(4.0)], rtol=1e-5)
 
 
 def test_detections_gen_skips_none_beamformed_data(monkeypatch) -> None:
@@ -282,7 +222,7 @@ def test_detections_gen_skips_none_beamformed_data(monkeypatch) -> None:
     sensor_data = SimpleNamespace(beamformed_data=None, timestamp=timestamp)
 
     detector = passive.PassiveSonarDetector(
-        detection_chain=[],
+        detector=_FakeDetector(detect_fn=lambda data: np.empty((0, 2))),
         sensor_data_gen=iter([(timestamp, [sensor_data])]),
         steering_azimuths_rad=np.array([0.1]),
     )
@@ -303,7 +243,7 @@ def test_detections_gen_skips_empty_beamformed_data(monkeypatch) -> None:
     )
 
     detector = passive.PassiveSonarDetector(
-        detection_chain=[],
+        detector=_FakeDetector(detect_fn=lambda data: np.empty((0, 2))),
         sensor_data_gen=iter([(timestamp, [sensor_data])]),
         steering_azimuths_rad=np.array([0.1]),
     )
@@ -315,8 +255,8 @@ def test_detections_gen_skips_empty_beamformed_data(monkeypatch) -> None:
     assert len(detections) == 0
 
 
-def test_detections_gen_empty_chain_produces_no_detections(monkeypatch) -> None:
-    """An empty detection_chain should yield a timestep with no detections."""
+def test_detections_gen_no_detections_when_detector_finds_nothing(monkeypatch) -> None:
+    """A detector reporting no detections should yield an empty set, not raise."""
     passive = _load_passive_detector_module(monkeypatch)
     timestamp = datetime(2026, 1, 1, 12, 0, 0)
     sensor_data = SimpleNamespace(
@@ -325,7 +265,7 @@ def test_detections_gen_empty_chain_produces_no_detections(monkeypatch) -> None:
     )
 
     detector = passive.PassiveSonarDetector(
-        detection_chain=[],
+        detector=_FakeDetector(detect_fn=lambda data: np.empty((0, 2), dtype=np.float64)),
         sensor_data_gen=iter([(timestamp, [sensor_data])]),
         steering_azimuths_rad=np.array([0.1]),
     )
@@ -342,7 +282,7 @@ def test_snr_history_empty_before_any_detections(monkeypatch) -> None:
     passive = _load_passive_detector_module(monkeypatch)
 
     detector = passive.PassiveSonarDetector(
-        detection_chain=[],
+        detector=_FakeDetector(detect_fn=lambda data: np.empty((0, 2))),
         sensor_data_gen=iter(()),
         steering_azimuths_rad=np.array([0.1]),
     )
@@ -357,73 +297,22 @@ def test_detections_gen_accumulates_across_multiple_sensor_data_per_step(monkeyp
     passive = _load_passive_detector_module(monkeypatch)
     timestamp = datetime(2026, 1, 1, 12, 0, 0)
 
-    # Two sensor data objects at the same timestamp, each with one beam
     sd1 = SimpleNamespace(beamformed_data=np.array([[3.0 + 0.0j]]), timestamp=timestamp)
     sd2 = SimpleNamespace(beamformed_data=np.array([[5.0 + 0.0j]]), timestamp=timestamp)
 
-    class SelectFirst:
-        def detect(self, data_map):
-            return np.array([[0.0, data_map[0]]])
-
     detector = passive.PassiveSonarDetector(
-        detection_chain=[SelectFirst()],
+        detector=_FakeDetector(detect_fn=lambda data: np.array([[0.0, data[0, 0].real]])),
         sensor_data_gen=iter([(timestamp, [sd1, sd2])]),
         steering_azimuths_rad=np.array([0.7]),
     )
 
-    result = list(detector.detections_gen(beamformer_output_type="power"))
+    result = list(detector.detections_gen())
 
     assert len(result) == 1
     _, detections = result[0]
-    # Both sensor_data objects trigger a detection at the same bearing
+    # Both sensor_data objects trigger a detection at the same bearing, with different SNRs.
     assert len(detections) == 2
-
-
-def test_run_detection_chain_short_circuits_on_empty_stage_output(monkeypatch) -> None:
-    """If any stage in the chain returns no detections the chain should stop immediately."""
-    passive = _load_passive_detector_module(monkeypatch)
-
-    second_stage_called = []
-
-    class EmptyStage:
-        def detect(self, data_map):
-            return np.empty((0, 2), dtype=np.float64)
-
-    class ShouldNotRun:
-        def detect(self, data_map):
-            second_stage_called.append(True)
-            return np.array([[0.0, data_map[0]]])
-
-    detector = passive.PassiveSonarDetector(
-        detection_chain=[EmptyStage(), ShouldNotRun()],
-        sensor_data_gen=iter(()),
-        steering_azimuths_rad=np.array([0.1, 0.5]),
-    )
-
-    result = detector._run_detection_chain(np.array([1.0, 2.0]))
-
-    assert result.shape == (0, 2)
-    assert second_stage_called == []
-
-
-def test_detections_gen_all_zero_beamformed_data_does_not_raise(monkeypatch) -> None:
-    """All-zero beamformed data should not raise due to epsilon guard in SNR computation."""
-    passive = _load_passive_detector_module(monkeypatch)
-    timestamp = datetime(2026, 1, 1, 12, 0, 0)
-    sensor_data = SimpleNamespace(
-        beamformed_data=np.zeros((3, 4), dtype=complex), timestamp=timestamp
-    )
-
-    detector = passive.PassiveSonarDetector(
-        detection_chain=[],
-        sensor_data_gen=iter([(timestamp, [sensor_data])]),
-        steering_azimuths_rad=np.array([0.1, 0.2, 0.3]),
-    )
-
-    result = list(detector.detections_gen(beamformer_output_type="snr_percentile"))
-
-    assert len(result) == 1
-    assert np.isfinite(detector.snr_history).all()
+    assert {d.metadata["snr_db"] for d in detections} == {3.0, 5.0}
 
 
 def test_detections_gen_empty_sensor_data_set_yields_empty_detections(monkeypatch) -> None:
@@ -432,7 +321,7 @@ def test_detections_gen_empty_sensor_data_set_yields_empty_detections(monkeypatc
     timestamp = datetime(2026, 1, 1, 12, 0, 0)
 
     detector = passive.PassiveSonarDetector(
-        detection_chain=[],
+        detector=_FakeDetector(detect_fn=lambda data: np.empty((0, 2))),
         sensor_data_gen=iter([(timestamp, [])]),
         steering_azimuths_rad=np.array([0.1]),
     )
@@ -444,8 +333,8 @@ def test_detections_gen_empty_sensor_data_set_yields_empty_detections(monkeypatc
     assert len(detections) == 0
 
 
-def test_snr_history_accumulates_one_row_per_timestep(monkeypatch) -> None:
-    """snr_history should grow by one row for each processed timestep."""
+def test_snr_history_accumulates_one_row_per_timestep_from_snr_map(monkeypatch) -> None:
+    """snr_history should record snr_map()'s output, one row per timestep."""
     passive = _load_passive_detector_module(monkeypatch)
     t1 = datetime(2026, 1, 1, 12, 0, 0)
     t2 = datetime(2026, 1, 1, 12, 0, 1)
@@ -454,75 +343,40 @@ def test_snr_history_accumulates_one_row_per_timestep(monkeypatch) -> None:
         return SimpleNamespace(beamformed_data=np.array([[1.0 + 0.0j, 1.0 + 0.0j]]), timestamp=t)
 
     detector = passive.PassiveSonarDetector(
-        detection_chain=[],
+        detector=_FakeDetector(
+            detect_fn=lambda data: np.empty((0, 2)),
+            snr_fn=lambda data: np.array([7.0]),
+        ),
         sensor_data_gen=iter([(t1, [make_sd(t1)]), (t2, [make_sd(t2)])]),
         steering_azimuths_rad=np.array([0.1]),
     )
 
-    list(detector.detections_gen(beamformer_output_type="power"))
+    list(detector.detections_gen())
 
     assert detector.snr_history.shape == (2, 1)
+    np.testing.assert_allclose(detector.snr_history, [[7.0], [7.0]])
 
 
-def test_detections_gen_custom_snr_percentile_val(monkeypatch) -> None:
-    """A custom snr_percentile_val should be used instead of the default 10."""
+def test_detect_and_snr_map_are_independent_calls(monkeypatch) -> None:
+    """detect() and snr_map() are called separately, so their outputs need not agree."""
     passive = _load_passive_detector_module(monkeypatch)
     timestamp = datetime(2026, 1, 1, 12, 0, 0)
-    # Four beams with powers [1, 2, 3, 4]. 50th-percentile noise ≈ 2.5.
-    # With 10th-percentile noise ≈ 1.3 the SNR values differ.
-    beamformed_data = np.array(
-        [[1.0 + 0.0j], [np.sqrt(2) + 0.0j], [np.sqrt(3) + 0.0j], [2.0 + 0.0j]]
-    )
-    sensor_data = SimpleNamespace(beamformed_data=beamformed_data, timestamp=timestamp)
-
-    captured_50 = []
-    captured_10 = []
-
-    class Capture50:
-        def detect(self, data_map):
-            captured_50.append(data_map.copy())
-            return np.empty((0, 2))
-
-    class Capture10:
-        def detect(self, data_map):
-            captured_10.append(data_map.copy())
-            return np.empty((0, 2))
-
-    for _captured, pct, chain in [
-        (captured_50, 50, [Capture50()]),
-        (captured_10, 10, [Capture10()]),
-    ]:
-        detector = passive.PassiveSonarDetector(
-            detection_chain=chain,
-            sensor_data_gen=iter([(timestamp, [sensor_data])]),
-            steering_azimuths_rad=np.array([0.1, 0.2, 0.3, 0.4]),
-        )
-        list(
-            detector.detections_gen(
-                beamformer_output_type="snr_percentile", snr_percentile_val=pct
-            )
-        )
-
-    # Higher percentile → higher noise floor → lower SNR values
-    assert captured_50[0].max() < captured_10[0].max()
-
-
-def test_run_detection_chain_with_empty_input_array(monkeypatch) -> None:
-    """_run_detection_chain should return empty detections for a zero-length input."""
-    passive = _load_passive_detector_module(monkeypatch)
-
-    class AlwaysDetect:
-        def detect(self, data_map):
-            return np.empty((0, 2), dtype=np.float64)
+    sensor_data = SimpleNamespace(beamformed_data=np.array([[1.0 + 0.0j]]), timestamp=timestamp)
 
     detector = passive.PassiveSonarDetector(
-        detection_chain=[AlwaysDetect()],
-        sensor_data_gen=iter(()),
-        steering_azimuths_rad=np.array([], dtype=float),
+        detector=_FakeDetector(
+            detect_fn=lambda data: np.array([[0.0, 4.0]]),
+            snr_fn=lambda data: np.array([99.0]),
+        ),
+        sensor_data_gen=iter([(timestamp, [sensor_data])]),
+        steering_azimuths_rad=np.array([0.1]),
     )
 
-    result = detector._run_detection_chain(np.array([], dtype=np.float64))
-    assert result.shape == (0, 2)
+    generated = list(detector.detections_gen())
+
+    detection = next(iter(generated[0][1]))
+    assert detection.metadata["snr_db"] == pytest.approx(4.0)
+    np.testing.assert_allclose(detector.snr_history, [[99.0]])
 
 
 def test_detections_gen_progress_bar_wraps_iterator(monkeypatch) -> None:
@@ -540,7 +394,7 @@ def test_detections_gen_progress_bar_wraps_iterator(monkeypatch) -> None:
     monkeypatch.setattr(passive, "tqdm", fake_tqdm)
 
     detector = passive.PassiveSonarDetector(
-        detection_chain=[],
+        detector=_FakeDetector(detect_fn=lambda data: np.empty((0, 2))),
         sensor_data_gen=iter([(timestamp, [sensor_data])]),
         steering_azimuths_rad=np.array([0.1]),
     )
@@ -549,3 +403,23 @@ def test_detections_gen_progress_bar_wraps_iterator(monkeypatch) -> None:
 
     assert len(wrapped) == 1
     assert wrapped[0]["total"] == 5
+
+
+def test_snr_from_beamformed_data_gives_identical_results_for_real_power_and_complex_amplitude(
+    monkeypatch,
+) -> None:
+    """Real (already-power) input must not be double-squared relative to the equivalent complex
+    amplitude it was computed from.
+
+    Regression test for the same _directional_power bug covered in test_detector_algorithms.py:
+    BeamformedData is deliberately either complex amplitude or already-real power (see
+    bluepebble.types.sensordata.BeamformedData), and this function must treat both consistently.
+    """
+    passive = _load_passive_detector_module(monkeypatch)
+    amplitude = np.array([[1.0 + 0.0j], [3.0 + 0.0j]])
+    real_power = np.abs(amplitude) ** 2
+
+    for output_type in ("power", "log_power", "snr_percentile", "median_power"):
+        from_complex = passive.snr_from_beamformed_data(amplitude, output_type=output_type)
+        from_real_power = passive.snr_from_beamformed_data(real_power, output_type=output_type)
+        np.testing.assert_allclose(from_complex, from_real_power)
