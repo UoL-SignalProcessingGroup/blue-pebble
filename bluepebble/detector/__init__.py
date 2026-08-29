@@ -13,6 +13,10 @@ from .fluctuation_models import (
 from .metrics import (
     SweepResult,
     SweepSpec,
+    ca_cfar_roc,
+    estimate_effective_looks_per_frame,
+    os_cfar_roc,
+    snr_linear_from_ground_truth_bearing,
     sweep_detection_parameter,
     sweep_detection_parameter_multiband,
 )
@@ -35,7 +39,11 @@ __all__ = [
     "RayleighFluctuation",
     "SweepResult",
     "SweepSpec",
+    "ca_cfar_roc",
+    "estimate_effective_looks_per_frame",
+    "os_cfar_roc",
     "snr_from_beamformed_data",
+    "snr_linear_from_ground_truth_bearing",
     "sweep_detection_parameter",
     "sweep_detection_parameter_multiband",
 ]
