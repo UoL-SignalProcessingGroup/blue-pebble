@@ -212,6 +212,7 @@ class SweepResult:
     _tpr: FloatArray | None = None
 
     def __post_init__(self) -> None:
+        """Enforce that exactly one of the two construction modes was supplied."""
         has_counts = self.tp is not None
         has_theoretical = self._fpr is not None
         if has_counts == has_theoretical:

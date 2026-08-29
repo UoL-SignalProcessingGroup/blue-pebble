@@ -168,8 +168,12 @@ def test_snr_from_beamformed_data_snr_percentile_mode_uses_percentile_noise_floo
         [[1.0 + 0.0j], [np.sqrt(2) + 0.0j], [np.sqrt(3) + 0.0j], [2.0 + 0.0j]]
     )
 
-    low_percentile = passive.snr_from_beamformed_data(data, output_type="snr_percentile", percentile=10)
-    high_percentile = passive.snr_from_beamformed_data(data, output_type="snr_percentile", percentile=50)
+    low_percentile = passive.snr_from_beamformed_data(
+        data, output_type="snr_percentile", percentile=10
+    )
+    high_percentile = passive.snr_from_beamformed_data(
+        data, output_type="snr_percentile", percentile=50
+    )
 
     assert high_percentile.max() < low_percentile.max()
 
@@ -408,8 +412,7 @@ def test_detections_gen_progress_bar_wraps_iterator(monkeypatch) -> None:
 def test_snr_from_beamformed_data_gives_identical_results_for_real_power_and_complex_amplitude(
     monkeypatch,
 ) -> None:
-    """Real (already-power) input must not be double-squared relative to the equivalent complex
-    amplitude it was computed from.
+    """Real power input must not be squared again relative to the equivalent amplitude.
 
     Regression test for the same _directional_power bug covered in test_detector_algorithms.py:
     BeamformedData is deliberately either complex amplitude or already-real power (see

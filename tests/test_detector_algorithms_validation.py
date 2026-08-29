@@ -46,7 +46,7 @@ def _load_detector_algorithms(monkeypatch):
 
 
 def _load_fluctuation_models(monkeypatch):
-    """Load fluctuation_models.py (and the algorithms.py it depends on) with minimal scaffolding."""
+    """Load fluctuation_models.py and the algorithms.py it needs, with minimal scaffolding."""
     algorithms = _load_detector_algorithms(monkeypatch)
     fluctuation_models = load_package_module_from_repo(
         "bluepebble/detector/fluctuation_models.py",
@@ -247,7 +247,9 @@ def test_os_cfar_single_look_pd_at_snr_linear_zero_recovers_target_pfa(monkeypat
     assert pd == pytest.approx(target_pfa, rel=1e-9)
 
 
-def test_os_cfar_multilook_mc_at_snr_linear_zero_recovers_target_pfa_approximately(monkeypatch) -> None:
+def test_os_cfar_multilook_mc_at_snr_linear_zero_recovers_target_pfa_approximately(
+    monkeypatch,
+) -> None:
     """The Monte Carlo multi-look alpha/Pd pair should also round-trip at snr_linear=0."""
     algorithms, fluctuation_models = _load_fluctuation_models(monkeypatch)
     N, k, M = 20, 15, 10
@@ -265,7 +267,9 @@ def test_os_cfar_multilook_mc_at_snr_linear_zero_recovers_target_pfa_approximate
 
 
 @pytest.mark.parametrize("snr_linear_low, snr_linear_high", [(0.5, 1.0), (1.0, 5.0), (5.0, 20.0)])
-def test_ca_cfar_pd_increases_with_snr_linear(monkeypatch, snr_linear_low, snr_linear_high) -> None:
+def test_ca_cfar_pd_increases_with_snr_linear(
+    monkeypatch, snr_linear_low, snr_linear_high
+) -> None:
     """Pd should be monotonically increasing in target-power ratio snr_linear."""
     algorithms, fluctuation_models = _load_fluctuation_models(monkeypatch)
     alpha = algorithms.solve_ca_cfar_alpha(1e-3, num_training_total=20, num_frames=5)
@@ -697,8 +701,7 @@ def test_non_fluctuating_pd_is_monotonically_increasing_in_snr(monkeypatch) -> N
 
 
 def test_non_fluctuating_pd_exceeds_rayleigh_pd_at_moderate_to_high_snr(monkeypatch) -> None:
-    """A stable (non-fluctuating) target should out-detect a Rayleigh-fading one at the same
-    mean SNR, once SNR is high enough to be past the well-known Swerling low-Pd crossover.
+    """A steady target should out-detect a fading one of the same mean SNR, above the crossover.
 
     This is textbook radar/sonar detection theory (e.g. Skolnik, DiFranco & Rubin): a
     fluctuating target occasionally has a much WORSE-than-average look, which a fixed-threshold

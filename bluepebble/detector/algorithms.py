@@ -187,8 +187,8 @@ def _os_cfar_log_pfa(alpha: float, num_training_total: int, rank: int) -> float:
 
     """
     log_pfa = 0.0
-    for l in range(rank):
-        log_pfa += np.log(num_training_total - l) - np.log(alpha + num_training_total - l)
+    for i in range(rank):
+        log_pfa += np.log(num_training_total - i) - np.log(alpha + num_training_total - i)
     return log_pfa
 
 

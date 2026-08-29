@@ -695,9 +695,10 @@ def test_snr_linear_from_ground_truth_bearing_finds_nearest_beam(monkeypatch) ->
 
 
 def test_snr_linear_from_ground_truth_bearing_is_wrap_aware(monkeypatch) -> None:
-    """A bearing just below +pi should resolve to whichever beam is truly nearest,
+    """The nearest beam is found across the -pi/+pi seam, not just within the array order.
 
-    including across the -pi/+pi wrap seam (-pi and +pi are the same point).
+    A bearing just below +pi should resolve to whichever beam is truly nearest, including one
+    sitting just above -pi, since -pi and +pi are the same point.
     """
     _algorithms, metrics = _load_detector_modules(monkeypatch)
     steering = np.linspace(-np.pi, np.pi, 180, endpoint=False)
@@ -754,8 +755,7 @@ def test_snr_linear_from_ground_truth_bearing_rejects_guard_bins_covering_whole_
 def test_snr_linear_from_ground_truth_bearing_treats_real_power_and_complex_consistently(
     monkeypatch,
 ) -> None:
-    """Real (already-power) input must not be double-squared relative to the equivalent complex
-    amplitude it was computed from.
+    """Real power input must not be squared again relative to the equivalent amplitude.
 
     Regression test for the same _directional_power bug covered in test_detector_algorithms.py:
     BeamformedData is deliberately either complex amplitude or already-real power (see

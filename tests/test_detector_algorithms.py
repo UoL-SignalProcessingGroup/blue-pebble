@@ -20,7 +20,7 @@ def _load_detector_algorithms(monkeypatch):
 
 
 def _load_fluctuation_models(monkeypatch):
-    """Load fluctuation_models.py (and the algorithms.py it depends on) with minimal scaffolding."""
+    """Load fluctuation_models.py and the algorithms.py it needs, with minimal scaffolding."""
     algorithms = _load_detector_algorithms(monkeypatch)
     fluctuation_models = load_package_module_from_repo(
         "bluepebble/detector/fluctuation_models.py",
@@ -281,10 +281,11 @@ def test_cacfar_default_is_circular_and_detects_edge_peak(monkeypatch) -> None:
 def test_cacfar_non_circular_mode_folds_edge_peak_into_its_own_noise_estimate(
     monkeypatch,
 ) -> None:
-    """With circular=False, edge padding replicates the boundary cell (the peak itself),
+    """Non-circular mode folds an edge peak into its own noise estimate.
 
-    inflating the noise estimate right at the edge and suppressing the detection --
-    unlike circular=True, which wraps in independent (zero-power) cells instead.
+    With circular=False, edge padding replicates the boundary cell -- the peak itself --
+    inflating the noise estimate right at the edge and suppressing the detection, unlike
+    circular=True, which wraps in independent (zero-power) cells instead.
     """
     algorithms = _load_detector_algorithms(monkeypatch)
     detector = algorithms.CACFARDetector(

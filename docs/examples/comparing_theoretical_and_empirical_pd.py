@@ -7,7 +7,7 @@ This example compares the closed-form/Monte Carlo Pd-vs-Pfa model in
 :mod:`bluepebble.detector.fluctuation_models` against :class:`~.OSCFARDetector` run on
 beamformed data from Blue Pebble's own acoustic simulator.
 
-This example asks the question: how far does an actual simulated acoustic scenario (with 
+This example asks the question: how far does an actual simulated acoustic scenario (with
 propagation, multipath, and a moving platform/target) depart from the idealised model, and why?
 """  # noqa: D205, D212, D400, D415
 
@@ -39,7 +39,7 @@ from bluepebble.detector.metrics import (
 from bluepebble.models.environment import FlatBathymetry, Linear
 from bluepebble.models.propagation.acoustic import rtrsAcousticPropagationModel
 from bluepebble.platform import TowedArrayPlatform
-from bluepebble.plotter import plot_btr, plot_roc, plot_world
+from bluepebble.plotter import plot_btr, plot_roc
 from bluepebble.signal.anthropogenic import SyntheticAnthropogenicSignal
 from bluepebble.signal.random import ColouredNoiseSignal
 from bluepebble.sigproc import MinimumVarianceDistortionlessResponseBeamformer, SteeringCalculator
@@ -69,7 +69,8 @@ platform_transition_model = CombinedLinearGaussianTransitionModel(
 
 num_sensors = 128
 tow_cable_length_m = 100.0
-sensor_spacing_m = 2.5 # lambda_min = 1 / fmin * c = 1 / 250 * 1500 = 6 m, so 2.5 m spacing is < lambda_min / 2
+# lambda_min = c / fmin = 1500 / 250 = 6 m, so 2.5 m spacing stays under lambda_min / 2.
+sensor_spacing_m = 2.5
 array_depth_m = -50.0
 
 platform_initial_state = GroundTruthState(platform_start_vector, timestamp=start_time)
