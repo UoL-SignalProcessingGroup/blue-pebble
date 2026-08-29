@@ -19,6 +19,21 @@ def _load_detector_algorithms(monkeypatch):
     )
 
 
+def _load_fluctuation_models(monkeypatch):
+    """Load fluctuation_models.py (and the algorithms.py it depends on) with minimal scaffolding."""
+    algorithms = _load_detector_algorithms(monkeypatch)
+    fluctuation_models = load_package_module_from_repo(
+        "bluepebble/detector/fluctuation_models.py",
+        "bluepebble.detector.fluctuation_models",
+    )
+    return algorithms, fluctuation_models
+
+
+# --------------------------------------------------------------------------
+# Module-level Pfa/alpha/Pd functions
+# --------------------------------------------------------------------------
+
+
 def test_os_cfar_log_pfa_rank_one_matches_simple_formula(monkeypatch) -> None:
     """Rank 1 is a single spacing term: Pfa(alpha) = N / (alpha + N)."""
     algorithms = _load_detector_algorithms(monkeypatch)
@@ -68,6 +83,56 @@ def test_solve_ca_cfar_alpha_rejects_invalid_pfa(monkeypatch, target_pfa) -> Non
         algorithms.solve_ca_cfar_alpha(target_pfa, num_training_total=8, num_frames=1)
 
 
+def test_ca_cfar_pd_at_snr_linear_zero_recovers_target_pfa(monkeypatch) -> None:
+    """With no target power (snr_linear=0), Pd should equal the calibrated Pfa exactly."""
+    algorithms, fluctuation_models = _load_fluctuation_models(monkeypatch)
+    target_pfa = 0.01
+    num_training_total = 8
+    alpha = algorithms.solve_ca_cfar_alpha(target_pfa, num_training_total, num_frames=1)
+    model = fluctuation_models.RayleighFluctuation()
+
+    pd = model.ca_cfar_pd(alpha, num_training_total, num_frames=1, snr_linear=0.0)
+
+    assert pd == pytest.approx(target_pfa)
+
+
+def test_ca_cfar_pd_increases_with_snr_linear(monkeypatch) -> None:
+    """Pd should be monotonically increasing in target-power ratio snr_linear."""
+    algorithms, fluctuation_models = _load_fluctuation_models(monkeypatch)
+    alpha = algorithms.solve_ca_cfar_alpha(0.01, 8, num_frames=1)
+    model = fluctuation_models.RayleighFluctuation()
+
+    pd_low = model.ca_cfar_pd(alpha, 8, num_frames=1, snr_linear=1.0)
+    pd_high = model.ca_cfar_pd(alpha, 8, num_frames=1, snr_linear=10.0)
+
+    assert pd_high > pd_low
+
+
+def test_os_cfar_pd_single_look_at_snr_linear_zero_recovers_target_pfa(monkeypatch) -> None:
+    """With no target power (snr_linear=0), Pd should equal the calibrated Pfa exactly."""
+    algorithms, fluctuation_models = _load_fluctuation_models(monkeypatch)
+    target_pfa = 0.01
+    num_training_total = 8
+    alpha = algorithms.solve_os_cfar_alpha_single_look(target_pfa, num_training_total, rank=2)
+    model = fluctuation_models.RayleighFluctuation()
+
+    pd = model.os_cfar_pd(alpha, num_training_total, rank=2, num_frames=1, snr_linear=0.0)
+
+    assert pd == pytest.approx(target_pfa)
+
+
+def test_os_cfar_pd_single_look_increases_with_snr_linear(monkeypatch) -> None:
+    """Pd should be monotonically increasing in target-power ratio snr_linear."""
+    algorithms, fluctuation_models = _load_fluctuation_models(monkeypatch)
+    alpha = algorithms.solve_os_cfar_alpha_single_look(0.01, 8, rank=2)
+    model = fluctuation_models.RayleighFluctuation()
+
+    pd_low = model.os_cfar_pd(alpha, 8, rank=2, num_frames=1, snr_linear=1.0)
+    pd_high = model.os_cfar_pd(alpha, 8, rank=2, num_frames=1, snr_linear=10.0)
+
+    assert pd_high > pd_low
+
+
 def test_calibrate_os_cfar_alpha_mc_matches_closed_form_at_single_look(monkeypatch) -> None:
     """At num_frames=1 the Monte Carlo calibration should agree with the exact closed form."""
     algorithms = _load_detector_algorithms(monkeypatch)
@@ -86,6 +151,33 @@ def test_calibrate_os_cfar_alpha_mc_matches_closed_form_at_single_look(monkeypat
     )
 
     assert mc_alpha == pytest.approx(exact_alpha, rel=0.15)
+
+
+def test_os_cfar_pd_mc_matches_single_look_closed_form(monkeypatch) -> None:
+    """At num_frames=1 the Monte Carlo Pd should agree with the exact single-look Pd."""
+    algorithms, fluctuation_models = _load_fluctuation_models(monkeypatch)
+    num_training_total = 5
+    rank = 2
+    alpha = algorithms.solve_os_cfar_alpha_single_look(0.05, num_training_total, rank)
+    model = fluctuation_models.RayleighFluctuation()
+    exact_pd = model.os_cfar_pd(alpha, num_training_total, rank, num_frames=1, snr_linear=1.0)
+
+    # num_frames=2 forces the Monte Carlo path (no closed form beyond num_frames == 1); compare
+    # against a num_frames=1 exact call instead by simulating with num_frames=1, which routes
+    # through the same closed-form branch as exact_pd -- so this exercises the MC path directly.
+    rng = np.random.default_rng(7)
+    ref = rng.exponential(1.0, size=(20_000, num_training_total, 1)).mean(axis=2)
+    ref.sort(axis=1)
+    noise_estimate = ref[:, rank - 1]
+    cut = model.cut_power_samples(20_000, num_frames=1, snr_linear=1.0, rng=rng)
+    mc_pd = float(np.mean(cut > alpha * noise_estimate))
+
+    assert mc_pd == pytest.approx(exact_pd, abs=0.02)
+
+
+# --------------------------------------------------------------------------
+# Shared detector validation and consolidation behaviour
+# --------------------------------------------------------------------------
 
 
 def test_cacfar_detector_validates_num_guard_cells(monkeypatch) -> None:
@@ -569,3 +661,182 @@ def test_ca_cfar_alpha_rejects_non_positive_effective_looks(monkeypatch) -> None
 # --------------------------------------------------------------------------
 # signal_looks_per_frame (target bandwidth vs processing bandwidth)
 # --------------------------------------------------------------------------
+
+
+@pytest.mark.parametrize("model_name", ["RayleighFluctuation", "NonFluctuating"])
+@pytest.mark.parametrize("looks", [(1.0, None), (26.5, None), (26.5, 2.06), (26.5, 1.0)])
+def test_cut_power_mean_is_one_plus_snr_for_any_bandwidth_split(
+    monkeypatch, model_name, looks
+) -> None:
+    """snr_linear is defined on the integrated cell, so the H1 mean cannot depend on K_s.
+
+    Band-integration dilution (collecting a wide band of noise around a narrow signal) is
+    already reflected in the measured snr_linear. K_s must therefore move variance only --
+    if it moved the mean too, the dilution would be counted twice.
+    """
+    _algorithms, fluctuation_models = _load_fluctuation_models(monkeypatch)
+    noise_looks, signal_looks = looks
+    model = getattr(fluctuation_models, model_name)()
+    snr = 1.5
+
+    samples = model.cut_power_samples(
+        200_000, 6, snr, np.random.default_rng(0), noise_looks, signal_looks
+    )
+
+    assert samples.mean() == pytest.approx(1.0 + snr, rel=0.01)
+
+
+@pytest.mark.parametrize("model_name", ["RayleighFluctuation", "NonFluctuating"])
+def test_cut_power_at_zero_snr_collapses_to_the_noise_only_model(monkeypatch, model_name):
+    """With no target present, K_s is irrelevant and the cell must be pure Gamma(K_n, 1/K_n)."""
+    _algorithms, fluctuation_models = _load_fluctuation_models(monkeypatch)
+    model = getattr(fluctuation_models, model_name)()
+    noise_looks, num_frames = 26.5, 8
+
+    h0 = np.random.default_rng(1).gamma(
+        noise_looks, 1.0 / noise_looks, size=(200_000, num_frames)
+    ).mean(axis=1)
+    cut = model.cut_power_samples(
+        200_000, num_frames, 0.0, np.random.default_rng(2), noise_looks, 2.06
+    )
+
+    assert cut.mean() == pytest.approx(h0.mean(), rel=0.01)
+    assert cut.std() == pytest.approx(h0.std(), rel=0.03)
+
+
+def test_narrowband_target_fluctuates_more_than_a_band_filling_one(monkeypatch) -> None:
+    """The whole reason the parameter exists: K_s sets H1 spread at fixed mean.
+
+    A target spread over many looks self-averages; one confined to a couple of bins does not.
+    Both cells have the same mean, so a model that assumes the target fills the band predicts
+    a sharper Pd knee than a tonal can actually deliver.
+    """
+    _algorithms, fluctuation_models = _load_fluctuation_models(monkeypatch)
+    model = fluctuation_models.RayleighFluctuation()
+    noise_looks, snr = 26.5, 0.964
+
+    spreads = {}
+    for signal_looks in (26.5, 10.0, 2.06, 1.0):
+        cut = model.cut_power_samples(
+            200_000, 1, snr, np.random.default_rng(3), noise_looks, signal_looks
+        )
+        spreads[signal_looks] = cut.std() / cut.mean()
+
+    # Strictly decreasing K_s gives strictly increasing spread.
+    by_looks = [spreads[k] for k in (26.5, 10.0, 2.06, 1.0)]
+    assert by_looks == sorted(by_looks)
+    # A tonal in ~2 of 26.5 looks roughly doubles the cell's coefficient of variation.
+    assert spreads[2.06] > 1.8 * spreads[26.5]
+
+
+@pytest.mark.parametrize("model_name", ["RayleighFluctuation", "NonFluctuating"])
+def test_signal_looks_defaults_to_the_band_filling_case(monkeypatch, model_name) -> None:
+    """Omitting K_s must mean 'target fills the band', i.e. K_s = K_n."""
+    _algorithms, fluctuation_models = _load_fluctuation_models(monkeypatch)
+    model = getattr(fluctuation_models, model_name)()
+
+    default = model.cut_power_samples(100_000, 4, 1.0, np.random.default_rng(4), 12.0)
+    explicit = model.cut_power_samples(100_000, 4, 1.0, np.random.default_rng(4), 12.0, 12.0)
+
+    np.testing.assert_allclose(default, explicit)
+
+
+def test_rayleigh_cut_power_defaults_reproduce_the_single_look_model(monkeypatch) -> None:
+    """The untouched default path must stay bit-identical to mean-of-M-Exponential(1+snr)."""
+    _algorithms, fluctuation_models = _load_fluctuation_models(monkeypatch)
+    snr, num_frames, trials = 1.5, 5, 50_000
+
+    legacy = np.random.default_rng(5).exponential(1.0 + snr, size=(trials, num_frames)).mean(
+        axis=1
+    )
+    current = fluctuation_models.RayleighFluctuation().cut_power_samples(
+        trials, num_frames, snr, np.random.default_rng(5)
+    )
+
+    np.testing.assert_allclose(legacy, current)
+
+
+@pytest.mark.parametrize(
+    ("noise_looks", "signal_looks", "match"),
+    [
+        (0.0, None, "effective_looks_per_frame"),
+        (-2.0, None, "effective_looks_per_frame"),
+        (10.0, 0.0, "signal_looks_per_frame"),
+        (10.0, 20.0, "cannot exceed"),
+    ],
+)
+def test_look_counts_are_validated(monkeypatch, noise_looks, signal_looks, match) -> None:
+    """A target cannot occupy more looks than the detector integrates, nor can counts be <= 0."""
+    _algorithms, fluctuation_models = _load_fluctuation_models(monkeypatch)
+
+    with pytest.raises(ValueError, match=match):
+        fluctuation_models.RayleighFluctuation().cut_power_samples(
+            100, 2, 1.0, np.random.default_rng(6), noise_looks, signal_looks
+        )
+
+
+def test_pd_at_zero_snr_recovers_the_calibrated_pfa_under_the_mixture(monkeypatch) -> None:
+    """A target of zero strength must be detected exactly at the false-alarm rate.
+
+    This ties the H1 mixture back to the H0 model alpha was calibrated against; if the two
+    disagreed about the noise, this identity would fail.
+    """
+    algorithms, fluctuation_models = _load_fluctuation_models(monkeypatch)
+    model = fluctuation_models.RayleighFluctuation()
+    target_pfa, ntt, rank, num_frames, noise_looks = 0.05, 20, 15, 4, 12.0
+
+    alpha = algorithms.calibrate_os_cfar_alpha_mc(
+        target_pfa, ntt, rank, num_frames, num_trials=200_000,
+        rng=np.random.default_rng(7), effective_looks_per_frame=noise_looks,
+    )
+    pd_at_zero = model.os_cfar_pd(
+        alpha, ntt, rank, num_frames, 0.0, num_trials=200_000,
+        rng=np.random.default_rng(8),
+        effective_looks_per_frame=noise_looks, signal_looks_per_frame=2.0,
+    )
+
+    assert pd_at_zero == pytest.approx(target_pfa, rel=0.08)
+
+
+def test_ca_cfar_closed_form_agrees_with_the_mixture_monte_carlo(monkeypatch) -> None:
+    """At K_s = K_n the Beta closed form and the mixture simulation must describe one model.
+
+    K_s just below K_n forces the Monte Carlo branch while leaving the distribution
+    effectively unchanged, so any disagreement is a bug in one of the two paths.
+    """
+    algorithms, fluctuation_models = _load_fluctuation_models(monkeypatch)
+    model = fluctuation_models.RayleighFluctuation()
+    ntt, num_frames, noise_looks, snr = 20, 3, 8.0, 1.0
+
+    alpha = algorithms.solve_ca_cfar_alpha(0.05, ntt, num_frames, noise_looks)
+    exact = model.ca_cfar_pd(
+        alpha, ntt, num_frames, snr, effective_looks_per_frame=noise_looks
+    )
+    simulated = model.ca_cfar_pd(
+        alpha, ntt, num_frames, snr, num_trials=400_000, rng=np.random.default_rng(9),
+        effective_looks_per_frame=noise_looks, signal_looks_per_frame=noise_looks * 0.9999,
+    )
+
+    assert simulated == pytest.approx(exact, abs=0.01)
+
+
+def test_narrowband_target_lowers_pd_at_a_high_operating_point(monkeypatch) -> None:
+    """Extra H1 spread costs Pd where the curve has saturated, at identical mean SNR."""
+    algorithms, fluctuation_models = _load_fluctuation_models(monkeypatch)
+    model = fluctuation_models.RayleighFluctuation()
+    ntt, rank, num_frames, noise_looks, snr = 20, 15, 8, 26.5, 0.964
+
+    alpha = algorithms.calibrate_os_cfar_alpha_mc(
+        0.01, ntt, rank, num_frames, num_trials=200_000,
+        rng=np.random.default_rng(10), effective_looks_per_frame=noise_looks,
+    )
+    kwargs = dict(
+        num_trials=200_000, rng=np.random.default_rng(11),
+        effective_looks_per_frame=noise_looks,
+    )
+    band_filling = model.os_cfar_pd(alpha, ntt, rank, num_frames, snr, **kwargs)
+    tonal = model.os_cfar_pd(
+        alpha, ntt, rank, num_frames, snr, signal_looks_per_frame=2.06, **kwargs
+    )
+
+    assert tonal < band_filling

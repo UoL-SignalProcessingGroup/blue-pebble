@@ -5,6 +5,11 @@ from .algorithms import (
     DetectionAlgorithm,
     OSCFARDetector,
 )
+from .fluctuation_models import (
+    FluctuationModel,
+    NonFluctuating,
+    RayleighFluctuation,
+)
 from .metrics import (
     SweepResult,
     SweepSpec,
@@ -22,9 +27,12 @@ __all__ = [
     "BandDetector",
     "CACFARDetector",
     "DetectionAlgorithm",
+    "FluctuationModel",
     "MultibandPassiveSonarDetector",
+    "NonFluctuating",
     "OSCFARDetector",
     "PassiveSonarDetector",
+    "RayleighFluctuation",
     "SweepResult",
     "SweepSpec",
     "snr_from_beamformed_data",
