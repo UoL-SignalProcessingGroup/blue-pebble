@@ -89,6 +89,61 @@ def _directional_power(data: ArrayLike) -> np.ndarray:
     return np.abs(data_array) ** 2 if np.iscomplexobj(data_array) else data_array
 
 
+# Parameters removed by the single-detector refactor, mapped to what replaces them.
+_REMOVED_DETECTOR_KWARGS = {
+    "threshold_factor": (
+        "Thresholds are now calibrated from a false-alarm rate: pass target_pfa instead. "
+        "There is no fixed conversion -- the equivalent alpha depends on num_training_cells "
+        "and the number of frames integrated."
+    ),
+    "mode": (
+        "Edge handling is set by the circular flag: circular=True wraps (a full 360-degree "
+        "bearing sweep), circular=False pads at the edges."
+    ),
+}
+
+
+def _as_beamformed_2d(data: ArrayLike) -> np.ndarray:
+    """Validate raw beamformed input, naming the pre-refactor call pattern when it appears.
+
+    Detectors consume raw ``(num_beams, num_frames)`` data and estimate their own noise
+    floor. Before the single-detector refactor they were handed a precomputed 1-D SNR map
+    instead, so a 1-D array here is nearly always a caller that has not migrated yet. Say
+    so directly, rather than failing later on a tuple unpack or a numpy axis error.
+
+    Parameters
+    ----------
+    data : ArrayLike
+        Raw beamformed data, expected shape (num_beams, num_frames).
+
+    Returns
+    -------
+    np.ndarray
+        The input as an array, unchanged.
+
+    Raises
+    ------
+    ValueError
+        If ``data`` is not two-dimensional.
+
+    """
+    data_array = np.asarray(data)
+    if data_array.ndim == 2:
+        return data_array
+    if data_array.ndim == 1:
+        raise ValueError(
+            f"Expected raw beamformed data with shape (num_beams, num_frames), got a 1-D "
+            f"array of length {data_array.size}. CFAR detectors consume raw beamformed data "
+            f"and estimate their own local noise floor -- they no longer take a precomputed "
+            f"SNR map as the old detection chain did. Pass data[:, None] for a single frame."
+        )
+    raise ValueError(
+        f"Expected raw beamformed data with shape (num_beams, num_frames), got a "
+        f"{data_array.ndim}-D array of shape {data_array.shape}. For banded data, pass each "
+        f"band's map separately (see MultibandPassiveSonarDetector)."
+    )
+
+
 def _os_cfar_log_pfa(alpha: float, num_training_total: int, rank: int) -> float:
     """Log Pfa for single-look OS-CFAR.
 
@@ -442,6 +497,14 @@ class _CFARDetectorBase(DetectionAlgorithm, ABC):
     )
 
     def __init__(self, *args: object, **kwargs: object) -> None:
+        # Caught before Stone Soup's Base sees them: an unknown kwarg there surfaces as
+        # "missing a required argument: 'target_pfa'", which names the replacement but not
+        # the actual mistake.
+        for removed, guidance in _REMOVED_DETECTOR_KWARGS.items():
+            if removed in kwargs:
+                raise TypeError(
+                    f"{removed} is no longer a parameter of {type(self).__name__}. {guidance}"
+                )
         super().__init__(*args, **kwargs)
         if self.peak_distance < 1:
             raise ValueError(f"peak_distance ({self.peak_distance}) must be >= 1")
@@ -486,7 +549,8 @@ class _CFARDetectorBase(DetectionAlgorithm, ABC):
     def _power_and_noise(self, data: ArrayLike) -> tuple[np.ndarray, np.ndarray]:
         # Power per beam, averaged (incoherently) across looks/frames. See
         # _directional_power for why this isn't simply |data|**2.
-        directional_power = np.mean(_directional_power(data), axis=1)
+        data_array = _as_beamformed_2d(data)
+        directional_power = np.mean(_directional_power(data_array), axis=1)
         noise_estimate = self._local_noise_floor(directional_power)
         return directional_power, noise_estimate
 
@@ -537,7 +601,7 @@ class _CFARDetectorBase(DetectionAlgorithm, ABC):
             Shape (N, 2), columns [bearing_index, snr_db_relative_to_noise].
 
         """
-        data_array = np.asarray(data)
+        data_array = _as_beamformed_2d(data)
         num_beams, num_frames = data_array.shape
 
         directional_power, noise_estimate = self._power_and_noise(data_array)

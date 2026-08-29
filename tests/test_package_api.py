@@ -44,3 +44,36 @@ def test_getattr_rejects_unknown_attributes() -> None:
     """Unknown attributes should raise the standard package error."""
     with pytest.raises(AttributeError, match="has no attribute"):
         _ = bluepebble.not_a_real_attribute
+
+
+@pytest.mark.parametrize(
+    ("removed_name", "expected_guidance"),
+    [
+        ("PeakDetector", "OSCFARDetector"),
+        ("ThresholdDetector", "target_pfa"),
+        ("run_detection_chain", "detector.detect"),
+    ],
+)
+def test_removed_chain_api_raises_importerror_naming_its_replacement(
+    removed_name: str, expected_guidance: str
+) -> None:
+    """The chain API is gone; importing it should say what replaced it, not just fail.
+
+    ImportError rather than AttributeError is load-bearing here: ``from bluepebble.detector
+    import X`` discards an AttributeError's message and substitutes a generic one, so the
+    migration guidance would never reach the caller.
+    """
+    import bluepebble.detector as detector_pkg
+
+    with pytest.raises(ImportError, match=expected_guidance):
+        getattr(detector_pkg, removed_name)
+
+
+def test_unknown_detector_attribute_still_raises_attributeerror() -> None:
+    """Only the known removed names are special-cased; anything else behaves normally."""
+    import bluepebble.detector as detector_pkg
+
+    unknown_name = "NotAThing"
+
+    with pytest.raises(AttributeError, match="has no attribute"):
+        getattr(detector_pkg, unknown_name)

@@ -840,3 +840,55 @@ def test_narrowband_target_lowers_pd_at_a_high_operating_point(monkeypatch) -> N
     )
 
     assert tonal < band_filling
+
+
+def test_detect_rejects_a_precomputed_1d_snr_map_with_migration_guidance(monkeypatch) -> None:
+    """The pre-refactor call passed a 1-D SNR map; say so instead of failing on the unpack."""
+    algorithms = _load_detector_algorithms(monkeypatch)
+    detector = algorithms.CACFARDetector(
+        num_guard_cells=2, num_training_cells=8, target_pfa=1e-3
+    )
+
+    with pytest.raises(ValueError, match="1-D array of length 64"):
+        detector.detect(np.zeros(64))
+
+
+def test_snr_map_rejects_1d_input_the_same_way_detect_does(monkeypatch) -> None:
+    """Both raw-data entry points share one validator, so both give the same guidance."""
+    algorithms = _load_detector_algorithms(monkeypatch)
+    detector = algorithms.CACFARDetector(
+        num_guard_cells=2, num_training_cells=8, target_pfa=1e-3
+    )
+
+    with pytest.raises(ValueError, match="num_beams, num_frames"):
+        detector.snr_map(np.zeros(64))
+
+
+def test_detect_rejects_banded_3d_input_pointing_at_the_multiband_detector(monkeypatch) -> None:
+    """Stacked per-band data is a separate class's job, not a silently broadcast axis."""
+    algorithms = _load_detector_algorithms(monkeypatch)
+    detector = algorithms.CACFARDetector(
+        num_guard_cells=2, num_training_cells=8, target_pfa=1e-3
+    )
+
+    with pytest.raises(ValueError, match="MultibandPassiveSonarDetector"):
+        detector.detect(np.zeros((2, 64, 4)))
+
+
+@pytest.mark.parametrize(
+    ("removed_kwarg", "value", "expected_guidance"),
+    [("threshold_factor", 1.05, "target_pfa"), ("mode", "wrap", "circular")],
+)
+def test_removed_detector_kwargs_name_their_replacement(
+    monkeypatch, removed_kwarg: str, value: object, expected_guidance: str
+) -> None:
+    """Stone Soup's Base reports these as a missing target_pfa, which hides the real mistake."""
+    algorithms = _load_detector_algorithms(monkeypatch)
+
+    with pytest.raises(TypeError, match=expected_guidance):
+        algorithms.CACFARDetector(
+            num_guard_cells=2,
+            num_training_cells=8,
+            target_pfa=1e-3,
+            **{removed_kwarg: value},
+        )
