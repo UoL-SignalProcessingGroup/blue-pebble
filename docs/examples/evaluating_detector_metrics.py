@@ -40,7 +40,12 @@ from bluepebble.platform import TowedArrayPlatform
 from bluepebble.plotter import plot_btr, plot_roc_pr, plot_world
 from bluepebble.signal.anthropogenic import SyntheticAnthropogenicSignal
 from bluepebble.signal.random import ColouredNoiseSignal
-from bluepebble.sigproc import DelayAndSumBeamformer, SteeringCalculator
+from bluepebble.sigproc import (
+    DelayAndSumBeamformer,
+    SteeringCalculator,
+    beams_per_mainlobe,
+    cfar_window_for_mainlobe,
+)
 from bluepebble.simulator import ContinuousSTFTPassiveSonarArraySimulator
 
 # %%
@@ -301,12 +306,29 @@ simulator = ContinuousSTFTPassiveSonarArraySimulator(
     fade_in_ms=fade_in_ms,
 )
 
-cfar_num_guard_cells = 6
-cfar_num_training_cells = 10
+# Guard and training cells are set by the array, not chosen. A source spans a mainlobe in
+# bearing, so guard cells have to reach past it -- otherwise the training cells measure the
+# target and the reported SNR is compressed. Evaluated at 50 Hz, the lowest tonal in the
+# scenario and therefore the widest lobe: 15.3 beams across, giving a 16-beam guard band.
+# peak_distance falls out of the same number, since two candidates closer than a mainlobe
+# cannot be resolved as separate sources.
+mainlobe_beams = beams_per_mainlobe(
+    aperture_m=(num_sensors - 1) * sensor_spacing_m,
+    frequency_hz=50.0,
+    beam_spacing_rad=float(np.diff(steering_azimuths_rad)[0]),
+    sound_speed_ms=1500.0,
+)
+cfar_num_guard_cells, cfar_num_training_cells, peak_distance = cfar_window_for_mainlobe(
+    mainlobe_beams
+)
+# OS-CFAR picks the k-th smallest training cell, so its rank has to scale with the window.
+# 0.75 of the total is the usual starting point; 0.5 is the lowest that does not trip the
+# low-rank warning, and gives the contrast the two OS specs are here to show.
+os_rank_high = round(0.75 * 2 * cfar_num_training_cells)
+os_rank_low = round(0.50 * 2 * cfar_num_training_cells)
 # Reproduces the pre-refactor threshold_factor=1.05 exactly, via CA-CFAR's single-look
 # Pfa = (1 + alpha/N)^-N with N = 2 * num_training_cells.
 cfar_target_pfa = 0.3594
-peak_distance = 8
 
 cfar_detector = CACFARDetector(
     num_guard_cells=cfar_num_guard_cells,
@@ -413,8 +435,8 @@ specs = [
     # requested target_pfa.
     SweepSpec(
         detector=CACFARDetector(
-            num_guard_cells=2,
-            num_training_cells=5,
+            num_guard_cells=cfar_num_guard_cells,
+            num_training_cells=cfar_num_training_cells,
             target_pfa=float(pfa_values[0]),
             circular=True,
             consolidate_peaks=False,
@@ -425,9 +447,9 @@ specs = [
     ),
     SweepSpec(
         detector=OSCFARDetector(
-            num_guard_cells=3,
-            num_training_cells=12,
-            rank=24,
+            num_guard_cells=cfar_num_guard_cells,
+            num_training_cells=cfar_num_training_cells,
+            rank=os_rank_high,
             target_pfa=float(pfa_values[0]),
             circular=True,
             consolidate_peaks=False,
@@ -442,8 +464,8 @@ specs = [
     # below the requested Pfa and these curves stop short of the top-right corner.
     SweepSpec(
         detector=CACFARDetector(
-            num_guard_cells=2,
-            num_training_cells=5,
+            num_guard_cells=cfar_num_guard_cells,
+            num_training_cells=cfar_num_training_cells,
             target_pfa=float(pfa_values[0]),
             peak_distance=peak_distance,
             circular=True,
@@ -454,9 +476,9 @@ specs = [
     ),
     SweepSpec(
         detector=OSCFARDetector(
-            num_guard_cells=3,
-            num_training_cells=12,
-            rank=15,
+            num_guard_cells=cfar_num_guard_cells,
+            num_training_cells=cfar_num_training_cells,
+            rank=os_rank_low,
             target_pfa=float(pfa_values[0]),
             peak_distance=peak_distance,
             circular=True,

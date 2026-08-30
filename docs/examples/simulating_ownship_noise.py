@@ -43,6 +43,8 @@ from bluepebble.sigproc import (
     DelayAndSumBeamformer,
     MinimumVarianceDistortionlessResponseBeamformer,
     SteeringCalculator,
+    beams_per_mainlobe,
+    cfar_window_for_mainlobe,
 )
 from bluepebble.simulator import ContinuousSTFTPassiveSonarArraySimulator
 
@@ -396,14 +398,26 @@ steering_calculator = SteeringCalculator(
 # Keeping propagation, beamformer, and detector settings identical between the two simulators means
 # any difference in output is solely attributable to the ownship source term.
 
-cfar_num_guard_cells = 6
-cfar_num_training_cells = 10
+# Guard and training cells follow from the array rather than being chosen: a source spans a
+# mainlobe in bearing, so the guard band has to reach past it or the training cells measure
+# the target and compress the reported SNR. Evaluated at 50 Hz -- the lowest tonal in the
+# scenario; the beamformer itself is unbanded and so the widest
+# lobe. peak_distance comes from the same width, since two candidates closer than a mainlobe
+# are not resolvable as separate sources.
+mainlobe_beams = beams_per_mainlobe(
+    aperture_m=(num_sensors - 1) * sensor_spacing_m,
+    frequency_hz=50.0,
+    beam_spacing_rad=float(np.diff(steering_azimuths_rad)[0]),
+    sound_speed_ms=1500.0,
+)
+cfar_num_guard_cells, cfar_num_training_cells, peak_distance = cfar_window_for_mainlobe(
+    mainlobe_beams
+)
 # Preserves this example's pre-refactor operating point: the old threshold_factor=1.05 was
 # alpha applied to the training-cell mean, and CA-CFAR's single-look Pfa = (1 + alpha/N)^-N
 # with N = 2 * num_training_cells inverts it exactly. It is a deliberately permissive
 # threshold -- peak consolidation, not the threshold, does most of the rejection here.
 cfar_target_pfa = 0.3594
-peak_distance = 8
 
 
 def _make_detector(simulator: ContinuousSTFTPassiveSonarArraySimulator) -> PassiveSonarDetector:

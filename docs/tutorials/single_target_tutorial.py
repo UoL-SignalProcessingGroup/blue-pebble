@@ -23,7 +23,8 @@ Single Target Passive-Sonar Tracking Tutorial
 #
 # - :class:`~.TowedArrayPlatform` is the plugin entry point for representing a passive towed
 #   array as a Stone Soup-compatible moving platform.
-# - :class:`~stonesoup.types.groundtruth.GroundTruthState` and :class:`~stonesoup.types.groundtruth.GroundTruthPath` remain  # noqa: E501
+# - :class:`~stonesoup.types.groundtruth.GroundTruthState` and
+# :class:`~stonesoup.types.groundtruth.GroundTruthPath` remain  # noqa: E501
 #   standard Stone Soup types; Blue Pebble reads extra acoustic metadata from their `metadata`
 #   fields.
 # - :class:`~.ContinuousSTFTPassiveSonarArraySimulator` is the integration point that combines
@@ -82,7 +83,9 @@ timesteps = np.array([start_time + i * time_interval for i in range(num_steps)],
 # The first plugin-specific object is the host platform. :class:`~.TowedArrayPlatform` inherits
 # from Stone Soup's moving-platform machinery, so you still provide familiar Stone Soup
 # ingredients such as an initial :class:`~stonesoup.types.groundtruth.GroundTruthState`,
-# position/velocity mappings, and :class:`~stonesoup.models.transition.linear.CombinedLinearGaussianTransitionModel`.  # noqa: E501
+# position/velocity mappings, and
+# :class:`~stonesoup.models.transition.linear.CombinedLinearGaussianTransitionModel`.  # noqa:
+# E501
 #
 # Blue Pebble then adds the array-specific parameters that Stone Soup does not model by default:
 #
@@ -207,7 +210,8 @@ plot_world(truths=target_truths, platform=platform)
 # Next, configure the acoustic environment. This is where Blue Pebble begins to add
 # the underwater-propagation physics that sit outside Stone Soup's core remit.
 #
-# This tutorial uses :class:`~.CylindricalAcousticPropagationModel` with a simple linear sound-speed  # noqa: E501
+# This tutorial uses :class:`~.CylindricalAcousticPropagationModel` with a simple linear sound-
+# speed  # noqa: E501
 # profile and flat bathymetry. Once you provide a propagation model, the simulator can
 # use it to convert target/platform geometry into array-level acoustic observations.
 
@@ -295,6 +299,8 @@ from bluepebble.plotter import apply_shared_colourscale, plot_btr
 from bluepebble.sigproc import (
     MinimumVarianceDistortionlessResponseBeamformer,
     SteeringCalculator,
+    beams_per_mainlobe,
+    cfar_window_for_mainlobe,
 )
 from bluepebble.simulator import ContinuousSTFTPassiveSonarArraySimulator
 
@@ -326,11 +332,23 @@ simulator = ContinuousSTFTPassiveSonarArraySimulator(
     fade_in_ms=fade_in_ms,
 )
 
-num_guard_cells = 2
-num_training_cells = 10
+# Guard and training cells follow from the array rather than being chosen: a source spans a
+# mainlobe in bearing, so the guard band has to reach past it or the training cells measure
+# the target and compress the reported SNR. Evaluated at 100 Hz -- the lower edge of the MVDR band
+# this example processes and so the widest
+# lobe. peak_distance comes from the same width, since two candidates closer than a mainlobe
+# are not resolvable as separate sources.
+mainlobe_beams = beams_per_mainlobe(
+    aperture_m=(num_sensors - 1) * sensor_spacing_m,
+    frequency_hz=100.0,
+    beam_spacing_rad=float(np.diff(steering_azimuths_rad)[0]),
+    sound_speed_ms=1500.0,
+)
+num_guard_cells, num_training_cells, peak_distance = cfar_window_for_mainlobe(mainlobe_beams)
 target_pfa = 0.05
-rank = 15
-peak_distance = 3
+# OS-CFAR takes the k-th smallest training cell, so rank scales with the window; 0.75 of
+# the total is the usual starting point.
+rank = round(0.75 * 2 * num_training_cells)
 
 cfar_detector = OSCFARDetector(
     num_guard_cells=num_guard_cells,
