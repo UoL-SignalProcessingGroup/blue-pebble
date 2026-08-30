@@ -823,3 +823,33 @@ def test_consolidation_only_ever_removes_detections(monkeypatch) -> None:
         assert len(kept) <= len(every)
         # and every surviving detection was itself a crossing
         assert set(kept[:, 0].astype(int)).issubset(set(every[:, 0].astype(int)))
+
+
+def test_mc_calibration_is_tractable_at_broadband_frame_counts(monkeypatch) -> None:
+    """Calibration cost must not scale with num_frames.
+
+    The frame axis used to be sampled and then averaged, so the draw was
+    (num_trials, num_training_total, num_frames) float64. At the ~2500 frames a broadband
+    STFT beamformer produces, with a training window sized to a wide mainlobe, that is tens
+    of gigabytes for a single calibration -- enough to take a machine down rather than
+    merely run slowly. The frame average has a closed form, so the axis is never built.
+
+    This asserts the calibration simply completes at a frame count that was previously
+    impossible, and that alpha still lands where the single-look closed form says it should
+    when there is only one frame to average.
+    """
+    algorithms = _load_detector_algorithms(monkeypatch)
+
+    alpha_broadband = algorithms.calibrate_os_cfar_alpha_mc(
+        0.05, 128, rank=96, num_frames=2497, num_trials=20_000, rng=np.random.default_rng(5)
+    )
+    assert np.isfinite(alpha_broadband)
+    # Averaging thousands of frames concentrates the statistic, so alpha sits near 1.
+    assert 0.8 < alpha_broadband < 1.3
+
+    # With a single frame there is nothing to average, and the closed form applies exactly.
+    alpha_single = algorithms.calibrate_os_cfar_alpha_mc(
+        0.05, 24, rank=18, num_frames=1, num_trials=200_000, rng=np.random.default_rng(6)
+    )
+    closed_form = algorithms.solve_os_cfar_alpha_single_look(0.05, 24, 18)
+    assert alpha_single == pytest.approx(closed_form, rel=0.05)

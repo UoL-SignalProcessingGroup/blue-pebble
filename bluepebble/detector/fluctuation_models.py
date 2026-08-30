@@ -131,10 +131,18 @@ def _noise_only_cells(
     num_frames: int,
     noise_looks: float,
 ) -> FloatArray:
-    """M-frame-averaged noise-only reference cells, unit mean, K_n looks per frame."""
-    return rng.gamma(
-        noise_looks, 1.0 / noise_looks, size=(num_trials, num_training_total, num_frames)
-    ).mean(axis=2)
+    """M-frame-averaged noise-only reference cells, unit mean, K_n looks per frame.
+
+    Every look here is iid Gamma(K_n, 1/K_n), so their M-frame mean is exactly
+    Gamma(M*K_n, 1/(M*K_n)) and the frame axis never has to be materialised. Drawing it
+    would cost (num_trials, num_training_total, num_frames) float64, which runs to
+    gigabytes for a window sized to a wide mainlobe and to tens of gigabytes for broadband
+    STFT data. Note the same shortcut does NOT apply to a partially-occupied cell (see
+    cut_power_samples): there each look is a sum of two Gammas of different scale, which is
+    not itself Gamma, so those are still sampled per frame.
+    """
+    shape_m = noise_looks * num_frames
+    return rng.gamma(shape_m, 1.0 / shape_m, size=(num_trials, num_training_total))
 
 
 class FluctuationModel(ABC):

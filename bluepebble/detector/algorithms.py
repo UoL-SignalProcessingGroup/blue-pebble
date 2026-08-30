@@ -368,16 +368,23 @@ def calibrate_os_cfar_alpha_mc(
 
     # Simulate M-frame-averaged noise-only training cells: mean of `num_frames` unit-mean
     # per-frame looks per cell, for every training cell, over all trials.
+    # Only the frame-average is ever used, and the mean of M iid Gamma(k, 1/k) draws is
+    # exactly Gamma(M*k, 1/(M*k)) -- so the frame axis is drawn in closed form rather than
+    # materialised. Sampling it would cost (num_trials, num_training_total, num_frames)
+    # float64: over a gigabyte for a window sized to a wide mainlobe, and tens of gigabytes
+    # for broadband STFT data with thousands of frames. This is the same distribution, not
+    # an approximation.
+    shape_m = k * num_frames
     ref_samples = rng.gamma(
-        shape=k, scale=1.0 / k, size=(num_trials, num_training_total, num_frames)
-    ).mean(axis=2)
+        shape=shape_m, scale=1.0 / shape_m, size=(num_trials, num_training_total)
+    )
 
     # OS-CFAR's noise estimate is the rank-th smallest training cell per trial.
     ref_sorted = np.sort(ref_samples, axis=1)
     noise_estimate = ref_sorted[:, rank - 1]
 
     # Simulate the (noise-only) CUT under the same M-frame averaging.
-    cut_samples = rng.gamma(shape=k, scale=1.0 / k, size=(num_trials, num_frames)).mean(axis=1)
+    cut_samples = rng.gamma(shape=shape_m, scale=1.0 / shape_m, size=num_trials)
 
     ratio = cut_samples / noise_estimate
 
