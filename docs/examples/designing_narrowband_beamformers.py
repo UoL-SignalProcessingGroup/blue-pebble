@@ -18,7 +18,6 @@ into a single set of detections for downstream tracking.
 #
 # All dependencies are consolidated here for convenience.
 
-import math
 from datetime import datetime, timedelta
 
 import numpy as np
@@ -42,7 +41,13 @@ from bluepebble.platform import TowedArrayPlatform
 from bluepebble.plotter import apply_shared_colourscale, deduplicate_legend, plot_btr, plot_world
 from bluepebble.signal.anthropogenic import SyntheticAnthropogenicSignal
 from bluepebble.signal.random import ColouredNoiseSignal
-from bluepebble.sigproc import DelayAndSumBeamformer, FrequencyBand, SteeringCalculator
+from bluepebble.sigproc import (
+    DelayAndSumBeamformer,
+    FrequencyBand,
+    SteeringCalculator,
+    beams_per_mainlobe,
+    cfar_window_for_mainlobe,
+)
 from bluepebble.simulator import ContinuousSTFTPassiveSonarArraySimulator
 
 # %%
@@ -82,11 +87,6 @@ beam_spacing_deg = 360.0 / num_beams
 
 band_fmin_hz = 50.0
 band_fmax_hz = 240.0
-
-
-def _beamwidth_deg(frequency_hz: float) -> float:
-    """Return the -3 dB mainlobe width of the uniform line array at one frequency."""
-    return float(np.rad2deg(0.886 * (sound_speed_ms / frequency_hz) / array_aperture_m))
 
 
 print(f"Aperture {array_aperture_m:.2f} m, {num_beams} beams at {beam_spacing_deg:.2f} deg")
@@ -362,14 +362,20 @@ target_pfa = 0.18
 
 def _band_detector(band: FrequencyBand) -> CACFARDetector:
     """Build a CFAR detector sized to a band's widest mainlobe."""
-    mainlobe_beams = _beamwidth_deg(band.fmin) / beam_spacing_deg
-    guard = max(1, math.ceil(guard_scale * mainlobe_beams / 2))
-    training = max(2, math.ceil(train_scale * guard))
+    mainlobe_beams = beams_per_mainlobe(
+        aperture_m=array_aperture_m,
+        frequency_hz=band.fmin,
+        beam_spacing_rad=np.deg2rad(beam_spacing_deg),
+        sound_speed_ms=sound_speed_ms,
+    )
+    guard, training, peak_distance = cfar_window_for_mainlobe(
+        mainlobe_beams, guard_scale=guard_scale, train_scale=train_scale
+    )
     return CACFARDetector(
         num_guard_cells=guard,
         num_training_cells=training,
         target_pfa=target_pfa,
-        peak_distance=max(1, math.ceil(mainlobe_beams)),
+        peak_distance=peak_distance,
     )
 
 
