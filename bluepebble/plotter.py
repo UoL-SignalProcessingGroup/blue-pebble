@@ -1023,7 +1023,7 @@ def plot_btr(
     data_type: str = "SNR (dB)",
     cmin: float | None = None,
     cmax: float | None = None,
-    colorscale: str = "Turbo",
+    colorscale: str = "Viridis",
     figsize: tuple[float, float] = (800, 600),
     fig: go.Figure | None = None,
     row: int | None = None,
@@ -1058,7 +1058,10 @@ def plot_btr(
         Optional upper bound of the heatmap color scale. If ``None`` (default),
         Plotly automatically chooses the upper bound from the data.
     colorscale : str
-        Name of the Plotly colorscale to use for the heatmap. Default is ``"Turbo"``.
+        Name of the Plotly colorscale to use for the heatmap. Default is ``"Viridis"``,
+        which is perceptually uniform: its lightness climbs monotonically, so the eye reads
+        no structure the SNR field does not contain, and the ordering survives
+        colour-vision deficiency and greyscale printing.
     figsize : tuple[float, float]
         Figure size for standalone plots. Values that look like inches (for example
         ``(12, 6)``) are converted to pixels using 100 px/in; larger values are
@@ -1369,7 +1372,7 @@ def plot_spectrogram(
     z_percentiles: tuple[float, float] | None = None,
     showscale: bool = True,
     colorbar_title: str = "Intensity (dB)",
-    colorscale: str = "Turbo",
+    colorscale: str = "Viridis",
     customdata: ArrayLike | None = None,
     hovertemplate: str | None = None,
 ) -> go.Figure:

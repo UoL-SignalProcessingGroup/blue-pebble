@@ -426,7 +426,6 @@ fig_btr = plot_btr(
     timesteps=timesteps,
     steering_azimuths=np.rad2deg(steering_azimuths_rad),
     truths=[relative_bearing_truth],
-    colorscale="Viridis",
 ).update_layout(
     title="Bearing-Time Record: SNR",
     template="plotly_white",

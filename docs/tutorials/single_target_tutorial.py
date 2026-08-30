@@ -368,7 +368,6 @@ plot_btr(
     timesteps=timesteps,
     steering_azimuths=np.rad2deg(steering_azimuths_rad),
     fig=fig_btr,
-    colorscale="Viridis",
     row=1,
     col=1,
 )
@@ -378,7 +377,6 @@ plot_btr(
     timesteps=timesteps,
     steering_azimuths=np.rad2deg(steering_azimuths_rad),
     fig=fig_btr,
-    colorscale="Viridis",
     row=1,
     col=2,
 )
