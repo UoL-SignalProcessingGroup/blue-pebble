@@ -434,6 +434,23 @@ class _CFARDetectorBase(DetectionAlgorithm, ABC):
     The two criteria should be applied jointly; neither is sufficient to address the failure mode
     associated with the other.
 
+    Turning consolidation off
+    -------------------------
+    ``consolidate_peaks=False`` reports every cell above the threshold instead of one per
+    source. This exists to make the Pfa calibration observable: consolidation merges adjacent
+    crossings, so the number of reported detections falls below the requested rate as soon as
+    crossings stop being sparse. Measured on noise-only data at 361 beams, reported detections
+    hold at the requested Pfa up to about 0.05, then fall away -- roughly 78% of crossings at
+    Pfa 0.2, 57% at 0.5, and 37% at 0.9. Unconsolidated output tracks the requested Pfa across
+    that whole range, which is what makes it useful for verifying calibration, for ROC/PR
+    sweeps that need the full false-positive range, and for comparison against theoretical
+    curves.
+
+    It is a diagnostic mode, not an operational one. Without consolidation a single source
+    reports once per bearing bin its mainlobe and sidelobes cover, so anything downstream that
+    assumes one detection per source -- a tracker's data associator above all -- will be
+    swamped. Leave it True for detection; switch it off to measure.
+
     Attributes
     ----------
     peak_distance : int
@@ -464,6 +481,12 @@ class _CFARDetectorBase(DetectionAlgorithm, ABC):
 
     """
 
+    consolidate_peaks: bool = Property(
+        default=True,
+        doc="Whether to reduce CFAR-passing cells to one detection per source. Leave True for "
+        "operational detection. False reports every cell above the threshold, which is a "
+        "diagnostic mode -- see the class docstring.",
+    )
     peak_distance: int = Property(
         default=1,
         doc="Minimum bearing-bin separation between consolidated detections; also the "
@@ -614,6 +637,11 @@ class _CFARDetectorBase(DetectionAlgorithm, ABC):
         candidate_mask = directional_power > threshold
         if not np.any(candidate_mask):
             return _stack_detections(np.array([], dtype=int), snr_db)
+
+        if not self.consolidate_peaks:
+            # Every crossing, unmerged: the count is then a direct estimate of the achieved
+            # Pfa, which consolidation otherwise suppresses. Diagnostic only.
+            return _stack_detections(np.flatnonzero(candidate_mask), snr_db)
 
         indices = self._consolidate_peaks(snr_db, candidate_mask, num_beams)
         return _stack_detections(indices, snr_db)

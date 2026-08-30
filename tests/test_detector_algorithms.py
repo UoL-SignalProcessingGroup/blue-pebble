@@ -893,3 +893,42 @@ def test_removed_detector_kwargs_name_their_replacement(
             target_pfa=1e-3,
             **{removed_kwarg: value},
         )
+
+
+def test_consolidation_is_on_by_default(monkeypatch) -> None:
+    """Operational detection is the default; the raw mode must be opted into."""
+    algorithms = _load_detector_algorithms(monkeypatch)
+    detector = algorithms.CACFARDetector(
+        num_guard_cells=2, num_training_cells=8, target_pfa=1e-3
+    )
+
+    assert detector.consolidate_peaks is True
+
+
+def test_unconsolidated_detect_reports_every_cell_above_the_threshold(monkeypatch) -> None:
+    """With consolidation off, a broad plateau is reported cell by cell, not merged.
+
+    Not every cell of the plateau crosses: the outermost ones draw part of their training
+    window from inside the plateau itself, which inflates their noise estimate and masks them.
+    That is ordinary CFAR self-masking, so the test asserts the shape of the result -- a
+    contiguous run reported individually, against a single merged detection -- rather than a
+    cell count that depends on the exact window geometry.
+    """
+    algorithms = _load_detector_algorithms(monkeypatch)
+    kwargs = dict(num_guard_cells=1, num_training_cells=4, target_pfa=0.05, circular=False)
+    raw = algorithms.CACFARDetector(consolidate_peaks=False, peak_distance=5, **kwargs)
+    merged = algorithms.CACFARDetector(peak_distance=5, **kwargs)
+
+    # A wide, flat-topped target spanning several adjacent bearing bins.
+    data = np.full((40, 1), 0.01)
+    data[18:23, 0] = 50.0
+
+    raw_indices = raw.detect(data)[:, 0].astype(int)
+    merged_indices = merged.detect(data)[:, 0].astype(int)
+
+    assert len(merged_indices) == 1
+    assert len(raw_indices) > 1
+    # a single contiguous run, all of it inside the plateau, containing the merged detection
+    np.testing.assert_array_equal(np.diff(raw_indices), np.ones(len(raw_indices) - 1))
+    assert raw_indices.min() >= 18 and raw_indices.max() <= 22
+    assert merged_indices[0] in raw_indices

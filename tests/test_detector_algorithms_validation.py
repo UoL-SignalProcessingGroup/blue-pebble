@@ -763,3 +763,63 @@ def test_ca_and_os_cfar_non_fluctuating_mc_are_deterministic_given_fixed_seed(mo
         2.0, 16, 12, num_frames=4, snr_linear=1.0, num_trials=10_000, rng=np.random.default_rng(0)
     )
     assert os1 == os2
+
+
+@pytest.mark.parametrize("target_pfa", [0.05, 0.2, 0.5, 0.9])
+def test_unconsolidated_detect_tracks_target_pfa_where_consolidation_suppresses_it(
+    monkeypatch, target_pfa
+) -> None:
+    """Without consolidation, achieved Pfa follows target_pfa into the dense regime.
+
+    test_cacfar_detect_achieves_calibrated_pfa covers Pfa=1e-2, where crossings are sparse
+    enough to be isolated; it is a sound alpha check, but consolidation is a no-op there so it
+    says nothing about the dense regime. Once crossings stop being sparse, merging adjacent
+    ones pulls the reported count well below the requested rate -- about 78% of crossings at
+    Pfa 0.2, 57% at 0.5, 37% at 0.9 -- which is what breaks ROC sweeps and comparisons against
+    theory.
+
+    Unconsolidated output is the raw threshold-crossing rate, exactly the quantity
+    solve_ca_cfar_alpha calibrates, so it must track target_pfa across the whole range. This
+    guards that tracking property. Note it is a weak alpha check at the top of the range: near
+    Pfa 0.9 almost every cell crosses whatever alpha is, so a mis-solved alpha barely moves the
+    result. The sparse-regime test above is the sensitive one for alpha itself.
+    """
+    algorithms = _load_detector_algorithms(monkeypatch)
+    num_beams, num_frames = 361, 4
+    detector = algorithms.CACFARDetector(
+        num_guard_cells=2,
+        num_training_cells=5,
+        target_pfa=target_pfa,
+        peak_distance=1,
+        circular=True,
+        consolidate_peaks=False,
+    )
+
+    rng = np.random.default_rng(11)
+    n_trials = 60
+    total = 0
+    for _ in range(n_trials):
+        data = _complex_gaussian_power(rng, (num_beams, num_frames))
+        total += len(detector.detect(data))
+
+    empirical_pfa = total / (n_trials * num_beams)
+    assert empirical_pfa == pytest.approx(target_pfa, rel=0.1)
+
+
+def test_consolidation_only_ever_removes_detections(monkeypatch) -> None:
+    """Consolidation is a filter over the crossings, never a source of new ones."""
+    algorithms = _load_detector_algorithms(monkeypatch)
+    kwargs = dict(
+        num_guard_cells=2, num_training_cells=5, target_pfa=0.3, peak_distance=3, circular=True
+    )
+    consolidated = algorithms.CACFARDetector(**kwargs)
+    raw = algorithms.CACFARDetector(consolidate_peaks=False, **kwargs)
+
+    rng = np.random.default_rng(12)
+    for _ in range(20):
+        data = _complex_gaussian_power(rng, (361, 4))
+        kept = consolidated.detect(data)
+        every = raw.detect(data)
+        assert len(kept) <= len(every)
+        # and every surviving detection was itself a crossing
+        assert set(kept[:, 0].astype(int)).issubset(set(every[:, 0].astype(int)))
