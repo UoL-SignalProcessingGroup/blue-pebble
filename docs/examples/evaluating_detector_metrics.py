@@ -379,18 +379,24 @@ fig_btr = plot_btr(
 # Sweep Configurations
 # --------------------
 #
-# Four detector configurations are swept over ``target_pfa`` to produce ROC and PR curves.
-# Sweeping the requested false-alarm rate rather than a raw threshold multiplier means the
-# x-axis asks the same question of every configuration, even though CA-CFAR and OS-CFAR need
+# Four configurations are swept over ``target_pfa``: CA-CFAR and OS-CFAR, each with peak
+# consolidation off and on. Sweeping the requested false-alarm rate rather than a raw threshold
+# multiplier means the x-axis asks the same question of both detector families, which need
 # quite different multipliers to answer it.
 #
-# All four differ in how they estimate the local noise floor, which is the choice that
-# actually separates CFAR variants: two CA-CFAR windows of different widths, and two OS-CFAR
-# ranks over the same window. Peak consolidation is held fixed at ``peak_distance`` across
-# all four, since it is now intrinsic to the detector rather than a separate chained stage;
-# on this scenario the frame integration already leaves surviving cells isolated, so varying
-# it changes almost nothing and would only obscure the comparison that matters.
-# ``target_fpr`` marks the operating point printed in the summary table.
+# The consolidation axis is the interesting one, and it is what makes the ROC panel readable.
+# A CFAR threshold calibrated for a given Pfa produces that rate of threshold crossings, so
+# with ``consolidate_peaks=False`` the achieved false-positive rate follows the requested Pfa
+# across the whole sweep and the curve covers the full ROC box. Consolidation then merges
+# adjacent crossings into one detection per source, which is what you want operationally but
+# which caps the achieved rate: on noise-only data at this beam count, reported detections
+# hold at the requested Pfa to about 0.05 and then fall away, to roughly 78% of crossings at
+# Pfa 0.2 and 37% at 0.9.
+#
+# Both are legitimate operating modes and the pair is the point: the unconsolidated curves show
+# what the calibration delivers, the consolidated ones show what survives being turned into
+# one detection per source. ``target_fpr`` marks the operating point printed in the summary
+# table.
 
 target_fpr = 0.05
 
@@ -402,8 +408,38 @@ pfa_values = np.logspace(-4, np.log10(0.9), 60)
 
 
 specs = [
-    # Narrow CA-CFAR window: reacts quickly to a changing background, but estimates the noise
-    # floor from few cells, so the estimate itself is noisy.
+    # Raw CFAR output: every cell above the threshold. The count is then the achieved false-
+    # alarm rate directly, so these curves span the full FPR range and can be read against the
+    # requested target_pfa.
+    SweepSpec(
+        detector=CACFARDetector(
+            num_guard_cells=2,
+            num_training_cells=5,
+            target_pfa=float(pfa_values[0]),
+            circular=True,
+            consolidate_peaks=False,
+        ),
+        param_name="target_pfa",
+        param_values=pfa_values,
+        label="CA-CFAR",
+    ),
+    SweepSpec(
+        detector=OSCFARDetector(
+            num_guard_cells=3,
+            num_training_cells=12,
+            rank=24,
+            target_pfa=float(pfa_values[0]),
+            circular=True,
+            consolidate_peaks=False,
+            rng=np.random.default_rng(seed + 1),
+        ),
+        param_name="target_pfa",
+        param_values=pfa_values,
+        label="OS-CFAR",
+    ),
+    # The same two detectors reporting one detection per source, which is how they would
+    # actually be run. Consolidation merges adjacent crossings, so achieved FPR saturates well
+    # below the requested Pfa and these curves stop short of the top-right corner.
     SweepSpec(
         detector=CACFARDetector(
             num_guard_cells=2,
@@ -414,40 +450,8 @@ specs = [
         ),
         param_name="target_pfa",
         param_values=pfa_values,
-        label="CA-CFAR (5 train)",
+        label="CA-CFAR + Peak",
     ),
-    # Wider CA-CFAR window: a steadier noise estimate, at the cost of averaging across more
-    # bearing structure.
-    SweepSpec(
-        detector=CACFARDetector(
-            num_guard_cells=3,
-            num_training_cells=12,
-            target_pfa=float(pfa_values[0]),
-            peak_distance=peak_distance,
-            circular=True,
-        ),
-        param_name="target_pfa",
-        param_values=pfa_values,
-        label="CA-CFAR (12 train)",
-    ),
-    # OS-CFAR at a high rank sits near the top of the sorted training cells, so its noise
-    # estimate behaves much like the cell average.
-    SweepSpec(
-        detector=OSCFARDetector(
-            num_guard_cells=3,
-            num_training_cells=12,
-            rank=24,
-            target_pfa=float(pfa_values[0]),
-            peak_distance=peak_distance,
-            circular=True,
-            rng=np.random.default_rng(seed + 1),
-        ),
-        param_name="target_pfa",
-        param_values=pfa_values,
-        label="OS-CFAR (rank 24)",
-    ),
-    # A lower rank ignores the largest training cells, which is what makes OS-CFAR robust when
-    # a second target or sidelobe leaks into the window.
     SweepSpec(
         detector=OSCFARDetector(
             num_guard_cells=3,
@@ -460,7 +464,7 @@ specs = [
         ),
         param_name="target_pfa",
         param_values=pfa_values,
-        label="OS-CFAR (rank 15)",
+        label="OS-CFAR + Peak",
     ),
 ]
 
