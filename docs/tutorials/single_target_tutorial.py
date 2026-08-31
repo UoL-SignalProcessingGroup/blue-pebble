@@ -421,6 +421,40 @@ fig_btr.update_layout(
 
 
 # %%
+# Reading the Bearing-Time Record
+# --------------------------------
+#
+# Two features of this plot are worth naming, because both recur across the examples and
+# neither is a fault in the simulation.
+#
+# **There are two tracks, and only one target.** A straight line of hydrophones cannot tell
+# which side of itself a sound came from: a source and its reflection in the array axis give
+# identical delays across every sensor, so the beamformer reports both at equal strength.
+# The pair is symmetric about the array axis and the two merge whenever the target passes
+# through endfire -- dead ahead or dead astern. Resolving the ambiguity takes either a
+# manoeuvre, since the ghost swings differently from the real bearing once the array turns,
+# or a second array that is not collinear with the first.
+# :class:`~.SteeringCalculator` can steer only half the plane instead
+# (``mirror_half_plane``), which hides the ghost and halves the beamforming cost. It is left
+# off here because the ambiguity is a permanent feature of towed-array data and is better met
+# early, with an explanation, than met later without one.
+#
+# **The bands to either side of each track are darker than open water.** That is the
+# detector's own noise reference showing through rather than a quiet patch of ocean.
+# ``snr_map()`` measures every beam against the training cells around it, which sit between
+# ``num_guard_cells`` and ``num_guard_cells + num_training_cells`` bins away. A beam whose
+# training window happens to contain the target therefore measures the target as noise and
+# reports a lower SNR for itself. The band sits at exactly those offsets, it deepens with
+# target strength, and it is deepest where the real and ghost tracks converge, because each
+# then falls inside the other's training window and both estimates are inflated at once.
+#
+# Neither affects what is detected. Thresholding compares each cell against the same local
+# estimate being displayed here, so the map shows what actually drove each decision. For a
+# figure without the target-induced wings, :class:`~.PassiveSonarDetector` accepts
+# ``snr_reference="global"``, which measures every beam against a single percentile of the
+# whole scan instead.
+
+# %%
 # Feed Blue Pebble Detections into a Stone Soup Tracker
 # ------------------------------------------------------
 #
