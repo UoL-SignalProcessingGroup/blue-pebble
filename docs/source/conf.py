@@ -49,10 +49,13 @@ exclude_patterns = [
     "Thumbs.db",
     ".DS_Store",
     "**/.ipynb_checkpoints",
-    # Exclude the raw gallery source dirs — Sphinx should only see the
-    # sphinx-gallery-generated RST output under source/auto_examples/ etc.
-    "examples",
-    "tutorials",
+    # The raw gallery sources now live outside this source dir (docs/examples,
+    # docs/tutorials), so Sphinx never walks them and no exclude is needed. Only the
+    # leftover header in source/examples/ has to be hidden: that directory holds the
+    # hand-written pages for the data-dependent scripts, which _patch_gallery_index
+    # links into the gallery, so excluding the directory wholesale made those links
+    # dangle.
+    "examples/GALLERY_HEADER.rst",
     # Exclude RST stubs for WAV-dependent scripts that are in ignore_pattern.
     # These files may persist from earlier builds and would otherwise cause
     # toc.not_included warnings.
@@ -82,7 +85,11 @@ myst_enable_extensions = [
 _plotly_scraper = PlotlyScraper()
 
 sphinx_gallery_conf = {
-    "examples_dirs": ["examples", "../tutorials"],
+    # Relative to this conf.py (the Sphinx source dir). The gallery sources live in
+    # docs/examples and docs/tutorials, one level up -- "examples" without the ../ resolved
+    # to docs/source/examples, which holds only hand-written stubs and no scripts, so the
+    # whole examples gallery silently built empty.
+    "examples_dirs": ["../examples", "../tutorials"],
     "gallery_dirs": ["auto_examples", "auto_tutorials"],
     "filename_pattern": r"\.py",
     # Exclude scripts that require external data not bundled with the repository.
