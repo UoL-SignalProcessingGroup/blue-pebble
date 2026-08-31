@@ -79,6 +79,59 @@ def snr_from_beamformed_data(
     raise ValueError(f"Unsupported beamformer_output_type: {output_type}")
 
 
+_SNR_REFERENCES = ("local", "global")
+
+
+def _snr_reference_map(
+    detector: _CFARDetectorBase,
+    beamformed_data: ArrayLike,
+    snr_reference: str,
+    snr_percentile: int,
+) -> FloatArray:
+    """Per-beam SNR against the requested noise reference.
+
+    The two answer different questions. ``"local"`` is the detector's own training-cell
+    estimate -- the quantity its threshold was actually compared against, and the one that
+    follows a noise field varying with bearing. ``"global"`` measures every beam against a
+    single percentile of the whole scan, which is comparable across bearings and over time
+    but blind to a noisy sector.
+
+    ``"local"`` is contaminated by the target itself when the training cells fall inside its
+    mainlobe, which compresses strong peaks; see
+    :func:`~bluepebble.sigproc.cfar_window_for_mainlobe` for sizing a window that avoids it.
+
+    Parameters
+    ----------
+    detector : _CFARDetectorBase
+        Detector whose local noise-floor estimate is used for ``"local"``.
+    beamformed_data : ArrayLike
+        Raw beamformed data for one timestep, shape ``(num_beams, num_frames)``.
+    snr_reference : str
+        ``"local"`` or ``"global"``.
+    snr_percentile : int
+        Percentile of directional power taken as the noise floor for ``"global"``. Ignored
+        otherwise.
+
+    Returns
+    -------
+    FloatArray
+        Per-beam SNR in dB, shape ``(num_beams,)``.
+
+    Raises
+    ------
+    ValueError
+        If ``snr_reference`` is not one of the supported options.
+
+    """
+    if snr_reference == "local":
+        return detector.snr_map(beamformed_data)
+    if snr_reference == "global":
+        return snr_from_beamformed_data(
+            beamformed_data, output_type="snr_percentile", percentile=snr_percentile
+        )
+    raise ValueError(f"snr_reference must be one of {_SNR_REFERENCES}, got {snr_reference!r}")
+
+
 class PassiveSonarDetector(DetectionReader):
     """A passive sonar detector that processes beamformed sensor data.
 
@@ -108,6 +161,18 @@ class PassiveSonarDetector(DetectionReader):
     )
     steering_azimuths_rad: FloatArray = Property(
         doc="Array of steering azimuth angles in radians.",
+    )
+    snr_reference: str = Property(
+        default="local",
+        doc="Noise reference for the reported SNR map: 'local' (the detector's own "
+        "training-cell estimate, the quantity its threshold was compared against) or "
+        "'global' (a single percentile across the whole scan, comparable between bearings). "
+        "Detection always uses the local estimate; this only sets what is reported.",
+    )
+    snr_percentile: int = Property(
+        default=10,
+        doc="Percentile of directional power used as the noise floor when snr_reference is "
+        "'global'. Ignored otherwise.",
     )
 
     def __init__(self, *args: object, **kwargs: object) -> None:
@@ -175,7 +240,9 @@ class PassiveSonarDetector(DetectionReader):
                 # modest redundant computation in exchange for keeping "report the full
                 # picture" and "decide detections" as separate concerns. Worth revisiting if
                 # this shows up in profiling.
-                snr = self.detector.snr_map(beamformed_data)
+                snr = _snr_reference_map(
+                    self.detector, beamformed_data, self.snr_reference, self.snr_percentile
+                )
                 raw_detections: DetectionArray = self.detector.detect(beamformed_data)
 
                 if raw_detections.size > 0:
@@ -207,6 +274,18 @@ class BandDetector(Base):
     detector: _CFARDetectorBase = Property(
         doc="CFAR detector applied to this band's raw beamformed data.",
     )
+    snr_reference: str = Property(
+        default="local",
+        doc="Noise reference for the reported SNR map: 'local' (the detector's own "
+        "training-cell estimate, the quantity its threshold was compared against) or "
+        "'global' (a single percentile across the whole scan, comparable between bearings). "
+        "Detection always uses the local estimate; this only sets what is reported.",
+    )
+    snr_percentile: int = Property(
+        default=10,
+        doc="Percentile of directional power used as the noise floor when snr_reference is "
+        "'global'. Ignored otherwise.",
+    )
 
     def detect(self, beamformed_data: ArrayLike) -> tuple[FloatArray, DetectionArray]:
         """Run this band's detector against its raw beamformed data.
@@ -222,7 +301,9 @@ class BandDetector(Base):
             The band's full per-beam SNR map, and the detections found in it.
 
         """
-        snr = self.detector.snr_map(beamformed_data)
+        snr = _snr_reference_map(
+            self.detector, beamformed_data, self.snr_reference, self.snr_percentile
+        )
         detections = self.detector.detect(beamformed_data)
         return snr, detections
 

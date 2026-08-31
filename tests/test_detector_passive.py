@@ -426,3 +426,83 @@ def test_snr_from_beamformed_data_gives_identical_results_for_real_power_and_com
         from_complex = passive.snr_from_beamformed_data(amplitude, output_type=output_type)
         from_real_power = passive.snr_from_beamformed_data(real_power, output_type=output_type)
         np.testing.assert_allclose(from_complex, from_real_power)
+
+
+def test_band_detector_reports_the_local_noise_floor_by_default(monkeypatch) -> None:
+    """The default stays the detector's own estimate: what its threshold was compared to."""
+    passive = _load_passive_detector_module(monkeypatch)
+    marker = np.full(6, -99.0)
+    band = passive.BandDetector(
+        detector=_FakeDetector(lambda d: np.empty((0, 2)), snr_fn=lambda d: marker)
+    )
+
+    snr, _ = band.detect(np.ones((6, 2)))
+
+    assert band.snr_reference == "local"
+    np.testing.assert_array_equal(snr, marker)
+
+
+def test_band_detector_can_report_against_a_global_noise_floor(monkeypatch) -> None:
+    """'global' restores the pre-refactor scan-wide percentile reference.
+
+    The two references answer different questions -- local follows a noise field that varies
+    with bearing, global is comparable between bearings -- so both are legitimate and the
+    caller picks. The detector's own snr_map() is not consulted in this mode, which the
+    sentinel below checks by making it return something impossible.
+    """
+    passive = _load_passive_detector_module(monkeypatch)
+    data = np.array([[1.0 + 0.0j], [1.0 + 0.0j], [10.0 + 0.0j], [1.0 + 0.0j]])
+    band = passive.BandDetector(
+        detector=_FakeDetector(lambda d: np.empty((0, 2)), snr_fn=lambda d: np.full(4, -99.0)),
+        snr_reference="global",
+    )
+
+    snr, _ = band.detect(data)
+
+    expected = passive.snr_from_beamformed_data(
+        data, output_type="snr_percentile", percentile=10
+    )
+    np.testing.assert_allclose(snr, expected)
+    assert not np.any(snr == -99.0)
+
+
+def test_snr_percentile_selects_the_global_noise_floor(monkeypatch) -> None:
+    """A higher percentile is a higher noise floor, so reported SNR falls."""
+    passive = _load_passive_detector_module(monkeypatch)
+    data = np.array([[1.0 + 0.0j], [2.0 + 0.0j], [3.0 + 0.0j], [20.0 + 0.0j]])
+    make = lambda pct: passive.BandDetector(  # noqa: E731
+        detector=_FakeDetector(lambda d: np.empty((0, 2))),
+        snr_reference="global",
+        snr_percentile=pct,
+    )
+
+    low, _ = make(10).detect(data)
+    high, _ = make(90).detect(data)
+
+    assert high.max() < low.max()
+
+
+def test_snr_reference_does_not_change_what_is_detected(monkeypatch) -> None:
+    """The option only sets what is reported; thresholding always uses the local estimate."""
+    passive = _load_passive_detector_module(monkeypatch)
+    data = np.array([[1.0 + 0.0j], [9.0 + 0.0j], [1.0 + 0.0j]])
+    detections = np.array([[1.0, 12.0]])
+    make = lambda ref: passive.BandDetector(  # noqa: E731
+        detector=_FakeDetector(lambda d: detections), snr_reference=ref
+    )
+
+    _, local_hits = make("local").detect(data)
+    _, global_hits = make("global").detect(data)
+
+    np.testing.assert_array_equal(local_hits, global_hits)
+
+
+def test_unknown_snr_reference_is_rejected(monkeypatch) -> None:
+    """A typo should name the valid options rather than silently pick one."""
+    passive = _load_passive_detector_module(monkeypatch)
+    band = passive.BandDetector(
+        detector=_FakeDetector(lambda d: np.empty((0, 2))), snr_reference="globl"
+    )
+
+    with pytest.raises(ValueError, match="snr_reference must be one of"):
+        band.detect(np.ones((4, 2)))
