@@ -353,7 +353,8 @@ class RayleighFluctuation(FluctuationModel):
     ) -> float:
         """Exact Pd for CA-CFAR when the target fills the band; Monte Carlo when it doesn't.
 
-        The derivation proceeds by writing CUT = (1 + snr_linear) * Z, where
+        The cell-averaging formulation is Finn and Johnson's [CA1]_. The derivation here
+        proceeds by writing CUT = (1 + snr_linear) * Z, where
         Z ~ Gamma(K_n*M, 1/(K_n*M)) (unit mean, M-frame averaged, K_n looks per frame) -- the
         same scale shared by the reference-cell sum. Then::
 
@@ -361,7 +362,8 @@ class RayleighFluctuation(FluctuationModel):
                = P(Z > [alpha / (1 + snr_linear)] * mean_of_N_refs)
 
         which is exactly the Pfa relationship with alpha replaced by
-        alpha_eff = alpha / (1 + snr_linear). The Beta relationship established in
+        alpha_eff = alpha / (1 + snr_linear), the pair given as equations (13)-(14) in
+        [CA2]_. The Beta relationship established in
         :func:`~.algorithms.solve_ca_cfar_alpha` (W = CUT / (CUT + sum_of_refs) ~
         Beta(K_n*M, N*K_n*M)) is reused directly::
 
@@ -441,13 +443,15 @@ class RayleighFluctuation(FluctuationModel):
 
             Pd = P(CUT > alpha * X_(k)) = E[exp(-alpha * X_(k) / (1 + snr_linear))]
 
-        which is exactly :func:`~.algorithms._os_cfar_log_pfa`'s Pfa formula evaluated at
+        which is exactly :func:`~.algorithms._os_cfar_log_pfa`'s Pfa formula, equation (37)
+        of [OS2]_, evaluated at
         alpha_eff = alpha / (1 + snr_linear). That form rests on Renyi's exponential
-        order-statistic spacings, so it additionally requires single-LOOK reference cells
+        order-statistic spacings [OS3]_, so it additionally requires single-LOOK reference cells
         (K_n == 1) and a band-filling target (K_s == K_n); band-integrated data breaks both and
         routes to Monte Carlo even at num_frames == 1.
 
-        Multi-look (num_frames > 1): no closed form exists in the manner it does for CA-CFAR.
+        Multi-look (num_frames > 1): no closed form exists in the manner it does for CA-CFAR,
+        which is bound up with the multi-target robustness OS-CFAR was introduced for [OS1]_.
         Order statistics of Gamma-distributed (M-frame-averaged) reference cells do not reduce
         to a tractable distribution the way a sum of Gammas does; Renyi's spacings
         representation, on which the num_frames == 1 case relies, is specific to exponential
