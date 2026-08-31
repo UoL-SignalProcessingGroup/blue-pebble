@@ -127,64 +127,73 @@ class _FakeDetector:
 # --------------------------------------------------------------------------
 
 
-def test_snr_from_beamformed_data_power_mode_returns_linear_mean_power(monkeypatch) -> None:
-    """'power' mode should return the raw mean power per beam, unnormalised."""
+def test_beam_power_returns_the_frame_averaged_linear_power(monkeypatch) -> None:
+    """beam_power is the unnormalised power map, not an SNR."""
     passive = _load_passive_detector_module(monkeypatch)
     data = np.array([[1.0 + 0.0j], [3.0 + 0.0j]])
 
-    result = passive.snr_from_beamformed_data(data, output_type="power")
-
-    np.testing.assert_allclose(result, [1.0, 9.0])
+    np.testing.assert_allclose(passive.beam_power(data), [1.0, 9.0])
 
 
-def test_snr_from_beamformed_data_log_power_mode_returns_db_power(monkeypatch) -> None:
-    """'log_power' mode should return 10*log10(mean power) directly."""
+def test_beam_power_in_decibels(monkeypatch) -> None:
+    """decibels=True is 10*log10 of the same quantity."""
     passive = _load_passive_detector_module(monkeypatch)
     data = np.array([[2.0 + 0.0j, 2.0 + 0.0j]])
 
-    result = passive.snr_from_beamformed_data(data, output_type="log_power")
+    np.testing.assert_allclose(
+        passive.beam_power(data, decibels=True), [10 * np.log10(4.0)], rtol=1e-6
+    )
 
-    np.testing.assert_allclose(result, [10 * np.log10(4.0)], rtol=1e-6)
+
+def test_beam_power_does_not_square_real_power_input(monkeypatch) -> None:
+    """The reason this helper exists: BeamformedData may already be power.
+
+    Squaring a real-power beamformer's output a second time double-applies the power law,
+    which is silent in the output and breaks any Pfa calibration downstream. Amplitude and the
+    power it corresponds to must give the same answer.
+    """
+    passive = _load_passive_detector_module(monkeypatch)
+    amplitude = np.array([[1.0 + 0.0j], [3.0 + 0.0j]])
+    real_power = np.abs(amplitude) ** 2
+
+    np.testing.assert_allclose(
+        passive.beam_power(amplitude), passive.beam_power(real_power)
+    )
 
 
-def test_snr_from_beamformed_data_median_power_mode_uses_median_noise_floor(
-    monkeypatch,
-) -> None:
-    """'median_power' mode should normalise every beam to 0 dB when powers are equal."""
+def test_snr_is_zero_db_when_every_beam_carries_equal_power(monkeypatch) -> None:
+    """With a flat scan the noise floor equals every beam, whatever the percentile."""
     passive = _load_passive_detector_module(monkeypatch)
     data = np.array([[2.0 + 0.0j], [2.0 + 0.0j], [2.0 + 0.0j]])
 
-    result = passive.snr_from_beamformed_data(data, output_type="median_power")
+    np.testing.assert_allclose(
+        passive.snr_from_beamformed_data(data, percentile=50), np.zeros(3), atol=1e-6
+    )
 
-    np.testing.assert_allclose(result, np.zeros(3), atol=1e-6)
 
-
-def test_snr_from_beamformed_data_snr_percentile_mode_uses_percentile_noise_floor(
-    monkeypatch,
-) -> None:
-    """A higher percentile should give a higher noise floor and lower reported SNR."""
+def test_percentile_50_is_the_median_reference(monkeypatch) -> None:
+    """The former 'median_power' mode is exactly percentile=50, so it needs no own option."""
     passive = _load_passive_detector_module(monkeypatch)
-    data = np.array(
-        [[1.0 + 0.0j], [np.sqrt(2) + 0.0j], [np.sqrt(3) + 0.0j], [2.0 + 0.0j]]
-    )
+    rng = np.random.default_rng(0)
+    data = rng.exponential(1.0, size=(9, 3))
 
-    low_percentile = passive.snr_from_beamformed_data(
-        data, output_type="snr_percentile", percentile=10
-    )
-    high_percentile = passive.snr_from_beamformed_data(
-        data, output_type="snr_percentile", percentile=50
-    )
+    from_percentile = passive.snr_from_beamformed_data(data, percentile=50)
+    power = passive.beam_power(data)
+    eps = np.finfo(float).eps
+    by_hand = 10 * np.log10((power + eps) / (np.median(power) + eps))
 
-    assert high_percentile.max() < low_percentile.max()
+    np.testing.assert_allclose(from_percentile, by_hand)
 
 
-def test_snr_from_beamformed_data_rejects_unknown_output_type(monkeypatch) -> None:
-    """Unsupported output modes should raise a clear validation error."""
+def test_a_higher_percentile_lowers_the_reported_snr(monkeypatch) -> None:
+    """A higher percentile is a higher assumed noise floor."""
     passive = _load_passive_detector_module(monkeypatch)
-    data = np.array([[1.0 + 0.0j]])
+    data = np.array([[1.0 + 0.0j], [np.sqrt(2) + 0.0j], [np.sqrt(3) + 0.0j], [2.0 + 0.0j]])
 
-    with pytest.raises(ValueError, match="Unsupported beamformer_output_type"):
-        passive.snr_from_beamformed_data(data, output_type="unknown")
+    low = passive.snr_from_beamformed_data(data, percentile=10)
+    high = passive.snr_from_beamformed_data(data, percentile=50)
+
+    assert high.max() < low.max()
 
 
 # --------------------------------------------------------------------------
@@ -409,7 +418,7 @@ def test_detections_gen_progress_bar_wraps_iterator(monkeypatch) -> None:
     assert wrapped[0]["total"] == 5
 
 
-def test_snr_from_beamformed_data_gives_identical_results_for_real_power_and_complex_amplitude(
+def test_snr_gives_identical_results_for_real_power_and_complex_amplitude(
     monkeypatch,
 ) -> None:
     """Real power input must not be squared again relative to the equivalent amplitude.
@@ -422,10 +431,10 @@ def test_snr_from_beamformed_data_gives_identical_results_for_real_power_and_com
     amplitude = np.array([[1.0 + 0.0j], [3.0 + 0.0j]])
     real_power = np.abs(amplitude) ** 2
 
-    for output_type in ("power", "log_power", "snr_percentile", "median_power"):
-        from_complex = passive.snr_from_beamformed_data(amplitude, output_type=output_type)
-        from_real_power = passive.snr_from_beamformed_data(real_power, output_type=output_type)
-        np.testing.assert_allclose(from_complex, from_real_power)
+    np.testing.assert_allclose(
+        passive.snr_from_beamformed_data(amplitude),
+        passive.snr_from_beamformed_data(real_power),
+    )
 
 
 def test_band_detector_reports_the_local_noise_floor_by_default(monkeypatch) -> None:
@@ -459,9 +468,7 @@ def test_band_detector_can_report_against_a_global_noise_floor(monkeypatch) -> N
 
     snr, _ = band.detect(data)
 
-    expected = passive.snr_from_beamformed_data(
-        data, output_type="snr_percentile", percentile=10
-    )
+    expected = passive.snr_from_beamformed_data(data, percentile=10)
     np.testing.assert_allclose(snr, expected)
     assert not np.any(snr == -99.0)
 

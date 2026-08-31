@@ -23,60 +23,67 @@ DetectionBatch: TypeAlias = tuple[datetime, set[Detection]]
 _BandedStep: TypeAlias = tuple[datetime, dict[str, set[Detection]]]
 
 
-def snr_from_beamformed_data(
-    beamformed_data: ArrayLike,
-    output_type: str = "snr_percentile",
-    percentile: int = 10,
-) -> FloatArray:
-    """Reduce a beamformed power map to a per-beam map, using a single global normalisation.
+def beam_power(beamformed_data: ArrayLike, decibels: bool = False) -> FloatArray:
+    """Per-beam power, averaged over frames.
 
-    Not used internally by :class:`PassiveSonarDetector` or :class:`BandDetector` -- those now
-    get per-beam SNR from their CFAR detector's own local (per-bearing) noise-floor estimate via
-    ``detector.snr_map()``, which is more representative of what actually drove each detection
-    decision. Kept as a standalone utility for cases that want a quick global-normalised view
-    (e.g. debugging or plotting) without needing a configured CFAR detector.
+    Use this rather than computing ``|data|**2`` directly. ``BeamformedData`` is deliberately
+    either complex amplitude or already-real power depending on the beamformer, and squaring
+    the real-power case a second time double-applies the power law -- see
+    :func:`~.algorithms._directional_power`. That mistake is invisible in the output and
+    silently breaks any Pfa calibration downstream, so the distinction is worth keeping in one
+    place.
 
     Parameters
     ----------
     beamformed_data : ArrayLike
         Beamformer output with shape ``(num_beams, num_frames)``.
-    output_type : str, optional
-        Normalisation to apply. One of ``"snr_percentile"`` (default), ``"median_power"``,
-        ``"log_power"``, or ``"power"``.
-    percentile : int, optional
-        Percentile of directional power used as the noise estimate when ``output_type`` is
-        ``"snr_percentile"`` (default is 10).
+    decibels : bool, optional
+        Return ``10 * log10(power)`` rather than linear power, by default False.
 
     Returns
     -------
     FloatArray
-        Per-beam map with shape ``(num_beams,)``. In dB for every ``output_type``
-        except ``"power"``, which is linear.
-
-    Raises
-    ------
-    ValueError
-        If ``output_type`` is not one of the supported options.
+        Per-beam power with shape ``(num_beams,)``, linear unless ``decibels`` is set.
 
     """
-    data = np.asarray(beamformed_data)
+    power = np.mean(_directional_power(beamformed_data), axis=1)
+    return 10 * np.log10(power) if decibels else power
 
-    if output_type == "power":
-        return np.mean(_directional_power(data), axis=1)
 
-    if output_type == "log_power":
-        return 10 * np.log10(np.mean(_directional_power(data), axis=1))
+def snr_from_beamformed_data(
+    beamformed_data: ArrayLike,
+    percentile: int = 10,
+) -> FloatArray:
+    """Per-beam SNR in dB against a scan-wide noise floor.
 
-    if output_type in ("snr_percentile", "median_power"):
-        directional_power = np.mean(_directional_power(data), axis=1)
-        if output_type == "snr_percentile":
-            noise_power_estimate = np.percentile(directional_power, percentile)
-        else:
-            noise_power_estimate = np.median(directional_power)
-        epsilon = np.finfo(float).eps
-        return 10 * np.log10((directional_power + epsilon) / (noise_power_estimate + epsilon))
+    Each beam is measured against a single percentile of the directional power across the
+    whole scan, which makes the result comparable between bearings and between snapshots
+    whose absolute levels differ. It is blind to noise that varies with bearing; for the
+    estimate a CFAR detector actually thresholds against, see
+    :meth:`~.algorithms._CFARDetectorBase.snr_map`.
 
-    raise ValueError(f"Unsupported beamformer_output_type: {output_type}")
+    :class:`PassiveSonarDetector` and :class:`BandDetector` call this to build the map they
+    record when ``snr_reference="global"``. Detection itself never uses it.
+
+    Parameters
+    ----------
+    beamformed_data : ArrayLike
+        Beamformer output with shape ``(num_beams, num_frames)``.
+    percentile : int, optional
+        Percentile of directional power taken as the noise floor, by default 10. Pass 50 for
+        a median reference, which is the more robust choice when strong sources occupy a
+        large fraction of the scan.
+
+    Returns
+    -------
+    FloatArray
+        Per-beam SNR in dB with shape ``(num_beams,)``.
+
+    """
+    directional_power = beam_power(beamformed_data)
+    noise_power_estimate = np.percentile(directional_power, percentile)
+    epsilon = np.finfo(float).eps
+    return 10 * np.log10((directional_power + epsilon) / (noise_power_estimate + epsilon))
 
 
 _SNR_REFERENCES = ("local", "global")
@@ -126,9 +133,7 @@ def _snr_reference_map(
     if snr_reference == "local":
         return detector.snr_map(beamformed_data)
     if snr_reference == "global":
-        return snr_from_beamformed_data(
-            beamformed_data, output_type="snr_percentile", percentile=snr_percentile
-        )
+        return snr_from_beamformed_data(beamformed_data, percentile=snr_percentile)
     raise ValueError(f"snr_reference must be one of {_SNR_REFERENCES}, got {snr_reference!r}")
 
 

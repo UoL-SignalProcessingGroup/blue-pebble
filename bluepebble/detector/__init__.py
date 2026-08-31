@@ -24,6 +24,7 @@ from .passive import (
     BandDetector,
     MultibandPassiveSonarDetector,
     PassiveSonarDetector,
+    beam_power,
     snr_from_beamformed_data,
 )
 
@@ -42,6 +43,7 @@ __all__ = [
     "ca_cfar_roc",
     "estimate_effective_looks_per_frame",
     "os_cfar_roc",
+    "beam_power",
     "snr_from_beamformed_data",
     "snr_linear_from_ground_truth_bearing",
     "sweep_detection_parameter",
