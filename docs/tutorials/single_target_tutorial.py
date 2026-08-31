@@ -355,10 +355,14 @@ cfar_detector = OSCFARDetector(
     peak_distance=peak_distance,
 )
 
+# snr_reference only sets what snr_history reports; thresholding always uses the detector's
+# own local estimate. "global" measures every beam against a single percentile of the whole
+# scan, which keeps the bearing-time record readable -- see the notes under the figure.
 detector = PassiveSonarDetector(
     detector=cfar_detector,
     sensor_data_gen=simulator.sensor_data_gen(),
     steering_azimuths_rad=steering_azimuths_rad,
+    snr_reference="global",
 )
 
 all_detections = list(detector.detections_gen(progress_bar=False))
@@ -439,20 +443,21 @@ fig_btr.update_layout(
 # off here because the ambiguity is a permanent feature of towed-array data and is better met
 # early, with an explanation, than met later without one.
 #
-# **The bands to either side of each track are darker than open water.** That is the
-# detector's own noise reference showing through rather than a quiet patch of ocean.
-# ``snr_map()`` measures every beam against the training cells around it, which sit between
-# ``num_guard_cells`` and ``num_guard_cells + num_training_cells`` bins away. A beam whose
-# training window happens to contain the target therefore measures the target as noise and
-# reports a lower SNR for itself. The band sits at exactly those offsets, it deepens with
-# target strength, and it is deepest where the real and ghost tracks converge, because each
-# then falls inside the other's training window and both estimates are inflated at once.
+# **The colour scale is SNR against a scan-wide noise floor, not against the detector's own
+# estimate.** That is what ``snr_reference="global"`` selects above, and it is worth knowing
+# why the tutorial asks for it. A CFAR detector judges each beam against the training cells
+# around it, between ``num_guard_cells`` and ``num_guard_cells + num_training_cells`` bins
+# away. Any beam whose training window happens to contain the target measures the target as
+# noise, and so reports a lower SNR for itself: plotting that estimate directly paints dark
+# bands at exactly those offsets either side of every track, deepening with target strength
+# and deepest where the real and ghost tracks converge and each sits inside the other's
+# window. They are an artefact of the measurement, not quiet water, and they make the
+# picture harder to read.
 #
-# Neither affects what is detected. Thresholding compares each cell against the same local
-# estimate being displayed here, so the map shows what actually drove each decision. For a
-# figure without the target-induced wings, :class:`~.PassiveSonarDetector` accepts
-# ``snr_reference="global"``, which measures every beam against a single percentile of the
-# whole scan instead.
+# Detection is unaffected by the choice. Thresholding always uses the local estimate, which
+# is the point of CFAR: a scan-wide floor cannot follow noise that varies with bearing. Only
+# the reported map changes. Set ``snr_reference="local"`` to see what the detector itself
+# works with -- useful when the question is why a particular cell did or did not fire.
 
 # %%
 # Feed Blue Pebble Detections into a Stone Soup Tracker
