@@ -168,11 +168,13 @@ class PassiveSonarDetector(DetectionReader):
         doc="Array of steering azimuth angles in radians.",
     )
     snr_reference: str = Property(
-        default="local",
-        doc="Noise reference for the reported SNR map: 'local' (the detector's own "
-        "training-cell estimate, the quantity its threshold was compared against) or "
-        "'global' (a single percentile across the whole scan, comparable between bearings). "
-        "Detection always uses the local estimate; this only sets what is reported.",
+        default="global",
+        doc="Noise reference for the reported SNR map: 'global' (a single percentile across "
+        "the whole scan, comparable between bearings, and the pre-refactor behaviour) or "
+        "'local' (the detector's own training-cell estimate, the quantity its threshold was "
+        "actually compared against, which flattens a strong target's apparent SNR because the "
+        "training cells sit in its skirts). Detection always uses the local estimate "
+        "internally; this only sets what is reported.",
     )
     snr_percentile: int = Property(
         default=10,
@@ -280,11 +282,13 @@ class BandDetector(Base):
         doc="CFAR detector applied to this band's raw beamformed data.",
     )
     snr_reference: str = Property(
-        default="local",
-        doc="Noise reference for the reported SNR map: 'local' (the detector's own "
-        "training-cell estimate, the quantity its threshold was compared against) or "
-        "'global' (a single percentile across the whole scan, comparable between bearings). "
-        "Detection always uses the local estimate; this only sets what is reported.",
+        default="global",
+        doc="Noise reference for the reported SNR map: 'global' (a single percentile across "
+        "the whole scan, comparable between bearings, and the pre-refactor behaviour) or "
+        "'local' (the detector's own training-cell estimate, the quantity its threshold was "
+        "actually compared against, which flattens a strong target's apparent SNR because the "
+        "training cells sit in its skirts). Detection always uses the local estimate "
+        "internally; this only sets what is reported.",
     )
     snr_percentile: int = Property(
         default=10,

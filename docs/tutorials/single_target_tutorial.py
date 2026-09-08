@@ -444,8 +444,9 @@ fig_btr.update_layout(
 # early, with an explanation, than met later without one.
 #
 # **The colour scale is SNR against a scan-wide noise floor, not against the detector's own
-# estimate.** That is what ``snr_reference="global"`` selects above, and it is worth knowing
-# why the tutorial asks for it. A CFAR detector judges each beam against the training cells
+# estimate.** That is what ``snr_reference="global"`` selects above -- the default, stated
+# explicitly here because the distinction matters for reading the plot below. A CFAR
+# detector judges each beam against the training cells
 # around it, between ``num_guard_cells`` and ``num_guard_cells + num_training_cells`` bins
 # away. Any beam whose training window happens to contain the target measures the target as
 # noise, and so reports a lower SNR for itself: plotting that estimate directly paints dark

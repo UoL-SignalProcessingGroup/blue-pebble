@@ -347,7 +347,11 @@ def test_detections_gen_empty_sensor_data_set_yields_empty_detections(monkeypatc
 
 
 def test_snr_history_accumulates_one_row_per_timestep_from_snr_map(monkeypatch) -> None:
-    """snr_history should record snr_map()'s output, one row per timestep."""
+    """snr_history should record snr_map()'s output, one row per timestep.
+
+    snr_reference="local" is set explicitly: this test is about the snr_map() plumbing, and
+    the default reports a scan-wide percentile that never consults it.
+    """
     passive = _load_passive_detector_module(monkeypatch)
     t1 = datetime(2026, 1, 1, 12, 0, 0)
     t2 = datetime(2026, 1, 1, 12, 0, 1)
@@ -362,6 +366,7 @@ def test_snr_history_accumulates_one_row_per_timestep_from_snr_map(monkeypatch) 
         ),
         sensor_data_gen=iter([(t1, [make_sd(t1)]), (t2, [make_sd(t2)])]),
         steering_azimuths_rad=np.array([0.1]),
+        snr_reference="local",
     )
 
     list(detector.detections_gen())
@@ -371,7 +376,11 @@ def test_snr_history_accumulates_one_row_per_timestep_from_snr_map(monkeypatch) 
 
 
 def test_detect_and_snr_map_are_independent_calls(monkeypatch) -> None:
-    """detect() and snr_map() are called separately, so their outputs need not agree."""
+    """detect() and snr_map() are called separately, so their outputs need not agree.
+
+    snr_reference="local" is set explicitly so snr_map() is the reported source; the default
+    global reference would bypass it and defeat the point of the test.
+    """
     passive = _load_passive_detector_module(monkeypatch)
     timestamp = datetime(2026, 1, 1, 12, 0, 0)
     sensor_data = SimpleNamespace(beamformed_data=np.array([[1.0 + 0.0j]]), timestamp=timestamp)
@@ -383,6 +392,7 @@ def test_detect_and_snr_map_are_independent_calls(monkeypatch) -> None:
         ),
         sensor_data_gen=iter([(timestamp, [sensor_data])]),
         steering_azimuths_rad=np.array([0.1]),
+        snr_reference="local",
     )
 
     generated = list(detector.detections_gen())
@@ -437,17 +447,41 @@ def test_snr_gives_identical_results_for_real_power_and_complex_amplitude(
     )
 
 
-def test_band_detector_reports_the_local_noise_floor_by_default(monkeypatch) -> None:
-    """The default stays the detector's own estimate: what its threshold was compared to."""
+def test_band_detector_reports_the_global_noise_floor_by_default(monkeypatch) -> None:
+    """The default is the scan-wide percentile, matching pre-refactor behaviour.
+
+    The detector's own snr_map() must not be consulted in this mode, which the impossible
+    sentinel below checks: if it leaked into the result the assertion would see -99.
+    """
     passive = _load_passive_detector_module(monkeypatch)
-    marker = np.full(6, -99.0)
+    impossible = np.full(6, -99.0)
     band = passive.BandDetector(
-        detector=_FakeDetector(lambda d: np.empty((0, 2)), snr_fn=lambda d: marker)
+        detector=_FakeDetector(lambda d: np.empty((0, 2)), snr_fn=lambda d: impossible)
     )
 
     snr, _ = band.detect(np.ones((6, 2)))
 
-    assert band.snr_reference == "local"
+    assert band.snr_reference == "global"
+    assert not np.array_equal(snr, impossible)
+    np.testing.assert_allclose(snr, passive.snr_from_beamformed_data(np.ones((6, 2))))
+
+
+def test_band_detector_can_report_the_local_noise_floor(monkeypatch) -> None:
+    """'local' asks for the detector's own training-cell estimate instead.
+
+    That is the quantity its threshold was actually compared against, so it is the honest
+    answer to "what did this detector see", at the cost of not being comparable between
+    bearings -- a strong target flattens its own apparent SNR by sitting in its training cells.
+    """
+    passive = _load_passive_detector_module(monkeypatch)
+    marker = np.full(6, -99.0)
+    band = passive.BandDetector(
+        detector=_FakeDetector(lambda d: np.empty((0, 2)), snr_fn=lambda d: marker),
+        snr_reference="local",
+    )
+
+    snr, _ = band.detect(np.ones((6, 2)))
+
     np.testing.assert_array_equal(snr, marker)
 
 

@@ -239,7 +239,11 @@ def test_snr_history_is_keyed_by_band(monkeypatch) -> None:
 
 
 def test_each_band_uses_its_own_detectors_snr_scale(monkeypatch) -> None:
-    """Per-band SNR history must reflect that band's own detector, not a shared scale."""
+    """Per-band SNR history must reflect that band's own detector, not a shared scale.
+
+    Both bands ask for snr_reference="local", since the point here is that each band reports
+    through its own detector's snr_map(); the default global percentile bypasses it.
+    """
     passive = _load_passive_detector_module(monkeypatch)
 
     class DbDetector:
@@ -256,8 +260,10 @@ def test_each_band_uses_its_own_detectors_snr_scale(monkeypatch) -> None:
     detector = _detector(
         passive,
         {
-            "low": passive.BandDetector(detector=_ThresholdDetector(threshold=1e9)),
-            "high": passive.BandDetector(detector=DbDetector()),
+            "low": passive.BandDetector(
+                detector=_ThresholdDetector(threshold=1e9), snr_reference="local"
+            ),
+            "high": passive.BandDetector(detector=DbDetector(), snr_reference="local"),
         },
     )
     list(detector.detections_gen())

@@ -344,13 +344,12 @@ cfar_detector = CACFARDetector(
     peak_distance=det["cfar_detector"]["peak_distance"],
 )
 
-# snr_history feeds the BTR figures below. The detector thresholds against its own
-# local (training-cell) noise estimate either way; "global" asks for the reported map to
-# use a scan-wide percentile instead, which is the reference these figures were produced
-# with and keeps them comparable with the published versions.
+# snr_history feeds the BTR figures below. It reports SNR against a scan-wide percentile,
+# which is the reference these figures were produced with and keeps them comparable with the
+# published versions. The detector thresholds against its own local training-cell estimate
+# regardless; snr_reference only chooses what is reported.
 detector = PassiveSonarDetector(
     detector=cfar_detector,
-    snr_reference="global",
     sensor_data_gen=simulator.sensor_data_gen(),
     steering_azimuths_rad=bf["steering_azimuths_rad"],
 )
