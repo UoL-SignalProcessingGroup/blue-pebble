@@ -42,6 +42,10 @@ docs/examples/measured_data
 # Generated PDF figures
 *.pdf
 
-# Generated Sphinx-Gallery figures (large, rebuilt during docs build)
-docs/source/_static/acoustic_source_figs/
-docs/source/_static/measured_data_figs/
+# Pre-generated figures for the two data-dependent examples. The source data is
+# licensed third-party material and is not in the repository, so these cannot be
+# regenerated on a clean checkout or on Read the Docs -- the PNGs are committed so those
+# pages render anywhere. Run docs/scripts/generate_*_figs.py with the data present to
+# refresh them. The interactive HTML versions are ~165 MB and stay out.
+docs/source/_static/*_figs/*.html
+docs/source/_static/*_figs/*.json

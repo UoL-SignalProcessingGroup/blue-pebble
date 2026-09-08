@@ -200,13 +200,8 @@ fig_whale = plot_spectrogram(
 )
 
 # %%
-# .. raw:: html
-#    :file: ../_static/acoustic_source_figs/modelling_acoustic_sources_whale.html
-#
-# .. only:: not html
-#
-#    .. image:: ../_static/acoustic_source_figs/modelling_acoustic_sources_whale.png
-#       :alt: Whale call spectrogram
+# .. image:: ../_static/acoustic_source_figs/modelling_acoustic_sources_whale.png
+#    :alt: Whale call spectrogram
 
 # %%
 # Snapping Shrimp Signal
@@ -285,13 +280,8 @@ fig_shrimp = plot_spectrogram(
 )
 
 # %%
-# .. raw:: html
-#    :file: ../_static/acoustic_source_figs/modelling_acoustic_sources_shrimp.html
-#
-# .. only:: not html
-#
-#    .. image:: ../_static/acoustic_source_figs/modelling_acoustic_sources_shrimp.png
-#       :alt: Snapping shrimp spectrogram
+# .. image:: ../_static/acoustic_source_figs/modelling_acoustic_sources_shrimp.png
+#    :alt: Snapping shrimp spectrogram
 
 # %%
 # Commercial Vessel Tonals
@@ -354,13 +344,8 @@ fig_vessel_tonal = plot_spectrogram(
 )
 
 # %%
-# .. raw:: html
-#    :file: ../_static/acoustic_source_figs/modelling_acoustic_sources_vessel_tonal.html
-#
-# .. only:: not html
-#
-#    .. image:: ../_static/acoustic_source_figs/modelling_acoustic_sources_vessel_tonal.png
-#       :alt: Commercial vessel tonal spectrogram
+# .. image:: ../_static/acoustic_source_figs/modelling_acoustic_sources_vessel_tonal.png
+#    :alt: Commercial vessel tonal spectrogram
 
 # %%
 # Measured Vessel Noise
@@ -429,13 +414,8 @@ fig_vessel_measured = plot_spectrogram(
 )
 
 # %%
-# .. raw:: html
-#    :file: ../_static/acoustic_source_figs/modelling_acoustic_sources_vessel_measured.html
-#
-# .. only:: not html
-#
-#    .. image:: ../_static/acoustic_source_figs/modelling_acoustic_sources_vessel_measured.png
-#       :alt: Measured vessel noise spectrogram
+# .. image:: ../_static/acoustic_source_figs/modelling_acoustic_sources_vessel_measured.png
+#    :alt: Measured vessel noise spectrogram
 
 # %%
 # Ambient White Noise
@@ -484,13 +464,8 @@ fig_ambient = plot_spectrogram(
 )
 
 # %%
-# .. raw:: html
-#    :file: ../_static/acoustic_source_figs/modelling_acoustic_sources_ambient.html
-#
-# .. only:: not html
-#
-#    .. image:: ../_static/acoustic_source_figs/modelling_acoustic_sources_ambient.png
-#       :alt: Ambient white noise spectrogram
+# .. image:: ../_static/acoustic_source_figs/modelling_acoustic_sources_ambient.png
+#    :alt: Ambient white noise spectrogram
 
 # %%
 # Composite Soundscape
@@ -542,10 +517,5 @@ fig_composite = plot_spectrogram(
 )
 
 # %%
-# .. raw:: html
-#    :file: ../_static/acoustic_source_figs/modelling_acoustic_sources_composite.html
-#
-# .. only:: not html
-#
-#    .. image:: ../_static/acoustic_source_figs/modelling_acoustic_sources_composite.png
-#       :alt: Composite soundscape spectrogram
+# .. image:: ../_static/acoustic_source_figs/modelling_acoustic_sources_composite.png
+#    :alt: Composite soundscape spectrogram
