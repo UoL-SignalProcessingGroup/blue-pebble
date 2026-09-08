@@ -841,15 +841,25 @@ scale = 1.0
 out_dir = Path(output_dir)
 out_dir.mkdir(parents=True, exist_ok=True)
 
-for filename, fig in figures.items():
-    width = fig.layout.width
-    height = fig.layout.height
-    export_kwargs = {"scale": scale}
-    if width is not None:
-        export_kwargs["width"] = int(width)
-    if height is not None:
-        export_kwargs["height"] = int(height)
-    fig.write_image(str(out_dir / filename), **export_kwargs)
+# Static export needs Kaleido, which drives a headless Chrome. That is here to produce the
+# paper figures, not to read the example, so a machine without the browser should skip it
+# rather than take the whole docs build down -- Read the Docs has no Chrome at all.
+try:
+    for filename, fig in figures.items():
+        width = fig.layout.width
+        height = fig.layout.height
+        export_kwargs = {"scale": scale}
+        if width is not None:
+            export_kwargs["width"] = int(width)
+        if height is not None:
+            export_kwargs["height"] = int(height)
+        fig.write_image(str(out_dir / filename), **export_kwargs)
+    print(f"Wrote {len(figures)} figures to {out_dir}/")
+except Exception as exc:  # noqa: BLE001 - any export failure should be non-fatal here
+    print(
+        f"Skipped static figure export ({type(exc).__name__}). The interactive figures above "
+        "are unaffected. To enable it: pip install 'kaleido>=1' and run plotly_get_chrome."
+    )
 
 tab = " " * 4
 

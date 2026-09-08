@@ -298,13 +298,8 @@ fig_world = plot_world(
 )
 
 # %%
-# .. raw:: html
-#    :file: ../_static/measured_data_figs/using_measured_data_world.html
-#
-# .. only:: not html
-#
-#    .. image:: ../_static/measured_data_figs/using_measured_data_world.png
-#       :alt: Platform and target trajectories overlaid on measured GEBCO bathymetry
+# .. image:: ../_static/measured_data_figs/using_measured_data_world.png
+#    :alt: Platform and target trajectories overlaid on measured GEBCO bathymetry
 
 # %%
 # Bathymetry and Sound Speed Viewer
@@ -562,13 +557,8 @@ fig_results.update_layout(
 )
 
 # %%
-# .. raw:: html
-#    :file: ../_static/measured_data_figs/using_measured_data_results.html
-#
-# .. only:: not html
-#
-#    .. image:: ../_static/measured_data_figs/using_measured_data_results.png
-#       :alt: SNR map and detections for the measured environment scenario
+# .. image:: ../_static/measured_data_figs/using_measured_data_results.png
+#    :alt: SNR map and detections for the measured environment scenario
 
 # %%
 # Acknowledgement
