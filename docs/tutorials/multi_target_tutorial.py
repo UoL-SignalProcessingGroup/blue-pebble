@@ -339,7 +339,7 @@ detector = PassiveSonarDetector(
 )
 
 all_detections = list(detector.detections_gen(progress_bar=False))
-snr_map = detector.snr_history
+reported_snr = detector.reported_snr_history
 
 detections_for_plotter = [d for _, detections in all_detections for d in detections]
 
@@ -356,7 +356,7 @@ fig_btr = make_subplots(
 )
 
 plot_btr(
-    data=snr_map,
+    data=reported_snr,
     timesteps=timesteps,
     steering_azimuths=np.rad2deg(steering_azimuths_rad),
     fig=fig_btr,
@@ -364,7 +364,7 @@ plot_btr(
     col=1,
 )
 plot_btr(
-    data=snr_map,
+    data=reported_snr,
     detections=detections_for_plotter,
     timesteps=timesteps,
     steering_azimuths=np.rad2deg(steering_azimuths_rad),

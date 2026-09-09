@@ -327,14 +327,14 @@ def test_cacfar_alpha_is_memoized_per_num_frames(monkeypatch) -> None:
 
 
 def test_snr_map_matches_detect_output_values(monkeypatch) -> None:
-    """snr_map should report the same per-beam SNR values that detect() surfaces."""
+    """detection_snr_map should report the same per-beam SNR values that detect() surfaces."""
     algorithms = _load_detector_algorithms(monkeypatch)
     detector = algorithms.CACFARDetector(
         num_guard_cells=0, num_training_cells=1, target_pfa=0.5
     )
     data = np.array([[0.0], [0.0], [20.0], [0.0], [0.0]])
 
-    snr_db = detector.snr_map(data)
+    snr_db = detector.detection_snr_map(data)
     detections = detector.detect(data)
 
     assert detections[0, 1] == pytest.approx(snr_db[2])
@@ -862,7 +862,7 @@ def test_snr_map_rejects_1d_input_the_same_way_detect_does(monkeypatch) -> None:
     )
 
     with pytest.raises(ValueError, match="num_beams, num_frames"):
-        detector.snr_map(np.zeros(64))
+        detector.detection_snr_map(np.zeros(64))
 
 
 def test_detect_rejects_banded_3d_input_pointing_at_the_multiband_detector(monkeypatch) -> None:

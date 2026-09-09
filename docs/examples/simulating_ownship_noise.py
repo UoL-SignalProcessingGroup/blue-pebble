@@ -471,12 +471,12 @@ detector_with_ownship_noise = _make_detector(simulator_with_ownship_noise)
 all_detections_without_ownship_noise = list(
     detector_without_ownship_noise.detections_gen(progress_bar=False, total_timesteps=num_steps)
 )
-snr_map_without_ownship_noise = detector_without_ownship_noise.snr_history
+reported_snr_without_ownship_noise = detector_without_ownship_noise.reported_snr_history
 
 all_detections_with_ownship_noise = list(
     detector_with_ownship_noise.detections_gen(progress_bar=False, total_timesteps=num_steps)
 )
-snr_map_with_ownship_noise = detector_with_ownship_noise.snr_history
+reported_snr_with_ownship_noise = detector_with_ownship_noise.reported_snr_history
 
 steering_azimuths_deg = np.rad2deg(steering_azimuths_rad)
 
@@ -518,13 +518,13 @@ fig_results = make_subplots(
 )
 
 result_panels = [
-    (1, snr_map_without_ownship_noise, detections_without_ownship_noise),
-    (2, snr_map_with_ownship_noise, detections_with_ownship_noise),
+    (1, reported_snr_without_ownship_noise, detections_without_ownship_noise),
+    (2, reported_snr_with_ownship_noise, detections_with_ownship_noise),
 ]
 
-for row, snr_map, detections in result_panels:
+for row, reported_snr, detections in result_panels:
     plot_btr(
-        data=snr_map,
+        data=reported_snr,
         timesteps=timesteps,
         steering_azimuths=steering_azimuths_deg,
         fig=fig_results,
@@ -532,7 +532,7 @@ for row, snr_map, detections in result_panels:
         col=1,
     )
     plot_btr(
-        data=snr_map,
+        data=reported_snr,
         detections=detections,
         timesteps=timesteps,
         steering_azimuths=steering_azimuths_deg,

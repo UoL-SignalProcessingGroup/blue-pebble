@@ -34,14 +34,14 @@ def beam_power(beamformed_data: ArrayLike, decibels: bool = False) -> FloatArray
     ==============================  ======================================================
     :func:`beam_power`              nothing -- absolute power
     :func:`beam_snr`                a percentile of the whole scan, so bearings compare
-    :meth:`~.algorithms._CFARDetectorBase.snr_map`
+    :meth:`~.algorithms._CFARDetectorBase.detection_snr_map`
                                     the detector's own local training cells, which is what
                                     its threshold was compared against
     ==============================  ======================================================
 
     Most callers need none of them. :class:`PassiveSonarDetector` and :class:`BandDetector`
-    record a map every timestep in ``snr_history``, choosing between the last two with
-    ``snr_reference``; that is the normal way to obtain one.
+    record a map every timestep in ``reported_snr_history``, choosing between the last two with
+    ``reported_snr_reference``; that is the normal way to obtain one.
 
     Use this rather than computing ``|data|**2`` directly. ``BeamformedData`` is deliberately
     either complex amplitude or already-real power depending on the beamformer, and squaring
@@ -77,10 +77,10 @@ def beam_snr(
     whole scan, which makes the result comparable between bearings and between snapshots
     whose absolute levels differ. It is blind to noise that varies with bearing; for the
     estimate a CFAR detector actually thresholds against, see
-    :meth:`~.algorithms._CFARDetectorBase.snr_map`.
+    :meth:`~.algorithms._CFARDetectorBase.detection_snr_map`.
 
     :class:`PassiveSonarDetector` and :class:`BandDetector` call this to build the map they
-    record when ``snr_reference="global"``. Detection itself never uses it. See
+    record when ``reported_snr_reference="global"``. Detection itself never uses it. See
     :func:`beam_power` for when to reach for this rather than the alternatives.
 
     Parameters
@@ -104,13 +104,13 @@ def beam_snr(
     return 10 * np.log10((directional_power + epsilon) / (noise_power_estimate + epsilon))
 
 
-_SNR_REFERENCES = ("local", "global")
+_REPORTED_SNR_REFERENCES = ("local", "global")
 
 
-def _snr_reference_map(
+def _reported_snr_map(
     detector: _CFARDetectorBase,
     beamformed_data: ArrayLike,
-    snr_reference: str,
+    reported_snr_reference: str,
     snr_percentile: int,
 ) -> FloatArray:
     """Per-beam SNR against the requested noise reference.
@@ -131,7 +131,7 @@ def _snr_reference_map(
         Detector whose local noise-floor estimate is used for ``"local"``.
     beamformed_data : ArrayLike
         Raw beamformed data for one timestep, shape ``(num_beams, num_frames)``.
-    snr_reference : str
+    reported_snr_reference : str
         ``"local"`` or ``"global"``.
     snr_percentile : int
         Percentile of directional power taken as the noise floor for ``"global"``. Ignored
@@ -145,14 +145,17 @@ def _snr_reference_map(
     Raises
     ------
     ValueError
-        If ``snr_reference`` is not one of the supported options.
+        If ``reported_snr_reference`` is not one of the supported options.
 
     """
-    if snr_reference == "local":
-        return detector.snr_map(beamformed_data)
-    if snr_reference == "global":
+    if reported_snr_reference == "local":
+        return detector.detection_snr_map(beamformed_data)
+    if reported_snr_reference == "global":
         return beam_snr(beamformed_data, percentile=snr_percentile)
-    raise ValueError(f"snr_reference must be one of {_SNR_REFERENCES}, got {snr_reference!r}")
+    raise ValueError(
+        f"reported_snr_reference must be one of {_REPORTED_SNR_REFERENCES}, "
+        f"got {reported_snr_reference!r}"
+    )
 
 
 class PassiveSonarDetector(DetectionReader):
@@ -185,7 +188,7 @@ class PassiveSonarDetector(DetectionReader):
     steering_azimuths_rad: FloatArray = Property(
         doc="Array of steering azimuth angles in radians.",
     )
-    snr_reference: str = Property(
+    reported_snr_reference: str = Property(
         default="global",
         doc="Noise reference for the reported SNR map: 'global' (a single percentile across "
         "the whole scan, comparable between bearings, and the pre-refactor behaviour) or "
@@ -196,17 +199,18 @@ class PassiveSonarDetector(DetectionReader):
     )
     snr_percentile: int = Property(
         default=10,
-        doc="Percentile of directional power used as the noise floor when snr_reference is "
+        doc="Percentile of directional power used as the noise floor when "
+        "reported_snr_reference is "
         "'global'. Ignored otherwise.",
     )
 
     def __init__(self, *args: object, **kwargs: object) -> None:
         """Initialise the passive sonar detector."""
         super().__init__(*args, **kwargs)
-        self._snr_history: list[FloatArray] = []
+        self._reported_snr_history: list[FloatArray] = []
 
     @property
-    def snr_history(self) -> FloatArray:
+    def reported_snr_history(self) -> FloatArray:
         """Recorded SNR history.
 
         Returns
@@ -216,9 +220,9 @@ class PassiveSonarDetector(DetectionReader):
             available an empty array is returned.
 
         """
-        if not self._snr_history:
+        if not self._reported_snr_history:
             return np.array([], dtype=np.float64)
-        return np.asarray(self._snr_history, dtype=np.float64)
+        return np.asarray(self._reported_snr_history, dtype=np.float64)
 
     @BufferedGenerator.generator_method
     def detections_gen(
@@ -261,12 +265,15 @@ class PassiveSonarDetector(DetectionReader):
                 if beamformed_data is None or beamformed_data.size == 0:
                     continue
 
-                # snr_map() and detect() each estimate the noise floor independently -- a
+                # detection_snr_map() and detect() each estimate the noise floor independently -- a
                 # modest redundant computation in exchange for keeping "report the full
                 # picture" and "decide detections" as separate concerns. Worth revisiting if
                 # this shows up in profiling.
-                snr = _snr_reference_map(
-                    self.detector, beamformed_data, self.snr_reference, self.snr_percentile
+                snr = _reported_snr_map(
+                    self.detector,
+                    beamformed_data,
+                    self.reported_snr_reference,
+                    self.snr_percentile,
                 )
                 raw_detections: DetectionArray = self.detector.detect(beamformed_data)
 
@@ -283,7 +290,7 @@ class PassiveSonarDetector(DetectionReader):
                             )
                         )
 
-            self._snr_history.append(snr)
+            self._reported_snr_history.append(snr)
 
             yield timestamp, detections
 
@@ -299,7 +306,7 @@ class BandDetector(Base):
     detector: _CFARDetectorBase = Property(
         doc="CFAR detector applied to this band's raw beamformed data.",
     )
-    snr_reference: str = Property(
+    reported_snr_reference: str = Property(
         default="global",
         doc="Noise reference for the reported SNR map: 'global' (a single percentile across "
         "the whole scan, comparable between bearings, and the pre-refactor behaviour) or "
@@ -310,7 +317,8 @@ class BandDetector(Base):
     )
     snr_percentile: int = Property(
         default=10,
-        doc="Percentile of directional power used as the noise floor when snr_reference is "
+        doc="Percentile of directional power used as the noise floor when "
+        "reported_snr_reference is "
         "'global'. Ignored otherwise.",
     )
 
@@ -328,8 +336,8 @@ class BandDetector(Base):
             The band's full per-beam SNR map, and the detections found in it.
 
         """
-        snr = _snr_reference_map(
-            self.detector, beamformed_data, self.snr_reference, self.snr_percentile
+        snr = _reported_snr_map(
+            self.detector, beamformed_data, self.reported_snr_reference, self.snr_percentile
         )
         detections = self.detector.detect(beamformed_data)
         return snr, detections
@@ -443,12 +451,12 @@ class MultibandPassiveSonarDetector(DetectionReader):
     def __init__(self, *args: object, **kwargs: object) -> None:
         """Initialise the multiband detector."""
         super().__init__(*args, **kwargs)
-        self._snr_history: dict[str, list[FloatArray]] = defaultdict(list)
+        self._reported_snr_history: dict[str, list[FloatArray]] = defaultdict(list)
         self._pump = _SensorDataPump(self._banded_steps())
         self._subscriber_id: int | None = None
 
     @property
-    def snr_history(self) -> dict[str, FloatArray]:
+    def reported_snr_history(self) -> dict[str, FloatArray]:
         """Recorded SNR history per band.
 
         Returns
@@ -460,7 +468,8 @@ class MultibandPassiveSonarDetector(DetectionReader):
 
         """
         return {
-            label: np.asarray(rows, dtype=np.float64) for label, rows in self._snr_history.items()
+            label: np.asarray(rows, dtype=np.float64)
+            for label, rows in self._reported_snr_history.items()
         }
 
     def band_reader(self, band_label: str) -> "_BandDetectionReader":
@@ -555,7 +564,7 @@ class MultibandPassiveSonarDetector(DetectionReader):
                 for band_idx, band_label in enumerate(band_labels):
                     band_detector = self._detector_for(band_label)
                     snr, raw_detections = band_detector.detect(data[band_idx])
-                    self._snr_history[band_label].append(snr)
+                    self._reported_snr_history[band_label].append(snr)
 
                     for raw_det in raw_detections:
                         detections_by_band[band_label].add(

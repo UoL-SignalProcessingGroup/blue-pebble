@@ -410,19 +410,21 @@ spec = SweepSpec(
 # Bearing-Time Record: SNR
 # --------------------------
 #
-# A bearing-time record of the per-beam SNR ``detector.snr_map()`` computes from its own local
+# A bearing-time record of the per-beam SNR ``detector.detection_snr_map()`` computes from its own
+# local
 # noise-floor estimate (the same quantity its ``detect()`` thresholds against, not the
 # ground-truth-bearing readings used above and below) gives a visual check on the scenario
 # before digging further into detection statistics: is there a visible target track, and does
-# it behave the way the geometry above suggests? ``target_pfa`` doesn't affect ``snr_map()`` (it
+# it behave the way the geometry above suggests? ``target_pfa`` doesn't affect
+# ``detection_snr_map()`` (it
 # only sets the detection threshold, not the SNR itself), so the ``detector`` built above for
 # the sweep is reused as-is. ``sweep_detection_parameter`` deep-copies it per swept value and
 # never mutates the original.
 
-snr_map = np.array([detector.snr_map(data) for data in beamformed_data])
+detection_snr_map = np.array([detector.detection_snr_map(data) for data in beamformed_data])
 
 fig_btr = plot_btr(
-    data=snr_map,
+    data=detection_snr_map,
     timesteps=timesteps,
     steering_azimuths=np.rad2deg(steering_azimuths_rad),
     truths=[relative_bearing_truth],
@@ -484,7 +486,8 @@ nonfluct_result = SweepResult.from_theoretical_roc(
 # even a very permissive threshold produces a small, roughly constant number of correlated
 # "blobs" rather than many independent exceedances -- which is why achieved Pfa plateaus well
 # below 1 even as ``target_pfa`` approaches 1.0. This computes the statistic theoretical Pfa
-# actually models instead: the raw per-cell CFAR exceedance rate, direct from ``snr_map`` (already
+# actually models instead: the raw per-cell CFAR exceedance rate, direct from ``detection_snr_map``
+# (already
 # computed above), bypassing peak consolidation entirely. It reuses ``noise_only_mask`` from the
 # K-estimation section, which excludes cells within ``validation_guard_bins`` of the true bearing
 # per scan, so real target energy leaking into adjacent bins isn't miscounted as a false alarm.
@@ -505,7 +508,7 @@ raw_exceedance_pfa = np.array(
     [
         float(
             np.mean(
-                snr_map[noise_only_mask]
+                detection_snr_map[noise_only_mask]
                 > 10
                 * np.log10(
                     calibrate_os_cfar_alpha_mc(

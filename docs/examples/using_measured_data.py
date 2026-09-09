@@ -480,7 +480,7 @@ detector = PassiveSonarDetector(
 # that are compared in the results figure below.
 
 all_detections = list(detector.detections_gen(progress_bar=True, total_timesteps=num_steps))
-snr_map = detector.snr_history
+reported_snr = detector.reported_snr_history
 
 timesteps = [start_time + i * time_interval for i in range(num_steps)]
 steering_azimuths_deg = np.rad2deg(steering_azimuths_rad)
@@ -516,7 +516,7 @@ fig_results = make_subplots(
 )
 
 plot_btr(
-    data=snr_map,
+    data=reported_snr,
     timesteps=timesteps,
     steering_azimuths=steering_azimuths_deg,
     fig=fig_results,
@@ -524,7 +524,7 @@ plot_btr(
     col=1,
 )
 plot_btr(
-    data=snr_map,
+    data=reported_snr,
     detections=detections,
     truths=relative_bearing_ground_truths,
     timesteps=timesteps,

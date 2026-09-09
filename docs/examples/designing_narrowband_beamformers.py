@@ -422,7 +422,7 @@ labels = [band.label for band in view_bands]
 # so a downstream tracker gets exactly this stream. Bucketing each detection by the ``band``
 # already recorded in its metadata gives the per-band lists used for the panels below; a
 # tonal picked up by two bands still counts as two detections, one per band, not merged into
-# one. ``snr_history`` records the per-band SNR maps as a side effect of the same pass.
+# one. ``reported_snr_history`` records the per-band SNR maps as a side effect of the same pass.
 
 band_detectors = {
     label: BandDetector(detector=cfar)
@@ -442,7 +442,7 @@ for _timestamp, batch in detector.detections_gen(progress_bar=True, total_timest
         collapsed_detections.append(detection)
         detections_by_band[detection.metadata["band"]].append(detection)
 
-snr_maps = detector.snr_history
+snr_maps = detector.reported_snr_history
 map_rows = min(len(timesteps), next(iter(snr_maps.values())).shape[0])
 
 total_per_band = sum(len(dets) for dets in detections_by_band.values())

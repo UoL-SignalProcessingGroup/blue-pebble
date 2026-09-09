@@ -416,10 +416,10 @@ cfar_detector = CACFARDetector(
     peak_distance=det["cfar_detector"]["peak_distance"],
 )
 
-# snr_history feeds the BTR figures below. It reports SNR against a scan-wide percentile,
+# reported_snr_history feeds the BTR figures below. It reports SNR against a scan-wide percentile,
 # which is the reference these figures were produced with and keeps them comparable with the
 # published versions. The detector thresholds against its own local training-cell estimate
-# regardless; snr_reference only chooses what is reported.
+# regardless; reported_snr_reference only chooses what is reported.
 detector = PassiveSonarDetector(
     detector=cfar_detector,
     sensor_data_gen=simulator.sensor_data_gen(),
@@ -427,7 +427,7 @@ detector = PassiveSonarDetector(
 )
 
 all_detections = list(detector.detections_gen(progress_bar=False))
-snr_map = detector.snr_history
+reported_snr = detector.reported_snr_history
 
 timesteps = [
     cfg["sim"]["start_time"] + i * cfg["sim"]["time_interval"]
@@ -898,7 +898,7 @@ fig = make_subplots(
 
 fig.add_trace(
     go.Heatmap(
-        z=snr_map,
+        z=reported_snr,
         y=timesteps,
         x=np.rad2deg(cfg["beamforming"]["steering_azimuths_rad"]),
         colorscale="Viridis",
@@ -915,7 +915,7 @@ fig.add_trace(
 
 fig.add_trace(
     go.Heatmap(
-        z=snr_map,
+        z=reported_snr,
         y=timesteps,
         x=np.rad2deg(cfg["beamforming"]["steering_azimuths_rad"]),
         colorscale="Viridis",

@@ -109,7 +109,7 @@ def _load_passive_detector_module(monkeypatch):
 
 
 class _FakeDetector:
-    """Minimal stand-in for a ``_CFARDetectorBase``: independent detect()/snr_map()."""
+    """Minimal stand-in for a ``_CFARDetectorBase``: independent detect()/detection_snr_map()."""
 
     def __init__(self, detect_fn, snr_fn=None):
         self._detect_fn = detect_fn
@@ -118,7 +118,7 @@ class _FakeDetector:
     def detect(self, beamformed_data):
         return self._detect_fn(np.asarray(beamformed_data))
 
-    def snr_map(self, beamformed_data):
+    def detection_snr_map(self, beamformed_data):
         return self._snr_fn(np.asarray(beamformed_data))
 
 
@@ -291,7 +291,7 @@ def test_detections_gen_no_detections_when_detector_finds_nothing(monkeypatch) -
 
 
 def test_snr_history_empty_before_any_detections(monkeypatch) -> None:
-    """snr_history should return an empty array on a freshly constructed detector."""
+    """reported_snr_history should return an empty array on a freshly constructed detector."""
     passive = _load_passive_detector_module(monkeypatch)
 
     detector = passive.PassiveSonarDetector(
@@ -300,7 +300,7 @@ def test_snr_history_empty_before_any_detections(monkeypatch) -> None:
         steering_azimuths_rad=np.array([0.1]),
     )
 
-    history = detector.snr_history
+    history = detector.reported_snr_history
     assert history.shape == (0,)
     assert history.dtype == np.float64
 
@@ -347,9 +347,10 @@ def test_detections_gen_empty_sensor_data_set_yields_empty_detections(monkeypatc
 
 
 def test_snr_history_accumulates_one_row_per_timestep_from_snr_map(monkeypatch) -> None:
-    """snr_history should record snr_map()'s output, one row per timestep.
+    """reported_snr_history should record detection_snr_map()'s output, one row per timestep.
 
-    snr_reference="local" is set explicitly: this test is about the snr_map() plumbing, and
+    reported_snr_reference="local" is set explicitly: this test is about the detection_snr_map()
+    plumbing, and
     the default reports a scan-wide percentile that never consults it.
     """
     passive = _load_passive_detector_module(monkeypatch)
@@ -366,19 +367,20 @@ def test_snr_history_accumulates_one_row_per_timestep_from_snr_map(monkeypatch) 
         ),
         sensor_data_gen=iter([(t1, [make_sd(t1)]), (t2, [make_sd(t2)])]),
         steering_azimuths_rad=np.array([0.1]),
-        snr_reference="local",
+        reported_snr_reference="local",
     )
 
     list(detector.detections_gen())
 
-    assert detector.snr_history.shape == (2, 1)
-    np.testing.assert_allclose(detector.snr_history, [[7.0], [7.0]])
+    assert detector.reported_snr_history.shape == (2, 1)
+    np.testing.assert_allclose(detector.reported_snr_history, [[7.0], [7.0]])
 
 
 def test_detect_and_snr_map_are_independent_calls(monkeypatch) -> None:
-    """detect() and snr_map() are called separately, so their outputs need not agree.
+    """detect() and detection_snr_map() are called separately, so their outputs need not agree.
 
-    snr_reference="local" is set explicitly so snr_map() is the reported source; the default
+    reported_snr_reference="local" is set explicitly so detection_snr_map() is the reported source;
+    the default
     global reference would bypass it and defeat the point of the test.
     """
     passive = _load_passive_detector_module(monkeypatch)
@@ -392,14 +394,14 @@ def test_detect_and_snr_map_are_independent_calls(monkeypatch) -> None:
         ),
         sensor_data_gen=iter([(timestamp, [sensor_data])]),
         steering_azimuths_rad=np.array([0.1]),
-        snr_reference="local",
+        reported_snr_reference="local",
     )
 
     generated = list(detector.detections_gen())
 
     detection = next(iter(generated[0][1]))
     assert detection.metadata["snr_db"] == pytest.approx(4.0)
-    np.testing.assert_allclose(detector.snr_history, [[99.0]])
+    np.testing.assert_allclose(detector.reported_snr_history, [[99.0]])
 
 
 def test_detections_gen_progress_bar_wraps_iterator(monkeypatch) -> None:
@@ -450,7 +452,7 @@ def test_snr_gives_identical_results_for_real_power_and_complex_amplitude(
 def test_band_detector_reports_the_global_noise_floor_by_default(monkeypatch) -> None:
     """The default is the scan-wide percentile, matching pre-refactor behaviour.
 
-    The detector's own snr_map() must not be consulted in this mode, which the impossible
+    The detector's own detection_snr_map() must not be consulted in this mode, which the impossible
     sentinel below checks: if it leaked into the result the assertion would see -99.
     """
     passive = _load_passive_detector_module(monkeypatch)
@@ -461,7 +463,7 @@ def test_band_detector_reports_the_global_noise_floor_by_default(monkeypatch) ->
 
     snr, _ = band.detect(np.ones((6, 2)))
 
-    assert band.snr_reference == "global"
+    assert band.reported_snr_reference == "global"
     assert not np.array_equal(snr, impossible)
     np.testing.assert_allclose(snr, passive.beam_snr(np.ones((6, 2))))
 
@@ -477,7 +479,7 @@ def test_band_detector_can_report_the_local_noise_floor(monkeypatch) -> None:
     marker = np.full(6, -99.0)
     band = passive.BandDetector(
         detector=_FakeDetector(lambda d: np.empty((0, 2)), snr_fn=lambda d: marker),
-        snr_reference="local",
+        reported_snr_reference="local",
     )
 
     snr, _ = band.detect(np.ones((6, 2)))
@@ -490,14 +492,14 @@ def test_band_detector_can_report_against_a_global_noise_floor(monkeypatch) -> N
 
     The two references answer different questions -- local follows a noise field that varies
     with bearing, global is comparable between bearings -- so both are legitimate and the
-    caller picks. The detector's own snr_map() is not consulted in this mode, which the
+    caller picks. The detector's own detection_snr_map() is not consulted in this mode, which the
     sentinel below checks by making it return something impossible.
     """
     passive = _load_passive_detector_module(monkeypatch)
     data = np.array([[1.0 + 0.0j], [1.0 + 0.0j], [10.0 + 0.0j], [1.0 + 0.0j]])
     band = passive.BandDetector(
         detector=_FakeDetector(lambda d: np.empty((0, 2)), snr_fn=lambda d: np.full(4, -99.0)),
-        snr_reference="global",
+        reported_snr_reference="global",
     )
 
     snr, _ = band.detect(data)
@@ -513,7 +515,7 @@ def test_snr_percentile_selects_the_global_noise_floor(monkeypatch) -> None:
     data = np.array([[1.0 + 0.0j], [2.0 + 0.0j], [3.0 + 0.0j], [20.0 + 0.0j]])
     make = lambda pct: passive.BandDetector(  # noqa: E731
         detector=_FakeDetector(lambda d: np.empty((0, 2))),
-        snr_reference="global",
+        reported_snr_reference="global",
         snr_percentile=pct,
     )
 
@@ -529,7 +531,7 @@ def test_snr_reference_does_not_change_what_is_detected(monkeypatch) -> None:
     data = np.array([[1.0 + 0.0j], [9.0 + 0.0j], [1.0 + 0.0j]])
     detections = np.array([[1.0, 12.0]])
     make = lambda ref: passive.BandDetector(  # noqa: E731
-        detector=_FakeDetector(lambda d: detections), snr_reference=ref
+        detector=_FakeDetector(lambda d: detections), reported_snr_reference=ref
     )
 
     _, local_hits = make("local").detect(data)
@@ -542,8 +544,8 @@ def test_unknown_snr_reference_is_rejected(monkeypatch) -> None:
     """A typo should name the valid options rather than silently pick one."""
     passive = _load_passive_detector_module(monkeypatch)
     band = passive.BandDetector(
-        detector=_FakeDetector(lambda d: np.empty((0, 2))), snr_reference="globl"
+        detector=_FakeDetector(lambda d: np.empty((0, 2))), reported_snr_reference="globl"
     )
 
-    with pytest.raises(ValueError, match="snr_reference must be one of"):
+    with pytest.raises(ValueError, match="reported_snr_reference must be one of"):
         band.detect(np.ones((4, 2)))

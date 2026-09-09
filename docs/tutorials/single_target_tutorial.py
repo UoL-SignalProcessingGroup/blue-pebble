@@ -355,18 +355,19 @@ cfar_detector = OSCFARDetector(
     peak_distance=peak_distance,
 )
 
-# snr_reference only sets what snr_history reports; thresholding always uses the detector's
+# reported_snr_reference only sets what reported_snr_history reports; thresholding always uses the
+# detector's
 # own local estimate. "global" measures every beam against a single percentile of the whole
 # scan, which keeps the bearing-time record readable -- see the notes under the figure.
 detector = PassiveSonarDetector(
     detector=cfar_detector,
     sensor_data_gen=simulator.sensor_data_gen(),
     steering_azimuths_rad=steering_azimuths_rad,
-    snr_reference="global",
+    reported_snr_reference="global",
 )
 
 all_detections = list(detector.detections_gen(progress_bar=False))
-snr_map = detector.snr_history
+reported_snr = detector.reported_snr_history
 
 detections_for_plotter = [d for _, detections in all_detections for d in detections]
 
@@ -383,7 +384,7 @@ fig_btr = make_subplots(
 )
 
 plot_btr(
-    data=snr_map,
+    data=reported_snr,
     timesteps=timesteps,
     steering_azimuths=np.rad2deg(steering_azimuths_rad),
     fig=fig_btr,
@@ -391,7 +392,7 @@ plot_btr(
     col=1,
 )
 plot_btr(
-    data=snr_map,
+    data=reported_snr,
     detections=detections_for_plotter,
     timesteps=timesteps,
     steering_azimuths=np.rad2deg(steering_azimuths_rad),
@@ -444,7 +445,7 @@ fig_btr.update_layout(
 # early, with an explanation, than met later without one.
 #
 # **The colour scale is SNR against a scan-wide noise floor, not against the detector's own
-# estimate.** That is what ``snr_reference="global"`` selects above -- the default, stated
+# estimate.** That is what ``reported_snr_reference="global"`` selects above -- the default, stated
 # explicitly here because the distinction matters for reading the plot below. A CFAR
 # detector judges each beam against the training cells
 # around it, between ``num_guard_cells`` and ``num_guard_cells + num_training_cells`` bins
@@ -457,7 +458,7 @@ fig_btr.update_layout(
 #
 # Detection is unaffected by the choice. Thresholding always uses the local estimate, which
 # is the point of CFAR: a scan-wide floor cannot follow noise that varies with bearing. Only
-# the reported map changes. Set ``snr_reference="local"`` to see what the detector itself
+# the reported map changes. Set ``reported_snr_reference="local"`` to see what the detector itself
 # works with -- useful when the question is why a particular cell did or did not fire.
 
 # %%

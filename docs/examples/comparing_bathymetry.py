@@ -519,12 +519,12 @@ detector_seamount_bathymetry = _make_detector(simulator_seamount_bathymetry)
 all_detections_flat_bathymetry = list(
     detector_flat_bathymetry.detections_gen(progress_bar=False, total_timesteps=num_steps)
 )
-snr_map_flat_bathymetry = detector_flat_bathymetry.snr_history
+reported_snr_flat_bathymetry = detector_flat_bathymetry.reported_snr_history
 
 all_detections_seamount_bathymetry = list(
     detector_seamount_bathymetry.detections_gen(progress_bar=False, total_timesteps=num_steps)
 )
-snr_map_seamount_bathymetry = detector_seamount_bathymetry.snr_history
+reported_snr_seamount_bathymetry = detector_seamount_bathymetry.reported_snr_history
 
 timesteps = np.array([start_time + i * time_interval for i in range(num_steps)], dtype=object)
 steering_azimuths_deg = np.rad2deg(steering_azimuths_rad)
@@ -565,15 +565,15 @@ fig_snr = make_subplots(
 )
 
 snr_plot_configs = [
-    (1, 1, snr_map_flat_bathymetry, None),
-    (1, 2, snr_map_flat_bathymetry, detections_flat_bathymetry),
-    (2, 1, snr_map_seamount_bathymetry, None),
-    (2, 2, snr_map_seamount_bathymetry, detections_seamount_bathymetry),
+    (1, 1, reported_snr_flat_bathymetry, None),
+    (1, 2, reported_snr_flat_bathymetry, detections_flat_bathymetry),
+    (2, 1, reported_snr_seamount_bathymetry, None),
+    (2, 2, reported_snr_seamount_bathymetry, detections_seamount_bathymetry),
 ]
 
-for row, col, snr_map, detections in snr_plot_configs:
+for row, col, reported_snr, detections in snr_plot_configs:
     plot_btr(
-        data=snr_map,
+        data=reported_snr,
         detections=detections,
         timesteps=timesteps,
         steering_azimuths=steering_azimuths_deg,

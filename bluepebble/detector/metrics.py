@@ -1117,7 +1117,8 @@ def snr_linear_from_ground_truth_bearing(
        several scans, average snr_linear_hat across its associated readings for a stable estimate
        rather than trusting any single timestep.
     2. Contaminated noise estimate from the target's OWN leakage. This is the same "trench"
-       mechanism that affects detect()/snr_map(). Reading the noise floor from a WIDE exclusion
+       mechanism that affects detect()/detection_snr_map(). Reading the noise floor from a WIDE
+       exclusion
        zone (validation_guard_bins, wider than the operational num_guard_cells) mitigates this but
        doesn't eliminate it: for a very strong source, leakage can still extend past a
        generously-sized exclusion zone. Size validation_guard_bins from the same worst-case

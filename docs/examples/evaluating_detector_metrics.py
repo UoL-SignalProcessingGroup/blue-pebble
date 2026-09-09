@@ -364,7 +364,7 @@ detector = PassiveSonarDetector(
 # no second simulation run is needed.
 
 all_detections = list(detector.detections_gen(progress_bar=False))
-snr_map = detector.snr_history
+reported_snr = detector.reported_snr_history
 
 detections_for_plotter = [d for _, detections in all_detections for d in detections]
 
@@ -384,7 +384,7 @@ print(f"Total no. of detections: {len(detections_for_plotter)}")
 # anomalies in the ROC and PR curves that follow.
 
 fig_btr = plot_btr(
-    data=snr_map,
+    data=reported_snr,
     timesteps=timesteps,
     steering_azimuths=np.rad2deg(steering_azimuths_rad),
     truths=relative_bearing_truths,

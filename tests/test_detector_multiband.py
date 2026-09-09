@@ -47,14 +47,14 @@ class _ThresholdDetector:
     def __init__(self, threshold):
         self.threshold = threshold
 
-    def snr_map(self, beamformed_data):
+    def detection_snr_map(self, beamformed_data):
         """Return raw mean power per beam."""
         data = np.asarray(beamformed_data)
         return np.mean(np.abs(data) ** 2, axis=1)
 
     def detect(self, beamformed_data):
         """Return ``[index, power]`` rows for cells whose power exceeds the threshold."""
-        power = self.snr_map(beamformed_data)
+        power = self.detection_snr_map(beamformed_data)
         indices = np.nonzero(power > self.threshold)[0]
         if indices.size == 0:
             return np.empty((0, 2), dtype=np.float64)
@@ -225,11 +225,11 @@ def test_snr_history_is_keyed_by_band(monkeypatch) -> None:
         num_steps=4,
     )
 
-    assert detector.snr_history == {}
+    assert detector.reported_snr_history == {}
 
     list(detector.detections_gen())
 
-    history = detector.snr_history
+    history = detector.reported_snr_history
     assert sorted(history) == ["high", "low"]
     assert history["low"].shape == (4, 4)
     assert history["high"].shape == (4, 4)
@@ -241,15 +241,16 @@ def test_snr_history_is_keyed_by_band(monkeypatch) -> None:
 def test_each_band_uses_its_own_detectors_snr_scale(monkeypatch) -> None:
     """Per-band SNR history must reflect that band's own detector, not a shared scale.
 
-    Both bands ask for snr_reference="local", since the point here is that each band reports
-    through its own detector's snr_map(); the default global percentile bypasses it.
+    Both bands ask for reported_snr_reference="local", since the point here is that each band
+    reports
+    through its own detector's detection_snr_map(); the default global percentile bypasses it.
     """
     passive = _load_passive_detector_module(monkeypatch)
 
     class DbDetector:
         """A detector reporting SNR in dB relative to the mean, instead of raw power."""
 
-        def snr_map(self, beamformed_data):
+        def detection_snr_map(self, beamformed_data):
             power = np.mean(np.abs(np.asarray(beamformed_data)) ** 2, axis=1)
             eps = np.finfo(float).eps
             return 10 * np.log10((power + eps) / (np.mean(power) + eps))
@@ -261,13 +262,13 @@ def test_each_band_uses_its_own_detectors_snr_scale(monkeypatch) -> None:
         passive,
         {
             "low": passive.BandDetector(
-                detector=_ThresholdDetector(threshold=1e9), snr_reference="local"
+                detector=_ThresholdDetector(threshold=1e9), reported_snr_reference="local"
             ),
-            "high": passive.BandDetector(detector=DbDetector(), snr_reference="local"),
+            "high": passive.BandDetector(detector=DbDetector(), reported_snr_reference="local"),
         },
     )
     list(detector.detections_gen())
-    history = detector.snr_history
+    history = detector.reported_snr_history
 
     # 'low' uses raw linear power, so the 8.0 peak survives as 64.0 untouched.
     np.testing.assert_allclose(history["low"][0], [1.0, 1.0, 64.0, 1.0])
@@ -327,4 +328,4 @@ def test_skips_empty_and_missing_beamformed_data(monkeypatch) -> None:
 
     batches = list(detector.detections_gen())
     assert [batch for _, batch in batches] == [set(), set()]
-    assert detector.snr_history == {}
+    assert detector.reported_snr_history == {}
