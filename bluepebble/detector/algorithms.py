@@ -111,6 +111,14 @@ def _as_beamformed_2d(data: ArrayLike) -> np.ndarray:
     instead, so a 1-D array here is nearly always a caller that has not migrated yet. Say
     so directly, rather than failing later on a tuple unpack or a numpy axis error.
 
+    A frame is one look within a single timestep -- an STFT snapshot from that timestep's
+    sample block -- not a successive timestep. Detectors are called once per timestep and
+    return that timestep's detections; nothing is buffered across timesteps. The frames
+    axis has to survive as far as the detector because incoherent averaging over M looks
+    narrows the noise distribution, so the threshold multiplier achieving a given Pfa
+    depends on M; see :meth:`_CFARDetectorBase._alpha_for`. One frame is a valid input:
+    pass ``data[:, None]``.
+
     Parameters
     ----------
     data : ArrayLike
