@@ -50,7 +50,9 @@ def test_getattr_rejects_unknown_attributes() -> None:
     ("removed_name", "expected_guidance"),
     [
         ("PeakDetector", "OSCFARDetector"),
-        ("ThresholdDetector", "target_pfa"),
+        # Not target_pfa: a CFAR detector is not a drop-in replacement for a fixed
+        # global threshold, and the message must not imply that it is.
+        ("ThresholdDetector", "beam_snr"),
         ("run_detection_chain", "detector.detect"),
     ],
 )

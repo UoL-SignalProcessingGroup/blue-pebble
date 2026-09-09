@@ -61,8 +61,10 @@ _REMOVED = {
         "peak_distance / peak_prominence instead of chaining a separate detector."
     ),
     "ThresholdDetector": (
-        "A fixed threshold is a CFAR detector with a fixed alpha. Use CACFARDetector or "
-        "OSCFARDetector with target_pfa, which calibrates the threshold for you."
+        "It compared every cell to one scalar; the CFAR detectors compare each cell to its "
+        "own training cells, so they are not a drop-in replacement -- the two differ "
+        "wherever the noise varies with bearing. For a fixed global threshold, apply one "
+        "directly to beam_snr(data), which is the scan-referenced map it used to consume."
     ),
     "run_detection_chain": (
         "Detectors are no longer chained. Call detector.detect(beamformed_data) directly "
