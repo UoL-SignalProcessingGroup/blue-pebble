@@ -61,6 +61,8 @@ exclude_patterns = [
     # toc.not_included warnings.
     "auto_examples/comparing_simulators.rst",
     "auto_examples/modelling_acoustic_sources.rst",
+    "auto_examples/FUSION2026_singletarget_example.rst",
+    "auto_examples/FUSION2026_multitarget_example.rst",
 ]
 
 autodoc_member_order = "bysource"
@@ -98,6 +100,12 @@ sphinx_gallery_conf = {
         r"using_measured_data\.py"
         r"|modelling_acoustic_sources\.py"
         r"|comparing_simulators\.py"
+        # The FUSION 2026 scripts reproduce the figures for a specific paper. They stay in
+        # docs/examples so they can be run, but they are not documentation: they are the
+        # longest-running examples in the gallery and their narrative is aimed at that
+        # paper's readers rather than at someone learning the library.
+        r"|FUSION2026_singletarget_example\.py"
+        r"|FUSION2026_multitarget_example\.py"
     ),
     "abort_on_example_error": False,
     "image_scrapers": ("matplotlib", _plotly_scraper),
