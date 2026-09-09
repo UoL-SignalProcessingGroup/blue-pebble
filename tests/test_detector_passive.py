@@ -123,7 +123,7 @@ class _FakeDetector:
 
 
 # --------------------------------------------------------------------------
-# snr_from_beamformed_data (standalone utility)
+# beam_snr (standalone utility)
 # --------------------------------------------------------------------------
 
 
@@ -167,7 +167,7 @@ def test_snr_is_zero_db_when_every_beam_carries_equal_power(monkeypatch) -> None
     data = np.array([[2.0 + 0.0j], [2.0 + 0.0j], [2.0 + 0.0j]])
 
     np.testing.assert_allclose(
-        passive.snr_from_beamformed_data(data, percentile=50), np.zeros(3), atol=1e-6
+        passive.beam_snr(data, percentile=50), np.zeros(3), atol=1e-6
     )
 
 
@@ -177,7 +177,7 @@ def test_percentile_50_is_the_median_reference(monkeypatch) -> None:
     rng = np.random.default_rng(0)
     data = rng.exponential(1.0, size=(9, 3))
 
-    from_percentile = passive.snr_from_beamformed_data(data, percentile=50)
+    from_percentile = passive.beam_snr(data, percentile=50)
     power = passive.beam_power(data)
     eps = np.finfo(float).eps
     by_hand = 10 * np.log10((power + eps) / (np.median(power) + eps))
@@ -190,8 +190,8 @@ def test_a_higher_percentile_lowers_the_reported_snr(monkeypatch) -> None:
     passive = _load_passive_detector_module(monkeypatch)
     data = np.array([[1.0 + 0.0j], [np.sqrt(2) + 0.0j], [np.sqrt(3) + 0.0j], [2.0 + 0.0j]])
 
-    low = passive.snr_from_beamformed_data(data, percentile=10)
-    high = passive.snr_from_beamformed_data(data, percentile=50)
+    low = passive.beam_snr(data, percentile=10)
+    high = passive.beam_snr(data, percentile=50)
 
     assert high.max() < low.max()
 
@@ -442,8 +442,8 @@ def test_snr_gives_identical_results_for_real_power_and_complex_amplitude(
     real_power = np.abs(amplitude) ** 2
 
     np.testing.assert_allclose(
-        passive.snr_from_beamformed_data(amplitude),
-        passive.snr_from_beamformed_data(real_power),
+        passive.beam_snr(amplitude),
+        passive.beam_snr(real_power),
     )
 
 
@@ -463,7 +463,7 @@ def test_band_detector_reports_the_global_noise_floor_by_default(monkeypatch) ->
 
     assert band.snr_reference == "global"
     assert not np.array_equal(snr, impossible)
-    np.testing.assert_allclose(snr, passive.snr_from_beamformed_data(np.ones((6, 2))))
+    np.testing.assert_allclose(snr, passive.beam_snr(np.ones((6, 2))))
 
 
 def test_band_detector_can_report_the_local_noise_floor(monkeypatch) -> None:
@@ -502,7 +502,7 @@ def test_band_detector_can_report_against_a_global_noise_floor(monkeypatch) -> N
 
     snr, _ = band.detect(data)
 
-    expected = passive.snr_from_beamformed_data(data, percentile=10)
+    expected = passive.beam_snr(data, percentile=10)
     np.testing.assert_allclose(snr, expected)
     assert not np.any(snr == -99.0)
 

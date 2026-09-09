@@ -26,6 +26,23 @@ _BandedStep: TypeAlias = tuple[datetime, dict[str, set[Detection]]]
 def beam_power(beamformed_data: ArrayLike, decibels: bool = False) -> FloatArray:
     """Per-beam power, averaged over frames.
 
+    .. rubric:: Which reduction do you want?
+
+    Three functions turn a beamformed frame into a per-beam map. They differ only in what
+    the result is measured against:
+
+    ==============================  ======================================================
+    :func:`beam_power`              nothing -- absolute power
+    :func:`beam_snr`                a percentile of the whole scan, so bearings compare
+    :meth:`~.algorithms._CFARDetectorBase.snr_map`
+                                    the detector's own local training cells, which is what
+                                    its threshold was compared against
+    ==============================  ======================================================
+
+    Most callers need none of them. :class:`PassiveSonarDetector` and :class:`BandDetector`
+    record a map every timestep in ``snr_history``, choosing between the last two with
+    ``snr_reference``; that is the normal way to obtain one.
+
     Use this rather than computing ``|data|**2`` directly. ``BeamformedData`` is deliberately
     either complex amplitude or already-real power depending on the beamformer, and squaring
     the real-power case a second time double-applies the power law -- see
@@ -50,7 +67,7 @@ def beam_power(beamformed_data: ArrayLike, decibels: bool = False) -> FloatArray
     return 10 * np.log10(power) if decibels else power
 
 
-def snr_from_beamformed_data(
+def beam_snr(
     beamformed_data: ArrayLike,
     percentile: int = 10,
 ) -> FloatArray:
@@ -63,7 +80,8 @@ def snr_from_beamformed_data(
     :meth:`~.algorithms._CFARDetectorBase.snr_map`.
 
     :class:`PassiveSonarDetector` and :class:`BandDetector` call this to build the map they
-    record when ``snr_reference="global"``. Detection itself never uses it.
+    record when ``snr_reference="global"``. Detection itself never uses it. See
+    :func:`beam_power` for when to reach for this rather than the alternatives.
 
     Parameters
     ----------
@@ -133,7 +151,7 @@ def _snr_reference_map(
     if snr_reference == "local":
         return detector.snr_map(beamformed_data)
     if snr_reference == "global":
-        return snr_from_beamformed_data(beamformed_data, percentile=snr_percentile)
+        return beam_snr(beamformed_data, percentile=snr_percentile)
     raise ValueError(f"snr_reference must be one of {_SNR_REFERENCES}, got {snr_reference!r}")
 
 
