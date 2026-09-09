@@ -645,9 +645,9 @@ class _CFARDetectorBase(DetectionAlgorithm, ABC):
         directional_power, noise_estimate = self._power_and_noise(data_array)
         alpha = self._alpha_for(num_frames)
         threshold = alpha * noise_estimate
-        # Reported SNR is noise-relative (not threshold-relative) so it matches detection_snr_map()
-        # and
-        # reads as a physical quantity independent of the chosen Pfa/rank.
+        # Reported SNR is noise-relative rather than threshold-relative, so it matches
+        # detection_snr_map() and reads as a physical quantity independent of the chosen
+        # Pfa or rank.
         snr_db = _to_db(directional_power, noise_estimate)
 
         candidate_mask = directional_power > threshold

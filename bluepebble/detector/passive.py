@@ -200,8 +200,7 @@ class PassiveSonarDetector(DetectionReader):
     snr_percentile: int = Property(
         default=10,
         doc="Percentile of directional power used as the noise floor when "
-        "reported_snr_reference is "
-        "'global'. Ignored otherwise.",
+        "reported_snr_reference is 'global'. Ignored otherwise.",
     )
 
     def __init__(self, *args: object, **kwargs: object) -> None:
@@ -318,8 +317,7 @@ class BandDetector(Base):
     snr_percentile: int = Property(
         default=10,
         doc="Percentile of directional power used as the noise floor when "
-        "reported_snr_reference is "
-        "'global'. Ignored otherwise.",
+        "reported_snr_reference is 'global'. Ignored otherwise.",
     )
 
     def detect(self, beamformed_data: ArrayLike) -> tuple[FloatArray, DetectionArray]:
