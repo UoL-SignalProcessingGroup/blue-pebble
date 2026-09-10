@@ -1,0 +1,6 @@
+# setuptools_scm puts every git-tracked file in the source distribution, which sweeps in the
+# pre-generated example figures. Those are 5.6 MB of PNG built for the documentation, they are
+# regenerable with docs/scripts/generate_*_figs.py, and the wheel carries no documentation at
+# all, so they inflate the sdist for no one's benefit. The example sources stay.
+prune docs/source/_static/acoustic_source_figs
+prune docs/source/_static/measured_data_figs
