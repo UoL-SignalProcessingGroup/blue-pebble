@@ -43,7 +43,7 @@ from stonesoup.types.update import GaussianStateUpdate
 from stonesoup.updater.kalman import ExtendedKalmanUpdater
 
 import bluepebble
-from bluepebble.detector import CACFARDetector, PassiveSonarDetector, PeakDetector
+from bluepebble.detector import CACFARDetector, PassiveSonarDetector
 from bluepebble.models.environment import FlatBathymetry, Linear
 from bluepebble.models.propagation import CylindricalAcousticPropagationModel
 from bluepebble.platform import TowedArrayPlatform
@@ -145,10 +145,10 @@ det_params = {
     "cfar_detector": {
         "num_guard_cells": 2,
         "num_training_cells": 8,
-        "threshold_factor": 1.95,
-    },
-    "peak_detector": {
-        "distance": 3,
+        # Reproduces the pre-refactor threshold_factor exactly, via CA-CFAR's single-look
+        # Pfa = (1 + alpha/N)^-N with N = 2 * num_training_cells.
+        "target_pfa": 0.1588,
+        "peak_distance": 3,
     },
 }
 
@@ -332,7 +332,7 @@ simulator = ContinuousSTFTPassiveSonarArraySimulator(
     fade_in_ms=signal["fade_in_ms"],
 )
 
-print("Running detection chain...")
+print("Running detector...")
 
 det = cfg["detection"]
 bf = cfg["beamforming"]
@@ -340,21 +340,22 @@ bf = cfg["beamforming"]
 cfar_detector = CACFARDetector(
     num_guard_cells=det["cfar_detector"]["num_guard_cells"],
     num_training_cells=det["cfar_detector"]["num_training_cells"],
-    threshold_factor=det["cfar_detector"]["threshold_factor"],
+    target_pfa=det["cfar_detector"]["target_pfa"],
+    peak_distance=det["cfar_detector"]["peak_distance"],
 )
 
-detection_chain = [cfar_detector]
-if det["peak_detector"]["distance"] > 0:
-    detection_chain.append(PeakDetector(distance=det["peak_detector"]["distance"]))
-
+# reported_snr_history feeds the BTR figures below. It reports SNR against a scan-wide percentile,
+# which is the reference these figures were produced with and keeps them comparable with the
+# published versions. The detector thresholds against its own local training-cell estimate
+# regardless; reported_snr_reference only chooses what is reported.
 detector = PassiveSonarDetector(
-    detection_chain=detection_chain,
+    detector=cfar_detector,
     sensor_data_gen=simulator.sensor_data_gen(),
     steering_azimuths_rad=bf["steering_azimuths_rad"],
 )
 
 all_detections = list(detector.detections_gen(progress_bar=False))
-snr_map = detector.snr_history
+reported_snr = detector.reported_snr_history
 
 timesteps = [
     cfg["sim"]["start_time"] + i * cfg["sim"]["time_interval"]
@@ -581,7 +582,7 @@ fig = make_subplots(
 
 fig.add_trace(
     go.Heatmap(
-        z=snr_map,
+        z=reported_snr,
         y=timesteps,
         x=np.rad2deg(cfg["beamforming"]["steering_azimuths_rad"]),
         colorscale="Viridis",
@@ -597,7 +598,7 @@ fig.add_trace(
 )
 fig.add_trace(
     go.Heatmap(
-        z=snr_map,
+        z=reported_snr,
         y=timesteps,
         x=np.rad2deg(cfg["beamforming"]["steering_azimuths_rad"]),
         colorscale="Viridis",

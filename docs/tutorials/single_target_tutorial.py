@@ -38,7 +38,7 @@ Single Target Passive-Sonar Tracking Tutorial
 # - A towed array platform.
 # - A single target truth path with plugin-specific acoustic metadata.
 # - A cylindrical acoustic propagation model and broadband signal/noise models.
-# - A broadband passive-sonar simulator, beamformer, and detector chain.
+# - A broadband passive-sonar simulator, beamformer, and detector.
 # - A Stone Soup bearing tracker driven by Blue Pebble detections.
 
 # %%
@@ -59,6 +59,7 @@ from datetime import datetime, timedelta
 import numpy as np
 
 import bluepebble
+from bluepebble.detector.algorithms import OSCFARDetector
 
 # Random seed for reproducibility
 seed = 42
@@ -113,7 +114,7 @@ platform_transition_model = CombinedLinearGaussianTransitionModel(
 )
 
 # Define the towed array parameters
-num_sensors = 50
+num_sensors = 64
 tow_cable_length_m = 100.0
 sensor_spacing_m = 0.5
 array_depth_m = -50.0
@@ -274,30 +275,28 @@ signal_model = SyntheticAnthropogenicSignal(
 )
 
 # %%
-# Run the Blue Pebble Simulator, Beamformer, and Detector Chain
-# --------------------------------------------------------------
+# Run the Blue Pebble Simulator, Beamformer, and Detector
+# ---------------------------------------------------------
 #
 # This section is the core plugin workflow. :class:`~.ContinuousSTFTPassiveSonarArraySimulator`
 # brings together the platform, propagation model, source/noise models, steering
 # calculation, and beamformer to produce beamformed sonar output over time.
 #
-# Once the simulator is in place, :class:`~.PassiveSonarDetector` applies a passive-sonar
-# detection chain to those outputs. Here that chain is CA-CFAR followed by peak
-# picking. The important usage pattern is that Blue Pebble handles the
-# signal-processing and detection side, then returns timestamped detections that can
-# be analysed directly or passed into Stone Soup tracking components.
+# Once the simulator is in place, :class:`~.PassiveSonarDetector` applies a single CFAR-family
+# ``detector`` (here, :class:`~.CACFARDetector`) directly to those outputs. Thresholding and
+# wrap-aware peak consolidation both happen inside the detector's own ``detect()`` call, so no
+# separate peak-picking stage is needed. The important usage pattern is that Blue Pebble handles
+# the signal-processing and detection side, then returns timestamped detections that can be
+# analysed directly or passed into Stone Soup tracking components.
 
 # %%
-from bluepebble.detector import (
-    CACFARDetector,
-    DetectionAlgorithm,
-    PassiveSonarDetector,
-    PeakDetector,
-)
+from bluepebble.detector import PassiveSonarDetector
 from bluepebble.plotter import apply_shared_colourscale, plot_btr
 from bluepebble.sigproc import (
     MinimumVarianceDistortionlessResponseBeamformer,
     SteeringCalculator,
+    beams_per_mainlobe,
+    cfar_window_for_mainlobe,
 )
 from bluepebble.simulator import ContinuousSTFTPassiveSonarArraySimulator
 
@@ -329,28 +328,46 @@ simulator = ContinuousSTFTPassiveSonarArraySimulator(
     fade_in_ms=fade_in_ms,
 )
 
-num_guard_cells = 2
-num_training_cells = 16
-threshold_factor = 1.5
-peak_distance = 3
+# Guard and training cells follow from the array rather than being chosen: a source spans a
+# mainlobe in bearing, so the guard band has to reach past it or the training cells measure
+# the target and compress the reported SNR. Evaluated at 100 Hz: the lower edge of the band
+# this example's MVDR beamformer passes, and so the widest lobe it can produce. The target
+# tonals reach down to 25 Hz, but nothing below 100 Hz survives the beamformer to reach the
+# detector. peak_distance comes from the same width, since two candidates closer than a
+# mainlobe are not resolvable as separate sources.
+mainlobe_beams = beams_per_mainlobe(
+    aperture_m=(num_sensors - 1) * sensor_spacing_m,
+    frequency_hz=100.0,
+    beam_spacing_rad=float(np.diff(steering_azimuths_rad)[0]),
+    sound_speed_ms=1500.0,
+)
+num_guard_cells, num_training_cells, peak_distance = cfar_window_for_mainlobe(mainlobe_beams)
+target_pfa = 0.05
+# OS-CFAR takes the k-th smallest training cell, so rank scales with the window; 0.75 of
+# the total is the usual starting point.
+rank = round(0.75 * 2 * num_training_cells)
 
-cfar_detector = CACFARDetector(
+cfar_detector = OSCFARDetector(
     num_guard_cells=num_guard_cells,
     num_training_cells=num_training_cells,
-    threshold_factor=threshold_factor,
+    rank=rank,
+    target_pfa=target_pfa,
+    peak_distance=peak_distance,
 )
-detection_chain: list[DetectionAlgorithm] = [cfar_detector]
-if peak_distance > 0:
-    detection_chain.append(PeakDetector(distance=peak_distance))
 
+# reported_snr_reference only sets what reported_snr_history reports; thresholding always uses the
+# detector's
+# own local estimate. "global" measures every beam against a single percentile of the whole
+# scan, which keeps the bearing-time record readable -- see the notes under the figure.
 detector = PassiveSonarDetector(
-    detection_chain=detection_chain,
+    detector=cfar_detector,
     sensor_data_gen=simulator.sensor_data_gen(),
     steering_azimuths_rad=steering_azimuths_rad,
+    reported_snr_reference="global",
 )
 
 all_detections = list(detector.detections_gen(progress_bar=False))
-snr_map = detector.snr_history
+reported_snr = detector.reported_snr_history
 
 detections_for_plotter = [d for _, detections in all_detections for d in detections]
 
@@ -367,7 +384,7 @@ fig_btr = make_subplots(
 )
 
 plot_btr(
-    data=snr_map,
+    data=reported_snr,
     timesteps=timesteps,
     steering_azimuths=np.rad2deg(steering_azimuths_rad),
     fig=fig_btr,
@@ -375,7 +392,7 @@ plot_btr(
     col=1,
 )
 plot_btr(
-    data=snr_map,
+    data=reported_snr,
     detections=detections_for_plotter,
     timesteps=timesteps,
     steering_azimuths=np.rad2deg(steering_azimuths_rad),
@@ -406,6 +423,43 @@ fig_btr.update_layout(
     margin=dict(r=80),
     yaxis2=dict(title=""),
 )
+
+
+# %%
+# Reading the Bearing-Time Record
+# --------------------------------
+#
+# Two features of this plot are worth naming, because both recur across the examples and
+# neither is a fault in the simulation.
+#
+# **There are two tracks, and only one target.** A straight line of hydrophones cannot tell
+# which side of itself a sound came from: a source and its reflection in the array axis give
+# identical delays across every sensor, so the beamformer reports both at equal strength.
+# The pair is symmetric about the array axis and the two merge whenever the target passes
+# through endfire -- dead ahead or dead astern. Resolving the ambiguity takes either a
+# manoeuvre, since the ghost swings differently from the real bearing once the array turns,
+# or a second array that is not collinear with the first.
+# :class:`~.SteeringCalculator` can steer only half the plane instead
+# (``mirror_half_plane``), which hides the ghost and halves the beamforming cost. It is left
+# off here because the ambiguity is a permanent feature of towed-array data and is better met
+# early, with an explanation, than met later without one.
+#
+# **The colour scale is SNR against a scan-wide noise floor, not against the detector's own
+# estimate.** That is what ``reported_snr_reference="global"`` selects above -- the default, stated
+# explicitly here because the distinction matters for reading the plot below. A CFAR
+# detector judges each beam against the training cells
+# around it, between ``num_guard_cells`` and ``num_guard_cells + num_training_cells`` bins
+# away. Any beam whose training window happens to contain the target measures the target as
+# noise, and so reports a lower SNR for itself: plotting that estimate directly paints dark
+# bands at exactly those offsets either side of every track, deepening with target strength
+# and deepest where the real and ghost tracks converge and each sits inside the other's
+# window. They are an artefact of the measurement, not quiet water, and they make the
+# picture harder to read.
+#
+# Detection is unaffected by the choice. Thresholding always uses the local estimate, which
+# is the point of CFAR: a scan-wide floor cannot follow noise that varies with bearing. Only
+# the reported map changes. Set ``reported_snr_reference="local"`` to see what the detector itself
+# works with -- useful when the question is why a particular cell did or did not fire.
 
 # %%
 # Feed Blue Pebble Detections into a Stone Soup Tracker
@@ -524,5 +578,5 @@ plot_btr(
 #
 # 1. Build a Stone Soup platform and truth model.
 # 2. Add Blue Pebble array, propagation, source, and noise components.
-# 3. Run passive sonar simulator and a passive-sonar detection chain.
+# 3. Run the passive sonar simulator and a CFAR-family passive-sonar detector.
 # 4. Pass the resulting detections into a Stone Soup tracker.

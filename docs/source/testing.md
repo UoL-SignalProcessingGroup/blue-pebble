@@ -93,7 +93,7 @@ Current module counts:
 
 - threshold, peak, CA-CFAR, and OS-CFAR behaviour
 - wrapped-bearing timestep metrics and parameter-sweep helpers
-- passive detector chain wiring from beamformer outputs to detections
+- passive detector wiring from beamformer outputs to detections
 
 ### Plotting helpers
 

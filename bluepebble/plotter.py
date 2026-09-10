@@ -1023,7 +1023,7 @@ def plot_btr(
     data_type: str = "SNR (dB)",
     cmin: float | None = None,
     cmax: float | None = None,
-    colorscale: str = "Turbo",
+    colorscale: str = "Viridis",
     figsize: tuple[float, float] = (800, 600),
     fig: go.Figure | None = None,
     row: int | None = None,
@@ -1058,7 +1058,10 @@ def plot_btr(
         Optional upper bound of the heatmap color scale. If ``None`` (default),
         Plotly automatically chooses the upper bound from the data.
     colorscale : str
-        Name of the Plotly colorscale to use for the heatmap. Default is ``"Turbo"``.
+        Name of the Plotly colorscale to use for the heatmap. Default is ``"Viridis"``,
+        which is perceptually uniform: its lightness climbs monotonically, so the eye reads
+        no structure the SNR field does not contain, and the ordering survives
+        colour-vision deficiency and greyscale printing.
     figsize : tuple[float, float]
         Figure size for standalone plots. Values that look like inches (for example
         ``(12, 6)``) are converted to pixels using 100 px/in; larger values are
@@ -1369,7 +1372,7 @@ def plot_spectrogram(
     z_percentiles: tuple[float, float] | None = None,
     showscale: bool = True,
     colorbar_title: str = "Intensity (dB)",
-    colorscale: str = "Turbo",
+    colorscale: str = "Viridis",
     customdata: ArrayLike | None = None,
     hovertemplate: str | None = None,
 ) -> go.Figure:
@@ -1596,6 +1599,9 @@ def plot_roc(
     results: Sequence[SweepResult],
     show_diagonal: bool = True,
     figsize: tuple[float, float] = (600, 500),
+    fig: go.Figure | None = None,
+    row: int | None = None,
+    col: int | None = None,
 ) -> go.Figure:
     """Plot Receiver Operating Characteristic (ROC) curves for one or more sweep results.
 
@@ -1607,7 +1613,16 @@ def plot_roc(
     show_diagonal : bool
         If ``True`` (default), overlay the random-classifier diagonal.
     figsize : tuple[float, float]
-        Figure dimensions in pixels.  Default is ``(600, 500)``.
+        Figure dimensions in pixels for standalone plots. Ignored when ``fig`` is provided.
+        Default is ``(600, 500)``.
+    fig : go.Figure | None
+        Optional target figure. Provide a subplot figure from
+        :func:`plotly.subplots.make_subplots` to draw directly into a cell.
+        If None, a new standalone figure is created.
+    row : int | None
+        Subplot row when ``fig`` is provided.
+    col : int | None
+        Subplot column when ``fig`` is provided.
 
     Returns
     -------
@@ -1615,47 +1630,52 @@ def plot_roc(
         Plotly figure containing the ROC curves.
 
     """
+    if fig is not None:
+        if row is None or col is None:
+            raise ValueError("row and col must both be provided when fig is supplied")
+        if row <= 0 or col <= 0:
+            raise ValueError("row and col must be positive")
+    if fig is None and (row is not None or col is not None):
+        raise ValueError("row and col can only be used when fig is supplied")
+
     colorway = px.colors.qualitative.Plotly
     grid_color = "rgba(200, 200, 200, 0.5)"
     axis_line = "rgba(160, 160, 160, 1.0)"
 
-    fig = go.Figure()
+    target_fig = go.Figure() if fig is None else fig
+    using_subplot_target = fig is not None
 
     for i, result in enumerate(results):
         # Sort by x-axis metric so connected lines are drawn in curve order.
         order = np.argsort(result.fpr)
         name = f"{result.label} (AUC={result.auc_roc:.3f})"
-        fig.add_trace(
-            go.Scatter(
-                x=result.fpr[order],
-                y=result.tpr[order],
-                mode="lines",
-                line=dict(width=2, color=colorway[i % len(colorway)]),
-                name=name,
-            )
+        trace = go.Scatter(
+            x=result.fpr[order],
+            y=result.tpr[order],
+            mode="lines",
+            line=dict(width=2, color=colorway[i % len(colorway)]),
+            name=name,
         )
+        if using_subplot_target:
+            target_fig.add_trace(trace, row=row, col=col)
+        else:
+            target_fig.add_trace(trace)
 
     if show_diagonal:
-        fig.add_trace(
-            go.Scatter(
-                x=[0.0, 1.0],
-                y=[0.0, 1.0],
-                mode="lines",
-                line=dict(width=1, color="grey", dash="dash"),
-                name="Random",
-                showlegend=True,
-            )
+        diagonal_trace = go.Scatter(
+            x=[0.0, 1.0],
+            y=[0.0, 1.0],
+            mode="lines",
+            line=dict(width=1, color="grey", dash="dash"),
+            name="Random",
+            showlegend=True,
         )
+        if using_subplot_target:
+            target_fig.add_trace(diagonal_trace, row=row, col=col)
+        else:
+            target_fig.add_trace(diagonal_trace)
 
-    fig.update_layout(
-        template="plotly_white",
-        width=figsize[0],
-        height=figsize[1],
-        showlegend=True,
-        plot_bgcolor="white",
-        paper_bgcolor="white",
-    )
-    fig.update_xaxes(
+    xaxis_kwargs = dict(
         title_text="False Positive Rate",
         range=[0.0, 1.0],
         showgrid=True,
@@ -1664,7 +1684,7 @@ def plot_roc(
         linewidth=1,
         linecolor=axis_line,
     )
-    fig.update_yaxes(
+    yaxis_kwargs = dict(
         title_text="True Positive Rate",
         range=[0.0, 1.05],
         showgrid=True,
@@ -1673,13 +1693,30 @@ def plot_roc(
         linewidth=1,
         linecolor=axis_line,
     )
+    if using_subplot_target:
+        target_fig.update_xaxes(row=row, col=col, **xaxis_kwargs)
+        target_fig.update_yaxes(row=row, col=col, **yaxis_kwargs)
+    else:
+        target_fig.update_xaxes(**xaxis_kwargs)
+        target_fig.update_yaxes(**yaxis_kwargs)
+        target_fig.update_layout(
+            template="plotly_white",
+            width=figsize[0],
+            height=figsize[1],
+            showlegend=True,
+            plot_bgcolor="white",
+            paper_bgcolor="white",
+        )
 
-    return fig
+    return target_fig
 
 
 def plot_pr(
     results: Sequence[SweepResult],
     figsize: tuple[float, float] = (600, 500),
+    fig: go.Figure | None = None,
+    row: int | None = None,
+    col: int | None = None,
 ) -> go.Figure:
     """Plot Precision-Recall (PR) curves for one or more sweep results.
 
@@ -1689,7 +1726,16 @@ def plot_pr(
         Sweep results produced by :func:`~bluepebble.detector.metrics.sweep_detection_parameter`.
         Each result is drawn as a separate trace using its ``label`` attribute.
     figsize : tuple[float, float]
-        Figure dimensions in pixels.  Default is ``(600, 500)``.
+        Figure dimensions in pixels for standalone plots. Ignored when ``fig`` is provided.
+        Default is ``(600, 500)``.
+    fig : go.Figure | None
+        Optional target figure. Provide a subplot figure from
+        :func:`plotly.subplots.make_subplots` to draw directly into a cell.
+        If None, a new standalone figure is created.
+    row : int | None
+        Subplot row when ``fig`` is provided.
+    col : int | None
+        Subplot column when ``fig`` is provided.
 
     Returns
     -------
@@ -1697,35 +1743,38 @@ def plot_pr(
         Plotly figure containing the PR curves.
 
     """
+    if fig is not None:
+        if row is None or col is None:
+            raise ValueError("row and col must both be provided when fig is supplied")
+        if row <= 0 or col <= 0:
+            raise ValueError("row and col must be positive")
+    if fig is None and (row is not None or col is not None):
+        raise ValueError("row and col can only be used when fig is supplied")
+
     colorway = px.colors.qualitative.Plotly
     grid_color = "rgba(200, 200, 200, 0.5)"
     axis_line = "rgba(160, 160, 160, 1.0)"
 
-    fig = go.Figure()
+    target_fig = go.Figure() if fig is None else fig
+    using_subplot_target = fig is not None
 
     for i, result in enumerate(results):
         # Sort by x-axis metric so connected lines are drawn in curve order.
         order = np.argsort(result.recall)
         name = f"{result.label} (AUC={result.auc_pr:.3f})"
-        fig.add_trace(
-            go.Scatter(
-                x=result.recall[order],
-                y=result.precision[order],
-                mode="lines",
-                line=dict(width=2, color=colorway[i % len(colorway)]),
-                name=name,
-            )
+        trace = go.Scatter(
+            x=result.recall[order],
+            y=result.precision[order],
+            mode="lines",
+            line=dict(width=2, color=colorway[i % len(colorway)]),
+            name=name,
         )
+        if using_subplot_target:
+            target_fig.add_trace(trace, row=row, col=col)
+        else:
+            target_fig.add_trace(trace)
 
-    fig.update_layout(
-        template="plotly_white",
-        width=figsize[0],
-        height=figsize[1],
-        showlegend=True,
-        plot_bgcolor="white",
-        paper_bgcolor="white",
-    )
-    fig.update_xaxes(
+    xaxis_kwargs = dict(
         title_text="Recall",
         range=[0.0, 1.0],
         showgrid=True,
@@ -1734,7 +1783,7 @@ def plot_pr(
         linewidth=1,
         linecolor=axis_line,
     )
-    fig.update_yaxes(
+    yaxis_kwargs = dict(
         title_text="Precision",
         range=[0.0, 1.05],
         showgrid=True,
@@ -1743,14 +1792,31 @@ def plot_pr(
         linewidth=1,
         linecolor=axis_line,
     )
+    if using_subplot_target:
+        target_fig.update_xaxes(row=row, col=col, **xaxis_kwargs)
+        target_fig.update_yaxes(row=row, col=col, **yaxis_kwargs)
+    else:
+        target_fig.update_xaxes(**xaxis_kwargs)
+        target_fig.update_yaxes(**yaxis_kwargs)
+        target_fig.update_layout(
+            template="plotly_white",
+            width=figsize[0],
+            height=figsize[1],
+            showlegend=True,
+            plot_bgcolor="white",
+            paper_bgcolor="white",
+        )
 
-    return fig
+    return target_fig
 
 
 def plot_roc_pr(
     results: Sequence[SweepResult],
     show_diagonal: bool = True,
     figsize: tuple[float, float] = (600, 900),
+    fig: go.Figure | None = None,
+    row: int | None = None,
+    col: int | None = None,
 ) -> go.Figure:
     """Plot ROC and Precision-Recall curves stacked vertically for one or more sweep results.
 
@@ -1763,7 +1829,19 @@ def plot_roc_pr(
     show_diagonal : bool
         If ``True`` (default), overlay the random-classifier diagonal on the ROC subplot.
     figsize : tuple[float, float]
-        Figure dimensions in pixels.  Default is ``(600, 900)``.
+        Figure dimensions in pixels for standalone plots. Ignored when ``fig`` is provided.
+        Default is ``(600, 900)``.
+    fig : go.Figure | None
+        Optional target figure. Provide a subplot figure from
+        :func:`plotly.subplots.make_subplots` to draw directly into it. Unlike the other
+        ``plot_*`` functions' single-cell ``fig``/``row``/``col``, this plot always needs two
+        stacked rows (ROC above PR), so ``fig`` must already reserve rows ``row`` and ``row + 1``
+        in column ``col``. If None, a new standalone two-row figure is created.
+    row : int | None
+        Starting subplot row when ``fig`` is provided; the ROC curve is drawn in ``row`` and
+        the PR curve in ``row + 1``.
+    col : int | None
+        Subplot column when ``fig`` is provided.
 
     Returns
     -------
@@ -1771,12 +1849,26 @@ def plot_roc_pr(
         Plotly figure with ROC (top) and PR (bottom) subplots.
 
     """
+    if fig is not None:
+        if row is None or col is None:
+            raise ValueError("row and col must both be provided when fig is supplied")
+        if row <= 0 or col <= 0:
+            raise ValueError("row and col must be positive")
+    if fig is None and (row is not None or col is not None):
+        raise ValueError("row and col can only be used when fig is supplied")
+
     colorway = px.colors.qualitative.Plotly
-
-    fig = make_subplots(rows=2, cols=1, subplot_titles=("ROC Curve", "PR Curve"))
-
     grid_color = "rgba(200, 200, 200, 0.5)"
     axis_line = "rgba(160, 160, 160, 1.0)"
+
+    using_subplot_target = fig is not None
+    if using_subplot_target:
+        target_fig = fig
+        roc_row, pr_row = row, row + 1
+    else:
+        target_fig = make_subplots(rows=2, cols=1, subplot_titles=("ROC Curve", "PR Curve"))
+        roc_row, pr_row = 1, 2
+    target_col = col if using_subplot_target else 1
 
     for i, result in enumerate(results):
         color = colorway[i % len(colorway)]
@@ -1784,7 +1876,7 @@ def plot_roc_pr(
         roc_order = np.argsort(result.fpr)
         pr_order = np.argsort(result.recall)
 
-        fig.add_trace(
+        target_fig.add_trace(
             go.Scatter(
                 x=result.fpr[roc_order],
                 y=result.tpr[roc_order],
@@ -1794,10 +1886,10 @@ def plot_roc_pr(
                 legendgroup=result.label,
                 legendgrouptitle_text=result.label,
             ),
-            row=1,
-            col=1,
+            row=roc_row,
+            col=target_col,
         )
-        fig.add_trace(
+        target_fig.add_trace(
             go.Scatter(
                 x=result.recall[pr_order],
                 y=result.precision[pr_order],
@@ -1807,12 +1899,12 @@ def plot_roc_pr(
                 legendgroup=result.label,
                 showlegend=False,
             ),
-            row=2,
-            col=1,
+            row=pr_row,
+            col=target_col,
         )
 
     if show_diagonal:
-        fig.add_trace(
+        target_fig.add_trace(
             go.Scatter(
                 x=[0.0, 1.0],
                 y=[0.0, 1.0],
@@ -1821,11 +1913,11 @@ def plot_roc_pr(
                 name="Random",
                 showlegend=True,
             ),
-            row=1,
-            col=1,
+            row=roc_row,
+            col=target_col,
         )
 
-    fig.update_xaxes(
+    target_fig.update_xaxes(
         title_text="False Positive Rate",
         range=[0.0, 1.0],
         showgrid=True,
@@ -1833,9 +1925,10 @@ def plot_roc_pr(
         showline=True,
         linewidth=1,
         linecolor=axis_line,
-        row=1,
+        row=roc_row,
+        col=target_col,
     )
-    fig.update_yaxes(
+    target_fig.update_yaxes(
         title_text="True Positive Rate",
         range=[0.0, 1.05],
         showgrid=True,
@@ -1843,9 +1936,10 @@ def plot_roc_pr(
         showline=True,
         linewidth=1,
         linecolor=axis_line,
-        row=1,
+        row=roc_row,
+        col=target_col,
     )
-    fig.update_xaxes(
+    target_fig.update_xaxes(
         title_text="Recall",
         range=[0.0, 1.0],
         showgrid=True,
@@ -1853,9 +1947,10 @@ def plot_roc_pr(
         showline=True,
         linewidth=1,
         linecolor=axis_line,
-        row=2,
+        row=pr_row,
+        col=target_col,
     )
-    fig.update_yaxes(
+    target_fig.update_yaxes(
         title_text="Precision",
         range=[0.0, 1.05],
         showgrid=True,
@@ -1863,22 +1958,24 @@ def plot_roc_pr(
         showline=True,
         linewidth=1,
         linecolor=axis_line,
-        row=2,
+        row=pr_row,
+        col=target_col,
     )
 
-    fig.update_layout(
-        template="plotly_white",
-        width=figsize[0],
-        height=figsize[1],
-        showlegend=True,
-        plot_bgcolor="white",
-        paper_bgcolor="white",
-        legend=dict(
-            y=0.5,
-        ),
-    )
+    if not using_subplot_target:
+        target_fig.update_layout(
+            template="plotly_white",
+            width=figsize[0],
+            height=figsize[1],
+            showlegend=True,
+            plot_bgcolor="white",
+            paper_bgcolor="white",
+            legend=dict(
+                y=0.5,
+            ),
+        )
 
-    return fig
+    return target_fig
 
 
 def apply_shared_colourscale(

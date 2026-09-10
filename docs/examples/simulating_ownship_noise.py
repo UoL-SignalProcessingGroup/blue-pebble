@@ -32,7 +32,7 @@ from stonesoup.models.transition.linear import (
 from stonesoup.types.groundtruth import GroundTruthPath, GroundTruthState
 
 import bluepebble
-from bluepebble.detector import CACFARDetector, PassiveSonarDetector, PeakDetector
+from bluepebble.detector import CACFARDetector, PassiveSonarDetector
 from bluepebble.models.environment import FlatBathymetry, Linear
 from bluepebble.models.propagation import rtrsAcousticPropagationModel
 from bluepebble.platform import TowedArrayPlatform
@@ -43,6 +43,8 @@ from bluepebble.sigproc import (
     DelayAndSumBeamformer,
     MinimumVarianceDistortionlessResponseBeamformer,
     SteeringCalculator,
+    beams_per_mainlobe,
+    cfar_window_for_mainlobe,
 )
 from bluepebble.simulator import ContinuousSTFTPassiveSonarArraySimulator
 
@@ -396,23 +398,39 @@ steering_calculator = SteeringCalculator(
 # Keeping propagation, beamformer, and detector settings identical between the two simulators means
 # any difference in output is solely attributable to the ownship source term.
 
-cfar_num_guard_cells = 6
-cfar_num_training_cells = 10
-cfar_threshold_factor = 1.05
-peak_distance = 8
+# Guard and training cells follow from the array rather than being chosen: a source spans a
+# mainlobe in bearing, so the guard band has to reach past it or the training cells measure
+# the target and compress the reported SNR. Evaluated at 50 Hz -- the lowest tonal in the
+# scenario; the beamformer itself is unbanded and so the widest
+# lobe. peak_distance comes from the same width, since two candidates closer than a mainlobe
+# are not resolvable as separate sources.
+mainlobe_beams = beams_per_mainlobe(
+    aperture_m=(num_sensors - 1) * sensor_spacing_m,
+    frequency_hz=50.0,
+    beam_spacing_rad=float(np.diff(steering_azimuths_rad)[0]),
+    sound_speed_ms=1500.0,
+)
+cfar_num_guard_cells, cfar_num_training_cells, peak_distance = cfar_window_for_mainlobe(
+    mainlobe_beams
+)
+# Preserves this example's pre-refactor operating point: the old threshold_factor=1.05 was
+# alpha applied to the training-cell mean, and CA-CFAR's single-look Pfa = (1 + alpha/N)^-N
+# with N = 2 * num_training_cells inverts it exactly. It is a deliberately permissive
+# threshold -- peak consolidation, not the threshold, does most of the rejection here.
+cfar_target_pfa = 0.3594
 
 
 def _make_detector(simulator: ContinuousSTFTPassiveSonarArraySimulator) -> PassiveSonarDetector:
     cfar_detector = CACFARDetector(
         num_guard_cells=cfar_num_guard_cells,
         num_training_cells=cfar_num_training_cells,
-        threshold_factor=cfar_threshold_factor,
-        mode="wrap",
+        target_pfa=cfar_target_pfa,
+        peak_distance=peak_distance,
+        circular=True,
     )
-    peak_detector = PeakDetector(distance=peak_distance)
 
     return PassiveSonarDetector(
-        detection_chain=[cfar_detector, peak_detector],
+        detector=cfar_detector,
         sensor_data_gen=simulator.sensor_data_gen(),
         steering_azimuths_rad=steering_azimuths_rad,
     )
@@ -453,12 +471,12 @@ detector_with_ownship_noise = _make_detector(simulator_with_ownship_noise)
 all_detections_without_ownship_noise = list(
     detector_without_ownship_noise.detections_gen(progress_bar=False, total_timesteps=num_steps)
 )
-snr_map_without_ownship_noise = detector_without_ownship_noise.snr_history
+reported_snr_without_ownship_noise = detector_without_ownship_noise.reported_snr_history
 
 all_detections_with_ownship_noise = list(
     detector_with_ownship_noise.detections_gen(progress_bar=False, total_timesteps=num_steps)
 )
-snr_map_with_ownship_noise = detector_with_ownship_noise.snr_history
+reported_snr_with_ownship_noise = detector_with_ownship_noise.reported_snr_history
 
 steering_azimuths_deg = np.rad2deg(steering_azimuths_rad)
 
@@ -477,7 +495,7 @@ print(f"Total no. of detections w/ ownship noise: {len(detections_with_ownship_n
 # --------------------------------------
 #
 # A two-row comparison grid highlights how ownship self-noise changes the raw
-# SNR field and corresponding detection overlays under the same detector chain.
+# SNR field and corresponding detection overlays under the same detector.
 # In the ambient-only row the three target tracks are cleanly resolved, with
 # detections following each line closely. In the ownship-noise row the same
 # tracks remain present but a wideband elevation appears concentrated around
@@ -500,13 +518,13 @@ fig_results = make_subplots(
 )
 
 result_panels = [
-    (1, snr_map_without_ownship_noise, detections_without_ownship_noise),
-    (2, snr_map_with_ownship_noise, detections_with_ownship_noise),
+    (1, reported_snr_without_ownship_noise, detections_without_ownship_noise),
+    (2, reported_snr_with_ownship_noise, detections_with_ownship_noise),
 ]
 
-for row, snr_map, detections in result_panels:
+for row, reported_snr, detections in result_panels:
     plot_btr(
-        data=snr_map,
+        data=reported_snr,
         timesteps=timesteps,
         steering_azimuths=steering_azimuths_deg,
         fig=fig_results,
@@ -514,7 +532,7 @@ for row, snr_map, detections in result_panels:
         col=1,
     )
     plot_btr(
-        data=snr_map,
+        data=reported_snr,
         detections=detections,
         timesteps=timesteps,
         steering_azimuths=steering_azimuths_deg,

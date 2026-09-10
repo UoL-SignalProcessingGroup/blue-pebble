@@ -265,16 +265,19 @@ signal_models = [_make_signal_model() for _ in target_truths]
 # calculator to produce beamformed output over time.
 #
 # :class:`~.PassiveSonarDetector` then turns that output into discrete detections using a
-# sonar-specific chain of thresholding and peak selection. In multi-target scenes, this
-# stage is where overlapping bearing structure, sidelobes, and clutter begin to
+# single CFAR-family detector, which applies a false-alarm-calibrated threshold and
+# consolidates the surviving cells into one detection per source. In multi-target scenes,
+# this stage is where overlapping bearing structure, sidelobes, and clutter begin to
 # influence the tracking problem downstream.
 
 # %%
-from bluepebble.detector import CACFARDetector, PassiveSonarDetector, PeakDetector
+from bluepebble.detector import CACFARDetector, PassiveSonarDetector
 from bluepebble.plotter import apply_shared_colourscale, plot_btr
 from bluepebble.sigproc import (
     DelayAndSumBeamformer,
     SteeringCalculator,
+    beams_per_mainlobe,
+    cfar_window_for_mainlobe,
 )
 from bluepebble.simulator import ContinuousSTFTPassiveSonarArraySimulator
 
@@ -304,21 +307,39 @@ simulator = ContinuousSTFTPassiveSonarArraySimulator(
     fade_in_ms=fade_in_ms,
 )
 
-cfar_detector = CACFARDetector(
-    num_guard_cells=6, num_training_cells=10, threshold_factor=1.05, mode="wrap"
+# target_pfa=0.3594 reproduces the pre-refactor threshold_factor=1.05 exactly, via
+# CA-CFAR's single-look Pfa = (1 + alpha/N)^-N with N = 2 * num_training_cells. It is a
+# permissive threshold: peak consolidation does most of the rejection in this scenario.
+# Guard and training cells follow from the array rather than being chosen: a source spans a
+# mainlobe in bearing, so the guard band has to reach past it or the training cells measure
+# the target and compress the reported SNR. Evaluated at 50 Hz -- the lowest tonal in the scenario
+# and so the widest
+# lobe. peak_distance comes from the same width, since two candidates closer than a mainlobe
+# are not resolvable as separate sources.
+mainlobe_beams = beams_per_mainlobe(
+    aperture_m=(num_sensors - 1) * sensor_spacing_m,
+    frequency_hz=50.0,
+    beam_spacing_rad=float(np.diff(steering_azimuths_rad)[0]),
+    sound_speed_ms=1500.0,
 )
-peak_detector = PeakDetector(distance=8)
+num_guard_cells, num_training_cells, peak_distance = cfar_window_for_mainlobe(mainlobe_beams)
 
-detection_chain = [cfar_detector, peak_detector]
+cfar_detector = CACFARDetector(
+    num_guard_cells=num_guard_cells,
+    num_training_cells=num_training_cells,
+    target_pfa=0.3594,
+    peak_distance=peak_distance,
+    circular=True,
+)
 
 detector = PassiveSonarDetector(
-    detection_chain=detection_chain,
+    detector=cfar_detector,
     sensor_data_gen=simulator.sensor_data_gen(),
     steering_azimuths_rad=steering_azimuths_rad,
 )
 
 all_detections = list(detector.detections_gen(progress_bar=False))
-snr_map = detector.snr_history
+reported_snr = detector.reported_snr_history
 
 detections_for_plotter = [d for _, detections in all_detections for d in detections]
 
@@ -335,7 +356,7 @@ fig_btr = make_subplots(
 )
 
 plot_btr(
-    data=snr_map,
+    data=reported_snr,
     timesteps=timesteps,
     steering_azimuths=np.rad2deg(steering_azimuths_rad),
     fig=fig_btr,
@@ -343,7 +364,7 @@ plot_btr(
     col=1,
 )
 plot_btr(
-    data=snr_map,
+    data=reported_snr,
     detections=detections_for_plotter,
     timesteps=timesteps,
     steering_azimuths=np.rad2deg(steering_azimuths_rad),

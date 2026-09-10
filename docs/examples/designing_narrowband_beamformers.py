@@ -18,7 +18,6 @@ into a single set of detections for downstream tracking.
 #
 # All dependencies are consolidated here for convenience.
 
-import math
 from datetime import datetime, timedelta
 
 import numpy as np
@@ -35,7 +34,6 @@ from bluepebble.detector import (
     BandDetector,
     CACFARDetector,
     MultibandPassiveSonarDetector,
-    PeakDetector,
 )
 from bluepebble.models.environment import FlatBathymetry, Linear
 from bluepebble.models.propagation import CylindricalAcousticPropagationModel
@@ -43,7 +41,13 @@ from bluepebble.platform import TowedArrayPlatform
 from bluepebble.plotter import apply_shared_colourscale, deduplicate_legend, plot_btr, plot_world
 from bluepebble.signal.anthropogenic import SyntheticAnthropogenicSignal
 from bluepebble.signal.random import ColouredNoiseSignal
-from bluepebble.sigproc import DelayAndSumBeamformer, FrequencyBand, SteeringCalculator
+from bluepebble.sigproc import (
+    DelayAndSumBeamformer,
+    FrequencyBand,
+    SteeringCalculator,
+    beams_per_mainlobe,
+    cfar_window_for_mainlobe,
+)
 from bluepebble.simulator import ContinuousSTFTPassiveSonarArraySimulator
 
 # %%
@@ -83,11 +87,6 @@ beam_spacing_deg = 360.0 / num_beams
 
 band_fmin_hz = 50.0
 band_fmax_hz = 240.0
-
-
-def _beamwidth_deg(frequency_hz: float) -> float:
-    """Return the -3 dB mainlobe width of the uniform line array at one frequency."""
-    return float(np.rad2deg(0.886 * (sound_speed_ms / frequency_hz) / array_aperture_m))
 
 
 print(f"Aperture {array_aperture_m:.2f} m, {num_beams} beams at {beam_spacing_deg:.2f} deg")
@@ -352,25 +351,35 @@ def _tonals_in_band(band: FrequencyBand) -> str:
 
 guard_scale = 2.0
 train_scale = 4.0
-threshold_factor = 1.75
+# Calibrating on Pfa rather than a raw threshold multiplier matters more here than in the
+# single-band examples: because each band sizes its own training window, the shared
+# threshold_factor=1.75 this example used previously actually gave every band a slightly
+# different false-alarm rate (0.176 at the widest window, 0.190 at the narrowest). Asking
+# for a Pfa instead gives every band the same detection policy, whatever its window size.
+# 0.18 sits in the middle of that old spread, so the bands behave much as they did before.
+target_pfa = 0.18
 
 
-def _band_detection_chain(band: FrequencyBand) -> list:
-    """Build a CFAR + peak chain sized to a band's widest mainlobe."""
-    mainlobe_beams = _beamwidth_deg(band.fmin) / beam_spacing_deg
-    guard = max(1, math.ceil(guard_scale * mainlobe_beams / 2))
-    training = max(2, math.ceil(train_scale * guard))
-    return [
-        CACFARDetector(
-            num_guard_cells=guard,
-            num_training_cells=training,
-            threshold_factor=threshold_factor,
-        ),
-        PeakDetector(distance=max(1, math.ceil(mainlobe_beams))),
-    ]
+def _band_detector(band: FrequencyBand) -> CACFARDetector:
+    """Build a CFAR detector sized to a band's widest mainlobe."""
+    mainlobe_beams = beams_per_mainlobe(
+        aperture_m=array_aperture_m,
+        frequency_hz=band.fmin,
+        beam_spacing_rad=np.deg2rad(beam_spacing_deg),
+        sound_speed_ms=sound_speed_ms,
+    )
+    guard, training, peak_distance = cfar_window_for_mainlobe(
+        mainlobe_beams, guard_scale=guard_scale, train_scale=train_scale
+    )
+    return CACFARDetector(
+        num_guard_cells=guard,
+        num_training_cells=training,
+        target_pfa=target_pfa,
+        peak_distance=peak_distance,
+    )
 
 
-chains = {band.label: _band_detection_chain(band) for band in view_bands}
+band_cfar_detectors = {band.label: _band_detector(band) for band in view_bands}
 
 # %%
 # Running the Simulation
@@ -413,9 +422,12 @@ labels = [band.label for band in view_bands]
 # so a downstream tracker gets exactly this stream. Bucketing each detection by the ``band``
 # already recorded in its metadata gives the per-band lists used for the panels below; a
 # tonal picked up by two bands still counts as two detections, one per band, not merged into
-# one. ``snr_history`` records the per-band SNR maps as a side effect of the same pass.
+# one. ``reported_snr_history`` records the per-band SNR maps as a side effect of the same pass.
 
-band_detectors = {label: BandDetector(detection_chain=chain) for label, chain in chains.items()}
+band_detectors = {
+    label: BandDetector(detector=cfar)
+    for label, cfar in band_cfar_detectors.items()
+}
 
 detector = MultibandPassiveSonarDetector(
     band_detectors=band_detectors,
@@ -430,7 +442,7 @@ for _timestamp, batch in detector.detections_gen(progress_bar=True, total_timest
         collapsed_detections.append(detection)
         detections_by_band[detection.metadata["band"]].append(detection)
 
-snr_maps = detector.snr_history
+snr_maps = detector.reported_snr_history
 map_rows = min(len(timesteps), next(iter(snr_maps.values())).shape[0])
 
 total_per_band = sum(len(dets) for dets in detections_by_band.values())

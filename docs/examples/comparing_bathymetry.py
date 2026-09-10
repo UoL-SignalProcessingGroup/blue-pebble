@@ -32,7 +32,7 @@ from stonesoup.models.transition.linear import (
 from stonesoup.types.groundtruth import GroundTruthPath, GroundTruthState
 
 import bluepebble
-from bluepebble.detector import CACFARDetector, PassiveSonarDetector, PeakDetector
+from bluepebble.detector import CACFARDetector, PassiveSonarDetector
 from bluepebble.models.environment import Constant, FlatBathymetry, SeamountBathymetry
 from bluepebble.models.propagation import rtrsAcousticPropagationModel
 from bluepebble.platform import TowedArrayPlatform
@@ -42,6 +42,8 @@ from bluepebble.signal.random import ColouredNoiseSignal
 from bluepebble.sigproc import (
     DelayAndSumBeamformer,
     SteeringCalculator,
+    beams_per_mainlobe,
+    cfar_window_for_mainlobe,
 )
 from bluepebble.simulator import ContinuousSTFTPassiveSonarArraySimulator
 
@@ -437,29 +439,45 @@ steering_calculator = SteeringCalculator(
 # - flat bathymetry
 # - seamount bathymetry
 #
-# Both use the same detector chain, CA-CFAR followed by peak selection. That means any
+# Both use the same detector, CA-CFAR with wrap-aware peak consolidation. That means any
 # difference in the final output should come from the seabed model rather than from a
 # different detection policy.
 
-cfar_num_guard_cells = 6
-cfar_num_training_cells = 10
-cfar_threshold_factor = 1.05
-cfar_mode = "wrap"
-peak_distance = 8
+# Guard and training cells follow from the array rather than being chosen: a source spans a
+# mainlobe in bearing, so the guard band has to reach past it or the training cells measure
+# the target and compress the reported SNR. Evaluated at 120 Hz -- the lowest tonal in the
+# scenario and so the widest
+# lobe. peak_distance comes from the same width, since two candidates closer than a mainlobe
+# are not resolvable as separate sources.
+mainlobe_beams = beams_per_mainlobe(
+    aperture_m=(num_sensors - 1) * sensor_spacing_m,
+    frequency_hz=120.0,
+    beam_spacing_rad=float(np.diff(steering_azimuths_rad)[0]),
+    sound_speed_ms=1500.0,
+)
+cfar_num_guard_cells, cfar_num_training_cells, peak_distance = cfar_window_for_mainlobe(
+    mainlobe_beams
+)
+# Preserves this example's pre-refactor operating point: the old threshold_factor=1.05 was
+# alpha applied to the training-cell mean, and CA-CFAR's single-look Pfa = (1 + alpha/N)^-N
+# with N = 2 * num_training_cells inverts it exactly. It is a deliberately permissive
+# threshold -- peak consolidation, not the threshold, does most of the rejection here.
+cfar_target_pfa = 0.3594
+cfar_circular = True
 
 
 def _make_detector(simulator: ContinuousSTFTPassiveSonarArraySimulator) -> PassiveSonarDetector:
-    """Create a PassiveSonarDetector with a CACFARDetector followed by a PeakDetector."""
+    """Create a PassiveSonarDetector driven by a single CA-CFAR detector."""
     cfar_detector = CACFARDetector(
         num_guard_cells=cfar_num_guard_cells,
         num_training_cells=cfar_num_training_cells,
-        threshold_factor=cfar_threshold_factor,
-        mode=cfar_mode,
+        target_pfa=cfar_target_pfa,
+        peak_distance=peak_distance,
+        circular=cfar_circular,
     )
-    peak_detector = PeakDetector(distance=peak_distance)
 
     return PassiveSonarDetector(
-        detection_chain=[cfar_detector, peak_detector],
+        detector=cfar_detector,
         sensor_data_gen=simulator.sensor_data_gen(),
         steering_azimuths_rad=steering_azimuths_rad,
     )
@@ -501,12 +519,12 @@ detector_seamount_bathymetry = _make_detector(simulator_seamount_bathymetry)
 all_detections_flat_bathymetry = list(
     detector_flat_bathymetry.detections_gen(progress_bar=False, total_timesteps=num_steps)
 )
-snr_map_flat_bathymetry = detector_flat_bathymetry.snr_history
+reported_snr_flat_bathymetry = detector_flat_bathymetry.reported_snr_history
 
 all_detections_seamount_bathymetry = list(
     detector_seamount_bathymetry.detections_gen(progress_bar=False, total_timesteps=num_steps)
 )
-snr_map_seamount_bathymetry = detector_seamount_bathymetry.snr_history
+reported_snr_seamount_bathymetry = detector_seamount_bathymetry.reported_snr_history
 
 timesteps = np.array([start_time + i * time_interval for i in range(num_steps)], dtype=object)
 steering_azimuths_deg = np.rad2deg(steering_azimuths_rad)
@@ -547,15 +565,15 @@ fig_snr = make_subplots(
 )
 
 snr_plot_configs = [
-    (1, 1, snr_map_flat_bathymetry, None),
-    (1, 2, snr_map_flat_bathymetry, detections_flat_bathymetry),
-    (2, 1, snr_map_seamount_bathymetry, None),
-    (2, 2, snr_map_seamount_bathymetry, detections_seamount_bathymetry),
+    (1, 1, reported_snr_flat_bathymetry, None),
+    (1, 2, reported_snr_flat_bathymetry, detections_flat_bathymetry),
+    (2, 1, reported_snr_seamount_bathymetry, None),
+    (2, 2, reported_snr_seamount_bathymetry, detections_seamount_bathymetry),
 ]
 
-for row, col, snr_map, detections in snr_plot_configs:
+for row, col, reported_snr, detections in snr_plot_configs:
     plot_btr(
-        data=snr_map,
+        data=reported_snr,
         detections=detections,
         timesteps=timesteps,
         steering_azimuths=steering_azimuths_deg,
