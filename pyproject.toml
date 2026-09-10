@@ -156,7 +156,10 @@ include-package-data = false
 
 [tool.setuptools.packages.find]
 where = ["."]
-exclude = ["docs*", "tests*", "external_tools*"]
+# "build*" keeps a stale local build/lib tree out of the wheel. Package discovery walks the
+# filesystem rather than the git index, so a developer with leftover build output otherwise
+# ships nested copies of the whole package inside their wheel.
+exclude = ["docs*", "tests*", "external_tools*", "build*"]
 
 [tool.coverage.run]
 source = ["bluepebble"]
