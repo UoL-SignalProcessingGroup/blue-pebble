@@ -34,7 +34,7 @@ import numpy as np
 from numpy.lib.stride_tricks import sliding_window_view
 from numpy.typing import ArrayLike, NDArray
 from scipy.optimize import brentq
-from scipy.signal import find_peaks
+from scipy.signal import find_peaks, peak_prominences
 from scipy.stats import beta as beta_dist
 from stonesoup.base import Base, Property
 
@@ -43,6 +43,13 @@ DetectionArray: TypeAlias = NDArray[np.float64]
 
 # Shared floor to keep log10/division finite at zero power without biasing real signals.
 _EPS = np.finfo(np.float64).eps
+
+# Below this threshold margin (alpha, in dB above the local noise estimate) a CFAR detector
+# only rejects random noise fluctuation: deterministic spatial structure such as beamformer
+# sidelobes or multipath spread sits above the local mean by more than this and is detected
+# regardless of target_pfa. Many integrated looks drive alpha towards 0 dB -- e.g. ~0.1 dB for
+# a complex time series of thousands of samples -- which is when users need to be told.
+_LOW_THRESHOLD_MARGIN_DB = 1.0
 
 
 def _empty_detections() -> DetectionArray:
@@ -493,6 +500,27 @@ class _CFARDetectorBase(DetectionAlgorithm, ABC):
     target_pfa : float
         Desired probability of false alarm. Alpha is calibrated automatically per num_frames seen
         at each detect() call.
+    effective_looks_per_frame : float
+        Effective independent Exponential(1) looks in each per-frame power sample (K). The
+        calibration assumes ``K * num_frames`` independent looks per cell.
+
+    Threshold margin and sidelobes
+    ------------------------------
+    ``target_pfa`` controls false alarms: threshold crossings where no source is present. Its
+    calibration assumes noise-only cells whose looks are independent. Two things break that on
+    beamformer output:
+
+    - Correlated looks. Complex time-series output from ``DelayAndSumBeamformer`` in ``'time'``
+      or ``'frequency'`` domain presents every sample as a frame, but samples are not independent
+      looks, and neighbouring beams share noise. The achieved Pfa then differs from target_pfa.
+      Set ``effective_looks_per_frame`` to the data's true degrees of freedom.
+    - Source-induced crossings. With many looks, noise fluctuation averages out and alpha
+      approaches 1 (0 dB), which is correct for noise. Every sidelobe of a strong source then
+      exceeds the threshold. These are not false alarms in the Pfa sense, so no choice of
+      target_pfa removes them; :meth:`detect` warns when the margin falls below 1 dB. Reduce
+      sidelobes at the beamformer (``DelayAndSumBeamformer(shading=...)``), which keeps
+      target_pfa as the only detection parameter. ``peak_prominence`` also rejects them, but as a
+      fixed dB criterion outside the Pfa model.
 
     """
 
@@ -533,6 +561,15 @@ class _CFARDetectorBase(DetectionAlgorithm, ABC):
         doc="Desired probability of false alarm. Alpha is calibrated automatically per num_frames "
         "seen at each detect() call.",
     )
+    effective_looks_per_frame: float = Property(
+        default=1.0,
+        doc="Effective number of independent Exponential(1) looks integrated into each "
+        "per-frame power sample fed to this detector. Leave at 1.0 for narrowband/single-bin "
+        "data; broadband STFT beam power (a sum over many frequency bins per frame) needs "
+        "this set to the data's effective per-frame degrees of freedom or the calibrated "
+        "Pfa runs far below target. Values below 1 account for correlated frames. See "
+        "calibrate_os_cfar_alpha_mc for how to estimate it.",
+    )
 
     def __init__(self, *args: object, **kwargs: object) -> None:
         # Caught before Stone Soup's Base sees them: an unknown kwarg there surfaces as
@@ -554,10 +591,32 @@ class _CFARDetectorBase(DetectionAlgorithm, ABC):
             raise ValueError(f"num_training_cells ({self.num_training_cells}) must be >= 1")
         if not 0 < self.target_pfa < 1:
             raise ValueError(f"target_pfa ({self.target_pfa}) must be in (0, 1)")
-        self.num_training_total: int = 2 * self.num_training_cells
-        # Alpha depends only on num_frames (not on the data itself), so it's cheap to memoize
-        # across detect() calls that share a frame count. Avoids re-solving/re-simulating.
+        if self.effective_looks_per_frame <= 0:
+            raise ValueError(
+                f"effective_looks_per_frame ({self.effective_looks_per_frame}) must be positive"
+            )
+        # Alpha depends only on num_frames and the calibration parameters (not on the data
+        # itself), so it's cheap to memoize across detect() calls that share a frame count.
+        # Avoids re-solving/re-simulating. The cache is keyed by num_frames and invalidated
+        # whenever _calibration_signature() changes -- see _alpha_for.
         self._alpha_cache: dict[int, float] = {}
+        self._alpha_cache_signature: tuple = self._calibration_signature()
+        # Frame counts already warned about for a low threshold margin, so a detector warns once
+        # per frame count rather than on every scan.
+        self._low_margin_warned: set[int] = set()
+
+    @property
+    def num_training_total(self) -> int:
+        """Total reference cells, both sides of the CUT.
+
+        Derived on access rather than stored at construction, so it can never disagree with
+        ``num_training_cells`` if that property is changed later (e.g. by a parameter sweep).
+        """
+        return 2 * self.num_training_cells
+
+    def _calibration_signature(self) -> tuple:
+        """Every parameter alpha depends on, besides num_frames."""
+        return (self.target_pfa, self.effective_looks_per_frame, self.num_training_cells)
 
     @property
     def _wrap_pad(self) -> int:
@@ -574,9 +633,26 @@ class _CFARDetectorBase(DetectionAlgorithm, ABC):
         """
         return "wrap" if self.circular else "edge"
 
-    @abstractmethod
     def _alpha_for(self, num_frames: int) -> float:
-        """Return the calibrated threshold multiplier for a given number of frames."""
+        """Return the calibrated threshold multiplier for a given number of frames.
+
+        Memoised per num_frames. Stone Soup properties are ordinary mutable attributes, so the
+        cache is discarded if any calibration parameter has changed since it was filled;
+        otherwise a detector reconfigured after first use (directly, or on a deep copy during a
+        sweep) would silently keep thresholding with the old alpha.
+        """
+        signature = self._calibration_signature()
+        if signature != self._alpha_cache_signature:
+            self._alpha_cache = {}
+            self._low_margin_warned = set()
+            self._alpha_cache_signature = signature
+        if num_frames not in self._alpha_cache:
+            self._alpha_cache[num_frames] = self._calibrate_alpha(num_frames)
+        return self._alpha_cache[num_frames]
+
+    @abstractmethod
+    def _calibrate_alpha(self, num_frames: int) -> float:
+        """Compute (uncached) the threshold multiplier for a given number of frames."""
         ...
 
     @abstractmethod
@@ -613,17 +689,75 @@ class _CFARDetectorBase(DetectionAlgorithm, ABC):
             # rather than pure angular resolution.
             pad = self._wrap_pad
             padded = np.pad(sparse, pad_width=pad, mode="wrap")
-            padded_indices, _ = find_peaks(
-                padded, distance=self.peak_distance, prominence=self.peak_prominence
-            )
+            padded_indices, _ = find_peaks(padded, distance=self.peak_distance)
             # Map padded indices back to original bearing bins; modulo handles peaks that
             # were only visible inside the wrapped padding itself.
-            return np.unique((padded_indices - pad) % num_beams)
+            indices = np.unique((padded_indices - pad) % num_beams)
+        else:
+            indices, _ = find_peaks(sparse, distance=self.peak_distance)
 
-        indices, _ = find_peaks(
-            sparse, distance=self.peak_distance, prominence=self.peak_prominence
+        return self._filter_by_prominence(snr_db, indices, num_beams)
+
+    def _filter_by_prominence(
+        self, snr_db: np.ndarray, indices: IntArray, num_beams: int
+    ) -> IntArray:
+        """Keep consolidated peaks whose prominence in the full SNR map meets peak_prominence.
+
+        Prominence is measured on the SNR map itself, not the sparse candidate map used for
+        consolidation: there, every non-candidate cell is -inf, so any candidate isolated by
+        sub-threshold cells -- e.g. a sidelobe separated from its mainlobe by a null -- would
+        have infinite prominence and could never be rejected.
+
+        A candidate that is not a local maximum of the SNR map (a shoulder of a higher,
+        sub-threshold cell) has zero prominence and is dropped.
+        """
+        if self.peak_prominence is None or len(indices) == 0:
+            return indices
+
+        if self.circular:
+            # Three copies give every peak the full circle on both sides to search for its
+            # bases, which is what prominence on a circular axis means.
+            extended = np.concatenate([snr_db, snr_db, snr_db])
+            positions = indices + num_beams
+        else:
+            extended = snr_db
+            positions = indices
+
+        with warnings.catch_warnings():
+            # scipy flags zero-prominence (non-maximum) positions with PeakPropertyWarning, a
+            # RuntimeWarning subclass that is not exported publicly; those are dropped below.
+            warnings.simplefilter("ignore", RuntimeWarning)
+            prominences, _, _ = peak_prominences(extended, positions)
+        return indices[prominences >= self.peak_prominence]
+
+    def _warn_if_low_threshold_margin(self, alpha: float, num_frames: int) -> None:
+        """Warn once per frame count when look integration has pushed alpha towards 0 dB.
+
+        Only integration-driven margins are reported: if the same target_pfa would already give
+        a sub-1 dB threshold from a single look, the low margin is a deliberate high-Pfa choice
+        (the CA-CFAR single-look closed form is used as that reference for both detectors).
+        """
+        margin_db = 10 * np.log10(alpha)
+        if margin_db >= _LOW_THRESHOLD_MARGIN_DB or num_frames in self._low_margin_warned:
+            return
+        # Sweeps may set target_pfa to 1.0, which the constructor rejects and the closed form
+        # cannot solve; a Pfa of 1 is a deliberately high choice, so there is nothing to report.
+        if self.target_pfa >= 1:
+            return
+        single_look_alpha = solve_ca_cfar_alpha(self.target_pfa, self.num_training_total, 1)
+        if 10 * np.log10(single_look_alpha) < _LOW_THRESHOLD_MARGIN_DB:
+            return
+        self._low_margin_warned.add(num_frames)
+        warnings.warn(
+            f"{type(self).__name__} threshold is only {margin_db:.2f} dB above the local noise "
+            f"estimate ({num_frames} frames x {self.effective_looks_per_frame:g} effective looks "
+            f"per frame, target_pfa={self.target_pfa:g}). At this margin, sidelobes of strong "
+            "sources cross the threshold regardless of target_pfa: they are source-induced, not "
+            "false alarms. Reduce them with beamformer shading. If frames are correlated (e.g. "
+            "complex time-series samples), also set effective_looks_per_frame to the data's "
+            "true degrees of freedom. See _CFARDetectorBase.",
+            stacklevel=3,
         )
-        return indices
 
     def detect(self, data: ArrayLike) -> DetectionArray:
         """Detect and consolidate signals from raw beamformed data.
@@ -644,6 +778,7 @@ class _CFARDetectorBase(DetectionAlgorithm, ABC):
 
         directional_power, noise_estimate = self._power_and_noise(data_array)
         alpha = self._alpha_for(num_frames)
+        self._warn_if_low_threshold_margin(alpha, num_frames)
         threshold = alpha * noise_estimate
         # Reported SNR is noise-relative rather than threshold-relative, so it matches
         # detection_snr_map() and reads as a physical quantity independent of the chosen
@@ -674,17 +809,19 @@ class CACFARDetector(_CFARDetectorBase):
     a contaminated training cell the way OS-CFAR's order statistic can. Kept for
     codebase consistency and as a benchmark; see OSCFARDetector as the default choice.
 
-    See :class:`_CFARDetectorBase` for ``num_guard_cells``, ``num_training_cells``, and
-    ``target_pfa`` -- CA-CFAR adds no attributes of its own.
+    See :class:`_CFARDetectorBase` for ``num_guard_cells``, ``num_training_cells``,
+    ``target_pfa`` and ``effective_looks_per_frame`` -- CA-CFAR adds no attributes of its own.
 
     """
 
-    def _alpha_for(self, num_frames: int) -> float:
-        if num_frames not in self._alpha_cache:
-            self._alpha_cache[num_frames] = solve_ca_cfar_alpha(
-                self.target_pfa, self.num_training_total, num_frames
-            )
-        return self._alpha_cache[num_frames]
+    def _calibrate_alpha(self, num_frames: int) -> float:
+        """Exact CA-CFAR alpha for ``effective_looks_per_frame * num_frames`` looks."""
+        return solve_ca_cfar_alpha(
+            self.target_pfa,
+            self.num_training_total,
+            num_frames,
+            effective_looks_per_frame=self.effective_looks_per_frame,
+        )
 
     def _local_noise_floor(self, directional_power: np.ndarray) -> np.ndarray:
         """Per-bearing local noise floor via cell-averaging sliding window."""
@@ -734,7 +871,9 @@ class OSCFARDetector(_CFARDetectorBase):
     -----
     Alpha is memoised per ``num_frames``, so calibration is paid once per distinct frame count
     per detector instance rather than on every :meth:`detect` call. Subsequent calls at the same
-    frame count cost microseconds.
+    frame count cost microseconds. Changing a calibration parameter (``target_pfa``,
+    ``effective_looks_per_frame``, ``num_training_cells``, ``rank`` or ``mc_trials``) discards
+    the memoised values.
 
     ``num_frames == 1`` with ``effective_looks_per_frame == 1`` uses the closed form and is
     effectively free. Every other case falls back to Monte Carlo, which draws arrays sized
@@ -762,23 +901,11 @@ class OSCFARDetector(_CFARDetectorBase):
         doc="Random number generator for num_frames > 1 Monte Carlo alpha calibration. Defaults "
         "to a fresh unseeded Generator per calibration when unset.",
     )
-    effective_looks_per_frame: float = Property(
-        default=1.0,
-        doc="Effective number of independent Exponential(1) looks integrated into each "
-        "per-frame power sample fed to this detector. Leave at 1.0 for narrowband/single-bin "
-        "data; broadband STFT beam power (a sum over many frequency bins per frame) needs "
-        "this set to the data's effective per-frame degrees of freedom or the calibrated "
-        "Pfa runs far below target. See calibrate_os_cfar_alpha_mc for how to estimate it.",
-    )
 
     def __init__(self, *args: object, **kwargs: object) -> None:
         """Initialise the OS-CFAR detector with the given parameters."""
         super().__init__(*args, **kwargs)
 
-        if self.effective_looks_per_frame <= 0:
-            raise ValueError(
-                f"effective_looks_per_frame ({self.effective_looks_per_frame}) must be positive"
-            )
         if not 1 <= self.rank <= self.num_training_total:
             raise ValueError(
                 f"Rank ({self.rank}) must be between 1 and "
@@ -796,7 +923,15 @@ class OSCFARDetector(_CFARDetectorBase):
                 stacklevel=2,
             )
 
-    def _alpha_for(self, num_frames: int) -> float:
+    def _calibration_signature(self) -> tuple:
+        """Return the base calibration parameters plus rank and Monte Carlo size.
+
+        ``rng`` is deliberately excluded: it only changes Monte Carlo sampling noise, not the
+        quantity being estimated.
+        """
+        return (*super()._calibration_signature(), self.rank, self.mc_trials)
+
+    def _calibrate_alpha(self, num_frames: int) -> float:
         """Get the calibrated alpha for a given number of frames.
 
         Parameters
@@ -810,26 +945,22 @@ class OSCFARDetector(_CFARDetectorBase):
             The calibrated alpha value.
 
         """
-        if num_frames not in self._alpha_cache:
-            if num_frames == 1 and self.effective_looks_per_frame == 1.0:
-                # Exact closed form only holds for single-frame (exponential) statistics.
-                alpha = solve_os_cfar_alpha_single_look(
-                    self.target_pfa, self.num_training_total, self.rank
-                )
-            else:
-                # M-frame (and/or band-integrated) power is Gamma-distributed; fall back to
-                # Monte Carlo calibration.
-                alpha = calibrate_os_cfar_alpha_mc(
-                    self.target_pfa,
-                    self.num_training_total,
-                    self.rank,
-                    num_frames,
-                    num_trials=self.mc_trials,
-                    rng=self.rng,
-                    effective_looks_per_frame=self.effective_looks_per_frame,
-                )
-            self._alpha_cache[num_frames] = alpha
-        return self._alpha_cache[num_frames]
+        if num_frames == 1 and self.effective_looks_per_frame == 1.0:
+            # Exact closed form only holds for single-frame (exponential) statistics.
+            return solve_os_cfar_alpha_single_look(
+                self.target_pfa, self.num_training_total, self.rank
+            )
+        # M-frame (and/or band-integrated) power is Gamma-distributed; fall back to
+        # Monte Carlo calibration.
+        return calibrate_os_cfar_alpha_mc(
+            self.target_pfa,
+            self.num_training_total,
+            self.rank,
+            num_frames,
+            num_trials=self.mc_trials,
+            rng=self.rng,
+            effective_looks_per_frame=self.effective_looks_per_frame,
+        )
 
     def _local_noise_floor(self, directional_power: np.ndarray) -> np.ndarray:
         """Per-bearing local noise floor via order-statistic sliding window.

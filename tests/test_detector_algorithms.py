@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+import warnings
+
 import numpy as np
 import pytest
 
@@ -436,6 +438,70 @@ def test_oscfar_peak_prominence_suppresses_low_prominence_shoulder(monkeypatch) 
     np.testing.assert_array_equal(strict._consolidate_peaks(snr_db, candidate_mask, 5), [1])
 
 
+def test_peak_prominence_rejects_candidate_isolated_by_sub_threshold_cells(monkeypatch) -> None:
+    """Prominence must be measured on the SNR map, not the thresholded candidate map.
+
+    Regression test: a weak candidate separated from a stronger one by a non-candidate dip (a
+    sidelobe beyond its null) used to be measured against -inf neighbours, giving infinite
+    prominence, so peak_prominence could never reject it.
+    """
+    algorithms = _load_detector_algorithms(monkeypatch)
+    snr_db = np.array([0.0, 12.0, 2.0, 5.0, 3.5, 0.0])
+    candidate_mask = np.array([False, True, False, True, False, False])
+    common = dict(num_guard_cells=0, num_training_cells=1, target_pfa=0.9, peak_distance=1)
+
+    permissive = algorithms.CACFARDetector(**common, circular=False)
+    strict = algorithms.CACFARDetector(**common, circular=False, peak_prominence=4.0)
+    lenient = algorithms.CACFARDetector(**common, circular=False, peak_prominence=2.5)
+
+    # Candidate at index 3 has prominence 5 - max(2, 0) = 3 dB on the real map.
+    np.testing.assert_array_equal(permissive._consolidate_peaks(snr_db, candidate_mask, 6), [1, 3])
+    np.testing.assert_array_equal(strict._consolidate_peaks(snr_db, candidate_mask, 6), [1])
+    np.testing.assert_array_equal(lenient._consolidate_peaks(snr_db, candidate_mask, 6), [1, 3])
+
+
+def test_peak_prominence_bases_wrap_on_a_circular_axis(monkeypatch) -> None:
+    """On a circular axis a peak's bases are searched across the wrap seam."""
+    algorithms = _load_detector_algorithms(monkeypatch)
+    # Peak at index 1 (6 dB). Linear: the left search stops at the edge (5 dB), so prominence is
+    # 6 - max(5, 1) = 1 dB. Circular: the left search wraps through the 0 dB cells before meeting
+    # the 9 dB peak, so prominence is 6 - max(0, 1) = 5 dB.
+    snr_db = np.array([5.0, 6.0, 1.0, 9.0, 0.0, 0.0])
+    candidate_mask = np.array([False, True, False, True, False, False])
+    common = dict(
+        num_guard_cells=0,
+        num_training_cells=1,
+        target_pfa=0.9,
+        peak_distance=1,
+        peak_prominence=2.0,
+    )
+
+    circular = algorithms.CACFARDetector(**common, circular=True)
+    linear = algorithms.CACFARDetector(**common, circular=False)
+
+    np.testing.assert_array_equal(circular._consolidate_peaks(snr_db, candidate_mask, 6), [1, 3])
+    np.testing.assert_array_equal(linear._consolidate_peaks(snr_db, candidate_mask, 6), [3])
+
+
+def test_peak_prominence_drops_candidate_that_is_a_shoulder_of_a_sub_threshold_peak(
+    monkeypatch,
+) -> None:
+    """A candidate that is not a local maximum of the SNR map has zero prominence."""
+    algorithms = _load_detector_algorithms(monkeypatch)
+    snr_db = np.array([0.0, 6.0, 8.0, 0.0, 0.0])
+    candidate_mask = np.array([False, True, False, False, False])
+    detector = algorithms.CACFARDetector(
+        num_guard_cells=0,
+        num_training_cells=1,
+        target_pfa=0.9,
+        peak_distance=1,
+        peak_prominence=0.5,
+        circular=False,
+    )
+
+    assert detector._consolidate_peaks(snr_db, candidate_mask, 5).size == 0
+
+
 # --------------------------------------------------------------------------
 # _directional_power (real vs complex beamformed_data)
 # --------------------------------------------------------------------------
@@ -657,6 +723,88 @@ def test_ca_cfar_alpha_rejects_non_positive_effective_looks(monkeypatch) -> None
 
     with pytest.raises(ValueError, match="effective_looks_per_frame"):
         algorithms.solve_ca_cfar_alpha(0.05, 16, 4, 0.0)
+
+
+def test_cacfar_detector_passes_effective_looks_through_to_calibration(monkeypatch) -> None:
+    """CA-CFAR should calibrate for K * num_frames looks, like OS-CFAR."""
+    algorithms = _load_detector_algorithms(monkeypatch)
+    common = dict(num_guard_cells=0, num_training_cells=4, target_pfa=1e-3)
+    detector = algorithms.CACFARDetector(**common, effective_looks_per_frame=0.25)
+
+    expected = algorithms.solve_ca_cfar_alpha(1e-3, 8, 40, effective_looks_per_frame=0.25)
+
+    assert detector._alpha_for(40) == pytest.approx(expected)
+    assert detector._alpha_for(40) == pytest.approx(algorithms.solve_ca_cfar_alpha(1e-3, 8, 10))
+    assert algorithms.CACFARDetector(**common)._alpha_for(40) < detector._alpha_for(40)
+
+
+@pytest.mark.parametrize("bad_value", [0.0, -1.0])
+def test_cacfar_detector_rejects_non_positive_effective_looks(monkeypatch, bad_value) -> None:
+    """effective_looks_per_frame is validated for every CFAR detector, not only OS-CFAR."""
+    algorithms = _load_detector_algorithms(monkeypatch)
+    with pytest.raises(ValueError, match="effective_looks_per_frame"):
+        algorithms.CACFARDetector(
+            num_guard_cells=0,
+            num_training_cells=1,
+            target_pfa=0.1,
+            effective_looks_per_frame=bad_value,
+        )
+
+
+def test_detect_warns_once_when_integration_leaves_a_negligible_threshold_margin(
+    monkeypatch,
+) -> None:
+    """Thousands of looks drive alpha to ~0 dB, where sidelobes pass regardless of target_pfa."""
+    algorithms = _load_detector_algorithms(monkeypatch)
+    detector = algorithms.CACFARDetector(num_guard_cells=1, num_training_cells=4, target_pfa=1e-3)
+    data = np.ones((16, 5000), dtype=complex)
+
+    with pytest.warns(UserWarning, match="threshold is only"):
+        detector.detect(data)
+    with warnings.catch_warnings():
+        warnings.simplefilter("error")
+        detector.detect(data)
+
+
+def test_detect_does_not_warn_about_margin_for_single_look_or_deliberately_high_pfa(
+    monkeypatch,
+) -> None:
+    """Low margins that are not caused by look integration are the user's explicit choice."""
+    algorithms = _load_detector_algorithms(monkeypatch)
+    single_look = algorithms.CACFARDetector(
+        num_guard_cells=1, num_training_cells=4, target_pfa=1e-3
+    )
+    high_pfa = algorithms.CACFARDetector(num_guard_cells=0, num_training_cells=1, target_pfa=0.5)
+
+    with warnings.catch_warnings():
+        warnings.simplefilter("error")
+        single_look.detect(np.ones((16, 1)))
+        high_pfa.detect(np.ones((16, 50)))
+        # Declaring the frames correlated restores a meaningful margin.
+        algorithms.CACFARDetector(
+            num_guard_cells=1,
+            num_training_cells=4,
+            target_pfa=1e-3,
+            effective_looks_per_frame=1 / 5000,
+        ).detect(np.ones((16, 5000)))
+
+
+def test_margin_check_tolerates_target_pfa_of_one_set_by_a_sweep(monkeypatch) -> None:
+    """Pd examples sweep target_pfa up to 1.0; the margin reference must not reject it."""
+    algorithms = _load_detector_algorithms(monkeypatch)
+    detector = algorithms.OSCFARDetector(
+        num_guard_cells=1,
+        num_training_cells=4,
+        rank=6,
+        target_pfa=1e-3,
+        mc_trials=2000,
+        rng=np.random.default_rng(0),
+    )
+    detector.target_pfa = 1.0
+
+    with warnings.catch_warnings():
+        warnings.simplefilter("error")
+        detector.detect(np.random.default_rng(1).exponential(size=(16, 50)))
 
 
 # --------------------------------------------------------------------------

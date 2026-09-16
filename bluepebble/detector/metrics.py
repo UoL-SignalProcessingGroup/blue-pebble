@@ -433,11 +433,20 @@ class SweepResult:
 def _clone_detector_with_param(spec: SweepSpec, value: float) -> DetectionAlgorithm:
     """Deep-copy a spec's detector with its swept parameter set to ``value``."""
     detector_copy = copy.deepcopy(spec.detector)
-    setattr(detector_copy, spec.param_name, float(value))
-    # A CFAR detector's alpha is memoized per num_frames (see _CFARDetectorBase). Deep-copying
-    # a detector that was already used to detect() carries that stale cache along with it, so
-    # the clone would keep reusing an alpha calibrated for the OLD parameter value instead of
-    # recalibrating for `value`. Not every DetectionAlgorithm has this cache, hence the guard.
+    current = getattr(detector_copy, spec.param_name)
+    # Integer parameters (num_training_cells, num_guard_cells, rank, peak_distance, ...) index
+    # and size arrays, so a float value would crash detect(); keep their type.
+    if isinstance(current, (int, np.integer)) and not isinstance(current, bool):
+        if not float(value).is_integer():
+            raise ValueError(
+                f"{spec.param_name} is an integer parameter; cannot sweep non-integer {value!r}"
+            )
+        setattr(detector_copy, spec.param_name, int(value))
+    else:
+        setattr(detector_copy, spec.param_name, float(value))
+    # A CFAR detector invalidates its memoised alpha when a calibration parameter changes (see
+    # _CFARDetectorBase._alpha_for); clearing here as well keeps detectors that don't track
+    # that themselves safe. Not every DetectionAlgorithm has this cache, hence the guard.
     if hasattr(detector_copy, "_alpha_cache"):
         detector_copy._alpha_cache = {}
     return detector_copy
