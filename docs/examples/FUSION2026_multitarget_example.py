@@ -185,8 +185,11 @@ det_params = {
     "cfar_detector": {
         "num_guard_cells": 6,
         "num_training_cells": 10,
-        # Reproduces the pre-refactor threshold_factor exactly, via CA-CFAR's single-look
-        # Pfa = (1 + alpha/N)^-N with N = 2 * num_training_cells.
+        # Chosen so CA-CFAR's single-look closed form, Pfa = (1 + alpha/N)^-N with
+        # N = 2 * num_training_cells, gives the pre-refactor threshold_factor of 1.05 (0.21 dB).
+        # detect() calibrates for the frames it receives, here every one of the 2500 samples
+        # per scan, so the threshold applied is 1.0073 (0.03 dB) and the achieved false-alarm
+        # rate is not 0.3594. See calibrating_cfar_from_noise.py for making target_pfa exact.
         "target_pfa": 0.3594,
         "circular": True,
         "peak_distance": 3,
