@@ -167,6 +167,11 @@ class PassiveSonarDetector(DetectionReader):
     by the detector (see :mod:`.algorithms`). Detections are produced with bearing values
     derived from the provided steering azimuths.
 
+    In sonar terms this is noise normalisation across bearing followed by a detection threshold
+    on the normalised beam powers; CA-CFAR corresponds to a split-window normaliser. See
+    "Relation to sonar noise normalisation" in :class:`~.algorithms._CFARDetectorBase` and
+    Stergiopoulos (1995) and Abraham (2019), cited there.
+
     Attributes
     ----------
     detector : _CFARDetectorBase
@@ -300,6 +305,11 @@ class BandDetector(Base):
     Each band of a multiband beamformer gets its own instance, so bands can differ in
     sensitivity (guard/training cell sizing, target Pfa, etc). Bands are matched to detectors
     by label; see :class:`MultibandPassiveSonarDetector`.
+
+    Noise statistics differ between bands, so a ``noise_calibration`` is per band: calibrate
+    each band's detector with :func:`~.calibration.calibrate_from_noise` on that band's slices of
+    noise-only multiband output, selected with
+    ``beamformed_scans_from_sensor_data(sensor_data_gen, band_label=...)``.
     """
 
     detector: _CFARDetectorBase = Property(

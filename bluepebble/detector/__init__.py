@@ -5,6 +5,12 @@ from .algorithms import (
     DetectionAlgorithm,
     OSCFARDetector,
 )
+from .calibration import (
+    NoiseCalibration,
+    beamformed_scans_from_sensor_data,
+    calibrate_from_noise,
+    cell_noise_ratios,
+)
 from .fluctuation_models import (
     FluctuationModel,
     NonFluctuating,
@@ -34,13 +40,17 @@ __all__ = [
     "DetectionAlgorithm",
     "FluctuationModel",
     "MultibandPassiveSonarDetector",
+    "NoiseCalibration",
     "NonFluctuating",
     "OSCFARDetector",
     "PassiveSonarDetector",
     "RayleighFluctuation",
     "SweepResult",
     "SweepSpec",
+    "beamformed_scans_from_sensor_data",
     "ca_cfar_roc",
+    "calibrate_from_noise",
+    "cell_noise_ratios",
     "estimate_effective_looks_per_frame",
     "os_cfar_roc",
     "beam_power",

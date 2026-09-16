@@ -38,6 +38,8 @@ from scipy.signal import find_peaks, peak_prominences
 from scipy.stats import beta as beta_dist
 from stonesoup.base import Base, Property
 
+from .calibration import NoiseCalibration, signature_mismatch
+
 IntArray: TypeAlias = NDArray[np.integer[Any]]
 DetectionArray: TypeAlias = NDArray[np.float64]
 
@@ -506,21 +508,73 @@ class _CFARDetectorBase(DetectionAlgorithm, ABC):
 
     Threshold margin and sidelobes
     ------------------------------
-    ``target_pfa`` controls false alarms: threshold crossings where no source is present. Its
-    calibration assumes noise-only cells whose looks are independent. Two things break that on
-    beamformer output:
+    ``target_pfa`` sets the noise-only false-alarm rate: the probability that a cell containing
+    only noise crosses the threshold, as in the CFAR literature's definition of Pfa. It does not
+    cover every false alarm in a scene. Two things separate the requested rate from what is
+    observed on beamformer output:
 
-    - Correlated looks. Complex time-series output from ``DelayAndSumBeamformer`` in ``'time'``
-      or ``'frequency'`` domain presents every sample as a frame, but samples are not independent
-      looks, and neighbouring beams share noise. The achieved Pfa then differs from target_pfa.
-      Set ``effective_looks_per_frame`` to the data's true degrees of freedom.
-    - Source-induced crossings. With many looks, noise fluctuation averages out and alpha
-      approaches 1 (0 dB), which is correct for noise. Every sidelobe of a strong source then
-      exceeds the threshold. These are not false alarms in the Pfa sense, so no choice of
-      target_pfa removes them; :meth:`detect` warns when the margin falls below 1 dB. Reduce
-      sidelobes at the beamformer (``DelayAndSumBeamformer(shading=...)``), which keeps
-      target_pfa as the only detection parameter. ``peak_prominence`` also rejects them, but as a
-      fixed dB criterion outside the Pfa model.
+    - Noise statistics. The model calibration assumes independent, Gamma-distributed cells.
+      Complex time-series output from ``DelayAndSumBeamformer`` in ``'time'`` or ``'frequency'``
+      domain presents every sample as a frame although samples are not independent looks,
+      neighbouring beams share noise, and the ratio's tail is heavier than Gamma. The achieved
+      noise-only rate then differs from target_pfa; see "Noise calibration" below.
+    - Source-induced false alarms. Sidelobes, leakage and multipath from real sources cross the
+      threshold at bearings where no source is present. They are false alarms, and are counted
+      as false positives by :mod:`.metrics`, but they are not noise, so no choice of target_pfa
+      or noise calibration controls them. Their rate depends on source strength and array design.
+      With many looks alpha approaches 1 (0 dB), which is correct for noise, and every sidelobe
+      of a strong source crosses; :meth:`detect` warns when the margin falls below 1 dB. Reduce
+      sidelobes at the beamformer (``DelayAndSumBeamformer(shading=...)``). ``peak_prominence``
+      also rejects them, but as a fixed dB criterion outside the Pfa model.
+
+    Noise calibration
+    -----------------
+    No single look count makes the Gamma model exact on beamformer output: correlation between
+    beams and a heavier-than-Gamma tail remain. Set ``noise_calibration`` from
+    :func:`~.calibration.calibrate_from_noise`, run on noise-only scans produced exactly like the
+    operational data, and alpha for any ``target_pfa`` is read from the measured distribution
+    (generalised Pareto tail below the directly observable rate). ``target_pfa`` stays the only
+    detection parameter. A calibration is specific to the detector's window, rank and edge
+    handling and to the frame count; a mismatch raises at detection time.
+
+    Relation to sonar noise normalisation
+    -------------------------------------
+    In sonar, estimating the local background and dividing each cell by it is called
+    normalisation [2]_, and it is applied across bearing to beamformed towed-array data as well
+    as across frequency [1]_. [2]_ (Sects. 8.6 and 9.3) names the sonar normalisers after the CFAR
+    processors directly, as cell-averaging and order-statistic CFAR normalisers, and takes the
+    auxiliary data for broadband energy detection from nearby beams (Sect. 9.3.1). These
+    detectors perform that normalisation across bearing: the power-to-noise-estimate ratio they
+    threshold is the normalised output, and alpha is the detection threshold applied to it.
+
+    - CA-CFAR corresponds to a split-window normaliser: the noise estimate averages beams either
+      side of the cell of interest, excluding a central gap (the guard cells), which [2]_
+      (Fig. 8.23) places to account for signal spreading. The two-pass split-window normaliser
+      of [1]_ also replaces cells above a "shearing threshold" with the local mean before
+      averaging again, to keep strong signals out of the estimate; CA-CFAR has no such pass and
+      relies on the guard cells alone.
+    - OS-CFAR is the order-statistic normaliser of [2]_ (Sect. 8.6.3), which trades some
+      performance in a benign background for robustness to interfering signals in the
+      auxiliary data. [2]_ (Sect. 8.6.3.3) recommends a rank between 3/4 and 7/8 of the
+      reference cells.
+
+    [1]_ reports that strong signals near endfire leak into neighbouring beams and bias
+    split-window noise estimates, and that the few beams in a broadband bearing record make the
+    edge beams hard to normalise, which bears on ``circular`` and on sidelobe-induced false
+    alarms. Its shearing threshold is derived assuming Rayleigh-distributed envelope noise
+    averaged over a known number of statistically independent beams, the same kind of
+    assumption that ``noise_calibration`` removes, and it does not set the detection threshold
+    for a stated false-alarm rate. [2]_ does, with the same closed forms used here
+    (Eqs. (8.336) and (8.372) for single-look CA and OS), assuming independent exponentially
+    distributed auxiliary data that is also independent of the test cell.
+
+    References
+    ----------
+    .. [1] Stergiopoulos, S. "Noise normalization technique for beamformed towed array data."
+           Journal of the Acoustical Society of America, 97(4), 2334-2345, 1995.
+           doi:10.1121/1.411958
+    .. [2] Abraham, D. A. "Underwater Acoustic Signal Processing: Modeling, Detection, and
+           Estimation." Springer, Cham, 2019. doi:10.1007/978-3-319-92983-5
 
     """
 
@@ -568,7 +622,16 @@ class _CFARDetectorBase(DetectionAlgorithm, ABC):
         "data; broadband STFT beam power (a sum over many frequency bins per frame) needs "
         "this set to the data's effective per-frame degrees of freedom or the calibrated "
         "Pfa runs far below target. Values below 1 account for correlated frames. See "
-        "calibrate_os_cfar_alpha_mc for how to estimate it.",
+        "calibrate_os_cfar_alpha_mc for how to estimate it. Ignored when noise_calibration "
+        "is set.",
+    )
+    noise_calibration: NoiseCalibration | None = Property(
+        default=None,
+        doc="Empirical calibration from noise-only scans (see calibration.calibrate_from_noise). "
+        "When set, alpha for target_pfa is read from the measured cell-to-noise ratio "
+        "distribution instead of the i.i.d. Gamma model, which makes target_pfa accurate on "
+        "correlated beamformer output. Must match this detector's window, rank, edge handling "
+        "and the data's frame count.",
     )
 
     def __init__(self, *args: object, **kwargs: object) -> None:
@@ -595,6 +658,12 @@ class _CFARDetectorBase(DetectionAlgorithm, ABC):
             raise ValueError(
                 f"effective_looks_per_frame ({self.effective_looks_per_frame}) must be positive"
             )
+        if self.noise_calibration is not None and self.effective_looks_per_frame != 1.0:
+            warnings.warn(
+                "effective_looks_per_frame is ignored when noise_calibration is set: the "
+                "calibration already measures the data's statistics.",
+                stacklevel=2,
+            )
         # Alpha depends only on num_frames and the calibration parameters (not on the data
         # itself), so it's cheap to memoize across detect() calls that share a frame count.
         # Avoids re-solving/re-simulating. The cache is keyed by num_frames and invalidated
@@ -616,7 +685,15 @@ class _CFARDetectorBase(DetectionAlgorithm, ABC):
 
     def _calibration_signature(self) -> tuple:
         """Every parameter alpha depends on, besides num_frames."""
-        return (self.target_pfa, self.effective_looks_per_frame, self.num_training_cells)
+        # The calibration object itself, not id(): NoiseCalibration compares by identity, and
+        # holding the reference here keeps it alive, so a freed calibration's id can never be
+        # reused by a replacement and mistaken for it.
+        return (
+            self.target_pfa,
+            self.effective_looks_per_frame,
+            self.num_training_cells,
+            self.noise_calibration,
+        )
 
     @property
     def _wrap_pad(self) -> int:
@@ -647,7 +724,17 @@ class _CFARDetectorBase(DetectionAlgorithm, ABC):
             self._low_margin_warned = set()
             self._alpha_cache_signature = signature
         if num_frames not in self._alpha_cache:
-            self._alpha_cache[num_frames] = self._calibrate_alpha(num_frames)
+            calibration = self.noise_calibration
+            if calibration is None:
+                self._alpha_cache[num_frames] = self._calibrate_alpha(num_frames)
+            else:
+                mismatch = signature_mismatch(calibration, self, num_frames)
+                if mismatch is not None:
+                    raise ValueError(
+                        f"noise_calibration does not apply to this {type(self).__name__}: "
+                        f"{mismatch}. Recalibrate with calibrate_from_noise for these settings."
+                    )
+                self._alpha_cache[num_frames] = calibration.alpha(self.target_pfa, num_frames)
         return self._alpha_cache[num_frames]
 
     @abstractmethod
@@ -748,14 +835,25 @@ class _CFARDetectorBase(DetectionAlgorithm, ABC):
         if 10 * np.log10(single_look_alpha) < _LOW_THRESHOLD_MARGIN_DB:
             return
         self._low_margin_warned.add(num_frames)
+        if self.noise_calibration is None:
+            basis = (
+                f"{num_frames} frames x {self.effective_looks_per_frame:g} effective looks per "
+                "frame"
+            )
+            statistics_advice = (
+                " If frames are correlated (e.g. complex time-series samples), also calibrate "
+                "against noise-only scans (noise_calibration) so target_pfa is accurate."
+            )
+        else:
+            basis = f"noise-calibrated, {num_frames} frames"
+            statistics_advice = ""
         warnings.warn(
             f"{type(self).__name__} threshold is only {margin_db:.2f} dB above the local noise "
-            f"estimate ({num_frames} frames x {self.effective_looks_per_frame:g} effective looks "
-            f"per frame, target_pfa={self.target_pfa:g}). At this margin, sidelobes of strong "
-            "sources cross the threshold regardless of target_pfa: they are source-induced, not "
-            "false alarms. Reduce them with beamformer shading. If frames are correlated (e.g. "
-            "complex time-series samples), also set effective_looks_per_frame to the data's "
-            "true degrees of freedom. See _CFARDetectorBase.",
+            f"estimate ({basis}, target_pfa={self.target_pfa:g}). At this margin, sidelobes of "
+            "strong sources cross the threshold regardless of target_pfa: these are "
+            "source-induced false alarms, which target_pfa does not control. Reduce them with "
+            "beamformer shading."
+            f"{statistics_advice} See _CFARDetectorBase.",
             stacklevel=3,
         )
 

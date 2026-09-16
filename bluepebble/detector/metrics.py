@@ -35,6 +35,7 @@ from .algorithms import (
     solve_ca_cfar_alpha,
     solve_os_cfar_alpha_single_look,
 )
+from .calibration import detector_signature
 from .fluctuation_models import FluctuationModel, RayleighFluctuation
 
 if TYPE_CHECKING:
@@ -76,6 +77,15 @@ class SweepSpec:
     label : str | None
         Human-readable name used in plot legends.  Defaults to
         ``"<param_name> sweep"`` when ``None``.
+
+    Notes
+    -----
+    A CFAR detector with a ``noise_calibration`` can sweep ``target_pfa`` (and any other setting
+    the calibration does not depend on). Sweeping a setting that changes the calibrated ratio
+    distribution -- ``num_guard_cells``, ``num_training_cells``, ``rank`` or ``circular`` --
+    raises ``ValueError`` when the clone is made: the calibration no longer describes the swept
+    detector, and silently falling back to the noise model would change what the sweep measures.
+    Sweep such settings without a calibration, or calibrate each value separately.
 
     """
 
@@ -444,6 +454,16 @@ def _clone_detector_with_param(spec: SweepSpec, value: float) -> DetectionAlgori
         setattr(detector_copy, spec.param_name, int(value))
     else:
         setattr(detector_copy, spec.param_name, float(value))
+    calibration = getattr(detector_copy, "noise_calibration", None)
+    if calibration is not None:
+        swept_signature = detector_signature(detector_copy)
+        if swept_signature != calibration.detector_signature:
+            raise ValueError(
+                f"Sweeping {spec.param_name}={value!r} invalidates the detector's "
+                "noise_calibration, which was measured for a different window, rank or edge "
+                "handling. Sweep this parameter on a detector without noise_calibration, or "
+                "calibrate each value separately with calibrate_from_noise."
+            )
     # A CFAR detector invalidates its memoised alpha when a calibration parameter changes (see
     # _CFARDetectorBase._alpha_for); clearing here as well keeps detectors that don't track
     # that themselves safe. Not every DetectionAlgorithm has this cache, hence the guard.
