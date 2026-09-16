@@ -17,14 +17,17 @@ and single-frame end-to-end Pfa. The checks here target what that file leaves op
 from __future__ import annotations
 
 import copy
-from math import comb
 
 import numpy as np
 import pytest
-from scipy import integrate
-from scipy.stats import gamma as gamma_dist
 
-from .support import install_fake_stonesoup, install_repo_package, load_package_module_from_repo
+from .support import (
+    ca_pfa_by_quadrature,
+    install_fake_stonesoup,
+    install_repo_package,
+    load_package_module_from_repo,
+    os_pfa_by_quadrature,
+)
 
 
 def _load_detector_algorithms(monkeypatch):
@@ -160,25 +163,6 @@ def test_detect_thresholds_frame_averaged_power_against_alpha_times_noise_floor(
 # ---------------------------------------------------------------------------
 
 
-def _ca_pfa_by_quadrature(alpha, num_training_total, total_looks):
-    """P(CUT > alpha * mean(refs)) with CUT, refs unit-mean Gamma(total_looks) cells.
-
-    Integrates over the sum of reference cells, S ~ Gamma(N * L, scale 1/L), of the CUT
-    survival function, CUT ~ Gamma(L, scale 1/L). Written without the Beta-distribution identity
-    used by solve_ca_cfar_alpha.
-    """
-    looks = total_looks
-    ref_sum = gamma_dist(a=num_training_total * looks, scale=1.0 / looks)
-    cut = gamma_dist(a=looks, scale=1.0 / looks)
-    upper = ref_sum.ppf(1 - 1e-14)
-
-    def integrand(s):
-        return ref_sum.pdf(s) * cut.sf(alpha * s / num_training_total)
-
-    value, _ = integrate.quad(integrand, 0.0, upper, limit=500, epsabs=1e-14, epsrel=1e-10)
-    return value
-
-
 @pytest.mark.parametrize(
     "num_training_total, num_frames, looks_per_frame, target_pfa",
     [
@@ -198,7 +182,7 @@ def test_ca_cfar_alpha_achieves_target_pfa_by_quadrature(
         target_pfa, num_training_total, num_frames, effective_looks_per_frame=looks_per_frame
     )
 
-    pfa = _ca_pfa_by_quadrature(alpha, num_training_total, num_frames * looks_per_frame)
+    pfa = ca_pfa_by_quadrature(alpha, num_training_total, num_frames * looks_per_frame)
 
     assert pfa == pytest.approx(target_pfa, rel=1e-5)
 
@@ -246,25 +230,6 @@ def test_ca_cfar_alpha_is_monotone_in_pfa_and_looks(monkeypatch) -> None:
 # ---------------------------------------------------------------------------
 
 
-def _os_pfa_by_quadrature(alpha, num_training_total, rank, total_looks):
-    """P(CUT > alpha * X_(k)) for unit-mean Gamma(total_looks) cells, by quadrature.
-
-    X_(k), the k-th smallest of N iid cells with CDF F and PDF f, has density
-    ``k * C(N, k) * F^(k-1) * (1 - F)^(N-k) * f``.
-    """
-    n, k = num_training_total, rank
-    cell = gamma_dist(a=total_looks, scale=1.0 / total_looks)
-
-    def integrand(x):
-        f_cdf = cell.cdf(x)
-        density = k * comb(n, k) * f_cdf ** (k - 1) * (1 - f_cdf) ** (n - k) * cell.pdf(x)
-        return density * cell.sf(alpha * x)
-
-    upper = cell.ppf(1 - 1e-12)
-    value, _ = integrate.quad(integrand, 0.0, upper, limit=500, epsabs=1e-13, epsrel=1e-9)
-    return value
-
-
 @pytest.mark.parametrize(
     "num_training_total, rank, num_frames, looks_per_frame",
     [(16, 12, 4, 1.0), (20, 15, 1, 3.5), (24, 18, 10, 0.5), (32, 24, 8, 12.0)],
@@ -285,7 +250,7 @@ def test_os_cfar_mc_alpha_achieves_target_pfa_by_quadrature(
         effective_looks_per_frame=looks_per_frame,
     )
 
-    pfa = _os_pfa_by_quadrature(alpha, num_training_total, rank, num_frames * looks_per_frame)
+    pfa = os_pfa_by_quadrature(alpha, num_training_total, rank, num_frames * looks_per_frame)
 
     # 4000 exceedances: the quantile's own sampling error is a few percent.
     assert pfa == pytest.approx(target_pfa, rel=0.08)
@@ -296,7 +261,7 @@ def test_os_cfar_quadrature_reproduces_the_single_look_closed_form(monkeypatch) 
     algorithms = _load_detector_algorithms(monkeypatch)
     for n, k, pfa in [(24, 17, 1e-6), (16, 8, 1e-4), (20, 15, 1e-2)]:
         alpha = algorithms.solve_os_cfar_alpha_single_look(pfa, n, k)
-        assert _os_pfa_by_quadrature(alpha, n, k, 1.0) == pytest.approx(pfa, rel=1e-5)
+        assert os_pfa_by_quadrature(alpha, n, k, 1.0) == pytest.approx(pfa, rel=1e-5)
 
 
 # ---------------------------------------------------------------------------
