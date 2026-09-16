@@ -307,9 +307,12 @@ simulator = ContinuousSTFTPassiveSonarArraySimulator(
     fade_in_ms=fade_in_ms,
 )
 
-# target_pfa=0.3594 reproduces the pre-refactor threshold_factor=1.05 exactly, via
-# CA-CFAR's single-look Pfa = (1 + alpha/N)^-N with N = 2 * num_training_cells. It is a
-# permissive threshold: peak consolidation does most of the rejection in this scenario.
+# target_pfa=0.3594 is a permissive threshold: peak consolidation does most of the rejection
+# in this scenario. It was carried over from the pre-refactor threshold_factor=1.05, but the
+# correspondence only held for a single look with N = 20 training cells. Here the window below
+# gives N = 128 and detect() calibrates for every beamformed sample as a frame, so the applied
+# threshold is 1.0071 (0.03 dB above the local noise estimate). The "Calibrating Detection
+# Against Ambient Noise" section below shows how to make target_pfa an accurate rate.
 # Guard and training cells follow from the array rather than being chosen: a source spans a
 # mainlobe in bearing, so the guard band has to reach past it or the training cells measure
 # the target and compress the reported SNR. Evaluated at 50 Hz -- the lowest tonal in the scenario
@@ -394,6 +397,58 @@ fig_btr.update_layout(
     showlegend=False,
     margin=dict(r=80),
     yaxis2=dict(title=""),
+)
+
+# %%
+# Calibrating Detection Against Ambient Noise
+# -------------------------------------------
+#
+# ``target_pfa`` sets the CFAR threshold through a noise model that assumes independent beams
+# and a known number of looks. Beamformer output satisfies neither, so the false-alarm rate the
+# detector achieves generally differs from the one requested. To make ``target_pfa`` accurate,
+# measure the detector's own statistics on noise-only data produced exactly like the scenario:
+# the same platform, beamformer and steering, but no ``ground_truth_paths``.
+#
+# Calibrate across the whole run rather than a prefix of it. The platform turns mid-run, and a
+# bent array's noise statistics differ from a straight one's, so a calibration taken only from
+# the first leg would not describe every scan the detector sees. :func:`~.calibrate_from_noise`
+# needs a few hundred cells beyond the 1 % point of the ratio distribution; the full run's 180
+# scans of 361 beams comfortably provide them. Attach the result with ``noise_calibration`` and
+# keep choosing ``target_pfa`` as before.
+
+# %%
+from bluepebble.detector import beamformed_scans_from_sensor_data, calibrate_from_noise
+from bluepebble.detector.algorithms import solve_ca_cfar_alpha
+
+ambient_only_simulator = ContinuousSTFTPassiveSonarArraySimulator(
+    platform=platform,
+    propagation_model=propagation_model,
+    signal_models=signal_models,
+    noise_model=ambient_noise_model,
+    beamformer=beamformer,
+    steering_calculator=steering_calculator,
+    ground_truth_paths=[],
+    fade_in_ms=fade_in_ms,
+)
+noise_scans = beamformed_scans_from_sensor_data(ambient_only_simulator.sensor_data_gen())
+noise_calibration = calibrate_from_noise(cfar_detector, noise_scans)
+
+calibrated_detector = CACFARDetector(
+    num_guard_cells=num_guard_cells,
+    num_training_cells=num_training_cells,
+    target_pfa=1e-3,
+    peak_distance=peak_distance,
+    circular=True,
+    noise_calibration=noise_calibration,
+)
+
+num_frames = noise_calibration.num_frames
+model_alpha = solve_ca_cfar_alpha(1e-3, 2 * num_training_cells, num_frames)
+calibrated_alpha = noise_calibration.alpha(1e-3)
+print(
+    f"Threshold for target_pfa=1e-3 over {num_frames} frames: "
+    f"noise model {10 * np.log10(model_alpha):.3f} dB, "
+    f"noise-calibrated {10 * np.log10(calibrated_alpha):.3f} dB above the local noise estimate"
 )
 
 # %%
