@@ -1,29 +1,39 @@
 """Signal detection algorithms for 1D time-series and beamformed data.
 
-Assumptions
------------
-Every Pfa/alpha calibration in this module rests on three assumptions about the input data. All
-three can be violated in practice. The consequence of each violation is noted so a wrong Pfa shows
-up as a specific, checkable symptom rather than an unexplained discrepancy:
+Live detection here always calibrates alpha (the threshold multiplier applied to the local noise
+estimate) empirically (see ``noise_calibration`` and :class:`NoiseCalibration`), never from a
+model. The i.i.d.-Gamma model that :func:`~._theory.solve_ca_cfar_alpha` and
+:func:`~._theory.solve_os_cfar_alpha` still implement, for theoretical ROC curves
+(:mod:`._theory`) and as the correctness reference the empirical calibration is tested against,
+rests on assumptions beamformer output routinely violates:
 
-- **Noise statistics.** Reference cells and the CUT are modelled as i.i.d. Exponential(1) per look.
-  The statistics of square-law-detected magnitude from complex Gaussian noise. Under impulsive or
-  heavy-tailed interference (e.g. snapping shrimp), the true tail is heavier than exponential, so
-  the achieved Pfa will run higher than the calibrated target_pfa.
+- **Noise statistics.** Reference cells and the CUT are modelled as i.i.d. Exponential(1) per
+  look, the statistics of square-law-detected magnitude from complex Gaussian noise. Under
+  impulsive or heavy-tailed interference (e.g. snapping shrimp), the true tail is heavier than
+  exponential, so the model overstates how quickly Pfa falls as alpha increases.
 - **Independence across looks.** The M looks/frames averaged into a single cell are assumed
-  statistically independent. If the integration period is shorter than the clutter's decorrelation
-  time, the effective M is smaller than the nominal frame count. The Gamma(M, ...) model
-  understates the true variance, so the calibrated alpha is too low and the achieved Pfa runs
-  higher than target.
-- **Homogeneous reference window.** All N reference cells are assumed to share the CUT's underlying
-  noise level, differing only by random fluctuation. Clutter edges or interfering targets in the
-  window violate this; OS-CFAR's order-statistic censoring tolerates a minority of contaminated
-  cells (see OSCFARDetector), but calibrated Pfa is exact only under full homogeneity.
+  statistically independent. If the integration period is shorter than the clutter's
+  decorrelation time, the effective M is smaller than the nominal frame count, so the model
+  understates the true variance.
+- **Independence across cells.** The CUT and every reference cell are assumed mutually
+  independent. Beamformer output violates this directly: neighbouring beams share noise, which
+  correlates the CUT with its reference cells and makes the ratio the detector thresholds far
+  less variable than the model assumes. ``noise_calibration`` measures around this violation
+  rather than assuming it away (see :mod:`.calibration`); heavy tails in the same data act in
+  the opposite direction at small Pfa.
+- **Homogeneous reference window.** All N reference cells are assumed to share the CUT's
+  underlying noise level, differing only by random fluctuation. Clutter edges or interfering
+  targets in the window violate this; OS-CFAR's order-statistic censoring tolerates a minority of
+  contaminated cells (see OSCFARDetector), but the model is exact only under full homogeneity.
+
+None of this constrains live detection, since ``noise_calibration`` measures the real ratio
+distribution instead of assuming one. It matters only for the theoretical curves and correctness
+checks in :mod:`._theory`.
 
 Pd (as opposed to Pfa/alpha) additionally depends on how the target's amplitude fluctuates from
-look to look -- that's a separate, independent assumption, and lives in a separate module:
-:mod:`.fluctuation_models`. Nothing in this module (including the detector classes) calls a Pd
-function; only :mod:`.metrics`'s theoretical ROC curve functions do.
+look to look, a separate, independent assumption handled by
+:class:`~._theory.FluctuationModel`. Nothing in this module (including the detector classes)
+calls a Pd function; only :mod:`._theory`'s theoretical ROC curve functions do.
 """
 
 import warnings
@@ -33,12 +43,10 @@ from typing import Any, TypeAlias
 import numpy as np
 from numpy.lib.stride_tricks import sliding_window_view
 from numpy.typing import ArrayLike, NDArray
-from scipy.optimize import brentq
 from scipy.signal import find_peaks, peak_prominences
-from scipy.stats import beta as beta_dist
 from stonesoup.base import Base, Property
 
-from .calibration import NoiseCalibration, signature_mismatch
+from .calibration import NoiseCalibration
 
 IntArray: TypeAlias = NDArray[np.integer[Any]]
 DetectionArray: TypeAlias = NDArray[np.float64]
@@ -46,24 +54,12 @@ DetectionArray: TypeAlias = NDArray[np.float64]
 # Shared floor to keep log10/division finite at zero power without biasing real signals.
 _EPS = np.finfo(np.float64).eps
 
-# Below this threshold margin (alpha, in dB above the local noise estimate) a CFAR detector
-# only rejects random noise fluctuation: deterministic spatial structure such as beamformer
-# sidelobes or multipath spread sits above the local mean by more than this and is detected
-# regardless of target_pfa. Many integrated looks drive alpha towards 0 dB -- e.g. ~0.1 dB for
-# a complex time series of thousands of samples -- which is when users need to be told.
-_LOW_THRESHOLD_MARGIN_DB = 1.0
-
-
-def _empty_detections() -> DetectionArray:
-    """Return a standard empty detection matrix of shape ``(0, 2)``."""
-    return np.empty((0, 2), dtype=np.float64)
-
 
 def _stack_detections(indices: IntArray, data: ArrayLike) -> DetectionArray:
     """Create a ``(N, 2)`` matrix with detection indices and values."""
     data_array = np.asarray(data, dtype=np.float64)
     if indices.size == 0:
-        return _empty_detections()
+        return np.empty((0, 2), dtype=np.float64)
     return np.column_stack((indices, data_array[indices])).astype(np.float64, copy=False)
 
 
@@ -79,7 +75,7 @@ def _directional_power(data: ArrayLike) -> np.ndarray:
     or real: ``DelayAndSumBeamformer`` in ``'time'``/``'frequency'`` domain returns complex
     amplitude, so power is ``|amplitude|**2``. ``MinimumVarianceDistortionlessResponseBeamformer``,
     and ``DelayAndSumBeamformer`` in ``'broadband_power'`` domain, already return real-valued
-    power directly -- squaring that again would double-apply the power law and break the
+    power directly; squaring that again would double-apply the power law and break the
     Exponential(1)-per-look Pfa/alpha calibration this module depends on (an MVDR-fed detector
     calibrated for Pfa=0.05 was empirically measured at Pfa~=0.09 before this branch existed).
 
@@ -102,7 +98,7 @@ def _directional_power(data: ArrayLike) -> np.ndarray:
 _REMOVED_DETECTOR_KWARGS = {
     "threshold_factor": (
         "Thresholds are now calibrated from a false-alarm rate: pass target_pfa instead. "
-        "There is no fixed conversion -- the equivalent alpha depends on num_training_cells "
+        "There is no fixed conversion, the equivalent alpha depends on num_training_cells "
         "and the number of frames integrated."
     ),
     "mode": (
@@ -120,8 +116,8 @@ def _as_beamformed_2d(data: ArrayLike) -> np.ndarray:
     instead, so a 1-D array here is nearly always a caller that has not migrated yet. Say
     so directly, rather than failing later on a tuple unpack or a numpy axis error.
 
-    A frame is one look within a single timestep -- an STFT snapshot from that timestep's
-    sample block -- not a successive timestep. Detectors are called once per timestep and
+    A frame is one look within a single timestep, an STFT snapshot from that timestep's
+    sample block, not a successive timestep. Detectors are called once per timestep and
     return that timestep's detections; nothing is buffered across timesteps. The frames
     axis has to survive as far as the detector because incoherent averaging over M looks
     narrows the noise distribution, so the threshold multiplier achieving a given Pfa
@@ -151,7 +147,7 @@ def _as_beamformed_2d(data: ArrayLike) -> np.ndarray:
         raise ValueError(
             f"Expected raw beamformed data with shape (num_beams, num_frames), got a 1-D "
             f"array of length {data_array.size}. CFAR detectors consume raw beamformed data "
-            f"and estimate their own local noise floor -- they no longer take a precomputed "
+            f"and estimate their own local noise floor; they no longer take a precomputed "
             f"SNR map as the old detection chain did. Pass data[:, None] for a single frame."
         )
     raise ValueError(
@@ -159,254 +155,6 @@ def _as_beamformed_2d(data: ArrayLike) -> np.ndarray:
         f"{data_array.ndim}-D array of shape {data_array.shape}. For banded data, pass each "
         f"band's map separately (see MultibandPassiveSonarDetector)."
     )
-
-
-def _os_cfar_log_pfa(alpha: float, num_training_total: int, rank: int) -> float:
-    """Log Pfa for single-look OS-CFAR.
-
-    Derivation: for N iid Exponential(1) reference cells, the k-th order statistic (ascending,
-    1-indexed) admits the exponential order-statistic "spacings" representation::
-
-        X_(k) = sum_{i=1}^{k} E_i / (N - i + 1),   E_i iid Exponential(1)
-
-    i.e. a sum of k INDEPENDENT (not identical) exponential random variables. Since the detection
-    threshold is alpha * X_(k) and the CUT ~ Exponential(1) independently of the reference cells,
-    Pfa = P(CUT > alpha * X_(k)) = E[exp(-alpha * X_(k))], which factors into a product of Laplace
-    transforms (one per spacing term)::
-
-        Pfa(alpha) = prod_{l=0}^{k-1} (N - l) / (alpha + N - l)
-
-    Parameters
-    ----------
-    alpha : float
-        Threshold multiplier.
-    num_training_total : int
-        Total number of reference cells (N).
-    rank : int
-        Order-statistic rank used as the noise estimate (k, 1-indexed).
-
-    Returns
-    -------
-    float
-        log(Pfa(alpha)).
-
-    References
-    ----------
-    .. [1] Rohling, H. "Radar CFAR Thresholding in Clutter and Multiple Target Situations."
-           IEEE Transactions on Aerospace and Electronic Systems, AES-19(4), 608-621, 1983.
-    .. [2] Renyi, A. "On the theory of order statistics." Acta Mathematica Academiae Scientiarum
-           Hungaricae, 4(3-4), 191-231, 1953.
-
-    This specific closed form was re-derived from [2] and confirmed algebraically identical to
-    Rohling's own equation (14) in [1] -- k*C(N,k)*(k-1)!*(T+N-k)!/(T+N)! reduces exactly to the
-    product form above. Cross-checked numerically against four entries in [1]'s Table II
-    (Pfa=1e-6): both eq. 14 and this formula reproduce the tabulated T values to within rounding.
-
-    """
-    log_pfa = 0.0
-    for i in range(rank):
-        log_pfa += np.log(num_training_total - i) - np.log(alpha + num_training_total - i)
-    return log_pfa
-
-
-def solve_ca_cfar_alpha(
-    target_pfa: float,
-    num_training_total: int,
-    num_frames: int,
-    effective_looks_per_frame: float = 1.0,
-) -> float:
-    """Exact alpha for target_pfa, for any num_frames (M-frame integration per look).
-
-    Reference cells and the CUT are each Gamma(K*num_frames, 1/(K*num_frames)) (unit mean,
-    M-frame averaged, K looks integrated per frame). Since threhsold = alpha * mean(N reference
-    cells)), and mean(N cells) is itself Gamma(N*K*num_frames, ...) (same scale as the CUT),
-    W = CUT / (CUT + sum_of_refs) is exactly Beta(K*num_frames, N*K*num_frames)-distributed.
-    Reduces to the classic single-look closed form N*(Pfa**(-1/N) - 1) when num_frames == 1 and
-    K == 1.
-
-    Parameters
-    ----------
-    target_pfa : float
-        The desired probability of false alarm.
-    num_training_total : int
-        The total number of training cells.
-    num_frames : int
-        The number of frames incoherently integrated into this one look (M).
-    effective_looks_per_frame : float, optional
-        Effective independent Exponential(1) looks already integrated into each per-frame
-        power sample (K), by default 1.0 (classic single-bin square-law data). Broadband STFT
-        beam power sums many frequency bins per frame, making K far larger; see
-        :func:`calibrate_os_cfar_alpha_mc` for how to estimate it. Need not be an integer.
-
-    Returns
-    -------
-    float
-        The calibrated alpha value.
-
-    References
-    ----------
-    .. [1] Finn, H.M. and Johnson, R.S. "Adaptive detection mode with threshold control as a
-           function of spatially sampled clutter level estimates." RCA Review, 29, 414-464, 1968.
-           Origin of cell-averaging CFAR.
-    .. [2] Gandhi, P.P. and Kassam, S.A. "Analysis of CFAR Processors in Nonhomogeneous
-           Background." IEEE Transactions on Aerospace and Electronic Systems, 24(4), 427-445,
-           1988. Equation (14) gives this exact single-look alpha/Pfa pair (sum-based threshold;
-           reconciles with this module's mean-based alpha via alpha = N*T -- see
-           fluctuation_models.RayleighFluctuation.ca_cfar_pd).
-    .. [3] Chalabi, I. "Application of CFAR detection to multiple pulses for gamma distributed
-           clutter." Remote Sensing Letters, 13(10), 1011-1019, 2022. Independently derives the
-           same multi-look CA-CFAR Pfa (their eq. 8) via direct numerical integration rather than
-           this function's Beta-function closed form -- see
-           fluctuation_models.RayleighFluctuation.ca_cfar_pd for the numerical cross-check
-           (6 decimal places across several threshold values).
-
-    """
-    if not 0 < target_pfa < 1:
-        raise ValueError(f"target_pfa ({target_pfa}) must be in (0, 1)")
-    if effective_looks_per_frame <= 0:
-        raise ValueError(
-            f"effective_looks_per_frame ({effective_looks_per_frame}) must be positive"
-        )
-
-    # w0 is the (1 - target_pfa) quantile of W = CUT / (CUT + sum_of_refs); alpha is then
-    # recovered by inverting W = threshold / (threshold + N*mean_ref) for the equal-scale case.
-    a = effective_looks_per_frame * num_frames
-    b = num_training_total * effective_looks_per_frame * num_frames
-    w0 = beta_dist.ppf(1 - target_pfa, a, b)
-    return num_training_total * w0 / (1 - w0)  # pyright: ignore[reportReturnType]
-
-
-def solve_os_cfar_alpha_single_look(
-    target_pfa: float, num_training_total: int, rank: int
-) -> float:
-    """Exact alpha for target_pfa when num_frames == 1 (CORRECTED -- see module note).
-
-    Solves Pfa(alpha) = target_pfa for alpha, using the corrected closed form from
-    _os_cfar_log_pfa::
-
-        target_pfa = prod_{l=0}^{k-1} (N - l) / (alpha + N - l)
-
-    Pfa is strictly decreasing in alpha, so a standard root-finder (Brent's method)
-    converges reliably.
-
-    Parameters
-    ----------
-    target_pfa : float
-        Desired probability of false alarm, in (0, 1).
-    num_training_total : int
-        Total number of reference cells (N).
-    rank : int
-        Order-statistic rank used as the noise estimate (k, 1-indexed).
-
-    Returns
-    -------
-    float
-        The alpha satisfying Pfa(alpha) = target_pfa.
-
-    References
-    ----------
-    .. [1] Rohling, H. "Radar CFAR Thresholding in Clutter and Multiple Target Situations."
-            IEEE Transactions on Aerospace and Electronic Systems, AES-19(4), 608-621, 1983.
-    .. [2] Renyi, A. "On the theory of order statistics." Acta Mathematica Academiae
-            Scientiarum Hungaricae, 4(3-4), 191-231, 1953.
-
-    """
-    if not 0 < target_pfa < 1:
-        raise ValueError(f"target_pfa ({target_pfa}) must be in (0, 1)")
-
-    def f(alpha: float) -> float:
-        return _os_cfar_log_pfa(alpha, num_training_total, rank) - np.log(target_pfa)
-
-    return brentq(f, 1e-9, 1e9)  # pyright: ignore[reportReturnType]
-
-
-def calibrate_os_cfar_alpha_mc(
-    target_pfa: float,
-    num_training_total: int,
-    rank: int,
-    num_frames: int,
-    num_trials: int = 200_000,
-    rng: np.random.Generator | None = None,
-    effective_looks_per_frame: float = 1.0,
-) -> float:
-    """Calibrate OS-CFAR alpha for a target Pfa using Monte Carlo simulation.
-
-    M-frame averaged power is Gamma(M, ...)-distributed, not exponential, so Rohling's closed form
-    doesn't apply directly. Caveat: for target_pfa << 1, num_trials needs scaling up (rule of thumb
-    ~100 / target_pfa) or the calibrated alpha will be noisy.
-
-    Parameters
-    ----------
-    target_pfa : float
-        The desired probability of false alarm.
-    num_training_total : int
-        The total number of training cells.
-    rank : int
-        The rank of the cell under test.
-    num_frames : int
-        The number of independent frames (averages).
-    num_trials : int, optional
-        The number of Monte Carlo trials to run, by default 200_000.
-    rng : np.random.Generator | None, optional
-        A random number generator for reproducibility, by default None.
-    effective_looks_per_frame : float, optional
-        Effective number of independent Exponential(1) looks already integrated into each
-        per-frame power sample, by default 1.0 (the classic single-bin square-law model).
-        Broadband STFT beamformers (``MinimumVarianceDistortionlessResponseBeamformer``,
-        ``DelayAndSumBeamformer`` in ``'broadband_power'`` domain) sum power over every
-        active frequency bin in [fmin, fmax] before the detector sees it, so each per-frame
-        sample is Gamma(K, 1/K)-distributed (unit mean) with K well above 1. Window
-        spectral leakage correlates adjacent bins, so K is smaller than the bin count;
-        estimate it from noise-only per-cell power as ``1 / CV**2 / num_frames`` (CV of the
-        frame-averaged cell power across independent scans). Need not be an integer.
-
-    Returns
-    -------
-    float
-        The calibrated alpha value.
-
-    References
-    ----------
-    .. [1] Rohling, H. "Radar CFAR Thresholding in Clutter and Multiple Target Situations."
-           IEEE Transactions on Aerospace and Electronic Systems, AES-19(4), 608-621, 1983.
-    .. [2] Chalabi, I. "Application of CFAR detection to multiple pulses for gamma distributed
-           clutter." Remote Sensing Letters, 13(10), 1011-1019, 2022. Independently derives the
-           same multi-look OS-CFAR problem and states explicitly that no closed form exists for
-           it -- see fluctuation_models.RayleighFluctuation.os_cfar_pd for the numerical
-           cross-check against their eq. 20 (shape=1). This function calibrates alpha for the
-           same model fluctuation_models.RayleighFluctuation.os_cfar_pd evaluates Pd against.
-
-    """
-    rng = rng or np.random.default_rng()
-
-    # Each per-frame look is Gamma(K, 1/K): unit mean, K effective independent exponential
-    # looks integrated per frame. K = 1 is exactly the classic Exponential(1) per-look model.
-    k = effective_looks_per_frame
-
-    # Simulate M-frame-averaged noise-only training cells: mean of `num_frames` unit-mean
-    # per-frame looks per cell, for every training cell, over all trials.
-    # Only the frame-average is ever used, and the mean of M iid Gamma(k, 1/k) draws is
-    # exactly Gamma(M*k, 1/(M*k)) -- so the frame axis is drawn in closed form rather than
-    # materialised. Sampling it would cost (num_trials, num_training_total, num_frames)
-    # float64: over a gigabyte for a window sized to a wide mainlobe, and tens of gigabytes
-    # for broadband STFT data with thousands of frames. This is the same distribution, not
-    # an approximation.
-    shape_m = k * num_frames
-    ref_samples = rng.gamma(
-        shape=shape_m, scale=1.0 / shape_m, size=(num_trials, num_training_total)
-    )
-
-    # OS-CFAR's noise estimate is the rank-th smallest training cell per trial.
-    ref_sorted = np.sort(ref_samples, axis=1)
-    noise_estimate = ref_sorted[:, rank - 1]
-
-    # Simulate the (noise-only) CUT under the same M-frame averaging.
-    cut_samples = rng.gamma(shape=shape_m, scale=1.0 / shape_m, size=num_trials)
-
-    ratio = cut_samples / noise_estimate
-
-    # alpha is the value the CUT/noise ratio exceeds with probability target_pfa under H0.
-    return float(np.quantile(ratio, 1 - target_pfa))
 
 
 class DetectionAlgorithm(Base, ABC):
@@ -464,7 +212,7 @@ class _CFARDetectorBase(DetectionAlgorithm, ABC):
     source. This exists to make the Pfa calibration observable: consolidation merges adjacent
     crossings, so the number of reported detections falls below the requested rate as soon as
     crossings stop being sparse. Measured on noise-only data at 361 beams, reported detections
-    hold at the requested Pfa up to about 0.05, then fall away -- roughly 78% of crossings at
+    hold at the requested Pfa up to about 0.05, then fall away: roughly 78% of crossings at
     Pfa 0.2, 57% at 0.5, and 37% at 0.9. Unconsolidated output tracks the requested Pfa across
     that whole range, which is what makes it useful for verifying calibration, for ROC/PR
     sweeps that need the full false-positive range, and for comparison against theoretical
@@ -472,7 +220,7 @@ class _CFARDetectorBase(DetectionAlgorithm, ABC):
 
     It is a diagnostic mode, not an operational one. Without consolidation a single source
     reports once per bearing bin its mainlobe and sidelobes cover, so anything downstream that
-    assumes one detection per source -- a tracker's data associator above all -- will be
+    assumes one detection per source (a tracker's data associator above all) will be
     swamped. Leave it True for detection; switch it off to measure.
 
     Attributes
@@ -486,7 +234,7 @@ class _CFARDetectorBase(DetectionAlgorithm, ABC):
         be classified as an independent detection. See class docstring.
     wrap_pad_width : int, optional
         Bearing-bin margin for circular wrap-padding; must cover the widest expected candidate
-        cluster (worst-case leakage/sidelobe footprint) -- the same sizing consideration as
+        cluster (worst-case leakage/sidelobe footprint), the same sizing consideration as
         num_guard_cells on CFAR subclasses. Deliberately decoupled from peak_distance so narrowing
         peak_distance to a resolution floor doesn't silently shrink wrap safety margin too.
         Defaults to peak_distance if unset, which is only safe if peak_distance itself is still
@@ -495,47 +243,37 @@ class _CFARDetectorBase(DetectionAlgorithm, ABC):
         Whether the bearing axis wraps (True for a full -180..180 sweep).
     num_guard_cells : int
         CFAR guard cells on each side of the CUT, in bearing bins. Size to the worst-case
-        (strong-source) sidelobe leakage extent -- the same sizing consideration as
+        (strong-source) sidelobe leakage extent, the same sizing consideration as
         wrap_pad_width above (peak consolidation side vs. CFAR side).
     num_training_cells : int
         CFAR reference cells on each side of the guard cells.
     target_pfa : float
         Desired probability of false alarm. Alpha is calibrated automatically per num_frames seen
         at each detect() call.
-    effective_looks_per_frame : float
-        Effective independent Exponential(1) looks in each per-frame power sample (K). The
-        calibration assumes ``K * num_frames`` independent looks per cell.
 
     Threshold margin and sidelobes
     ------------------------------
     ``target_pfa`` sets the noise-only false-alarm rate: the probability that a cell containing
     only noise crosses the threshold, as in the CFAR literature's definition of Pfa. It does not
-    cover every false alarm in a scene. Two things separate the requested rate from what is
-    observed on beamformer output:
-
-    - Noise statistics. The model calibration assumes independent, Gamma-distributed cells.
-      Complex time-series output from ``DelayAndSumBeamformer`` in ``'time'`` or ``'frequency'``
-      domain presents every sample as a frame although samples are not independent looks,
-      neighbouring beams share noise, and the ratio's tail is heavier than Gamma. The achieved
-      noise-only rate then differs from target_pfa; see "Noise calibration" below.
-    - Source-induced false alarms. Sidelobes, leakage and multipath from real sources cross the
-      threshold at bearings where no source is present. They are false alarms, and are counted
-      as false positives by :mod:`.metrics`, but they are not noise, so no choice of target_pfa
-      or noise calibration controls them. Their rate depends on source strength and array design.
-      With many looks alpha approaches 1 (0 dB), which is correct for noise, and every sidelobe
-      of a strong source crosses; :meth:`detect` warns when the margin falls below 1 dB. Reduce
-      sidelobes at the beamformer (``DelayAndSumBeamformer(shading=...)``). ``peak_prominence``
-      also rejects them, but as a fixed dB criterion outside the Pfa model.
+    cover every false alarm in a scene: sidelobes, leakage and multipath from real sources cross
+    the threshold at bearings where no source is present. They are false alarms, and are counted
+    as false positives by :mod:`.metrics`, but they are not noise, so no choice of target_pfa or
+    noise calibration controls them. Their rate depends on source strength and array design. With
+    many looks alpha approaches 1 (0 dB), which is correct for noise, and every sidelobe of a
+    strong source crosses. Reduce sidelobes at the beamformer
+    (``DelayAndSumBeamformer(shading=...)``). ``peak_prominence`` also rejects them, but as a
+    fixed dB criterion outside the Pfa model.
 
     Noise calibration
     -----------------
-    No single look count makes the Gamma model exact on beamformer output: correlation between
-    beams and a heavier-than-Gamma tail remain. Set ``noise_calibration`` from
-    :func:`~.calibration.calibrate_from_noise`, run on noise-only scans produced exactly like the
-    operational data, and alpha for any ``target_pfa`` is read from the measured distribution
-    (generalised Pareto tail below the directly observable rate). ``target_pfa`` stays the only
-    detection parameter. A calibration is specific to the detector's window, rank and edge
-    handling and to the frame count; a mismatch raises at detection time.
+    ``noise_calibration`` is required (see :class:`NoiseCalibration`), because no single look
+    count makes an i.i.d.-Gamma model exact on beamformer output: correlation between beams and a
+    heavier-than-Gamma tail remain regardless (see :mod:`._theory` for that model). Build one with
+    ``calibration.NoiseCalibrator(detector).calibrate_from_noise(noise_scans)``, run on noise-only
+    scans produced exactly like the operational data; alpha for any ``target_pfa`` is then read
+    from the measured distribution (generalised Pareto tail below the directly observable rate).
+    ``target_pfa`` stays the only detection parameter. A calibration is specific to the detector's
+    window, rank and edge handling and to the frame count; a mismatch raises at detection time.
 
     Relation to sonar noise normalisation
     -------------------------------------
@@ -582,7 +320,7 @@ class _CFARDetectorBase(DetectionAlgorithm, ABC):
         default=True,
         doc="Whether to reduce CFAR-passing cells to one detection per source. Leave True for "
         "operational detection. False reports every cell above the threshold, which is a "
-        "diagnostic mode -- see the class docstring.",
+        "diagnostic mode; see the class docstring.",
     )
     peak_distance: int = Property(
         default=1,
@@ -599,7 +337,7 @@ class _CFARDetectorBase(DetectionAlgorithm, ABC):
         doc="Bearing-bin margin for circular wrap-padding; must cover the widest expected "
         "candidate cluster. Decoupled from peak_distance so narrowing peak_distance to a "
         "resolution floor doesn't silently shrink wrap safety margin too. Defaults to "
-        "peak_distance if unset -- see class docstring for when that's unsafe.",
+        "peak_distance if unset; see class docstring for when that's unsafe.",
     )
     circular: bool = Property(
         default=True,
@@ -615,23 +353,11 @@ class _CFARDetectorBase(DetectionAlgorithm, ABC):
         doc="Desired probability of false alarm. Alpha is calibrated automatically per num_frames "
         "seen at each detect() call.",
     )
-    effective_looks_per_frame: float = Property(
-        default=1.0,
-        doc="Effective number of independent Exponential(1) looks integrated into each "
-        "per-frame power sample fed to this detector. Leave at 1.0 for narrowband/single-bin "
-        "data; broadband STFT beam power (a sum over many frequency bins per frame) needs "
-        "this set to the data's effective per-frame degrees of freedom or the calibrated "
-        "Pfa runs far below target. Values below 1 account for correlated frames. See "
-        "calibrate_os_cfar_alpha_mc for how to estimate it. Ignored when noise_calibration "
-        "is set.",
-    )
     noise_calibration: NoiseCalibration | None = Property(
         default=None,
-        doc="Empirical calibration from noise-only scans (see calibration.calibrate_from_noise). "
-        "When set, alpha for target_pfa is read from the measured cell-to-noise ratio "
-        "distribution instead of the i.i.d. Gamma model, which makes target_pfa accurate on "
-        "correlated beamformer output. Must match this detector's window, rank, edge handling "
-        "and the data's frame count.",
+        doc="Empirical calibration from noise-only scans (see calibration.NoiseCalibrator). "
+        "Must match this detector's window, rank, edge handling and the data's frame count. "
+        "Required before detect() or detection_snr_map() can be called.",
     )
 
     def __init__(self, *args: object, **kwargs: object) -> None:
@@ -654,25 +380,12 @@ class _CFARDetectorBase(DetectionAlgorithm, ABC):
             raise ValueError(f"num_training_cells ({self.num_training_cells}) must be >= 1")
         if not 0 < self.target_pfa < 1:
             raise ValueError(f"target_pfa ({self.target_pfa}) must be in (0, 1)")
-        if self.effective_looks_per_frame <= 0:
-            raise ValueError(
-                f"effective_looks_per_frame ({self.effective_looks_per_frame}) must be positive"
-            )
-        if self.noise_calibration is not None and self.effective_looks_per_frame != 1.0:
-            warnings.warn(
-                "effective_looks_per_frame is ignored when noise_calibration is set: the "
-                "calibration already measures the data's statistics.",
-                stacklevel=2,
-            )
         # Alpha depends only on num_frames and the calibration parameters (not on the data
         # itself), so it's cheap to memoize across detect() calls that share a frame count.
         # Avoids re-solving/re-simulating. The cache is keyed by num_frames and invalidated
-        # whenever _calibration_signature() changes -- see _alpha_for.
+        # whenever _calibration_signature() changes; see _alpha_for.
         self._alpha_cache: dict[int, float] = {}
         self._alpha_cache_signature: tuple = self._calibration_signature()
-        # Frame counts already warned about for a low threshold margin, so a detector warns once
-        # per frame count rather than on every scan.
-        self._low_margin_warned: set[int] = set()
 
     @property
     def num_training_total(self) -> int:
@@ -690,7 +403,6 @@ class _CFARDetectorBase(DetectionAlgorithm, ABC):
         # reused by a replacement and mistaken for it.
         return (
             self.target_pfa,
-            self.effective_looks_per_frame,
             self.num_training_cells,
             self.noise_calibration,
         )
@@ -721,26 +433,24 @@ class _CFARDetectorBase(DetectionAlgorithm, ABC):
         signature = self._calibration_signature()
         if signature != self._alpha_cache_signature:
             self._alpha_cache = {}
-            self._low_margin_warned = set()
             self._alpha_cache_signature = signature
         if num_frames not in self._alpha_cache:
-            calibration = self.noise_calibration
-            if calibration is None:
-                self._alpha_cache[num_frames] = self._calibrate_alpha(num_frames)
-            else:
-                mismatch = signature_mismatch(calibration, self, num_frames)
-                if mismatch is not None:
-                    raise ValueError(
-                        f"noise_calibration does not apply to this {type(self).__name__}: "
-                        f"{mismatch}. Recalibrate with calibrate_from_noise for these settings."
-                    )
-                self._alpha_cache[num_frames] = calibration.alpha(self.target_pfa, num_frames)
+            if self.noise_calibration is None:
+                raise ValueError(
+                    f"{type(self).__name__} has no noise_calibration set. Build one with "
+                    "calibration.NoiseCalibrator(detector).calibrate_from_noise(noise_scans) "
+                    "before calling detect()."
+                )
+            mismatch = self.noise_calibration.matches(self, num_frames)
+            if mismatch is not None:
+                raise ValueError(
+                    f"noise_calibration does not apply to this {type(self).__name__}: "
+                    f"{mismatch}. Recalibrate with NoiseCalibrator for these settings."
+                )
+            self._alpha_cache[num_frames] = self.noise_calibration.alpha(
+                self.target_pfa, num_frames
+            )
         return self._alpha_cache[num_frames]
-
-    @abstractmethod
-    def _calibrate_alpha(self, num_frames: int) -> float:
-        """Compute (uncached) the threshold multiplier for a given number of frames."""
-        ...
 
     @abstractmethod
     def _local_noise_floor(self, directional_power: np.ndarray) -> np.ndarray:
@@ -771,7 +481,7 @@ class _CFARDetectorBase(DetectionAlgorithm, ABC):
         if self.circular:
             # Pad both ends with wrapped data so a peak straddling the 0/num_beams seam is
             # still found as one peak instead of two truncated ones at the array edges.
-            # Padding width is wrap_pad_width, NOT peak_distance -- see class docstring; only
+            # Padding width is wrap_pad_width, NOT peak_distance; see class docstring, only
             # safe to conflate the two if peak_distance is still sized for worst-case leakage
             # rather than pure angular resolution.
             pad = self._wrap_pad
@@ -792,7 +502,7 @@ class _CFARDetectorBase(DetectionAlgorithm, ABC):
 
         Prominence is measured on the SNR map itself, not the sparse candidate map used for
         consolidation: there, every non-candidate cell is -inf, so any candidate isolated by
-        sub-threshold cells -- e.g. a sidelobe separated from its mainlobe by a null -- would
+        sub-threshold cells (e.g. a sidelobe separated from its mainlobe by a null) would
         have infinite prominence and could never be rejected.
 
         A candidate that is not a local maximum of the SNR map (a shoulder of a higher,
@@ -817,46 +527,6 @@ class _CFARDetectorBase(DetectionAlgorithm, ABC):
             prominences, _, _ = peak_prominences(extended, positions)
         return indices[prominences >= self.peak_prominence]
 
-    def _warn_if_low_threshold_margin(self, alpha: float, num_frames: int) -> None:
-        """Warn once per frame count when look integration has pushed alpha towards 0 dB.
-
-        Only integration-driven margins are reported: if the same target_pfa would already give
-        a sub-1 dB threshold from a single look, the low margin is a deliberate high-Pfa choice
-        (the CA-CFAR single-look closed form is used as that reference for both detectors).
-        """
-        margin_db = 10 * np.log10(alpha)
-        if margin_db >= _LOW_THRESHOLD_MARGIN_DB or num_frames in self._low_margin_warned:
-            return
-        # Sweeps may set target_pfa to 1.0, which the constructor rejects and the closed form
-        # cannot solve; a Pfa of 1 is a deliberately high choice, so there is nothing to report.
-        if self.target_pfa >= 1:
-            return
-        single_look_alpha = solve_ca_cfar_alpha(self.target_pfa, self.num_training_total, 1)
-        if 10 * np.log10(single_look_alpha) < _LOW_THRESHOLD_MARGIN_DB:
-            return
-        self._low_margin_warned.add(num_frames)
-        if self.noise_calibration is None:
-            basis = (
-                f"{num_frames} frames x {self.effective_looks_per_frame:g} effective looks per "
-                "frame"
-            )
-            statistics_advice = (
-                " If frames are correlated (e.g. complex time-series samples), also calibrate "
-                "against noise-only scans (noise_calibration) so target_pfa is accurate."
-            )
-        else:
-            basis = f"noise-calibrated, {num_frames} frames"
-            statistics_advice = ""
-        warnings.warn(
-            f"{type(self).__name__} threshold is only {margin_db:.2f} dB above the local noise "
-            f"estimate ({basis}, target_pfa={self.target_pfa:g}). At this margin, sidelobes of "
-            "strong sources cross the threshold regardless of target_pfa: these are "
-            "source-induced false alarms, which target_pfa does not control. Reduce them with "
-            "beamformer shading."
-            f"{statistics_advice} See _CFARDetectorBase.",
-            stacklevel=3,
-        )
-
     def detect(self, data: ArrayLike) -> DetectionArray:
         """Detect and consolidate signals from raw beamformed data.
 
@@ -876,7 +546,6 @@ class _CFARDetectorBase(DetectionAlgorithm, ABC):
 
         directional_power, noise_estimate = self._power_and_noise(data_array)
         alpha = self._alpha_for(num_frames)
-        self._warn_if_low_threshold_margin(alpha, num_frames)
         threshold = alpha * noise_estimate
         # Reported SNR is noise-relative rather than threshold-relative, so it matches
         # detection_snr_map() and reads as a physical quantity independent of the chosen
@@ -903,23 +572,14 @@ class CACFARDetector(_CFARDetectorBase):
     where the per-beam power exceeds the CFAR threshold.
 
     Not recommended over OSCFARDetector for environments with multiple contacts or
-    impulsive interference -- CA-CFAR's mean-based noise estimate has no way to reject
+    impulsive interference: CA-CFAR's mean-based noise estimate has no way to reject
     a contaminated training cell the way OS-CFAR's order statistic can. Kept for
     codebase consistency and as a benchmark; see OSCFARDetector as the default choice.
 
-    See :class:`_CFARDetectorBase` for ``num_guard_cells``, ``num_training_cells``,
-    ``target_pfa`` and ``effective_looks_per_frame`` -- CA-CFAR adds no attributes of its own.
+    See :class:`_CFARDetectorBase` for ``num_guard_cells``, ``num_training_cells``, and
+    ``target_pfa``; CA-CFAR adds no attributes of its own.
 
     """
-
-    def _calibrate_alpha(self, num_frames: int) -> float:
-        """Exact CA-CFAR alpha for ``effective_looks_per_frame * num_frames`` looks."""
-        return solve_ca_cfar_alpha(
-            self.target_pfa,
-            self.num_training_total,
-            num_frames,
-            effective_looks_per_frame=self.effective_looks_per_frame,
-        )
 
     def _local_noise_floor(self, directional_power: np.ndarray) -> np.ndarray:
         """Per-bearing local noise floor via cell-averaging sliding window."""
@@ -956,32 +616,21 @@ class OSCFARDetector(_CFARDetectorBase):
         (e.g. 1) in multi-target / leakage-prone environments. A common starting point is
         ~0.75 * (2 * num_training_cells).
     mc_trials : int
-        Monte Carlo trials for num_frames > 1 alpha calibration. Scale up for smaller target_pfa
-        (see calibrate_os_cfar_alpha_mc docstring).
+        Deprecated and ignored: alpha is calibrated empirically now (see ``noise_calibration``),
+        not by any model, Monte Carlo or otherwise.
     rng : np.random.Generator, optional
-        Random number generator for num_frames > 1 Monte Carlo alpha calibration. Pass a seeded
-        Generator for reproducible calibration -- e.g. so a deep-copied detector (as used when
-        sweeping a parameter, see metrics.py) recalibrates deterministically instead of drawing
-        fresh randomness each time. Defaults to a fresh unseeded Generator per calibration when
-        unset.
+        Deprecated and ignored: alpha is calibrated empirically now (see ``noise_calibration``),
+        not by any model, Monte Carlo or otherwise.
 
     Notes
     -----
     Alpha is memoised per ``num_frames``, so calibration is paid once per distinct frame count
     per detector instance rather than on every :meth:`detect` call. Subsequent calls at the same
     frame count cost microseconds. Changing a calibration parameter (``target_pfa``,
-    ``effective_looks_per_frame``, ``num_training_cells``, ``rank`` or ``mc_trials``) discards
-    the memoised values.
-
-    ``num_frames == 1`` with ``effective_looks_per_frame == 1`` uses the closed form and is
-    effectively free. Every other case falls back to Monte Carlo, which draws arrays sized
-    ``(mc_trials, 2 * num_training_cells, num_frames)``. At the default 200,000 trials that is a
-    few tenths of a second and around 0.8 GiB peak at ``num_training_cells=16, num_frames=8``,
-    growing linearly in all three factors -- wide training windows at high frame counts can want
-    several GiB. Reduce ``mc_trials`` if that is too much, accepting a noisier alpha.
+    ``num_training_cells`` or ``rank``) discards the memoised values.
 
     :func:`~.metrics.sweep_detection_parameter` deep-copies the detector per swept value, so a
-    sweep pays calibration once per point. Pass a seeded ``rng`` to make those reproducible.
+    sweep pays calibration once per point.
 
     """
 
@@ -992,12 +641,13 @@ class OSCFARDetector(_CFARDetectorBase):
     )
     mc_trials: int = Property(
         default=200_000,
-        doc="Monte Carlo trials for num_frames > 1 alpha calibration.",
+        doc="Deprecated and ignored: alpha is calibrated empirically now (see noise_calibration), "
+        "not by any model, Monte Carlo or otherwise.",
     )
     rng: np.random.Generator | None = Property(
         default=None,
-        doc="Random number generator for num_frames > 1 Monte Carlo alpha calibration. Defaults "
-        "to a fresh unseeded Generator per calibration when unset.",
+        doc="Deprecated and ignored: alpha is calibrated empirically now (see noise_calibration), "
+        "not by any model, Monte Carlo or otherwise.",
     )
 
     def __init__(self, *args: object, **kwargs: object) -> None:
@@ -1011,7 +661,7 @@ class OSCFARDetector(_CFARDetectorBase):
             )
         # A low rank picks the noise estimate from the small-value tail of the training cells,
         # which underestimates the true noise floor whenever some training cells are
-        # contaminated by a second target or sidelobe leakage -- warn rather than fail, since
+        # contaminated by a second target or sidelobe leakage; warn rather than fail, since
         # rank=1 (minimum statistic) is a legitimate choice in genuinely clean environments.
         if self.rank < 0.5 * self.num_training_total:
             warnings.warn(
@@ -1020,45 +670,17 @@ class OSCFARDetector(_CFARDetectorBase):
                 "noise floor in multi-target or leakage-prone environments.",
                 stacklevel=2,
             )
+        if self.mc_trials != 200_000 or self.rng is not None:
+            warnings.warn(
+                "OSCFARDetector mc_trials and rng are deprecated and ignored: alpha is "
+                "calibrated empirically now (see noise_calibration), not by any model.",
+                DeprecationWarning,
+                stacklevel=2,
+            )
 
     def _calibration_signature(self) -> tuple:
-        """Return the base calibration parameters plus rank and Monte Carlo size.
-
-        ``rng`` is deliberately excluded: it only changes Monte Carlo sampling noise, not the
-        quantity being estimated.
-        """
-        return (*super()._calibration_signature(), self.rank, self.mc_trials)
-
-    def _calibrate_alpha(self, num_frames: int) -> float:
-        """Get the calibrated alpha for a given number of frames.
-
-        Parameters
-        ----------
-        num_frames : int
-            The number of independent frames (averages).
-
-        Returns
-        -------
-        float
-            The calibrated alpha value.
-
-        """
-        if num_frames == 1 and self.effective_looks_per_frame == 1.0:
-            # Exact closed form only holds for single-frame (exponential) statistics.
-            return solve_os_cfar_alpha_single_look(
-                self.target_pfa, self.num_training_total, self.rank
-            )
-        # M-frame (and/or band-integrated) power is Gamma-distributed; fall back to
-        # Monte Carlo calibration.
-        return calibrate_os_cfar_alpha_mc(
-            self.target_pfa,
-            self.num_training_total,
-            self.rank,
-            num_frames,
-            num_trials=self.mc_trials,
-            rng=self.rng,
-            effective_looks_per_frame=self.effective_looks_per_frame,
-        )
+        """Return the base calibration parameters plus rank."""
+        return (*super()._calibration_signature(), self.rank)
 
     def _local_noise_floor(self, directional_power: np.ndarray) -> np.ndarray:
         """Per-bearing local noise floor via order-statistic sliding window.

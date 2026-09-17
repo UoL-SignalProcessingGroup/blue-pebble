@@ -32,7 +32,7 @@ def beam_power(beamformed_data: ArrayLike, decibels: bool = False) -> FloatArray
     the result is measured against:
 
     ==============================  ======================================================
-    :func:`beam_power`              nothing -- absolute power
+    :func:`beam_power`              nothing, absolute power
     :func:`beam_snr`                a percentile of the whole scan, so bearings compare
     :meth:`~.algorithms._CFARDetectorBase.detection_snr_map`
                                     the detector's own local training cells, which is what
@@ -45,7 +45,7 @@ def beam_power(beamformed_data: ArrayLike, decibels: bool = False) -> FloatArray
 
     Use this rather than computing ``|data|**2`` directly. ``BeamformedData`` is deliberately
     either complex amplitude or already-real power depending on the beamformer, and squaring
-    the real-power case a second time double-applies the power law -- see
+    the real-power case a second time double-applies the power law; see
     :func:`~.algorithms._directional_power`. That mistake is invisible in the output and
     silently breaks any Pfa calibration downstream, so the distinction is worth keeping in one
     place.
@@ -116,7 +116,7 @@ def _reported_snr_map(
     """Per-beam SNR against the requested noise reference.
 
     The two answer different questions. ``"local"`` is the detector's own training-cell
-    estimate -- the quantity its threshold was actually compared against, and the one that
+    estimate, the quantity its threshold was actually compared against, and the one that
     follows a noise field varying with bearing. ``"global"`` measures every beam against a
     single percentile of the whole scan, which is comparable across bearings and over time
     but blind to a noisy sector.
@@ -269,7 +269,7 @@ class PassiveSonarDetector(DetectionReader):
                 if beamformed_data is None or beamformed_data.size == 0:
                     continue
 
-                # detection_snr_map() and detect() each estimate the noise floor independently -- a
+                # detection_snr_map() and detect() each estimate the noise floor independently, a
                 # modest redundant computation in exchange for keeping "report the full
                 # picture" and "decide detections" as separate concerns. Worth revisiting if
                 # this shows up in profiling.
@@ -307,7 +307,7 @@ class BandDetector(Base):
     by label; see :class:`MultibandPassiveSonarDetector`.
 
     Noise statistics differ between bands, so a ``noise_calibration`` is per band: calibrate
-    each band's detector with :func:`~.calibration.calibrate_from_noise` on that band's slices of
+    each band's detector with :class:`~.calibration.NoiseCalibrator` on that band's slices of
     noise-only multiband output, selected with
     ``beamformed_scans_from_sensor_data(sensor_data_gen, band_label=...)``.
     """

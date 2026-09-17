@@ -1,6 +1,6 @@
 """Calibrate CFAR detectors against noise-only data so ``target_pfa`` is achieved.
 
-The closed-form and Monte Carlo calibrations in :mod:`.algorithms` derive alpha from a model:
+The closed-form and numerical calibrations in :mod:`._theory` derive alpha from a model:
 reference cells and the cell under test (CUT) are i.i.d. Gamma with a known number of looks.
 Beamformer output violates that model in ways no single look count repairs:
 
@@ -76,7 +76,7 @@ normaliser of [6]_ sets its internal shearing threshold by assuming Rayleigh-dis
 noise averaged over a known number of statistically independent beams, and does not set the
 detection threshold for a stated false-alarm rate. The textbook treatment in [7]_ (Sect. 8.6)
 does derive cell-averaging and order-statistic thresholds for a stated false-alarm rate, the same
-closed forms as :mod:`.algorithms`, but for independent exponentially distributed auxiliary data.
+closed forms as :mod:`._theory`, but for independent exponentially distributed auxiliary data.
 It handles correlated (oversampled) auxiliary data through an equivalent number of independent
 samples, ``tr(S)**2 / tr(S**2)`` for auxiliary-data covariance ``S`` (Sect. 8.6.1.2), or
 characteristic functions (Sect. 9.3.4), in both cases keeping the test cell independent of its
@@ -204,43 +204,6 @@ def _refer_ratios(ratios: ArrayLike, from_frames: float, to_frames: float) -> ND
     return 1.0 + (np.asarray(ratios, dtype=float) - 1.0) * np.sqrt(from_frames / to_frames)
 
 
-def cell_noise_ratios(
-    detector: Any,
-    beamformed_scans: Iterable[ArrayLike],
-    frame_count_tolerance: float = DEFAULT_FRAME_COUNT_TOLERANCE,
-) -> NDArray[np.float64]:
-    """Pooled ``frame-averaged power / local noise estimate`` for every cell of every scan.
-
-    Ratios from scans with differing frame counts are referred to the median frame count (see
-    the module docstring).
-
-    This is exactly the quantity :meth:`~.algorithms._CFARDetectorBase.detect` compares with
-    alpha, computed with the detector's own noise estimator and edge handling.
-
-    Parameters
-    ----------
-    detector : _CFARDetectorBase
-        The CFAR detector to be calibrated.
-    beamformed_scans : Iterable[ArrayLike]
-        Noise-only beamformer output, one ``(num_beams, num_frames)`` array per scan.
-    frame_count_tolerance : float, optional
-        Largest relative spread of frame counts across scans, by default 0.25.
-
-    Returns
-    -------
-    numpy.ndarray
-        One ratio per cell, shape ``(num_scans * num_beams,)``.
-
-    Raises
-    ------
-    ValueError
-        If there are no scans, frame counts spread beyond the tolerance, or a noise estimate is
-        zero.
-
-    """
-    return _ratios_and_frame_counts(detector, beamformed_scans, frame_count_tolerance)[0]
-
-
 @dataclass(frozen=True, eq=False)
 class NoiseCalibration:
     """Empirical alpha for any target Pfa, measured on noise-only scans.
@@ -342,92 +305,183 @@ class NoiseCalibration:
             return reference_alpha
         return float(_refer_ratios(reference_alpha, self.num_frames, num_frames))
 
+    def matches(self, detector: Any, num_frames: int) -> str | None:
+        """Describe why this calibration does not fit ``detector`` at ``num_frames``, if not.
 
-def calibrate_from_noise(
-    detector: Any,
-    beamformed_scans: Iterable[ArrayLike],
-    tail_pfa: float = 1e-2,
-    min_tail_exceedances: int = 200,
-    frame_count_tolerance: float = DEFAULT_FRAME_COUNT_TOLERANCE,
-) -> NoiseCalibration:
-    """Measure a detector's cell-to-noise ratio distribution on noise-only scans.
+        Parameters
+        ----------
+        detector : _CFARDetectorBase
+            The detector this calibration would be applied to.
+        num_frames : int
+            Frame count of the data being detected on.
 
-    Parameters
-    ----------
-    detector : _CFARDetectorBase
-        The CFAR detector to calibrate. Its window, rank and edge handling are recorded; its
-        ``target_pfa`` is not used, so one calibration serves every Pfa.
-    beamformed_scans : Iterable[ArrayLike]
-        Noise-only beamformer output, one ``(num_beams, num_frames)`` array per scan, all with
-        the same frame count and produced exactly as operational data will be (same array,
-        shading, beamformer, band and scan length). A simulator built with no
-        ``ground_truth_paths`` provides these; see :func:`beamformed_scans_from_sensor_data`.
-    tail_pfa : float, optional
-        Exceedance rate at which the generalised Pareto tail takes over from the empirical
-        quantile, by default 1e-2. Broadwater and Chellappa (2010; see the module references)
-        suggest 0.05-0.1 for detector outputs with fewer samples; the 1% default relies on the
-        many cells pooled from noise-only scans. Lower it only when there are enough cells for
-        the empirical quantile to be reliable there. Any fixed tail fraction is a rule of thumb:
-        choosing it trades bias in the tail approximation against variance from fewer
-        exceedances, and fixed-fraction rules lack theoretical support (Scarrott and MacDonald,
-        2012, Sects. 1 and 3; see the module references).
-    min_tail_exceedances : int, optional
-        Minimum number of cells above the tail threshold for the tail fit, by default 200.
-    frame_count_tolerance : float, optional
-        Largest relative spread of frame counts accepted across the calibration scans, and the
-        margin beyond their range within which the calibration is later applied, by default
-        0.25.
+        Returns
+        -------
+        str or None
+            A message naming the first mismatched setting, or ``None`` when it applies.
 
-    Returns
-    -------
-    NoiseCalibration
-        Assign to the detector's ``noise_calibration`` property.
+        """
+        margin = 1.0 + self.frame_count_tolerance
+        lowest = self.min_num_frames / margin
+        highest = self.max_num_frames * margin
+        if not lowest <= num_frames <= highest:
+            return (
+                f"calibrated for {self.min_num_frames}-{self.max_num_frames} frames "
+                f"(accepting {lowest:.0f}-{highest:.0f}) but the data has {num_frames}"
+            )
+        current = detector_signature(detector)
+        for name, calibrated, actual in zip(
+            _SIGNATURE_FIELDS, self.detector_signature, current, strict=True
+        ):
+            if calibrated != actual:
+                return (
+                    f"calibrated with {name}={calibrated!r} but the detector has {name}={actual!r}"
+                )
+        return None
 
-    Raises
-    ------
-    ValueError
-        If ``tail_pfa`` is not in (0, 1), the scans are empty or inconsistent, or they contain
-        too few cells to fit the tail.
 
-    Examples
-    --------
-    >>> calibration = calibrate_from_noise(detector, noise_scans)  # doctest: +SKIP
-    >>> detector.noise_calibration = calibration  # doctest: +SKIP
-    >>> detector.target_pfa = 1e-4  # doctest: +SKIP
+class NoiseCalibrator:
+    """Measures a detector's noise-only ratio distribution and builds a calibration for it.
 
+    Construct around the detector to be calibrated. Its structural settings (window, rank, edge
+    handling) and its own noise estimator (``_power_and_noise``) are read from it; ``target_pfa``
+    is not, since one calibration serves every Pfa. The detector need not have a
+    ``noise_calibration`` yet.
     """
-    if not 0 < tail_pfa < 1:
-        raise ValueError(f"tail_pfa ({tail_pfa}) must be in (0, 1)")
 
-    ratios, frame_counts = _ratios_and_frame_counts(
-        detector, beamformed_scans, frame_count_tolerance
-    )
-    sorted_ratios = np.sort(ratios)
-    num_cells = sorted_ratios.size
+    def __init__(self, detector: Any) -> None:
+        """Store the detector to be calibrated."""
+        self.detector = detector
 
-    tail_threshold = float(np.quantile(sorted_ratios, 1.0 - tail_pfa))
-    exceedances = sorted_ratios[sorted_ratios > tail_threshold] - tail_threshold
-    if exceedances.size < min_tail_exceedances:
-        needed = int(np.ceil(min_tail_exceedances / tail_pfa))
-        raise ValueError(
-            f"Only {exceedances.size} of {num_cells} cells exceed the tail threshold at "
-            f"tail_pfa={tail_pfa:g}; at least {min_tail_exceedances} are needed to fit the tail. "
-            f"Provide noise-only scans totalling about {needed} cells."
+    def cell_noise_ratios(
+        self,
+        beamformed_scans: Iterable[ArrayLike],
+        frame_count_tolerance: float = DEFAULT_FRAME_COUNT_TOLERANCE,
+    ) -> NDArray[np.float64]:
+        """Pooled ``frame-averaged power / local noise estimate`` for every cell of every scan.
+
+        Ratios from scans with differing frame counts are referred to the median frame count (see
+        the module docstring).
+
+        It is the quantity :meth:`~.algorithms._CFARDetectorBase.detect` compares with alpha,
+        computed with the detector's own noise estimator and edge handling.
+
+        Parameters
+        ----------
+        beamformed_scans : Iterable[ArrayLike]
+            Noise-only beamformer output, one ``(num_beams, num_frames)`` array per scan.
+        frame_count_tolerance : float, optional
+            Largest relative spread of frame counts across scans, by default 0.25.
+
+        Returns
+        -------
+        numpy.ndarray
+            One ratio per cell, shape ``(num_scans * num_beams,)``.
+
+        Raises
+        ------
+        ValueError
+            If there are no scans, frame counts spread beyond the tolerance, or a noise estimate is
+            zero.
+
+        """
+        return _ratios_and_frame_counts(self.detector, beamformed_scans, frame_count_tolerance)[0]
+
+    def calibrate_from_noise(
+        self,
+        beamformed_scans: Iterable[ArrayLike],
+        tail_pfa: float = 1e-2,
+        min_tail_exceedances: int = 200,
+        frame_count_tolerance: float = DEFAULT_FRAME_COUNT_TOLERANCE,
+    ) -> NoiseCalibration:
+        """Measure the detector's cell-to-noise ratio distribution and assign it.
+
+        Its window, rank and edge handling are recorded; ``target_pfa`` is not used, so one
+        calibration serves every Pfa. The result is assigned to ``self.detector.noise_calibration``
+        as well as being returned, so calibrating and attaching is a single call.
+
+        Parameters
+        ----------
+        beamformed_scans : Iterable[ArrayLike]
+            Noise-only beamformer output, one ``(num_beams, num_frames)`` array per scan, all with
+            the same frame count and produced exactly as operational data will be (same array,
+            shading, beamformer, band and scan length). A simulator built with no
+            ``ground_truth_paths`` provides these; see :func:`beamformed_scans_from_sensor_data`.
+            The tail fit needs roughly ``min_tail_exceedances / tail_pfa`` pooled cells (about
+            20,000 at the defaults), and each scan contributes ``num_beams`` cells, so the number
+            of noise-only time steps needed is that total divided by ``num_beams``: roughly 560
+            scans for a 36-beam detector, roughly 110 for a 180-beam one, at the defaults. This
+            minimum applies only when the requested ``target_pfa`` is below ``tail_pfa``, since
+            only then is the fitted tail actually used; direct quantiles above ``tail_pfa`` carry
+            no such requirement beyond what ``frame_count_tolerance`` already enforces.
+        tail_pfa : float, optional
+            Exceedance rate at which the generalised Pareto tail takes over from the empirical
+            quantile, by default 1e-2. Broadwater and Chellappa (2010; see the module references)
+            suggest 0.05-0.1 for detector outputs with fewer samples; the 1% default relies on the
+            many cells pooled from noise-only scans. Lower it only when there are enough cells for
+            the empirical quantile to be reliable there. Any fixed tail fraction is a rule of
+            thumb: choosing it trades bias in the tail approximation against variance from fewer
+            exceedances, and fixed-fraction rules lack theoretical support (Scarrott and MacDonald,
+            2012, Sects. 1 and 3; see the module references).
+        min_tail_exceedances : int, optional
+            Minimum number of cells above the tail threshold for the tail fit, by default 200.
+        frame_count_tolerance : float, optional
+            Largest relative spread of frame counts accepted across the calibration scans, and the
+            margin beyond their range within which the calibration is later applied, by default
+            0.25.
+
+        Returns
+        -------
+        NoiseCalibration
+            Also assigned to ``self.detector.noise_calibration``.
+
+        Raises
+        ------
+        ValueError
+            If ``tail_pfa`` is not in (0, 1), the scans are empty or inconsistent, or they contain
+            too few cells to fit the tail.
+
+        Examples
+        --------
+        >>> calibration = NoiseCalibrator(detector).calibrate_from_noise(noise_scans)
+        ... # doctest: +SKIP
+        >>> detector.target_pfa = 1e-4  # doctest: +SKIP
+
+        """
+        if not 0 < tail_pfa < 1:
+            raise ValueError(f"tail_pfa ({tail_pfa}) must be in (0, 1)")
+
+        ratios, frame_counts = _ratios_and_frame_counts(
+            self.detector, beamformed_scans, frame_count_tolerance
         )
+        sorted_ratios = np.sort(ratios)
+        num_cells = sorted_ratios.size
 
-    tail_shape, _, tail_scale = genpareto.fit(exceedances, floc=0.0)
-    return NoiseCalibration(
-        num_frames=int(np.median(frame_counts)),
-        min_num_frames=int(frame_counts.min()),
-        max_num_frames=int(frame_counts.max()),
-        frame_count_tolerance=frame_count_tolerance,
-        detector_signature=detector_signature(detector),
-        sorted_ratios=sorted_ratios,
-        tail_pfa=exceedances.size / num_cells,
-        tail_threshold=tail_threshold,
-        tail_shape=float(tail_shape),
-        tail_scale=float(tail_scale),
-    )
+        tail_threshold = float(np.quantile(sorted_ratios, 1.0 - tail_pfa))
+        exceedances = sorted_ratios[sorted_ratios > tail_threshold] - tail_threshold
+        if exceedances.size < min_tail_exceedances:
+            needed = int(np.ceil(min_tail_exceedances / tail_pfa))
+            raise ValueError(
+                f"Only {exceedances.size} of {num_cells} cells exceed the tail threshold at "
+                f"tail_pfa={tail_pfa:g}; at least {min_tail_exceedances} are needed to fit the "
+                f"tail. Provide noise-only scans totalling about {needed} cells."
+            )
+
+        tail_shape, _, tail_scale = genpareto.fit(exceedances, floc=0.0)
+        calibration = NoiseCalibration(
+            num_frames=int(np.median(frame_counts)),
+            min_num_frames=int(frame_counts.min()),
+            max_num_frames=int(frame_counts.max()),
+            frame_count_tolerance=frame_count_tolerance,
+            detector_signature=detector_signature(self.detector),
+            sorted_ratios=sorted_ratios,
+            tail_pfa=exceedances.size / num_cells,
+            tail_threshold=tail_threshold,
+            tail_shape=float(tail_shape),
+            tail_scale=float(tail_scale),
+        )
+        self.detector.noise_calibration = calibration
+        return calibration
 
 
 def beamformed_scans_from_sensor_data(
@@ -482,31 +536,3 @@ def beamformed_scans_from_sensor_data(
             if band_label not in labels:
                 raise ValueError(f"band_label={band_label!r} is not one of {list(labels)}")
             yield np.asarray(data)[list(labels).index(band_label)]
-
-
-def signature_mismatch(
-    calibration: NoiseCalibration, detector: Any, num_frames: int
-) -> str | None:
-    """Describe why ``calibration`` does not fit ``detector`` at ``num_frames``, if it does not.
-
-    Returns
-    -------
-    str or None
-        A message naming the first mismatched setting, or ``None`` when it applies.
-
-    """
-    margin = 1.0 + calibration.frame_count_tolerance
-    lowest = calibration.min_num_frames / margin
-    highest = calibration.max_num_frames * margin
-    if not lowest <= num_frames <= highest:
-        return (
-            f"calibrated for {calibration.min_num_frames}-{calibration.max_num_frames} frames "
-            f"(accepting {lowest:.0f}-{highest:.0f}) but the data has {num_frames}"
-        )
-    current = detector_signature(detector)
-    for name, calibrated, actual in zip(
-        _SIGNATURE_FIELDS, calibration.detector_signature, current, strict=True
-    ):
-        if calibrated != actual:
-            return f"calibrated with {name}={calibrated!r} but the detector has {name}={actual!r}"
-    return None

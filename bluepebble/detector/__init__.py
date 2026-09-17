@@ -1,5 +1,12 @@
 """Detector package public API."""
 
+from ._theory import (
+    FluctuationModel,
+    NonFluctuating,
+    RayleighFluctuation,
+    ca_cfar_roc,
+    os_cfar_roc,
+)
 from .algorithms import (
     CACFARDetector,
     DetectionAlgorithm,
@@ -7,21 +14,13 @@ from .algorithms import (
 )
 from .calibration import (
     NoiseCalibration,
+    NoiseCalibrator,
     beamformed_scans_from_sensor_data,
-    calibrate_from_noise,
-    cell_noise_ratios,
-)
-from .fluctuation_models import (
-    FluctuationModel,
-    NonFluctuating,
-    RayleighFluctuation,
 )
 from .metrics import (
     SweepResult,
     SweepSpec,
-    ca_cfar_roc,
     estimate_effective_looks_per_frame,
-    os_cfar_roc,
     snr_linear_from_ground_truth_bearing,
     sweep_detection_parameter,
     sweep_detection_parameter_multiband,
@@ -41,6 +40,7 @@ __all__ = [
     "FluctuationModel",
     "MultibandPassiveSonarDetector",
     "NoiseCalibration",
+    "NoiseCalibrator",
     "NonFluctuating",
     "OSCFARDetector",
     "PassiveSonarDetector",
@@ -49,8 +49,6 @@ __all__ = [
     "SweepSpec",
     "beamformed_scans_from_sensor_data",
     "ca_cfar_roc",
-    "calibrate_from_noise",
-    "cell_noise_ratios",
     "estimate_effective_looks_per_frame",
     "os_cfar_roc",
     "beam_power",
@@ -67,12 +65,12 @@ __all__ = [
 # below would never reach the caller.
 _REMOVED = {
     "PeakDetector": (
-        "Peak consolidation is built into OSCFARDetector -- configure it with "
+        "Peak consolidation is built into OSCFARDetector: configure it with "
         "peak_distance / peak_prominence instead of chaining a separate detector."
     ),
     "ThresholdDetector": (
         "It compared every cell to one scalar; the CFAR detectors compare each cell to its "
-        "own training cells, so they are not a drop-in replacement -- the two differ "
+        "own training cells, so they are not a drop-in replacement; the two differ "
         "wherever the noise varies with bearing. For a fixed global threshold, apply one "
         "directly to beam_snr(data), which is the scan-referenced map it used to consume."
     ),
