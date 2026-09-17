@@ -3,36 +3,22 @@
 Live detection here always calibrates alpha (the threshold multiplier applied to the local noise
 estimate) empirically (see ``noise_calibration`` and :class:`NoiseCalibration`), never from a
 model. The i.i.d.-Gamma model that :func:`~._theory.solve_ca_cfar_alpha` and
-:func:`~._theory.solve_os_cfar_alpha` still implement, for theoretical ROC curves
-(:mod:`._theory`) and as the correctness reference the empirical calibration is tested against,
-rests on assumptions beamformer output routinely violates:
+:func:`~._theory.solve_os_cfar_alpha` still implement is used only for theoretical ROC curves
+(:mod:`._theory`) and as the correctness reference the empirical calibration is tested against;
+it does not constrain live detection here.
 
-- **Noise statistics.** Reference cells and the CUT are modelled as i.i.d. Exponential(1) per
-  look, the statistics of square-law-detected magnitude from complex Gaussian noise. Under
-  impulsive or heavy-tailed interference (e.g. snapping shrimp), the true tail is heavier than
-  exponential, so the model overstates how quickly Pfa falls as alpha increases.
-- **Independence across looks.** The M looks/frames averaged into a single cell are assumed
-  statistically independent. If the integration period is shorter than the clutter's
-  decorrelation time, the effective M is smaller than the nominal frame count, so the model
-  understates the true variance.
-- **Independence across cells.** The CUT and every reference cell are assumed mutually
-  independent. Beamformer output violates this directly: neighbouring beams share noise, which
-  correlates the CUT with its reference cells and makes the ratio the detector thresholds far
-  less variable than the model assumes. ``noise_calibration`` measures around this violation
-  rather than assuming it away (see :mod:`.calibration`); heavy tails in the same data act in
-  the opposite direction at small Pfa.
-- **Homogeneous reference window.** All N reference cells are assumed to share the CUT's
-  underlying noise level, differing only by random fluctuation. Clutter edges or interfering
-  targets in the window violate this; OS-CFAR's order-statistic censoring tolerates a minority of
-  contaminated cells (see OSCFARDetector), but the model is exact only under full homogeneity.
+Assumptions (of the i.i.d.-Gamma model above, not of live detection)
+---------------------------------------------------------------------
+- Noise statistics: reference cells and the CUT are i.i.d. Exponential(1) per look.
+- Independence across looks: the M frames averaged into a cell are statistically independent.
+- Independence across cells: the CUT and every reference cell are mutually independent.
+- Homogeneous reference window: all N reference cells share the CUT's underlying noise level.
 
-None of this constrains live detection, since ``noise_calibration`` measures the real ratio
-distribution instead of assuming one. It matters only for the theoretical curves and correctness
-checks in :mod:`._theory`.
+Beamformer output violates all four to varying degrees; ``noise_calibration`` (see
+:mod:`.calibration`) measures around this rather than assuming it away.
 
 Pd (as opposed to Pfa/alpha) additionally depends on how the target's amplitude fluctuates from
-look to look, a separate, independent assumption handled by
-:class:`~._theory.FluctuationModel`. Nothing in this module (including the detector classes)
+look to look, handled separately by :class:`~._theory.FluctuationModel`. Nothing in this module
 calls a Pd function; only :mod:`._theory`'s theoretical ROC curve functions do.
 """
 
@@ -73,11 +59,10 @@ def _directional_power(data: ArrayLike) -> np.ndarray:
 
     ``BeamformedData`` (see ``bluepebble.types.sensordata``) is deliberately either complex
     or real: ``DelayAndSumBeamformer`` in ``'time'``/``'frequency'`` domain returns complex
-    amplitude, so power is ``|amplitude|**2``. ``MinimumVarianceDistortionlessResponseBeamformer``,
-    and ``DelayAndSumBeamformer`` in ``'broadband_power'`` domain, already return real-valued
-    power directly; squaring that again would double-apply the power law and break the
-    Exponential(1)-per-look Pfa/alpha calibration this module depends on (an MVDR-fed detector
-    calibrated for Pfa=0.05 was empirically measured at Pfa~=0.09 before this branch existed).
+    amplitude, so power is ``|amplitude|**2``. ``MinimumVarianceDistortionlessResponseBeamformer``
+    and ``DelayAndSumBeamformer`` in ``'broadband_power'`` domain already return real-valued
+    power directly; squaring that again would double-apply the power law (an MVDR-fed detector
+    calibrated for Pfa=0.05 was once measured at Pfa~=0.09 from exactly this bug).
 
     Parameters
     ----------

@@ -407,13 +407,6 @@ class NoiseCalibrator:
             the same frame count and produced exactly as operational data will be (same array,
             shading, beamformer, band and scan length). A simulator built with no
             ``ground_truth_paths`` provides these; see :func:`beamformed_scans_from_sensor_data`.
-            The tail fit needs roughly ``min_tail_exceedances / tail_pfa`` pooled cells (about
-            20,000 at the defaults), and each scan contributes ``num_beams`` cells, so the number
-            of noise-only time steps needed is that total divided by ``num_beams``: roughly 560
-            scans for a 36-beam detector, roughly 110 for a 180-beam one, at the defaults. This
-            minimum applies only when the requested ``target_pfa`` is below ``tail_pfa``, since
-            only then is the fitted tail actually used; direct quantiles above ``tail_pfa`` carry
-            no such requirement beyond what ``frame_count_tolerance`` already enforces.
         tail_pfa : float, optional
             Exceedance rate at which the generalised Pareto tail takes over from the empirical
             quantile, by default 1e-2. Broadwater and Chellappa (2010; see the module references)
@@ -440,6 +433,14 @@ class NoiseCalibrator:
         ValueError
             If ``tail_pfa`` is not in (0, 1), the scans are empty or inconsistent, or they contain
             too few cells to fit the tail.
+
+        Notes
+        -----
+        The tail fit needs roughly ``min_tail_exceedances / tail_pfa`` pooled cells (about 20,000
+        at the defaults). Each scan contributes ``num_beams`` cells, so divide that total by
+        ``num_beams`` for the number of noise-only time steps needed: roughly 560 scans for a
+        36-beam detector, roughly 110 for a 180-beam one. This only applies when the requested
+        ``target_pfa`` is below ``tail_pfa``, since only then is the fitted tail used.
 
         Examples
         --------
