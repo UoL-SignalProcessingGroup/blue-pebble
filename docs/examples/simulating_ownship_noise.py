@@ -32,7 +32,12 @@ from stonesoup.models.transition.linear import (
 from stonesoup.types.groundtruth import GroundTruthPath, GroundTruthState
 
 import bluepebble
-from bluepebble.detector import CACFARDetector, PassiveSonarDetector
+from bluepebble.detector import (
+    CACFARDetector,
+    NoiseCalibrator,
+    PassiveSonarDetector,
+    beamformed_scans_from_sensor_data,
+)
 from bluepebble.models.environment import FlatBathymetry, Linear
 from bluepebble.models.propagation import rtrsAcousticPropagationModel
 from bluepebble.platform import TowedArrayPlatform
@@ -420,7 +425,18 @@ cfar_num_guard_cells, cfar_num_training_cells, peak_distance = cfar_window_for_m
 cfar_target_pfa = 0.3594
 
 
-def _make_detector(simulator: ContinuousSTFTPassiveSonarArraySimulator) -> PassiveSonarDetector:
+def _make_detector(
+    simulator: ContinuousSTFTPassiveSonarArraySimulator,
+    noise_only_signal_models: list,
+    noise_only_ground_truth_paths: list,
+) -> PassiveSonarDetector:
+    """Create a PassiveSonarDetector, calibrated against this scenario's own background.
+
+    ``noise_only_signal_models``/``noise_only_ground_truth_paths`` describe what belongs to
+    the background (ambient noise, plus ownship self-noise where present) rather than the
+    real targets to be detected, so calibration measures the same clutter the detector
+    actually faces without baking the targets themselves into the noise floor.
+    """
     cfar_detector = CACFARDetector(
         num_guard_cells=cfar_num_guard_cells,
         num_training_cells=cfar_num_training_cells,
@@ -428,6 +444,21 @@ def _make_detector(simulator: ContinuousSTFTPassiveSonarArraySimulator) -> Passi
         peak_distance=peak_distance,
         circular=True,
     )
+
+    ambient_only_simulator = ContinuousSTFTPassiveSonarArraySimulator(
+        platform=simulator.platform,
+        propagation_model=simulator.propagation_model,
+        signal_models=noise_only_signal_models,
+        noise_model=simulator.noise_model,
+        beamformer=simulator.beamformer,
+        steering_calculator=simulator.steering_calculator,
+        ground_truth_paths=noise_only_ground_truth_paths,
+        fade_in_ms=simulator.fade_in_ms,
+    )
+    noise_scans = beamformed_scans_from_sensor_data(
+        ambient_only_simulator.sensor_data_gen(), progress_bar=True, total=num_steps
+    )
+    NoiseCalibrator(cfar_detector).calibrate_from_noise(noise_scans)
 
     return PassiveSonarDetector(
         detector=cfar_detector,
@@ -458,8 +489,12 @@ simulator_with_ownship_noise = ContinuousSTFTPassiveSonarArraySimulator(
     fade_in_ms=fade_in_ms,
 )
 
-detector_without_ownship_noise = _make_detector(simulator_without_ownship_noise)
-detector_with_ownship_noise = _make_detector(simulator_with_ownship_noise)
+detector_without_ownship_noise = _make_detector(
+    simulator_without_ownship_noise, _make_signal_models(), []
+)
+detector_with_ownship_noise = _make_detector(
+    simulator_with_ownship_noise, [_make_self_noise_model()], [self_noise_ground_truth]
+)
 
 # %%
 # Run Detection on Simulated Data
@@ -469,12 +504,12 @@ detector_with_ownship_noise = _make_detector(simulator_with_ownship_noise)
 # side-by-side visual comparison.
 
 all_detections_without_ownship_noise = list(
-    detector_without_ownship_noise.detections_gen(progress_bar=False, total_timesteps=num_steps)
+    detector_without_ownship_noise.detections_gen(progress_bar=True, total_timesteps=num_steps)
 )
 reported_snr_without_ownship_noise = detector_without_ownship_noise.reported_snr_history
 
 all_detections_with_ownship_noise = list(
-    detector_with_ownship_noise.detections_gen(progress_bar=False, total_timesteps=num_steps)
+    detector_with_ownship_noise.detections_gen(progress_bar=True, total_timesteps=num_steps)
 )
 reported_snr_with_ownship_noise = detector_with_ownship_noise.reported_snr_history
 

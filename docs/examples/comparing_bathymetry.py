@@ -32,7 +32,12 @@ from stonesoup.models.transition.linear import (
 from stonesoup.types.groundtruth import GroundTruthPath, GroundTruthState
 
 import bluepebble
-from bluepebble.detector import CACFARDetector, PassiveSonarDetector
+from bluepebble.detector import (
+    CACFARDetector,
+    NoiseCalibrator,
+    PassiveSonarDetector,
+    beamformed_scans_from_sensor_data,
+)
 from bluepebble.models.environment import Constant, FlatBathymetry, SeamountBathymetry
 from bluepebble.models.propagation import rtrsAcousticPropagationModel
 from bluepebble.platform import TowedArrayPlatform
@@ -467,7 +472,12 @@ cfar_circular = True
 
 
 def _make_detector(simulator: ContinuousSTFTPassiveSonarArraySimulator) -> PassiveSonarDetector:
-    """Create a PassiveSonarDetector driven by a single CA-CFAR detector."""
+    """Create a PassiveSonarDetector driven by a single CA-CFAR detector.
+
+    Bathymetry shapes multipath, which shapes the noise-only cell-to-noise ratio the
+    detector thresholds, so each bathymetry gets its own noise_calibration measured under
+    its own propagation model rather than sharing one between the two scenarios.
+    """
     cfar_detector = CACFARDetector(
         num_guard_cells=cfar_num_guard_cells,
         num_training_cells=cfar_num_training_cells,
@@ -475,6 +485,21 @@ def _make_detector(simulator: ContinuousSTFTPassiveSonarArraySimulator) -> Passi
         peak_distance=peak_distance,
         circular=cfar_circular,
     )
+
+    ambient_only_simulator = ContinuousSTFTPassiveSonarArraySimulator(
+        platform=simulator.platform,
+        propagation_model=simulator.propagation_model,
+        signal_models=simulator.signal_models,
+        noise_model=simulator.noise_model,
+        beamformer=simulator.beamformer,
+        steering_calculator=simulator.steering_calculator,
+        ground_truth_paths=[],
+        fade_in_ms=simulator.fade_in_ms,
+    )
+    noise_scans = beamformed_scans_from_sensor_data(
+        ambient_only_simulator.sensor_data_gen(), progress_bar=True, total=num_steps
+    )
+    NoiseCalibrator(cfar_detector).calibrate_from_noise(noise_scans)
 
     return PassiveSonarDetector(
         detector=cfar_detector,
@@ -517,12 +542,12 @@ detector_seamount_bathymetry = _make_detector(simulator_seamount_bathymetry)
 # two cases, but the scenario definition remains otherwise identical.
 
 all_detections_flat_bathymetry = list(
-    detector_flat_bathymetry.detections_gen(progress_bar=False, total_timesteps=num_steps)
+    detector_flat_bathymetry.detections_gen(progress_bar=True, total_timesteps=num_steps)
 )
 reported_snr_flat_bathymetry = detector_flat_bathymetry.reported_snr_history
 
 all_detections_seamount_bathymetry = list(
-    detector_seamount_bathymetry.detections_gen(progress_bar=False, total_timesteps=num_steps)
+    detector_seamount_bathymetry.detections_gen(progress_bar=True, total_timesteps=num_steps)
 )
 reported_snr_seamount_bathymetry = detector_seamount_bathymetry.reported_snr_history
 

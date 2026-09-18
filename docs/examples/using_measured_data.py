@@ -34,7 +34,12 @@ from stonesoup.models.transition.linear import (
 from stonesoup.types.groundtruth import GroundTruthPath, GroundTruthState
 
 import bluepebble
-from bluepebble.detector import CACFARDetector, PassiveSonarDetector
+from bluepebble.detector import (
+    CACFARDetector,
+    NoiseCalibrator,
+    PassiveSonarDetector,
+    beamformed_scans_from_sensor_data,
+)
 from bluepebble.models.environment import GEBCOBathymetry, LeroyCopernicusSoundSpeedProfile
 from bluepebble.models.propagation import rtrsAcousticPropagationModel
 from bluepebble.platform import TowedArrayPlatform
@@ -441,9 +446,7 @@ steering_calculator = SteeringCalculator(
 
 cfar_num_guard_cells = 2
 cfar_num_training_cells = 5
-# Reproduces the pre-refactor threshold_factor=1.75 exactly, via CA-CFAR's single-look
-# Pfa = (1 + alpha/N)^-N with N = 2 * num_training_cells.
-cfar_target_pfa = 0.1994
+cfar_target_pfa = 1e-3
 cfar_circular = True
 peak_distance = 3
 
@@ -466,9 +469,29 @@ cfar_detector = CACFARDetector(
     peak_distance=peak_distance,
 )
 
+# CFAR thresholds a noise model that assumes independent beams and a known number of looks;
+# beamformer output satisfies neither, so noise_calibration must be measured on noise-only data
+# before the detector can run at all. Build that data the same way as the scenario -- same
+# platform, beamformer and steering (and the same measured bathymetry/sound-speed profile,
+# since propagation shapes the noise multipath too), but no ground_truth_paths.
+ambient_only_simulator = ContinuousSTFTPassiveSonarArraySimulator(
+    platform=platform,
+    propagation_model=prop_model,
+    signal_models=signal_models,
+    noise_model=ambient_noise_model,
+    beamformer=beamformer,
+    steering_calculator=steering_calculator,
+    ground_truth_paths=[],
+    fade_in_ms=fade_in_ms,
+)
+noise_scans = beamformed_scans_from_sensor_data(
+    ambient_only_simulator.sensor_data_gen(), progress_bar=True, total=num_steps
+)
+NoiseCalibrator(cfar_detector).calibrate_from_noise(noise_scans)
+
 detector = PassiveSonarDetector(
     detector=cfar_detector,
-    sensor_data_gen=simulator.sensor_data_gen(),
+    sensor_data_gen=simulator.sensor_data_gen(progress_bar=True),
     steering_azimuths_rad=steering_azimuths_rad,
 )
 

@@ -10,17 +10,18 @@ beams share noise) nor Gamma-tailed, so the false-alarm rate a detector achieves
 the one requested by orders of magnitude.
 
 This example measures that gap on noise-only delay-and-sum output, then closes it with
-:func:`~bluepebble.detector.calibrate_from_noise`: the detector's own cell-to-noise ratio is
-measured on noise-only scans, alpha is read from its empirical distribution, and a generalised
-Pareto tail carries it below the rates the scans can observe. Every threshold is judged on
-held-out scans, so the comparison is between what each method promises and what it delivers.
+:meth:`~bluepebble.detector.NoiseCalibrator.calibrate_from_noise`: the detector's own
+cell-to-noise ratio is measured on noise-only scans, alpha is read from its empirical
+distribution, and a generalised Pareto tail carries it below the rates the scans can observe.
+Every threshold is judged on held-out scans, so the comparison is between what each method
+promises and what it delivers.
 
 Three thresholds are compared for each beamformer domain and ambient spectrum:
 
 - **Nominal**: the Gamma model with one look per frame.
 - **Effective looks**: the Gamma model with looks estimated from the same noise by
   :func:`~bluepebble.detector.estimate_effective_looks_per_frame`.
-- **Noise calibration**: :func:`~bluepebble.detector.calibrate_from_noise`.
+- **Noise calibration**: :meth:`~bluepebble.detector.NoiseCalibrator.calibrate_from_noise`.
 """  # noqa: D205, D212, D400, D415
 # sphinx_gallery_skip_execution = True
 
@@ -41,10 +42,16 @@ from plotly.subplots import make_subplots
 import bluepebble
 from bluepebble.detector import (
     CACFARDetector,
-    calibrate_from_noise,
-    cell_noise_ratios,
+    NoiseCalibrator,
     estimate_effective_looks_per_frame,
 )
+
+# CACFARDetector no longer computes a Gamma-model alpha at all (see _CFARDetectorBase's
+# noise_calibration docstring); solve_ca_cfar_alpha is what it used to call internally, kept
+# private since only Noise calibration is meant for detectors. Importing it here is exactly the
+# kind of internal access that's fine for a doc example illustrating that theory, not for
+# application code driving a detector.
+from bluepebble.detector._theory import solve_ca_cfar_alpha
 from bluepebble.signal.random import ColouredNoiseSignal, WhiteNoiseSignal
 from bluepebble.sigproc import DelayAndSumBeamformer
 
@@ -155,12 +162,11 @@ def simulate_case(domain, colour, beamformer):
             return pickle.load(file)
 
     beam_power = []
-    calibration = calibrate_from_noise(
-        make_detector(),
+    calibration = NoiseCalibrator(make_detector()).calibrate_from_noise(
         noise_scans(f"{domain}/{colour} calibration", colour, beamformer, beam_power),
     )
-    held_out_ratios = cell_noise_ratios(
-        make_detector(), noise_scans(f"{domain}/{colour} held out", colour, beamformer, [])
+    held_out_ratios = NoiseCalibrator(make_detector()).cell_noise_ratios(
+        noise_scans(f"{domain}/{colour} held out", colour, beamformer, [])
     )
     result = (calibration, np.asarray(beam_power), held_out_ratios)
     with path.open("wb") as file:
@@ -173,7 +179,7 @@ def simulate_case(domain, colour, beamformer):
 # -----------------------------------------
 #
 # Achieved Pfa is the fraction of held-out cells whose power-to-noise ratio exceeds each
-# threshold's alpha, which is exactly what unconsolidated ``detect()`` counts.
+# threshold's alpha, which is what unconsolidated ``detect()`` counts.
 
 results = {}
 for (domain, colour), beamformer in cases.items():
@@ -183,22 +189,43 @@ for (domain, colour), beamformer in cases.items():
 
     looks = estimate_effective_looks_per_frame([power[:, None] for power in calibration_power])
     effective_looks_per_frame = looks / num_frames
+    num_training_total = 2 * make_detector().num_training_cells
 
-    thresholds = {
-        "Nominal": make_detector(),
-        "Effective looks": make_detector(effective_looks_per_frame=effective_looks_per_frame),
-        "Noise calibration": make_detector(noise_calibration=calibration),
+    achieved = {
+        "Nominal": np.array(
+            [
+                np.mean(held_out_ratios > solve_ca_cfar_alpha(pfa, num_training_total, num_frames))
+                for pfa in target_pfas
+            ]
+        ),
+        "Effective looks": np.array(
+            [
+                np.mean(
+                    held_out_ratios
+                    > solve_ca_cfar_alpha(
+                        pfa,
+                        num_training_total,
+                        num_frames,
+                        effective_looks_per_frame=effective_looks_per_frame,
+                    )
+                )
+                for pfa in target_pfas
+            ]
+        ),
     }
-    achieved = {}
-    for name, detector in thresholds.items():
-        rates = []
-        for pfa in target_pfas:
-            detector.target_pfa = float(pfa)
-            with warnings.catch_warnings():
-                warnings.simplefilter("ignore")
-                alpha = detector._alpha_for(num_frames)
-            rates.append(np.mean(held_out_ratios > alpha))
-        achieved[name] = np.asarray(rates)
+
+    calibrated_detector = make_detector(noise_calibration=calibration)
+    rates = []
+    for pfa in target_pfas:
+        calibrated_detector.target_pfa = float(pfa)
+        with warnings.catch_warnings():
+            # calibration.alpha() warns once target_pfa is well beyond the calibration's tail
+            # exceedances, which the sweep below deliberately probes down to 1e-5.
+            warnings.simplefilter("ignore")
+            alpha = calibrated_detector._alpha_for(num_frames)
+        rates.append(np.mean(held_out_ratios > alpha))
+    achieved["Noise calibration"] = np.asarray(rates)
+
     results[(domain, colour)] = (achieved, held_out_ratios.size, effective_looks_per_frame)
 
 # %%
@@ -259,6 +286,7 @@ figure.write_html(cache_dir / "achieved_vs_target_pfa.html")
 
 for (domain, colour), (achieved, num_cells, effective_looks) in results.items():
     print(f"\n{domain} / {colour}  ({num_cells} held-out cells, fitted K = {effective_looks:.3g})")
+    print("  Values are achieved Pfa / target Pfa; 1.00 means perfectly calibrated.")
     print("  target   " + "  ".join(f"{name:>17s}" for name in achieved))
     for pfa_index, pfa in enumerate(target_pfas):
         if pfa < 5.0 / num_cells:

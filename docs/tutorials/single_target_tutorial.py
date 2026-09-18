@@ -59,7 +59,7 @@ from datetime import datetime, timedelta
 import numpy as np
 
 import bluepebble
-from bluepebble.detector.algorithms import OSCFARDetector
+from bluepebble.detector import OSCFARDetector
 
 # Random seed for reproducibility
 seed = 42
@@ -290,7 +290,11 @@ signal_model = SyntheticAnthropogenicSignal(
 # analysed directly or passed into Stone Soup tracking components.
 
 # %%
-from bluepebble.detector import PassiveSonarDetector
+from bluepebble.detector import (
+    NoiseCalibrator,
+    PassiveSonarDetector,
+    beamformed_scans_from_sensor_data,
+)
 from bluepebble.plotter import apply_shared_colourscale, plot_btr
 from bluepebble.sigproc import (
     MinimumVarianceDistortionlessResponseBeamformer,
@@ -342,7 +346,7 @@ mainlobe_beams = beams_per_mainlobe(
     sound_speed_ms=1500.0,
 )
 num_guard_cells, num_training_cells, peak_distance = cfar_window_for_mainlobe(mainlobe_beams)
-target_pfa = 0.05
+target_pfa = 1e-3
 # OS-CFAR takes the k-th smallest training cell, so rank scales with the window; 0.75 of
 # the total is the usual starting point.
 rank = round(0.75 * 2 * num_training_cells)
@@ -355,6 +359,25 @@ cfar_detector = OSCFARDetector(
     peak_distance=peak_distance,
 )
 
+# CFAR thresholds a noise model that assumes independent beams and a known number of looks;
+# beamformer output satisfies neither, so noise_calibration must be measured on noise-only
+# data before the detector can run at all. Build that data the same way as the scenario --
+# same platform, beamformer and steering, but no ground_truth_paths.
+ambient_only_simulator = ContinuousSTFTPassiveSonarArraySimulator(
+    platform=platform,
+    propagation_model=propagation_model,
+    signal_models=[signal_model],
+    noise_model=ambient_noise_model,
+    beamformer=beamformer,
+    steering_calculator=steering_calculator,
+    ground_truth_paths=[],
+    fade_in_ms=fade_in_ms,
+)
+noise_scans = beamformed_scans_from_sensor_data(
+    ambient_only_simulator.sensor_data_gen(), progress_bar=True, total=num_steps
+)
+NoiseCalibrator(cfar_detector).calibrate_from_noise(noise_scans)
+
 # reported_snr_reference only sets what reported_snr_history reports; thresholding always uses the
 # detector's
 # own local estimate. "global" measures every beam against a single percentile of the whole
@@ -366,7 +389,7 @@ detector = PassiveSonarDetector(
     reported_snr_reference="global",
 )
 
-all_detections = list(detector.detections_gen(progress_bar=False))
+all_detections = list(detector.detections_gen(progress_bar=True, total_timesteps=num_steps))
 reported_snr = detector.reported_snr_history
 
 detections_for_plotter = [d for _, detections in all_detections for d in detections]
