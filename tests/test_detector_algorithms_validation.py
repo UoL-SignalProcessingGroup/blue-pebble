@@ -46,13 +46,35 @@ def _load_detector_algorithms(monkeypatch):
 
 
 def _load_fluctuation_models(monkeypatch):
-    """Load fluctuation_models.py and the algorithms.py it needs, with minimal scaffolding."""
+    """Load _theory.py and the algorithms.py it needs, with minimal scaffolding."""
     algorithms = _load_detector_algorithms(monkeypatch)
     fluctuation_models = load_package_module_from_repo(
-        "bluepebble/detector/fluctuation_models.py",
-        "bluepebble.detector.fluctuation_models",
+        "bluepebble/detector/_theory.py",
+        "bluepebble.detector._theory",
     )
     return algorithms, fluctuation_models
+
+
+def _load_detector_algorithms_and_calibration(monkeypatch):
+    """Load algorithms.py and calibration.py, with minimal scaffolding."""
+    algorithms = _load_detector_algorithms(monkeypatch)
+    calibration = load_package_module_from_repo(
+        "bluepebble/detector/calibration.py",
+        "bluepebble.detector.calibration",
+    )
+    return algorithms, calibration
+
+
+def _calibrate(detector, calibration_module, num_beams=200, num_frames=1, seed=0, **kwargs):
+    """Calibrate ``detector`` on i.i.d. Exponential(1) noise-only scans.
+
+    Defaults to enough scans for the default tail fit (``min_tail_exceedances / tail_pfa``
+    pooled cells, about 20,000), plus margin, regardless of ``num_beams``.
+    """
+    num_scans = kwargs.pop("num_scans", None) or max(200, -(-22_000 // num_beams))
+    rng = np.random.default_rng(seed)
+    scans = [rng.exponential(size=(num_beams, num_frames)) for _ in range(num_scans)]
+    return calibration_module.NoiseCalibrator(detector).calibrate_from_noise(scans, **kwargs)
 
 
 def _complex_gaussian_power(rng, shape):
@@ -85,9 +107,9 @@ def _complex_gaussian_power(rng, shape):
 )
 def test_os_cfar_single_look_alpha_matches_rohling_table_ii(monkeypatch, N, k, T_expected) -> None:
     """The single-look OS-CFAR alpha solver should reproduce Rohling's Table II."""
-    algorithms = _load_detector_algorithms(monkeypatch)
+    _algorithms, fluctuation_models = _load_fluctuation_models(monkeypatch)
 
-    alpha = algorithms.solve_os_cfar_alpha_single_look(
+    alpha = fluctuation_models.solve_os_cfar_alpha_single_look(
         target_pfa=1e-6, num_training_total=N, rank=k
     )
 
@@ -106,13 +128,12 @@ def test_os_cfar_single_look_alpha_achieves_target_pfa_by_direct_simulation(
     Guards against a bug that's self-consistent within the formula but wrong
     relative to what the formula is supposed to compute. target_pfa values here
     are chosen so 500k trials gives hundreds-to-thousands of exceedance events
-    (per the num_trials ~ 100/target_pfa rule of thumb documented on
-    calibrate_os_cfar_alpha_mc) -- very small Pfa (e.g. 1e-6) is already covered
-    exactly, without needing simulation, by the Rohling Table II regression
-    test above.
+    (a quantile needs roughly 100/target_pfa trials to resolve) -- very small Pfa
+    (e.g. 1e-6) is already covered exactly, without needing simulation, by the
+    Rohling Table II regression test above.
     """
-    algorithms = _load_detector_algorithms(monkeypatch)
-    alpha = algorithms.solve_os_cfar_alpha_single_look(target_pfa, N, k)
+    _algorithms, fluctuation_models = _load_fluctuation_models(monkeypatch)
+    alpha = fluctuation_models.solve_os_cfar_alpha_single_look(target_pfa, N, k)
 
     rng = np.random.default_rng(0)
     trials = 500_000
@@ -222,9 +243,9 @@ def test_os_cfar_multilook_matches_chalabi_eq20(monkeypatch) -> None:
 @pytest.mark.parametrize("N, M", [(20, 1), (20, 5), (32, 10)])
 def test_ca_cfar_pd_at_snr_linear_zero_recovers_target_pfa(monkeypatch, N, M) -> None:
     """With no target power, Pd should equal the calibrated Pfa exactly."""
-    algorithms, fluctuation_models = _load_fluctuation_models(monkeypatch)
+    _algorithms, fluctuation_models = _load_fluctuation_models(monkeypatch)
     target_pfa = 1e-3
-    alpha = algorithms.solve_ca_cfar_alpha(target_pfa, N, num_frames=M)
+    alpha = fluctuation_models.solve_ca_cfar_alpha(target_pfa, N, num_frames=M)
 
     pd = fluctuation_models.RayleighFluctuation().ca_cfar_pd(
         alpha, N, num_frames=M, snr_linear=0.0
@@ -236,9 +257,9 @@ def test_ca_cfar_pd_at_snr_linear_zero_recovers_target_pfa(monkeypatch, N, M) ->
 @pytest.mark.parametrize("N, k", [(20, 15), (24, 18)])
 def test_os_cfar_single_look_pd_at_snr_linear_zero_recovers_target_pfa(monkeypatch, N, k) -> None:
     """With no target power, Pd should equal the calibrated Pfa exactly."""
-    algorithms, fluctuation_models = _load_fluctuation_models(monkeypatch)
+    _algorithms, fluctuation_models = _load_fluctuation_models(monkeypatch)
     target_pfa = 1e-3
-    alpha = algorithms.solve_os_cfar_alpha_single_look(target_pfa, N, k)
+    alpha = fluctuation_models.solve_os_cfar_alpha_single_look(target_pfa, N, k)
 
     pd = fluctuation_models.RayleighFluctuation().os_cfar_pd(
         alpha, N, k, num_frames=1, snr_linear=0.0
@@ -250,14 +271,11 @@ def test_os_cfar_single_look_pd_at_snr_linear_zero_recovers_target_pfa(monkeypat
 def test_os_cfar_multilook_mc_at_snr_linear_zero_recovers_target_pfa_approximately(
     monkeypatch,
 ) -> None:
-    """The Monte Carlo multi-look alpha/Pd pair should also round-trip at snr_linear=0."""
-    algorithms, fluctuation_models = _load_fluctuation_models(monkeypatch)
+    """The multi-look alpha and Monte Carlo Pd should also round-trip at snr_linear=0."""
+    _algorithms, fluctuation_models = _load_fluctuation_models(monkeypatch)
     N, k, M = 20, 15, 10
     target_pfa = 1e-2  # larger target so Monte Carlo noise stays proportionally small
-    rng = np.random.default_rng(1)
-    alpha = algorithms.calibrate_os_cfar_alpha_mc(
-        target_pfa, N, k, num_frames=M, num_trials=300_000, rng=rng
-    )
+    alpha = fluctuation_models.solve_os_cfar_alpha(target_pfa, N, k, num_frames=M)
 
     got = fluctuation_models.RayleighFluctuation().os_cfar_pd(
         alpha, N, k, num_frames=M, snr_linear=0.0, num_trials=300_000, rng=np.random.default_rng(2)
@@ -271,8 +289,8 @@ def test_ca_cfar_pd_increases_with_snr_linear(
     monkeypatch, snr_linear_low, snr_linear_high
 ) -> None:
     """Pd should be monotonically increasing in target-power ratio snr_linear."""
-    algorithms, fluctuation_models = _load_fluctuation_models(monkeypatch)
-    alpha = algorithms.solve_ca_cfar_alpha(1e-3, num_training_total=20, num_frames=5)
+    _algorithms, fluctuation_models = _load_fluctuation_models(monkeypatch)
+    alpha = fluctuation_models.solve_ca_cfar_alpha(1e-3, num_training_total=20, num_frames=5)
     model = fluctuation_models.RayleighFluctuation()
 
     pd_low = model.ca_cfar_pd(alpha, 20, 5, snr_linear_low)
@@ -283,8 +301,8 @@ def test_ca_cfar_pd_increases_with_snr_linear(
 
 def test_ca_cfar_pd_approaches_one_at_high_snr_linear(monkeypatch) -> None:
     """As target power dominates the noise floor, Pd should approach 1."""
-    algorithms, fluctuation_models = _load_fluctuation_models(monkeypatch)
-    alpha = algorithms.solve_ca_cfar_alpha(1e-3, num_training_total=20, num_frames=5)
+    _algorithms, fluctuation_models = _load_fluctuation_models(monkeypatch)
+    alpha = fluctuation_models.solve_ca_cfar_alpha(1e-3, num_training_total=20, num_frames=5)
 
     pd = fluctuation_models.RayleighFluctuation().ca_cfar_pd(alpha, 20, 5, snr_linear=1e6)
     assert pd == pytest.approx(1.0, abs=1e-6)
@@ -335,11 +353,11 @@ def test_os_cfar_pd_does_not_exceed_ca_cfar_pd_in_homogeneous_noise(monkeypatch)
     This holds in genuinely homogeneous noise -- the trade-off documented at
     length in OSCFARDetector's own docstring.
     """
-    algorithms, fluctuation_models = _load_fluctuation_models(monkeypatch)
+    _algorithms, fluctuation_models = _load_fluctuation_models(monkeypatch)
     N, target_pfa = 20, 1e-3
     rank = round(0.75 * N)
-    alpha_os = algorithms.solve_os_cfar_alpha_single_look(target_pfa, N, rank)
-    alpha_ca = algorithms.solve_ca_cfar_alpha(target_pfa, N, num_frames=1)
+    alpha_os = fluctuation_models.solve_os_cfar_alpha_single_look(target_pfa, N, rank)
+    alpha_ca = fluctuation_models.solve_ca_cfar_alpha(target_pfa, N, num_frames=1)
     model = fluctuation_models.RayleighFluctuation()
 
     for snr_linear in [0.5, 1.0, 2.0, 5.0]:
@@ -356,7 +374,7 @@ def test_os_cfar_pd_does_not_exceed_ca_cfar_pd_in_homogeneous_noise(monkeypatch)
 
 def test_oscfar_detect_achieves_calibrated_pfa(monkeypatch) -> None:
     """Running detect() on pure noise many times should reproduce target_pfa."""
-    algorithms = _load_detector_algorithms(monkeypatch)
+    algorithms, calibration = _load_detector_algorithms_and_calibration(monkeypatch)
     num_beams, num_frames = 180, 1
     target_pfa = 1e-2
     detector = algorithms.OSCFARDetector(
@@ -368,6 +386,7 @@ def test_oscfar_detect_achieves_calibrated_pfa(monkeypatch) -> None:
         peak_prominence=None,
         circular=True,
     )
+    _calibrate(detector, calibration, num_beams=num_beams, num_frames=num_frames, seed=1007)
     rng = np.random.default_rng(7)
     n_trials = 2000
     total_candidates = 0
@@ -384,7 +403,7 @@ def test_oscfar_detect_achieves_calibrated_pfa(monkeypatch) -> None:
 
 def test_cacfar_detect_achieves_calibrated_pfa(monkeypatch) -> None:
     """Running detect() on pure noise many times should reproduce target_pfa."""
-    algorithms = _load_detector_algorithms(monkeypatch)
+    algorithms, calibration = _load_detector_algorithms_and_calibration(monkeypatch)
     num_beams, num_frames = 180, 1
     target_pfa = 1e-2
     detector = algorithms.CACFARDetector(
@@ -395,6 +414,7 @@ def test_cacfar_detect_achieves_calibrated_pfa(monkeypatch) -> None:
         peak_prominence=None,
         circular=True,
     )
+    _calibrate(detector, calibration, num_beams=num_beams, num_frames=num_frames, seed=1008)
     rng = np.random.default_rng(8)
     n_trials = 2000
     total_candidates = 0
@@ -413,7 +433,7 @@ def test_cacfar_detect_achieves_calibrated_pfa(monkeypatch) -> None:
 
 def test_empirical_pfa_is_invariant_to_absolute_noise_power(monkeypatch) -> None:
     """Scaling the noise floor up or down should not move the achieved Pfa."""
-    algorithms = _load_detector_algorithms(monkeypatch)
+    algorithms, calibration = _load_detector_algorithms_and_calibration(monkeypatch)
     num_beams, num_frames = 180, 1
     target_pfa = 1e-2
     detector = algorithms.OSCFARDetector(
@@ -424,6 +444,7 @@ def test_empirical_pfa_is_invariant_to_absolute_noise_power(monkeypatch) -> None
         peak_distance=1,
         circular=True,
     )
+    _calibrate(detector, calibration, num_beams=num_beams, num_frames=num_frames, seed=1009)
     rng = np.random.default_rng(9)
     n_trials = 1500
     results = {}
@@ -517,13 +538,14 @@ def test_minimal_guard_and_training_do_not_crash(
     monkeypatch, num_guard_cells, num_training_cells
 ) -> None:
     """Degenerate but valid guard/training sizes should not crash detect()."""
-    algorithms = _load_detector_algorithms(monkeypatch)
+    algorithms, calibration = _load_detector_algorithms_and_calibration(monkeypatch)
     detector = algorithms.OSCFARDetector(
         num_guard_cells=num_guard_cells,
         num_training_cells=num_training_cells,
         rank=max(1, round(0.75 * 2 * num_training_cells)),
         target_pfa=1e-3,
     )
+    _calibrate(detector, calibration, num_beams=50, seed=1004)
     data = _complex_gaussian_power(np.random.default_rng(4), (50, 1))
 
     detector.detect(data)  # should not raise
@@ -537,14 +559,16 @@ def test_minimal_guard_and_training_do_not_crash(
 
 def test_calibrate_os_cfar_alpha_mc_is_deterministic_given_fixed_seed(monkeypatch) -> None:
     """Two calibration runs with the same seeded Generator should agree exactly."""
-    algorithms = _load_detector_algorithms(monkeypatch)
+    _algorithms, fluctuation_models = _load_fluctuation_models(monkeypatch)
 
-    a1 = algorithms.calibrate_os_cfar_alpha_mc(
-        1e-3, 20, 15, num_frames=5, num_trials=10_000, rng=np.random.default_rng(42)
-    )
-    a2 = algorithms.calibrate_os_cfar_alpha_mc(
-        1e-3, 20, 15, num_frames=5, num_trials=10_000, rng=np.random.default_rng(42)
-    )
+    with pytest.warns(DeprecationWarning):
+        a1 = fluctuation_models.calibrate_os_cfar_alpha_mc(
+            1e-3, 20, 15, num_frames=5, num_trials=10_000, rng=np.random.default_rng(42)
+        )
+    with pytest.warns(DeprecationWarning):
+        a2 = fluctuation_models.calibrate_os_cfar_alpha_mc(
+            1e-3, 20, 15, num_frames=5, num_trials=10_000, rng=np.random.default_rng(42)
+        )
 
     assert a1 == a2
 
@@ -564,44 +588,22 @@ def test_os_cfar_pd_mc_is_deterministic_given_fixed_seed(monkeypatch) -> None:
     assert p1 == p2
 
 
-def test_oscfar_detector_rng_gives_reproducible_multilook_alpha(monkeypatch) -> None:
-    """Two detectors built with identically-seeded rng should calibrate the same alpha.
+def test_oscfar_detector_multilook_alpha_is_reproducible_without_a_seed(monkeypatch) -> None:
+    """Independently built detectors calibrate the identical multi-look alpha.
 
-    OSCFARDetector._alpha_for falls back to Monte Carlo calibration for num_frames > 1;
-    without an explicit rng each detector draws from a fresh, unseeded Generator, so a
-    deep-copied detector (as used when sweeping a parameter -- see metrics.py) would
-    otherwise recalibrate with different randomness than its original.
+    Alpha comes from numerical integration rather than Monte Carlo, so a deep-copied detector
+    (as used when sweeping a parameter -- see metrics.py) recalibrates to exactly the same value
+    with no generator to seed.
     """
-    algorithms = _load_detector_algorithms(monkeypatch)
+    algorithms, calibration = _load_detector_algorithms_and_calibration(monkeypatch)
+    kwargs = dict(num_guard_cells=2, num_training_cells=10, rank=15, target_pfa=1e-2)
 
-    det1 = algorithms.OSCFARDetector(
-        num_guard_cells=2,
-        num_training_cells=10,
-        rank=15,
-        target_pfa=1e-2,
-        rng=np.random.default_rng(42),
-    )
-    det2 = algorithms.OSCFARDetector(
-        num_guard_cells=2,
-        num_training_cells=10,
-        rank=15,
-        target_pfa=1e-2,
-        rng=np.random.default_rng(42),
-    )
+    det1 = algorithms.OSCFARDetector(**kwargs)
+    det2 = algorithms.OSCFARDetector(**kwargs)
+    _calibrate(det1, calibration, num_frames=5, seed=1010)
+    det2.noise_calibration = det1.noise_calibration
 
     assert det1._alpha_for(num_frames=5) == det2._alpha_for(num_frames=5)
-
-
-def test_oscfar_detector_without_rng_still_calibrates(monkeypatch) -> None:
-    """Omitting rng should not break multi-look calibration -- it just won't be seeded."""
-    algorithms = _load_detector_algorithms(monkeypatch)
-    detector = algorithms.OSCFARDetector(
-        num_guard_cells=2, num_training_cells=10, rank=15, target_pfa=1e-2
-    )
-
-    alpha = detector._alpha_for(num_frames=5)
-
-    assert alpha > 0
 
 
 # ---------------------------------------------------------------------------
@@ -657,10 +659,10 @@ def test_ca_cfar_pd_non_fluctuating_mc_at_zero_snr_recovers_target_pfa(
     monkeypatch, num_frames
 ) -> None:
     """With no target power, Pd must equal the calibrated Pfa -- the H0 side is model-agnostic."""
-    algorithms, fluctuation_models = _load_fluctuation_models(monkeypatch)
+    _algorithms, fluctuation_models = _load_fluctuation_models(monkeypatch)
     target_pfa = 0.02
     N = 16
-    alpha = algorithms.solve_ca_cfar_alpha(target_pfa, N, num_frames=num_frames)
+    alpha = fluctuation_models.solve_ca_cfar_alpha(target_pfa, N, num_frames=num_frames)
 
     pd = fluctuation_models.NonFluctuating().ca_cfar_pd(
         alpha, N, num_frames, snr_linear=0.0, num_trials=300_000, rng=np.random.default_rng(3)
@@ -671,10 +673,10 @@ def test_ca_cfar_pd_non_fluctuating_mc_at_zero_snr_recovers_target_pfa(
 
 def test_os_cfar_pd_non_fluctuating_mc_at_zero_snr_recovers_target_pfa(monkeypatch) -> None:
     """With no target power, Pd must equal the calibrated Pfa -- the H0 side is model-agnostic."""
-    algorithms, fluctuation_models = _load_fluctuation_models(monkeypatch)
+    _algorithms, fluctuation_models = _load_fluctuation_models(monkeypatch)
     target_pfa = 0.02
     N, rank = 16, 12
-    alpha = algorithms.solve_os_cfar_alpha_single_look(target_pfa, N, rank)
+    alpha = fluctuation_models.solve_os_cfar_alpha_single_look(target_pfa, N, rank)
 
     pd = fluctuation_models.NonFluctuating().os_cfar_pd(
         alpha, N, rank, num_frames=1, snr_linear=0.0, num_trials=300_000,
@@ -686,8 +688,8 @@ def test_os_cfar_pd_non_fluctuating_mc_at_zero_snr_recovers_target_pfa(monkeypat
 
 def test_non_fluctuating_pd_is_monotonically_increasing_in_snr(monkeypatch) -> None:
     """Pd should increase with target-power ratio, same invariant as the Rayleigh-fading model."""
-    algorithms, fluctuation_models = _load_fluctuation_models(monkeypatch)
-    alpha = algorithms.solve_ca_cfar_alpha(0.02, 16, num_frames=4)
+    _algorithms, fluctuation_models = _load_fluctuation_models(monkeypatch)
+    alpha = fluctuation_models.solve_ca_cfar_alpha(0.02, 16, num_frames=4)
     model = fluctuation_models.NonFluctuating()
 
     pd_low = model.ca_cfar_pd(
@@ -710,9 +712,9 @@ def test_non_fluctuating_pd_exceeds_rayleigh_pd_at_moderate_to_high_snr(monkeypa
     which is why this test only asserts the ordering at 6 dB, well clear of that crossover --
     see test_non_fluctuating_pd_crossover_at_low_snr_matches_rayleigh_closely for that region.
     """
-    algorithms, fluctuation_models = _load_fluctuation_models(monkeypatch)
+    _algorithms, fluctuation_models = _load_fluctuation_models(monkeypatch)
     N, M = 16, 4
-    alpha = algorithms.solve_ca_cfar_alpha(0.02, N, num_frames=M)
+    alpha = fluctuation_models.solve_ca_cfar_alpha(0.02, N, num_frames=M)
     snr_linear = 10 ** (6 / 10)
 
     pd_rayleigh = fluctuation_models.RayleighFluctuation().ca_cfar_pd(alpha, N, M, snr_linear)
@@ -731,9 +733,9 @@ def test_non_fluctuating_pd_crossover_at_low_snr_matches_rayleigh_closely(monkey
     fluctuation models' Pd values sit close together rather than the wide gap seen at high SNR
     (see test_non_fluctuating_pd_exceeds_rayleigh_pd_at_moderate_to_high_snr).
     """
-    algorithms, fluctuation_models = _load_fluctuation_models(monkeypatch)
+    _algorithms, fluctuation_models = _load_fluctuation_models(monkeypatch)
     N, M = 16, 4
-    alpha = algorithms.solve_ca_cfar_alpha(0.02, N, num_frames=M)
+    alpha = fluctuation_models.solve_ca_cfar_alpha(0.02, N, num_frames=M)
 
     pd_rayleigh = fluctuation_models.RayleighFluctuation().ca_cfar_pd(alpha, N, M, snr_linear=1.0)
     pd_non_fluctuating = fluctuation_models.NonFluctuating().ca_cfar_pd(
@@ -784,7 +786,7 @@ def test_unconsolidated_detect_tracks_target_pfa_where_consolidation_suppresses_
     Pfa 0.9 almost every cell crosses whatever alpha is, so a mis-solved alpha barely moves the
     result. The sparse-regime test above is the sensitive one for alpha itself.
     """
-    algorithms = _load_detector_algorithms(monkeypatch)
+    algorithms, calibration = _load_detector_algorithms_and_calibration(monkeypatch)
     num_beams, num_frames = 361, 4
     detector = algorithms.CACFARDetector(
         num_guard_cells=2,
@@ -794,6 +796,7 @@ def test_unconsolidated_detect_tracks_target_pfa_where_consolidation_suppresses_
         circular=True,
         consolidate_peaks=False,
     )
+    _calibrate(detector, calibration, num_beams=num_beams, num_frames=num_frames, seed=1011)
 
     rng = np.random.default_rng(11)
     n_trials = 60
@@ -808,12 +811,15 @@ def test_unconsolidated_detect_tracks_target_pfa_where_consolidation_suppresses_
 
 def test_consolidation_only_ever_removes_detections(monkeypatch) -> None:
     """Consolidation is a filter over the crossings, never a source of new ones."""
-    algorithms = _load_detector_algorithms(monkeypatch)
+    algorithms, calibration = _load_detector_algorithms_and_calibration(monkeypatch)
     kwargs = dict(
         num_guard_cells=2, num_training_cells=5, target_pfa=0.3, peak_distance=3, circular=True
     )
     consolidated = algorithms.CACFARDetector(**kwargs)
     raw = algorithms.CACFARDetector(consolidate_peaks=False, **kwargs)
+    # consolidate_peaks isn't part of the calibration signature.
+    _calibrate(consolidated, calibration, num_beams=361, num_frames=4, seed=1012)
+    raw.noise_calibration = consolidated.noise_calibration
 
     rng = np.random.default_rng(12)
     for _ in range(20):
@@ -838,18 +844,14 @@ def test_mc_calibration_is_tractable_at_broadband_frame_counts(monkeypatch) -> N
     impossible, and that alpha still lands where the single-look closed form says it should
     when there is only one frame to average.
     """
-    algorithms = _load_detector_algorithms(monkeypatch)
+    _algorithms, fluctuation_models = _load_fluctuation_models(monkeypatch)
 
-    alpha_broadband = algorithms.calibrate_os_cfar_alpha_mc(
-        0.05, 128, rank=96, num_frames=2497, num_trials=20_000, rng=np.random.default_rng(5)
-    )
+    alpha_broadband = fluctuation_models.solve_os_cfar_alpha(0.05, 128, rank=96, num_frames=2497)
     assert np.isfinite(alpha_broadband)
     # Averaging thousands of frames concentrates the statistic, so alpha sits near 1.
     assert 0.8 < alpha_broadband < 1.3
 
     # With a single frame there is nothing to average, and the closed form applies exactly.
-    alpha_single = algorithms.calibrate_os_cfar_alpha_mc(
-        0.05, 24, rank=18, num_frames=1, num_trials=200_000, rng=np.random.default_rng(6)
-    )
-    closed_form = algorithms.solve_os_cfar_alpha_single_look(0.05, 24, 18)
-    assert alpha_single == pytest.approx(closed_form, rel=0.05)
+    alpha_single = fluctuation_models.solve_os_cfar_alpha(0.05, 24, rank=18, num_frames=1)
+    closed_form = fluctuation_models.solve_os_cfar_alpha_single_look(0.05, 24, 18)
+    assert alpha_single == pytest.approx(closed_form, rel=1e-12)

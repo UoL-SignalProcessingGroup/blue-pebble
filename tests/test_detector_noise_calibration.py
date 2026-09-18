@@ -88,7 +88,7 @@ def test_calibration_on_iid_gamma_data_recovers_the_exact_pfa(monkeypatch, detec
     num_frames = 4
     scans = _gamma_scans(np.random.default_rng(0), 500, 256, num_frames)
 
-    calibration = calibration_module.calibrate_from_noise(detector, scans)
+    calibration = calibration_module.NoiseCalibrator(detector).calibrate_from_noise(scans)
 
     def exact_pfa(alpha):
         if detector_name == "ca":
@@ -130,8 +130,8 @@ def test_generalised_pareto_tail_extrapolates_a_known_heavy_tail(monkeypatch) ->
         circular=True,
         _power_and_noise=lambda data: (np.asarray(data)[:, 0], np.ones(len(data))),
     )
-    calibration = calibration_module.calibrate_from_noise(
-        detector, [ratios[:, None]], tail_pfa=1e-2
+    calibration = calibration_module.NoiseCalibrator(detector).calibrate_from_noise(
+        [ratios[:, None]], tail_pfa=1e-2
     )
 
     alpha = calibration.alpha(1e-5)  # below tail_pfa, within what 2e5 cells resolve
@@ -156,8 +156,7 @@ def test_calibrated_detector_achieves_target_pfa_on_held_out_correlated_noise(
 
     Beam correlation leaves far fewer independent cells than cells, so the scan counts are
     sized from a seed study: at 3000 scans per set, achieved/target stayed within 0.88-1.07 at
-    both Pfa values across eight seeds. The same data drives the nominal model to almost no
-    false alarms, so this also shows the calibration is doing work.
+    both Pfa values across eight seeds.
     """
     algorithms, calibration_module = _load(monkeypatch)
     rng = np.random.default_rng(2)
@@ -166,24 +165,15 @@ def test_calibrated_detector_achieves_target_pfa_on_held_out_correlated_noise(
 
     kwargs = dict(consolidate_peaks=False, circular=circular)
     reference = _make_detector(algorithms, detector_name, **kwargs)
-    calibration = calibration_module.calibrate_from_noise(reference, calibration_scans)
-    nominal = (
-        _make_detector(
-            algorithms, detector_name, **kwargs, mc_trials=50_000, rng=np.random.default_rng(0)
-        )
-        if detector_name == "os"
-        else _make_detector(algorithms, detector_name, **kwargs)
+    calibration = calibration_module.NoiseCalibrator(reference).calibrate_from_noise(
+        calibration_scans
     )
     calibrated = _make_detector(algorithms, detector_name, **kwargs, noise_calibration=calibration)
 
     for target_pfa, tolerance in ((1e-2, 1.15), (1e-3, 1.3)):
-        nominal.target_pfa = target_pfa
         calibrated.target_pfa = target_pfa
         achieved = _achieved_pfa(calibrated, held_out_scans)
         assert target_pfa / tolerance < achieved < target_pfa * tolerance, (target_pfa, achieved)
-
-    nominal.target_pfa = 1e-2
-    assert _achieved_pfa(nominal, held_out_scans) < 1e-2 / 2
 
 
 # ---------------------------------------------------------------------------
@@ -193,7 +183,9 @@ def test_calibrated_detector_achieves_target_pfa_on_held_out_correlated_noise(
 
 def _small_calibration(algorithms, calibration_module, detector, num_frames=2):
     scans = _gamma_scans(np.random.default_rng(3), 120, 200, num_frames)
-    return calibration_module.calibrate_from_noise(detector, scans, min_tail_exceedances=100)
+    return calibration_module.NoiseCalibrator(detector).calibrate_from_noise(
+        scans, min_tail_exceedances=100
+    )
 
 
 def test_calibrated_alpha_replaces_the_model_alpha(monkeypatch) -> None:
@@ -245,25 +237,26 @@ def test_setting_or_replacing_calibration_and_changing_pfa_invalidate_alpha(monk
     """Cached alpha follows the calibration and target_pfa after the detector has been used."""
     algorithms, calibration_module = _load(monkeypatch)
     detector = _make_detector(algorithms, "ca")
-    model_alpha = detector._alpha_for(2)
 
     first = _small_calibration(algorithms, calibration_module, detector)
     detector.noise_calibration = first
-    assert detector._alpha_for(2) == first.alpha(1e-2) != model_alpha
+    assert detector._alpha_for(2) == first.alpha(1e-2)
 
-    second = calibration_module.calibrate_from_noise(
-        detector,
+    second = calibration_module.NoiseCalibrator(detector).calibrate_from_noise(
         _correlated_scans(np.random.default_rng(4), 120, 200, 2),
         min_tail_exceedances=100,
     )
     detector.noise_calibration = second
-    assert detector._alpha_for(2) == second.alpha(1e-2)
+    assert detector._alpha_for(2) == second.alpha(1e-2) != first.alpha(1e-2)
 
     detector.target_pfa = 5e-2
     assert detector._alpha_for(2) == second.alpha(5e-2)
 
+    # No model-based fallback remains: clearing the calibration must raise, not silently
+    # thresholding on the wrong distribution.
     detector.noise_calibration = None
-    assert detector._alpha_for(2) == pytest.approx(algorithms.solve_ca_cfar_alpha(5e-2, 20, 2))
+    with pytest.raises(ValueError, match="no noise_calibration set"):
+        detector._alpha_for(2)
 
 
 def test_sweeping_target_pfa_on_clones_uses_the_calibration(monkeypatch) -> None:
@@ -285,19 +278,6 @@ def test_sweeping_target_pfa_on_clones_uses_the_calibration(monkeypatch) -> None
     )
 
 
-def test_effective_looks_is_reported_as_ignored_when_calibrated(monkeypatch) -> None:
-    """Setting both is contradictory; the detector says which one wins."""
-    algorithms, calibration_module = _load(monkeypatch)
-    calibration = _small_calibration(
-        algorithms, calibration_module, _make_detector(algorithms, "ca")
-    )
-
-    with pytest.warns(UserWarning, match="ignored"):
-        _make_detector(
-            algorithms, "ca", effective_looks_per_frame=0.5, noise_calibration=calibration
-        )
-
-
 # ---------------------------------------------------------------------------
 # 4. Input validation and guards
 # ---------------------------------------------------------------------------
@@ -310,22 +290,23 @@ def test_too_few_tail_exceedances_raises_with_guidance(monkeypatch) -> None:
     scans = _gamma_scans(np.random.default_rng(5), 10, 100, 2)
 
     with pytest.raises(ValueError, match="cells"):
-        calibration_module.calibrate_from_noise(detector, scans)
+        calibration_module.NoiseCalibrator(detector).calibrate_from_noise(scans)
 
 
 def test_mixed_frame_counts_empty_input_and_zero_noise_raise(monkeypatch) -> None:
     """Inconsistent, empty or degenerate noise scans and invalid tail_pfa are rejected."""
     algorithms, calibration_module = _load(monkeypatch)
     detector = _make_detector(algorithms, "ca")
+    calibrator = calibration_module.NoiseCalibrator(detector)
 
     with pytest.raises(ValueError, match="frame count"):
-        calibration_module.cell_noise_ratios(detector, [np.ones((50, 2)), np.ones((50, 3))])
+        calibrator.cell_noise_ratios([np.ones((50, 2)), np.ones((50, 3))])
     with pytest.raises(ValueError, match="empty"):
-        calibration_module.cell_noise_ratios(detector, [])
+        calibrator.cell_noise_ratios([])
     with pytest.raises(ValueError, match="non-finite"):
-        calibration_module.cell_noise_ratios(detector, [np.zeros((50, 2))])
+        calibrator.cell_noise_ratios([np.zeros((50, 2))])
     with pytest.raises(ValueError, match="tail_pfa"):
-        calibration_module.calibrate_from_noise(detector, [np.ones((50, 2))], tail_pfa=1.0)
+        calibrator.calibrate_from_noise([np.ones((50, 2))], tail_pfa=1.0)
 
 
 def test_extrapolation_warning_is_issued_once_per_pfa(monkeypatch) -> None:
@@ -403,8 +384,8 @@ def test_calibration_is_unbiased_across_independent_seeds(monkeypatch, detector_
     ratios_of_target = {1e-2: [], 1e-3: []}
     for seed in range(24):
         rng = np.random.default_rng(100 + seed)
-        calibration = calibration_module.calibrate_from_noise(
-            detector, _correlated_scans(rng, 800, 128, 3)
+        calibration = calibration_module.NoiseCalibrator(detector).calibrate_from_noise(
+            _correlated_scans(rng, 800, 128, 3)
         )
         held_out = _ratios_of(detector, _correlated_scans(rng, 800, 128, 3))
         for pfa, collected in ratios_of_target.items():
@@ -425,7 +406,7 @@ def test_calibration_transfers_exactly_across_ambient_level(monkeypatch) -> None
     scans = _correlated_scans(rng, 300, 128, 3)
     held_out = _correlated_scans(rng, 50, 128, 3)
     reference = _make_detector(algorithms, "ca", consolidate_peaks=False)
-    calibration = calibration_module.calibrate_from_noise(reference, scans)
+    calibration = calibration_module.NoiseCalibrator(reference).calibrate_from_noise(scans)
     detector = _make_detector(
         algorithms, "ca", consolidate_peaks=False, target_pfa=1e-2, noise_calibration=calibration
     )
@@ -440,9 +421,9 @@ def test_consolidated_false_alarms_never_exceed_the_calibrated_cell_rate(monkeyp
     """target_pfa calibrates per-cell crossings; consolidation can only remove detections."""
     algorithms, calibration_module = _load(monkeypatch)
     rng = np.random.default_rng(8)
-    calibration = calibration_module.calibrate_from_noise(
-        _make_detector(algorithms, "ca"), _correlated_scans(rng, 1500, 128, 3)
-    )
+    calibration = calibration_module.NoiseCalibrator(
+        _make_detector(algorithms, "ca")
+    ).calibrate_from_noise(_correlated_scans(rng, 1500, 128, 3))
     held_out = _correlated_scans(rng, 1500, 128, 3)
     common = dict(target_pfa=2e-2, noise_calibration=calibration)
 
@@ -468,7 +449,9 @@ def test_bounded_tail_is_extrapolated_without_passing_its_endpoint(monkeypatch) 
         circular=True,
         _power_and_noise=lambda data: (np.asarray(data)[:, 0], np.ones(len(data))),
     )
-    calibration = calibration_module.calibrate_from_noise(detector, [ratios[:, None]])
+    calibration = calibration_module.NoiseCalibrator(detector).calibrate_from_noise(
+        [ratios[:, None]]
+    )
 
     assert calibration.tail_shape < 0
     endpoint = calibration.tail_threshold - calibration.tail_scale / calibration.tail_shape
@@ -492,7 +475,7 @@ def test_duplicated_mirror_beams_do_not_bias_the_calibration(monkeypatch) -> Non
     held_out = [np.concatenate([scan, scan[::-1]]) for scan in _correlated_scans(rng, 1000, 64, 3)]
     detector = _make_detector(algorithms, "ca")
 
-    calibration = calibration_module.calibrate_from_noise(detector, mirrored)
+    calibration = calibration_module.NoiseCalibrator(detector).calibrate_from_noise(mirrored)
     achieved = np.mean(_ratios_of(detector, held_out) > calibration.alpha(1e-2))
 
     assert achieved == pytest.approx(1e-2, rel=0.2)
@@ -527,9 +510,9 @@ def test_complex_amplitude_and_its_power_give_the_same_calibration(monkeypatch) 
     ]
     detector = _make_detector(algorithms, "ca")
 
-    from_amplitude = calibration_module.calibrate_from_noise(detector, amplitudes)
-    from_power = calibration_module.calibrate_from_noise(
-        detector, [np.abs(a) ** 2 for a in amplitudes]
+    from_amplitude = calibration_module.NoiseCalibrator(detector).calibrate_from_noise(amplitudes)
+    from_power = calibration_module.NoiseCalibrator(detector).calibrate_from_noise(
+        [np.abs(a) ** 2 for a in amplitudes]
     )
 
     np.testing.assert_allclose(from_amplitude.sorted_ratios, from_power.sorted_ratios)
@@ -559,17 +542,17 @@ def test_frame_counts_within_tolerance_are_accepted_and_beyond_it_rejected(monke
     scans.append(rng.exponential(size=(128, 2398)))  # final scan, 20% longer
     detector = _make_detector(algorithms, "ca", consolidate_peaks=False)
 
-    calibration = calibration_module.calibrate_from_noise(detector, scans, min_tail_exceedances=50)
+    calibrator = calibration_module.NoiseCalibrator(detector)
+    calibration = calibrator.calibrate_from_noise(scans, min_tail_exceedances=50)
     assert (calibration.min_num_frames, calibration.max_num_frames) == (1998, 2398)
     assert calibration.num_frames == 1998
 
-    detector.noise_calibration = calibration
     detector.detect(rng.exponential(size=(128, 2398)))
     detector.detect(rng.exponential(size=(128, 1700)))
     with pytest.raises(ValueError, match="frames"):
         detector.detect(rng.exponential(size=(128, 3100)))
     with pytest.raises(ValueError, match="frame count"):
-        calibration_module.calibrate_from_noise(detector, [np.ones((128, 9)), np.ones((128, 12))])
+        calibrator.calibrate_from_noise([np.ones((128, 9)), np.ones((128, 12))])
 
 
 @pytest.mark.parametrize("detect_frames", [300, 500])
@@ -584,8 +567,8 @@ def test_alpha_is_referred_to_the_frame_count_being_detected_on(
     algorithms, calibration_module = _load(monkeypatch)
     rng = np.random.default_rng(13)
     detector = _make_detector(algorithms, "ca")
-    calibration = calibration_module.calibrate_from_noise(
-        detector, [rng.exponential(size=(128, 400)) for _ in range(1200)]
+    calibration = calibration_module.NoiseCalibrator(detector).calibrate_from_noise(
+        [rng.exponential(size=(128, 400)) for _ in range(1200)]
     )
     held_out = _ratios_of(
         detector, [rng.exponential(size=(128, detect_frames)) for _ in range(1200)]
@@ -608,8 +591,8 @@ def test_calibration_pooled_over_mixed_frame_counts_is_unbiased(monkeypatch) -> 
     rng = np.random.default_rng(14)
     detector = _make_detector(algorithms, "ca")
     frame_counts = rng.choice([320, 400], size=1500)
-    calibration = calibration_module.calibrate_from_noise(
-        detector, [rng.exponential(size=(128, m)) for m in frame_counts]
+    calibration = calibration_module.NoiseCalibrator(detector).calibrate_from_noise(
+        [rng.exponential(size=(128, m)) for m in frame_counts]
     )
     reference = calibration.num_frames
     held_out = _ratios_of(detector, [rng.exponential(size=(128, reference)) for _ in range(1500)])
@@ -623,9 +606,9 @@ def test_calibrated_detect_refers_alpha_to_each_scans_frame_count(monkeypatch) -
     """End to end: calibrated at 400 frames, detect() on 500-frame scans still meets target."""
     algorithms, calibration_module = _load(monkeypatch)
     rng = np.random.default_rng(15)
-    calibration = calibration_module.calibrate_from_noise(
-        _make_detector(algorithms, "ca"), [rng.exponential(size=(128, 400)) for _ in range(1200)]
-    )
+    calibration = calibration_module.NoiseCalibrator(
+        _make_detector(algorithms, "ca")
+    ).calibrate_from_noise([rng.exponential(size=(128, 400)) for _ in range(1200)])
     detector = _make_detector(
         algorithms, "ca", consolidate_peaks=False, noise_calibration=calibration
     )
@@ -726,6 +709,10 @@ def test_replaced_calibration_is_kept_alive_until_the_cache_is_revalidated(monke
     gc.collect()
     assert reference() is not None
 
-    detector._alpha_for(2)
+    # Revalidating the cache against the new (missing) calibration is what drops the last
+    # reference to the old one; that it also raises now, rather than falling back to a model
+    # alpha, is incidental to what this test checks.
+    with pytest.raises(ValueError, match="no noise_calibration set"):
+        detector._alpha_for(2)
     gc.collect()
     assert reference() is None
