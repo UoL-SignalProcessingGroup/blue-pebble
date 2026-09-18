@@ -8,6 +8,7 @@ from typing import TYPE_CHECKING, Any, TypeAlias, cast
 import numpy as np
 from numpy.typing import ArrayLike, NDArray
 from stonesoup.base import Property
+from tqdm import tqdm
 
 from ..models.propagation import SpectrumPropagationModel
 from ..signal.anthropogenic import AnthropogenicSignal
@@ -286,8 +287,13 @@ class ContinuousSTFTPassiveSonarArraySimulator(PassiveSonarArraySimulatorBase):
         ctx: _STFTCommonContext,
         ground_truth_paths: "list[Iterable[State]]",
         signal_models_list: "list[AnthropogenicSignal]",
+        progress_bar: bool = False,
     ) -> list[_STFTTargetHistory]:
         """Build per-target source and channel histories at knot times.
+
+        This is the dominant cost of :meth:`sensor_data_gen` for scenarios with targets: every
+        knot of every target requires its own ``propagate_spectrum`` call, all of it done here
+        before the first sensor snapshot is yielded.
 
         Parameters
         ----------
@@ -297,6 +303,9 @@ class ContinuousSTFTPassiveSonarArraySimulator(PassiveSonarArraySimulatorBase):
             Target trajectories.
         signal_models_list : list
             Resolved signal-model list aligned with targets.
+        progress_bar : bool, optional
+            If True, show a progress bar over every (target, knot) propagation call, by
+            default False.
 
         Returns
         -------
@@ -323,57 +332,64 @@ class ContinuousSTFTPassiveSonarArraySimulator(PassiveSonarArraySimulatorBase):
             raise TypeError(msg)
         spectrum_propagation_model = cast(SpectrumPropagationModel, self.propagation_model)
 
-        for target_idx, target_path in enumerate(ground_truth_paths):
-            try:
-                target_first_state = next(iter(target_path))
-            except StopIteration:
-                msg = f"ground_truth_paths[{target_idx}] has no states"
-                raise ValueError(msg) from None
-            target_signal_model = signal_models_list[target_idx]
-            target_source_stft, target_freqs_hz, _, _ = target_signal_model.compute_stft(
-                target_first_state
-            )
-
-            if target_idx == 0:
-                # Reconcile ctx geometry with the actual STFT shape and frequencies.
-                # stft_geometry() cannot know whether the source is real or complex
-                # (which determines rfft vs. fft bin count), so we correct here.
-                ctx.num_frames, ctx.num_freq_bins = target_source_stft.shape
-                ctx.frequencies = np.asarray(target_freqs_hz, dtype=np.float64)
-            elif target_source_stft.shape != (ctx.num_frames, ctx.num_freq_bins):
-                msg = (
-                    "All target source STFTs must share the same shape. "
-                    f"Expected {(ctx.num_frames, ctx.num_freq_bins)}, "
-                    f"got {target_source_stft.shape}."
+        with tqdm(
+            total=len(ground_truth_paths) * len(ctx.all_timestamps),
+            disable=not progress_bar,
+            desc="Propagating signals",
+        ) as bar:
+            for target_idx, target_path in enumerate(ground_truth_paths):
+                try:
+                    target_first_state = next(iter(target_path))
+                except StopIteration:
+                    msg = f"ground_truth_paths[{target_idx}] has no states"
+                    raise ValueError(msg) from None
+                target_signal_model = signal_models_list[target_idx]
+                target_source_stft, target_freqs_hz, _, _ = target_signal_model.compute_stft(
+                    target_first_state
                 )
-                raise RuntimeError(msg)
 
-            H_hist = np.zeros(
-                (ctx.n_steps, ctx.num_sensors, ctx.num_freq_bins), dtype=np.complex64
-            )
-            tau_hist = np.zeros((ctx.n_steps, ctx.num_sensors), dtype=np.float64)
+                if target_idx == 0:
+                    # Reconcile ctx geometry with the actual STFT shape and frequencies.
+                    # stft_geometry() cannot know whether the source is real or complex
+                    # (which determines rfft vs. fft bin count), so we correct here.
+                    ctx.num_frames, ctx.num_freq_bins = target_source_stft.shape
+                    ctx.frequencies = np.asarray(target_freqs_hz, dtype=np.float64)
+                elif target_source_stft.shape != (ctx.num_frames, ctx.num_freq_bins):
+                    msg = (
+                        "All target source STFTs must share the same shape. "
+                        f"Expected {(ctx.num_frames, ctx.num_freq_bins)}, "
+                        f"got {target_source_stft.shape}."
+                    )
+                    raise RuntimeError(msg)
 
-            for step_idx, timestamp in enumerate(ctx.all_timestamps):
-                platform_state = self.platform.get_platform_state_at(timestamp)
-                target_state = self._target_state_at(target_path, timestamp)
-                if target_state is None:
-                    continue
-
-                H_sensors, sensor_delays_s = spectrum_propagation_model.propagate_spectrum(
-                    platform_state,
-                    target_state,
-                    ctx.frequencies,
+                H_hist = np.zeros(
+                    (ctx.n_steps, ctx.num_sensors, ctx.num_freq_bins), dtype=np.complex64
                 )
-                H_hist[step_idx, :, :] = np.asarray(H_sensors, dtype=np.complex64)
-                tau_hist[step_idx, :] = np.asarray(sensor_delays_s, dtype=np.float64)
+                tau_hist = np.zeros((ctx.n_steps, ctx.num_sensors), dtype=np.float64)
 
-            targets_data.append(
-                _STFTTargetHistory(
-                    source_stft=target_source_stft,
-                    H_hist=H_hist,
-                    tau_hist=_hold_last_finite_delays(tau_hist),
+                for step_idx, timestamp in enumerate(ctx.all_timestamps):
+                    platform_state = self.platform.get_platform_state_at(timestamp)
+                    target_state = self._target_state_at(target_path, timestamp)
+                    if target_state is None:
+                        bar.update(1)
+                        continue
+
+                    H_sensors, sensor_delays_s = spectrum_propagation_model.propagate_spectrum(
+                        platform_state,
+                        target_state,
+                        ctx.frequencies,
+                    )
+                    H_hist[step_idx, :, :] = np.asarray(H_sensors, dtype=np.complex64)
+                    tau_hist[step_idx, :] = np.asarray(sensor_delays_s, dtype=np.float64)
+                    bar.update(1)
+
+                targets_data.append(
+                    _STFTTargetHistory(
+                        source_stft=target_source_stft,
+                        H_hist=H_hist,
+                        tau_hist=_hold_last_finite_delays(tau_hist),
+                    )
                 )
-            )
 
         return targets_data
 
@@ -774,8 +790,21 @@ class ContinuousSTFTPassiveSonarArraySimulator(PassiveSonarArraySimulatorBase):
         receiver_accum = self._apply_fades(receiver_accum, ctx.fs, do_fade_out=True)
         return receiver_accum, self._slice_knot_step_samples(ctx, out_len)
 
-    def sensor_data_gen(self) -> Iterator[SensorBatch]:
+    def sensor_data_gen(self, progress_bar: bool = False) -> Iterator[SensorBatch]:
         """Yield continuous broadband sensor snapshots using selected STFT mode.
+
+        Every target's propagation history is built in full before the first snapshot is
+        yielded (see :meth:`_build_target_histories`), so with targets present there is a
+        delay before this starts yielding that ``progress_bar`` reports on but a caller
+        iterating the result cannot otherwise observe.
+
+        Parameters
+        ----------
+        progress_bar : bool, optional
+            If True, show a progress bar over target propagation while it builds, by
+            default False. Covers only that up-front phase; wrap the returned iterator
+            separately (e.g. via :meth:`~.PassiveSonarDetector.detections_gen`'s own
+            ``progress_bar``) to track per-timestep yields too.
 
         Yields
         ------
@@ -803,7 +832,9 @@ class ContinuousSTFTPassiveSonarArraySimulator(PassiveSonarArraySimulatorBase):
             "signal models",
         )
         ctx = self._build_common_context(all_timestamps, [ref_signal_model])
-        targets_data = self._build_target_histories(ctx, ground_truth_paths, signal_models_list)
+        targets_data = self._build_target_histories(
+            ctx, ground_truth_paths, signal_models_list, progress_bar=progress_bar
+        )
 
         if selected_mode == "stft_interp":
             receiver_signals, step_sample_idx = self._synthesise_stft_interp(ctx, targets_data)
@@ -919,8 +950,20 @@ class ContinuousFractionalDelayPassiveSonarArraySimulator(PassiveSonarArraySimul
         y = np.interp(src_idx, src_n, source.astype(np.float64), left=0.0, right=0.0)
         return y.astype(np.complex64)
 
-    def sensor_data_gen(self) -> Iterator[SensorBatch]:
+    def sensor_data_gen(self, progress_bar: bool = False) -> Iterator[SensorBatch]:
         """Yield broadband sensor snapshots via fractional-delay rendering.
+
+        Every target's propagation history is built in full before the first snapshot is
+        yielded, so with targets present there is a delay before this starts yielding that
+        ``progress_bar`` reports on but a caller iterating the result cannot otherwise observe.
+
+        Parameters
+        ----------
+        progress_bar : bool, optional
+            If True, show a progress bar over target propagation while it builds, by
+            default False. Covers only that up-front phase; wrap the returned iterator
+            separately (e.g. via :meth:`~.PassiveSonarDetector.detections_gen`'s own
+            ``progress_bar``) to track per-timestep yields too.
 
         Yields
         ------
@@ -975,66 +1018,75 @@ class ContinuousFractionalDelayPassiveSonarArraySimulator(PassiveSonarArraySimul
                 raise TypeError(msg)
             spectrum_propagation_model = cast(SpectrumPropagationModel, self.propagation_model)
 
-        for target_idx, target_path in enumerate(ground_truth_paths):
-            target_signal_model = signal_models_list[target_idx]
-            try:
-                target_first_state = next(iter(target_path))
-            except StopIteration:
-                msg = f"ground_truth_paths[{target_idx}] has no states"
-                raise ValueError(msg) from None
+        with tqdm(
+            total=len(ground_truth_paths) * n_steps,
+            disable=not progress_bar,
+            desc="Propagating targets",
+        ) as bar:
+            for target_idx, target_path in enumerate(ground_truth_paths):
+                target_signal_model = signal_models_list[target_idx]
+                try:
+                    target_first_state = next(iter(target_path))
+                except StopIteration:
+                    msg = f"ground_truth_paths[{target_idx}] has no states"
+                    raise ValueError(msg) from None
 
-            source_signal = target_signal_model.get_source_waveform(target_first_state)
+                source_signal = target_signal_model.get_source_waveform(target_first_state)
 
-            if len(source_signal) != out_len:
-                msg = (
-                    "All target source signals must have the same sample length. "
-                    f"Expected {out_len}, got {len(source_signal)}."
-                )
-                raise RuntimeError(msg)
+                if len(source_signal) != out_len:
+                    msg = (
+                        "All target source signals must have the same sample length. "
+                        f"Expected {out_len}, got {len(source_signal)}."
+                    )
+                    raise RuntimeError(msg)
 
-            broadband_rms = np.zeros((n_steps, num_sensors), dtype=np.float64)
-            sensor_delay_history_s = np.zeros((n_steps, num_sensors), dtype=np.float64)
+                broadband_rms = np.zeros((n_steps, num_sensors), dtype=np.float64)
+                sensor_delay_history_s = np.zeros((n_steps, num_sensors), dtype=np.float64)
 
-            for step_idx, timestamp in enumerate(all_timestamps):
-                platform_state = self.platform.get_platform_state_at(timestamp)
-                target_state = self._target_state_at(target_path, timestamp)
-                if target_state is None:
-                    continue
+                for step_idx, timestamp in enumerate(all_timestamps):
+                    platform_state = self.platform.get_platform_state_at(timestamp)
+                    target_state = self._target_state_at(target_path, timestamp)
+                    if target_state is None:
+                        bar.update(1)
+                        continue
 
-                H_sensors, sensor_delays_s = spectrum_propagation_model.propagate_spectrum(
-                    platform_state,
-                    target_state,
-                    frequencies_hz,
-                )
+                    H_sensors, sensor_delays_s = spectrum_propagation_model.propagate_spectrum(
+                        platform_state,
+                        target_state,
+                        frequencies_hz,
+                    )
 
-                sensor_delay_history_s[step_idx, :] = np.asarray(
-                    sensor_delays_s,
-                    dtype=np.float64,
-                )
+                    sensor_delay_history_s[step_idx, :] = np.asarray(
+                        sensor_delays_s,
+                        dtype=np.float64,
+                    )
 
-                H_abs = np.abs(np.asarray(H_sensors, dtype=np.complex64))
-                broadband_rms[step_idx, :] = np.sqrt(np.mean(H_abs**2, axis=1)).astype(np.float64)
+                    H_abs = np.abs(np.asarray(H_sensors, dtype=np.complex64))
+                    broadband_rms[step_idx, :] = np.sqrt(np.mean(H_abs**2, axis=1)).astype(
+                        np.float64
+                    )
+                    bar.update(1)
 
-            sensor_delay_history_s = _hold_last_finite_delays(sensor_delay_history_s)
+                sensor_delay_history_s = _hold_last_finite_delays(sensor_delay_history_s)
 
-            for sensor_idx in range(num_sensors):
-                amp_s = np.interp(
-                    sample_times_s,
-                    step_times_s,
-                    broadband_rms[:, sensor_idx],
-                    left=0.0,
-                    right=0.0,
-                )
-                tau_s = np.interp(
-                    sample_times_s,
-                    step_times_s,
-                    sensor_delay_history_s[:, sensor_idx],
-                    left=0.0,
-                    right=0.0,
-                )
+                for sensor_idx in range(num_sensors):
+                    amp_s = np.interp(
+                        sample_times_s,
+                        step_times_s,
+                        broadband_rms[:, sensor_idx],
+                        left=0.0,
+                        right=0.0,
+                    )
+                    tau_s = np.interp(
+                        sample_times_s,
+                        step_times_s,
+                        sensor_delay_history_s[:, sensor_idx],
+                        left=0.0,
+                        right=0.0,
+                    )
 
-                delayed = self._fractional_delay_resample(source_signal, tau_s, fs)
-                receiver_accum[sensor_idx, :] += delayed * amp_s.astype(np.float32)
+                    delayed = self._fractional_delay_resample(source_signal, tau_s, fs)
+                    receiver_accum[sensor_idx, :] += delayed * amp_s.astype(np.float32)
 
         if self.fade_in_ms > 0:
             fade_samples = int(self.fade_in_ms * fs / 1000.0)
