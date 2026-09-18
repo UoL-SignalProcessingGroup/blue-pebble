@@ -23,6 +23,27 @@ DetectionBatch: TypeAlias = tuple[datetime, set[Detection]]
 _BandedStep: TypeAlias = tuple[datetime, dict[str, set[Detection]]]
 
 
+def _lazy_progress_bar(iterable: Iterable, desc: str, total: int | None) -> Iterable:
+    """Wrap ``iterable`` with a progress bar that only appears once the first item arrives.
+
+    A plain ``tqdm(iterable)`` renders its 0% frame the moment it's constructed, before the
+    wrapped iterable has produced anything. That's misleading when the iterable's own first
+    ``next()`` call blocks on something that reports its own progress -- e.g. a simulator's
+    ``sensor_data_gen(progress_bar=True)`` building target propagation up front -- since the
+    two bars would then interleave instead of appearing in sequence.
+    """
+    bar: tqdm | None = None
+    try:
+        for item in iterable:
+            if bar is None:
+                bar = tqdm(desc=desc, total=total)
+            yield item
+            bar.update(1)
+    finally:
+        if bar is not None:
+            bar.close()
+
+
 def beam_power(beamformed_data: ArrayLike, decibels: bool = False) -> FloatArray:
     """Per-beam power, averaged over frames.
 
@@ -255,8 +276,8 @@ class PassiveSonarDetector(DetectionReader):
         """
         sensor_data_iterator: Iterable[SensorDataStep] = self.sensor_data_gen
         if progress_bar:
-            sensor_data_iterator = tqdm(
-                sensor_data_iterator, desc="Generating Detections", total=total_timesteps
+            sensor_data_iterator = _lazy_progress_bar(
+                sensor_data_iterator, "Generating Detections", total_timesteps
             )
 
         for timestamp, sensor_data_set in sensor_data_iterator:
@@ -612,7 +633,7 @@ class MultibandPassiveSonarDetector(DetectionReader):
 
         steps: Iterable[_BandedStep] = self._pump.stream(self._subscriber_id)
         if progress_bar:
-            steps = tqdm(steps, desc="Generating Detections", total=total_timesteps)
+            steps = _lazy_progress_bar(steps, "Generating Detections", total_timesteps)
 
         for timestamp, detections_by_band in steps:
             combined: set[Detection] = set()

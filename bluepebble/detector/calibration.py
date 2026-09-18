@@ -486,7 +486,10 @@ class NoiseCalibrator:
 
 
 def beamformed_scans_from_sensor_data(
-    sensor_data_gen: Iterable[Any], band_label: str | None = None
+    sensor_data_gen: Iterable[Any],
+    band_label: str | None = None,
+    progress_bar: bool = False,
+    total: int | None = None,
 ) -> Iterator[NDArray]:
     """Yield raw beamformer output from a simulator's ``sensor_data_gen()``.
 
@@ -501,6 +504,12 @@ def beamformed_scans_from_sensor_data(
         For multiband output (three-dimensional ``beamformed_data`` with ``band_labels``), the
         band whose ``(num_beams, num_frames)`` slice to yield. Calibrate each band's detector
         separately. Must be ``None`` for single-band output.
+    progress_bar : bool, optional
+        If True, show a progress bar over ``sensor_data_gen``, by default False. The bar only
+        appears once ``sensor_data_gen`` starts yielding, so it appears after (not during) a
+        simulator's own ``sensor_data_gen(progress_bar=True)`` target-propagation phase.
+    total : int, optional
+        Total number of timesteps for the progress bar.
 
     Yields
     ------
@@ -515,6 +524,13 @@ def beamformed_scans_from_sensor_data(
         single-band output, or the label is not one of the data's bands.
 
     """
+    if progress_bar:
+        # Deferred to break a module cycle: .passive imports from .algorithms, which imports
+        # NoiseCalibration from this module.
+        from .passive import _lazy_progress_bar
+
+        sensor_data_gen = _lazy_progress_bar(sensor_data_gen, "Noise calibration", total)
+
     for _, sensor_data_set in sensor_data_gen:
         for sensor_data in sensor_data_set:
             data = sensor_data.beamformed_data

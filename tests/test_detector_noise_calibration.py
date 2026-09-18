@@ -9,6 +9,7 @@ from __future__ import annotations
 
 import copy
 import dataclasses
+import sys
 import warnings
 from types import SimpleNamespace
 
@@ -361,6 +362,44 @@ def test_beamformed_scans_from_sensor_data_skips_missing_and_empty(monkeypatch) 
     scans = list(calibration_module.beamformed_scans_from_sensor_data(sensor_data_gen))
 
     assert len(scans) == 1 and scans[0] is full
+
+
+def test_beamformed_scans_progress_bar_routes_through_lazy_progress_bar(monkeypatch) -> None:
+    """progress_bar=True should defer to passive._lazy_progress_bar, not wrap eagerly.
+
+    The import is local (breaking a module cycle: .passive imports from .algorithms, which
+    imports NoiseCalibration from this module), so this stubs bluepebble.detector.passive in
+    sys.modules rather than pulling in the real Stone Soup dependencies passive.py needs.
+    """
+    _, calibration_module = _load(monkeypatch)
+
+    calls = []
+
+    def fake_lazy_progress_bar(iterable, desc, total):
+        calls.append((desc, total))
+        yield from iterable
+
+    monkeypatch.setitem(
+        sys.modules,
+        "bluepebble.detector.passive",
+        SimpleNamespace(_lazy_progress_bar=fake_lazy_progress_bar),
+    )
+
+    class SensorData:  # hashable stand-in for PassiveSonarSensorData
+        def __init__(self, beamformed_data):
+            self.beamformed_data = beamformed_data
+
+    full = np.ones((4, 2))
+    sensor_data_gen = [(0, {SensorData(full)})]
+
+    scans = list(
+        calibration_module.beamformed_scans_from_sensor_data(
+            sensor_data_gen, progress_bar=True, total=1
+        )
+    )
+
+    assert len(scans) == 1 and scans[0] is full
+    assert calls == [("Noise calibration", 1)]
 
 
 # ---------------------------------------------------------------------------
