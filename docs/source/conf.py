@@ -61,8 +61,6 @@ exclude_patterns = [
     # toc.not_included warnings.
     "auto_examples/comparing_simulators.rst",
     "auto_examples/modelling_acoustic_sources.rst",
-    "auto_examples/FUSION2026_singletarget_example.rst",
-    "auto_examples/FUSION2026_multitarget_example.rst",
 ]
 
 autodoc_member_order = "bysource"
@@ -100,12 +98,6 @@ sphinx_gallery_conf = {
         r"using_measured_data\.py"
         r"|modelling_acoustic_sources\.py"
         r"|comparing_simulators\.py"
-        # The FUSION 2026 scripts reproduce the figures for a specific paper. They stay in
-        # docs/examples so they can be run, but they are not documentation: they are the
-        # longest-running examples in the gallery and their narrative is aimed at that
-        # paper's readers rather than at someone learning the library.
-        r"|FUSION2026_singletarget_example\.py"
-        r"|FUSION2026_multitarget_example\.py"
     ),
     "abort_on_example_error": False,
     "image_scrapers": ("matplotlib", _plotly_scraper),
@@ -130,8 +122,8 @@ warnings.filterwarnings("ignore", category=RemovedInSphinx10Warning)
 #
 # Sphinx-Gallery regenerates source/auto_examples/index.rst on every build,
 # so any manual edits are lost.  The setup() hook below runs in builder-inited
-# AFTER SG's own handler (same priority 500, FIFO order) and splices in a
-# "Measured Data Examples" section before the FUSION 2026 section.
+# AFTER SG's own handler (same priority 500, FIFO order) and appends a
+# "Measured Data Examples" section to the end of the generated index.
 # ---------------------------------------------------------------------------
 
 _MEASURED_DATA_SECTION = """\
@@ -201,25 +193,14 @@ the scripts.
 
 
 def _patch_gallery_index(app: object) -> None:
-    """Splice the measured-data section into the SG-generated gallery index.
-
-    Also demotes the SG-generated "FUSION 2026 Examples" heading from h1 (=)
-    to h2 (-) so that both sub-sections nest correctly under "Examples" in the
-    sidebar navigation.
-    """
+    """Append the measured-data section to the SG-generated gallery index."""
     gallery_index = Path(app.srcdir) / "auto_examples" / "index.rst"  # type: ignore[attr-defined]
     if not gallery_index.exists():
         return
     content = gallery_index.read_text(encoding="utf-8")
     if _MEASURED_DATA_SECTION in content:
         return  # already patched (shouldn't happen, but be safe)
-    # Splice our measured-data section before the (now-demoted) FUSION heading.
-    marker = "FUSION 2026 Examples\n"
-    idx = content.find(marker)
-    if idx == -1:
-        content = content + "\n" + _MEASURED_DATA_SECTION
-    else:
-        content = content[:idx] + _MEASURED_DATA_SECTION + content[idx:]
+    content = content + "\n" + _MEASURED_DATA_SECTION
     gallery_index.write_text(content, encoding="utf-8")
 
 
