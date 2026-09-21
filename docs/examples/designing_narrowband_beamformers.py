@@ -413,8 +413,12 @@ simulator = ContinuousSTFTPassiveSonarArraySimulator(
 )
 
 # Noise statistics differ between bands (each has its own bandwidth and mainlobe width), so
-# each band's detector gets its own noise_calibration rather than sharing one. The ambient-only
-# multiband run is simulated once and cached, since it holds every band's data per timestep;
+# each band's detector gets its own noise_calibration rather than sharing one. Operationally
+# these come from a survey of the ambient noise recorded beforehand with the same array,
+# beamformer, steering and scan length; here the survey is the same platform with no
+# ground_truth_paths. It uses the whole run because 120 beams need about 167 scans to reach the
+# roughly 20,000 cells the calibration wants at its defaults. The ambient-only multiband run is
+# simulated once and cached, since it holds every band's data per timestep;
 # beamformed_scans_from_sensor_data then selects one band's slice per calibration.
 ambient_only_simulator = ContinuousSTFTPassiveSonarArraySimulator(
     platform=platform,

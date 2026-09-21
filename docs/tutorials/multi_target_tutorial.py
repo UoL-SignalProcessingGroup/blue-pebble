@@ -322,15 +322,24 @@ num_guard_cells, num_training_cells, peak_distance = cfar_window_for_mainlobe(ma
 # ``target_pfa`` sets the CFAR threshold through a noise model that assumes independent beams
 # and a known number of looks. Beamformer output satisfies neither, so a CFAR detector needs
 # its ``noise_calibration`` measured on noise-only data before it can detect anything at all
-# (see :class:`~.CACFARDetector`'s noise calibration notes). Build that data exactly like the
-# scenario -- the same platform, beamformer and steering, but no ``ground_truth_paths``.
+# (see :class:`~.CACFARDetector`'s noise calibration notes).
 #
-# Calibrate across the whole run rather than a prefix of it. The platform turns mid-run, and a
-# bent array's noise statistics differ from a straight one's, so a calibration taken only from
-# the first leg would not describe every scan the detector sees.
-# :meth:`~.NoiseCalibrator.calibrate_from_noise` needs a few hundred cells beyond the 1%
-# point of the ratio distribution; the full run's 180 scans of 361 beams comfortably provide
-# them.
+# Operationally this is a survey: ambient noise recorded in the area beforehand, with the same
+# array, beamformer, steering and scan length, but no targets. Here that recording comes from
+# the same platform with no ``ground_truth_paths``, taken over its first leg only, and its
+# noise is drawn independently of the scenario's. The ambient noise this simulator generates
+# is spatially white, so the array's heading and shape do not change its statistics. A
+# directional or speed-dependent noise field would, and the survey would then need to match
+# the conditions the detector runs in.
+#
+# :meth:`~.NoiseCalibrator.calibrate_from_noise` needs about 20,000 cells at its defaults, so
+# 60 scans of 361 beams (21,660 cells) is close to the minimum. In a convergence study on this
+# scenario, the false-alarm rate at ``target_pfa=1e-3`` from 60 scans was within a factor of
+# about 3.5 of the target (5-95% of random subsets), and within about 2 from 90.
+
+from itertools import islice
+
+num_survey_scans = 60
 
 ambient_only_simulator = ContinuousSTFTPassiveSonarArraySimulator(
     platform=platform,
@@ -343,7 +352,9 @@ ambient_only_simulator = ContinuousSTFTPassiveSonarArraySimulator(
     fade_in_ms=fade_in_ms,
 )
 noise_scans = beamformed_scans_from_sensor_data(
-    ambient_only_simulator.sensor_data_gen(), progress_bar=True, total=num_steps
+    islice(ambient_only_simulator.sensor_data_gen(), num_survey_scans),
+    progress_bar=True,
+    total=num_survey_scans,
 )
 
 target_pfa = 1e-3
@@ -385,7 +396,7 @@ simulator = ContinuousSTFTPassiveSonarArraySimulator(
 
 detector = PassiveSonarDetector(
     detector=cfar_detector,
-    sensor_data_gen=simulator.sensor_data_gen(),
+    sensor_data_gen=simulator.sensor_data_gen(progress_bar=True),
     steering_azimuths_rad=steering_azimuths_rad,
 )
 
@@ -445,7 +456,7 @@ fig_btr.update_layout(
     showlegend=False,
     margin=dict(r=80),
     yaxis2=dict(title=""),
-)
+).show()
 
 # %%
 # Track Multiple Bearings with Stone Soup Association
@@ -577,7 +588,7 @@ plot_btr(
     autosize=True,
     width=None,
     height=700,
-)
+).show()
 
 # %%
 # Adapting This Tutorial

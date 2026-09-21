@@ -471,9 +471,17 @@ cfar_detector = CACFARDetector(
 
 # CFAR thresholds a noise model that assumes independent beams and a known number of looks;
 # beamformer output satisfies neither, so noise_calibration must be measured on noise-only data
-# before the detector can run at all. Build that data the same way as the scenario -- same
-# platform, beamformer and steering (and the same measured bathymetry/sound-speed profile,
-# since propagation shapes the noise multipath too), but no ground_truth_paths.
+# before the detector can run at all. Operationally that is a survey of the ambient noise
+# recorded beforehand with the same array, beamformer, steering and scan length. Here it comes
+# from the same platform with no ground_truth_paths, over the first 120 scans only, with noise
+# drawn independently of the scenario's. The simulator adds ambient noise at the sensors
+# without propagating it, so the measured bathymetry and sound-speed profile do not change
+# it; a real survey would be specific to the area. The calibration needs about 20,000 cells at
+# its defaults, which is 111 scans of 181 beams.
+from itertools import islice
+
+num_survey_scans = 120
+
 ambient_only_simulator = ContinuousSTFTPassiveSonarArraySimulator(
     platform=platform,
     propagation_model=prop_model,
@@ -485,7 +493,9 @@ ambient_only_simulator = ContinuousSTFTPassiveSonarArraySimulator(
     fade_in_ms=fade_in_ms,
 )
 noise_scans = beamformed_scans_from_sensor_data(
-    ambient_only_simulator.sensor_data_gen(), progress_bar=True, total=num_steps
+    islice(ambient_only_simulator.sensor_data_gen(), num_survey_scans),
+    progress_bar=True,
+    total=num_survey_scans,
 )
 NoiseCalibrator(cfar_detector).calibrate_from_noise(noise_scans)
 

@@ -21,6 +21,7 @@ geometry rather than to a different signal-processing chain.
 # All dependencies are consolidated here for convenience.
 from copy import deepcopy
 from datetime import datetime, timedelta
+from itertools import islice
 
 import numpy as np
 from plotly.subplots import make_subplots
@@ -471,14 +472,8 @@ cfar_target_pfa = 0.3594
 cfar_circular = True
 
 
-def _make_detector(simulator: ContinuousSTFTPassiveSonarArraySimulator) -> PassiveSonarDetector:
-    """Create a PassiveSonarDetector driven by a single CA-CFAR detector.
-
-    Bathymetry shapes multipath, which shapes the noise-only cell-to-noise ratio the
-    detector thresholds, so each bathymetry gets its own noise_calibration measured under
-    its own propagation model rather than sharing one between the two scenarios.
-    """
-    cfar_detector = CACFARDetector(
+def _make_cfar_detector() -> CACFARDetector:
+    return CACFARDetector(
         num_guard_cells=cfar_num_guard_cells,
         num_training_cells=cfar_num_training_cells,
         target_pfa=cfar_target_pfa,
@@ -486,20 +481,39 @@ def _make_detector(simulator: ContinuousSTFTPassiveSonarArraySimulator) -> Passi
         circular=cfar_circular,
     )
 
-    ambient_only_simulator = ContinuousSTFTPassiveSonarArraySimulator(
-        platform=simulator.platform,
-        propagation_model=simulator.propagation_model,
-        signal_models=simulator.signal_models,
-        noise_model=simulator.noise_model,
-        beamformer=simulator.beamformer,
-        steering_calculator=simulator.steering_calculator,
-        ground_truth_paths=[],
-        fade_in_ms=simulator.fade_in_ms,
-    )
-    noise_scans = beamformed_scans_from_sensor_data(
-        ambient_only_simulator.sensor_data_gen(), progress_bar=True, total=num_steps
-    )
-    NoiseCalibrator(cfar_detector).calibrate_from_noise(noise_scans)
+
+# CFAR thresholds a noise model that assumes independent beams and a known number of looks;
+# beamformer output satisfies neither, so noise_calibration must be measured on noise-only
+# data. Operationally that is a survey of the ambient noise recorded beforehand with the same
+# array, beamformer, steering and scan length. Here it comes from the same platform with no
+# ground_truth_paths, over the first 120 scans only. The simulator adds ambient noise at the
+# sensors without propagating it, so the seabed does not change it and one survey serves both
+# bathymetries; a real survey would be specific to the area. The calibration needs about
+# 20,000 cells at its defaults, which is 111 scans of 181 beams.
+num_survey_scans = 120
+
+survey_simulator = ContinuousSTFTPassiveSonarArraySimulator(
+    platform=platform,
+    propagation_model=flat_prop_model,
+    signal_models=_make_signal_models(),
+    noise_model=ambient_noise_model,
+    beamformer=beamformer,
+    steering_calculator=steering_calculator,
+    ground_truth_paths=[],
+    fade_in_ms=fade_in_ms,
+)
+noise_scans = beamformed_scans_from_sensor_data(
+    islice(survey_simulator.sensor_data_gen(), num_survey_scans),
+    progress_bar=True,
+    total=num_survey_scans,
+)
+noise_calibration = NoiseCalibrator(_make_cfar_detector()).calibrate_from_noise(noise_scans)
+
+
+def _make_detector(simulator: ContinuousSTFTPassiveSonarArraySimulator) -> PassiveSonarDetector:
+    """Create a PassiveSonarDetector driven by a single, calibrated CA-CFAR detector."""
+    cfar_detector = _make_cfar_detector()
+    cfar_detector.noise_calibration = noise_calibration
 
     return PassiveSonarDetector(
         detector=cfar_detector,

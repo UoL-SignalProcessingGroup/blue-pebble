@@ -20,6 +20,7 @@ present in ambient-only simulations.
 # All dependencies are consolidated here for convenience.
 
 from datetime import datetime, timedelta
+from itertools import islice
 
 import numpy as np
 from plotly.subplots import make_subplots
@@ -423,6 +424,7 @@ cfar_num_guard_cells, cfar_num_training_cells, peak_distance = cfar_window_for_m
 # with N = 2 * num_training_cells inverts it exactly. It is a deliberately permissive
 # threshold -- peak consolidation, not the threshold, does most of the rejection here.
 cfar_target_pfa = 0.3594
+num_survey_scans = 120
 
 
 def _make_detector(
@@ -435,7 +437,12 @@ def _make_detector(
     ``noise_only_signal_models``/``noise_only_ground_truth_paths`` describe what belongs to
     the background (ambient noise, plus ownship self-noise where present) rather than the
     real targets to be detected, so calibration measures the same clutter the detector
-    actually faces without baking the targets themselves into the noise floor.
+    actually faces without baking the targets themselves into the noise floor. Operationally
+    this is a survey recorded beforehand under the same conditions, including the ownship's
+    own noise. Ownship noise is a propagated source, so, unlike the simulated ambient noise,
+    it changes the noise field and the two scenarios need separate surveys. The survey covers
+    the first ``num_survey_scans`` scans; the calibration needs about 20,000 cells at its
+    defaults, which is 111 scans of 181 beams.
     """
     cfar_detector = CACFARDetector(
         num_guard_cells=cfar_num_guard_cells,
@@ -456,7 +463,9 @@ def _make_detector(
         fade_in_ms=simulator.fade_in_ms,
     )
     noise_scans = beamformed_scans_from_sensor_data(
-        ambient_only_simulator.sensor_data_gen(), progress_bar=True, total=num_steps
+        islice(ambient_only_simulator.sensor_data_gen(), num_survey_scans),
+        progress_bar=True,
+        total=num_survey_scans,
     )
     NoiseCalibrator(cfar_detector).calibrate_from_noise(noise_scans)
 
