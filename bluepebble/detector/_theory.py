@@ -521,7 +521,11 @@ def ca_cfar_roc(
         :class:`RayleighFluctuation`.
     effective_looks_per_frame : float, optional
         Independent looks integrated into each per-frame sample (K_n), by default 1.0. Applied
-        to the threshold and the Pd alike, so the curve stays self-consistent.
+        to the threshold and the Pd alike, so the curve stays self-consistent. 1.0 is right only
+        for single-bin square-law data: on broadband beamformer output it can misstate Pd by an
+        order of magnitude. Measure it with
+        :func:`~.metrics.estimate_effective_looks_per_frame`; see
+        :doc:`/auto_examples/comparing_theoretical_and_empirical_pd`.
     signal_looks_per_frame : float or None, optional
         Looks the target occupies (K_s), by default ``None`` meaning K_s = K_n. Affects only
         Pd; H0 has no signal in it, so the threshold is untouched. See the
@@ -609,8 +613,10 @@ def os_cfar_roc(
     effective_looks_per_frame : float, optional
         Independent looks integrated into each per-frame sample (K_n), by default 1.0. Applied
         to the threshold and the Pd alike, so the curve stays self-consistent. Match it to the
-        detector being compared against; see
-        :func:`~.metrics.estimate_effective_looks_per_frame`.
+        detector being compared against. 1.0 is right only for single-bin square-law data: on
+        broadband beamformer output it can misstate Pd by an order of magnitude. Measure it with
+        :func:`~.metrics.estimate_effective_looks_per_frame`; see
+        :doc:`/auto_examples/comparing_theoretical_and_empirical_pd`.
     signal_looks_per_frame : float or None, optional
         Looks the target occupies (K_s), by default ``None`` meaning K_s = K_n. Affects only
         Pd; H0 has no signal in it, so the threshold is untouched. Set it well below K_n for
@@ -798,7 +804,8 @@ class FluctuationModel(ABC):
         rng : np.random.Generator
             Random number generator.
         effective_looks_per_frame : float, optional
-            Independent looks integrated into each per-frame sample (K_n), by default 1.0.
+            Independent looks integrated into each per-frame sample (K_n), by default 1.0,
+            which is right only for single-bin data; see :func:`os_cfar_roc`.
         signal_looks_per_frame : float or None, optional
             Looks the target occupies (K_s), by default ``None`` meaning K_s = K_n (the target
             fills the processed band). See the module docstring for why this matters.
@@ -846,7 +853,8 @@ class FluctuationModel(ABC):
             Random number generator for reproducibility, by default None. Ignored by models/paths
             with a closed form.
         effective_looks_per_frame : float, optional
-            Independent looks integrated into each per-frame sample (K_n), by default 1.0.
+            Independent looks integrated into each per-frame sample (K_n), by default 1.0,
+            which is right only for single-bin data; see :func:`os_cfar_roc`.
         signal_looks_per_frame : float or None, optional
             Looks the target occupies (K_s), by default ``None`` meaning K_s = K_n.
 
@@ -896,7 +904,8 @@ class FluctuationModel(ABC):
             Random number generator for reproducibility, by default None. Ignored by models/paths
             with a closed form.
         effective_looks_per_frame : float, optional
-            Independent looks integrated into each per-frame sample (K_n), by default 1.0.
+            Independent looks integrated into each per-frame sample (K_n), by default 1.0,
+            which is right only for single-bin data; see :func:`os_cfar_roc`.
         signal_looks_per_frame : float or None, optional
             Looks the target occupies (K_s), by default ``None`` meaning K_s = K_n.
 
