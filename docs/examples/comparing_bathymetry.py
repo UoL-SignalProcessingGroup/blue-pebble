@@ -464,10 +464,9 @@ mainlobe_beams = beams_per_mainlobe(
 cfar_num_guard_cells, cfar_num_training_cells, peak_distance = cfar_window_for_mainlobe(
     mainlobe_beams
 )
-# Preserves this example's pre-refactor operating point: the old threshold_factor=1.05 was
-# alpha applied to the training-cell mean, and CA-CFAR's single-look Pfa = (1 + alpha/N)^-N
-# with N = 2 * num_training_cells inverts it exactly. It is a deliberately permissive
-# threshold -- peak consolidation, not the threshold, does most of the rejection here.
+# A deliberately permissive per-cell Pfa: peak consolidation, not the threshold, does most of
+# the rejection here. The threshold it sets comes from the noise calibration, so it is measured
+# rather than derived from a noise model.
 cfar_target_pfa = 0.3594
 cfar_circular = True
 
