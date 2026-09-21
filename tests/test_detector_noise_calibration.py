@@ -399,7 +399,7 @@ def test_beamformed_scans_progress_bar_routes_through_lazy_progress_bar(monkeypa
     )
 
     assert len(scans) == 1 and scans[0] is full
-    assert calls == [("Noise calibration", 1)]
+    assert calls == [("Calibrating noise", 1)]
 
 
 # ---------------------------------------------------------------------------
