@@ -529,7 +529,7 @@ def beamformed_scans_from_sensor_data(
         # NoiseCalibration from this module.
         from .passive import _lazy_progress_bar
 
-        sensor_data_gen = _lazy_progress_bar(sensor_data_gen, "Noise calibration", total)
+        sensor_data_gen = _lazy_progress_bar(sensor_data_gen, "Calibrating noise", total)
 
     for _, sensor_data_set in sensor_data_gen:
         for sensor_data in sensor_data_set:
