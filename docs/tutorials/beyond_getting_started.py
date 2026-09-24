@@ -170,8 +170,12 @@ plot_world(truths=target_truths, platform=platform)
 #
 # Getting Started used a simple cylindrical spreading model. Here
 # :class:`~.rtrsAcousticPropagationModel` traces rays through a sound-speed profile and
-# bathymetry instead. Nothing else in the workflow changes: to the simulator it is just
+# bathymetry instead. Nothing else in the workflow changes. To the simulator it is just
 # another propagation model.
+#
+# The seabed is sand, which absorbs part of every steep bounce. Left unset, ``bottom_model``
+# gives a rigid seabed that reflects everything, so steep multipath arrives far stronger
+# than it would at sea.
 
 # %%
 from bluepebble.models.environment import FlatBathymetry, Linear
@@ -189,6 +193,12 @@ propagation_model = rtrsAcousticPropagationModel(
     azimuth_resolution=0.5,
     elevation_range=(-25.0, 25.0),
     elevation_resolution=1.0,
+    bottom_model={
+        "model": "acoustic",
+        "compressional_speed_m_s": 1650.0,
+        "density_g_cm3": 1.9,
+        "compressional_attenuation_db_per_wavelength": 0.8,
+    },
 )
 
 # %%
@@ -283,14 +293,14 @@ def make_simulator(ground_truth_paths):
 # --------------------------------------------
 #
 # Getting Started used CA-CFAR, which estimates each beam's noise level as the average of
-# the beams either side of it. With several targets that average is easily disturbed: a
+# the beams either side of it. With several targets that average is easily disturbed; a
 # neighbouring target, or a ghost, in those beams raises the estimate and can hide a real
 # contact. :class:`~.OSCFARDetector` instead takes the k-th smallest of those beams, so a
 # few bright ones make no difference.
 #
 # With more going on in the scene, it is also worth controlling the false-alarm rate rather
 # than choosing a threshold by hand. Setting ``target_pfa`` and calibrating the detector on
-# ambient noise does this: recorded, in practice, before the operation with the same array
+# ambient noise does this; recorded, in practice, before the operation with the same array
 # and settings but no targets present. Here the survey comes from the same scene with the
 # targets removed. :ref:`sphx_glr_auto_examples_calibrating_cfar_from_noise.py` covers
 # calibration in depth.
@@ -385,12 +395,9 @@ plot_btr(
 # detections agree.
 #
 # The tracker knows nothing about ghosts: it follows all six bearings. The turn still shows
-# through, though. The three real tracks run unbroken from start to finish, while each
-# ghost's track ends at the jump and a new one begins on the other side of it.
-#
-# After the turn, the target nearest the array's axis sits a few degrees off its true
-# bearing: sound reaching the array steeply, via the seabed and surface, reads as a bearing
-# nearer broadside (coning error).
+# through, though. The three real tracks run unbroken from start to finish, while the
+# ghosts' tracks break or get tangled at the jump as the ghosts swing across to their new
+# bearings.
 
 # %%
 bearing_truths = []
