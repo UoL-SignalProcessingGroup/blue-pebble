@@ -492,6 +492,14 @@ def _straight_array_platform(num_sensors: int = 8, spacing_m: float = 1.0) -> Si
     )
 
 
+def test_array_axis_is_wrapped_to_minus_pi_not_plus_pi(monkeypatch) -> None:
+    """An array lying along -x has axis -pi, the [-pi, pi) convention, not arctan2's +pi."""
+    beamformer = _load_beamformer_module(monkeypatch)
+    platform = _straight_array_platform(spacing_m=-1.0)  # last sensor at -x from the first
+
+    assert beamformer.SteeringCalculator._array_axis_rad(platform) == -np.pi
+
+
 def test_steering_calculator_mirror_half_plane_rejects_non_uniform_grid(monkeypatch) -> None:
     """A non-uniform or partial-circle grid cannot be mirror-paired."""
     beamformer = _load_beamformer_module(monkeypatch)

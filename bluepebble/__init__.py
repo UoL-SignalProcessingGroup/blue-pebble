@@ -1,4 +1,21 @@
-"""Blue Pebble package public API."""
+"""Blue Pebble package public API.
+
+Coordinate frames
+-----------------
+Positions are in a local Cartesian frame in metres: +x east, +y north and +z up, so depths
+are negative. Geographic data (bathymetry, sound-speed profiles) is projected onto it.
+
+Directions in the horizontal plane are angles in radians, measured anticlockwise from +x
+and wrapped to ``[-pi, pi)``, the convention of Stone Soup's
+:class:`~stonesoup.types.angle.Bearing`. Steering azimuths, detected and ground-truth
+bearings, and platform headings are all this same quantity. The navigation conventions,
+true bearing (clockwise from north) and relative bearing (clockwise from the platform's
+heading), are used only for display, through :func:`~bluepebble.plotter.plot_btr`'s
+``bearing_convention``.
+
+A full circle of steering directions should not list both -pi and pi, which point the same
+way: use ``np.linspace(-np.pi, np.pi, N, endpoint=False)``.
+"""
 
 from importlib import import_module
 from importlib.metadata import PackageNotFoundError, version

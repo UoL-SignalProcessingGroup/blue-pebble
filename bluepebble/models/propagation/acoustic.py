@@ -557,7 +557,9 @@ class rtrsAcousticPropagationModel(AcousticPropagationModel, SpectrumPropagation
         Returns
         -------
         list
-            Azimuth angles in degrees.
+            Launch azimuths in degrees in rtrs's convention, clockwise from +y (north), not
+            Blue Pebble's anticlockwise-from-+x frame (see Coordinate frames in
+            :mod:`bluepebble`).
 
         """
         # Calculate the direct azimuth to the receiver
@@ -577,6 +579,7 @@ class rtrsAcousticPropagationModel(AcousticPropagationModel, SpectrumPropagation
             direct_azimuth - half_width, direct_azimuth + half_width, num_angles
         )
 
+        # Blue Pebble's frame to rtrs's: anticlockwise from +x -> clockwise from +y.
         azimuths = -azimuths + 90
 
         return azimuths.tolist()

@@ -478,7 +478,7 @@ def _sweep_confusion_counts(
     detector_factory: Callable[[float], _DetectorState],
     detected_beams_at_t: Callable[[_DetectorState, int], IntArray],
     gt_bearings_per_t: list[FloatArray],
-    steering_azimuths: FloatArray,
+    steering_azimuths_rad: FloatArray,
     association_threshold_rad: float,
     num_timesteps: int,
     num_beams: int,
@@ -503,7 +503,7 @@ def _sweep_confusion_counts(
     gt_bearings_per_t : list[FloatArray]
         Ground-truth bearings per timestep, as returned by
         :func:`_bearings_from_ground_truth_paths`.
-    steering_azimuths : FloatArray
+    steering_azimuths_rad : FloatArray
         Beam steering angles in radians, shape ``(num_beams,)``.
     association_threshold_rad : float
         Maximum angular distance (rad) for a detection to count as a true positive.
@@ -529,7 +529,9 @@ def _sweep_confusion_counts(
         for t_idx in range(num_timesteps):
             beam_idx = detected_beams_at_t(detector_state, t_idx)
             det_bearings = (
-                steering_azimuths[beam_idx] if beam_idx.size > 0 else np.empty(0, dtype=np.float64)
+                steering_azimuths_rad[beam_idx]
+                if beam_idx.size > 0
+                else np.empty(0, dtype=np.float64)
             )
 
             m = _compute_timestep_metrics(
@@ -583,11 +585,11 @@ def sweep_detection_parameter(
         detector, parameter name, sweep range, and optional legend label.
     ground_truth_paths : Sequence[_GroundTruthPathLike]
         Stone Soup ground-truth paths whose state vectors carry bearing values —
-        typically ``relative_bearing_ground_truths`` from the simulation workflow.
+        typically the ``bearing_truths`` built in the examples and tutorials.
         The number of timesteps is inferred from ``beamformed_data``.
     steering_azimuths_rad : ArrayLike
-        Beam steering angles in radians, shape ``(N_beams,)``.  Maps a detection
-        index back to a physical bearing.
+        Beam steering angles in radians (see Coordinate frames in :mod:`bluepebble`),
+        shape ``(N_beams,)``. Maps a detection index back to a physical bearing.
     association_threshold_rad : float
         Maximum angular distance (rad) between a detection and a ground-truth
         bearing for the detection to count as a true positive.
@@ -639,15 +641,15 @@ def sweep_detection_parameter(
     >>> results = sweep_detection_parameter(
     ...     beamformed_data=beamformed_data,
     ...     sweep_specs=specs,
-    ...     ground_truth_paths=relative_bearing_ground_truths,
+    ...     ground_truth_paths=bearing_truths,
     ...     steering_azimuths_rad=BF_PARAMS["steering_azimuths_rad"],
     ...     association_threshold_rad=np.deg2rad(3.0),
     ... )
     >>> plot_roc_pr(results).show()
 
     """
-    steering_azimuths = np.asarray(steering_azimuths_rad, dtype=np.float64)
-    num_beams = steering_azimuths.shape[0]
+    steering_azimuths_rad = np.asarray(steering_azimuths_rad, dtype=np.float64)
+    num_beams = steering_azimuths_rad.shape[0]
     num_timesteps = len(beamformed_data)
     frames = [np.asarray(d) for d in beamformed_data]
     gt_bearings_per_t = _bearings_from_ground_truth_paths(
@@ -674,7 +676,7 @@ def sweep_detection_parameter(
             detector_factory=lambda p_val, _spec=spec: _clone_detector_with_param(_spec, p_val),
             detected_beams_at_t=_detected_beams_at_t,
             gt_bearings_per_t=gt_bearings_per_t,
-            steering_azimuths=steering_azimuths,
+            steering_azimuths_rad=steering_azimuths_rad,
             association_threshold_rad=association_threshold_rad,
             num_timesteps=num_timesteps,
             num_beams=num_beams,
@@ -792,7 +794,8 @@ def sweep_detection_parameter_multiband(
     ground_truth_paths : Sequence
         Bearing ground-truth paths used to score detections.
     steering_azimuths_rad : ArrayLike
-        Beam azimuths in radians, of length ``num_beams``.
+        Beam azimuths in radians (see Coordinate frames in :mod:`bluepebble`), of length
+        ``num_beams``.
     association_threshold_rad : float
         Maximum bearing error for a detection to count as a true positive.
     bearing_state_index : int, optional
@@ -807,8 +810,8 @@ def sweep_detection_parameter_multiband(
 
     """
     param_values, num_timesteps = _validate_multiband_sweep_inputs(beamformed_data, sweep_specs)
-    steering_azimuths = np.asarray(steering_azimuths_rad, dtype=np.float64)
-    num_beams = steering_azimuths.shape[0]
+    steering_azimuths_rad = np.asarray(steering_azimuths_rad, dtype=np.float64)
+    num_beams = steering_azimuths_rad.shape[0]
     gt_bearings_per_t = _bearings_from_ground_truth_paths(
         ground_truth_paths, num_timesteps, bearing_state_index
     )
@@ -841,7 +844,7 @@ def sweep_detection_parameter_multiband(
         detector_factory=_detector_factory,
         detected_beams_at_t=_detected_beams_at_t,
         gt_bearings_per_t=gt_bearings_per_t,
-        steering_azimuths=steering_azimuths,
+        steering_azimuths_rad=steering_azimuths_rad,
         association_threshold_rad=association_threshold_rad,
         num_timesteps=num_timesteps,
         num_beams=num_beams,
@@ -917,9 +920,11 @@ def snr_linear_from_ground_truth_bearing(
     beamformed_data : ArrayLike
         Raw beamformed data for one timestep, shape (num_beams, num_frames).
     true_bearing_rad : float
-        Ground-truth target bearing, radians, from the simulator (not detector output).
+        Ground-truth target bearing in radians (see Coordinate frames in
+        :mod:`bluepebble`), from the simulator (not detector output).
     steering_azimuths_rad : np.ndarray
-        Steering azimuths for each beam, radians. Assumed circular (spans a full -pi..pi sweep).
+        Steering azimuths for each beam, in radians (see Coordinate frames in
+        :mod:`bluepebble`). Assumed circular (spans a full -pi..pi sweep).
     validation_guard_bins : int
         Bins excluded on each side of the nearest-beam index when estimating the noise floor.
         Should be set wider than the operational detector's num_guard_cells. See Failure modes,

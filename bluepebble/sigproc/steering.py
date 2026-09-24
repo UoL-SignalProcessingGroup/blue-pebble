@@ -19,7 +19,9 @@ class SteeringCalculator(Base):
         doc="Sound speed profile for calculating delays",
     )
     steering_azimuths_rad: FloatArray = Property(
-        doc="Azimuth angles for steering, in radians",
+        doc="Azimuth angles for steering, in radians anticlockwise from +x, in [-pi, pi). For "
+        "a full circle use np.linspace(-np.pi, np.pi, N, endpoint=False): including both "
+        "-pi and pi steers two beams the same way.",
     )
     mirror_half_plane: bool = Property(
         default=False,
@@ -98,7 +100,8 @@ class SteeringCalculator(Base):
         sensor_positions = platform.array.state_vector
         endpoints_xy = sensor_positions[:2, [0, -1]]
         dx, dy = endpoints_xy[:, 1] - endpoints_xy[:, 0]
-        return float(np.arctan2(dy, dx))
+        # arctan2 alone gives (-pi, pi]; the modulo moves +pi to -pi.
+        return float((np.arctan2(dy, dx) + np.pi) % (2 * np.pi) - np.pi)
 
     def _delays_for_azimuths(self, platform: "Platform", azimuths_rad: FloatArray) -> FloatArray:
         """Compute steering delays for an explicit, arbitrary set of azimuths.

@@ -204,7 +204,7 @@ class PassiveSonarDetector(DetectionReader):
     sensor_data_gen : Generator[SensorDataStep, None, None]
         Generator yielding sensor-data batches.
     steering_azimuths_rad : FloatArray
-        An array of steering azimuth angles in radians corresponding to the beams.
+        Steering azimuth of each beam, in radians (see Coordinate frames in :mod:`bluepebble`).
 
     """
 
@@ -215,7 +215,8 @@ class PassiveSonarDetector(DetectionReader):
         doc="Generator that yields PassiveSonarSensorData objects",
     )
     steering_azimuths_rad: FloatArray = Property(
-        doc="Array of steering azimuth angles in radians.",
+        doc="Steering azimuth of each beam, in radians anticlockwise from +x (see "
+        "Coordinate frames in bluepebble).",
     )
     reported_snr_reference: str = Property(
         default="global",
@@ -476,7 +477,8 @@ class MultibandPassiveSonarDetector(DetectionReader):
         doc="Generator that yields PassiveSonarSensorData objects",
     )
     steering_azimuths_rad: FloatArray = Property(
-        doc="Array of steering azimuth angles in radians.",
+        doc="Steering azimuth of each beam, in radians anticlockwise from +x (see "
+        "Coordinate frames in bluepebble).",
     )
     default_detector: BandDetector | None = Property(
         default=None,
