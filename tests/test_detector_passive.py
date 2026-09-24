@@ -51,12 +51,27 @@ def _install_fake_passive_dependencies(monkeypatch) -> None:
         """Simple hashable detection object for set insertion assertions."""
 
         def __init__(self, state_vector, timestamp, metadata):
-            self.state_vector = np.asarray(state_vector, dtype=float)
+            # object dtype, as Stone Soup's StateVector keeps Bearing elements as Bearings.
+            self.state_vector = np.asarray(state_vector, dtype=object)
             self.timestamp = timestamp
             self.metadata = metadata
 
     detection_module.Detection = FakeDetection
     types_module.detection = detection_module
+
+    angle_module = ModuleType("stonesoup.types.angle")
+
+    class FakeBearing:
+        """Angle wrapped to [-pi, pi), standing in for Stone Soup's Bearing."""
+
+        def __init__(self, value):
+            self.value = (float(value) + np.pi) % (2 * np.pi) - np.pi
+
+        def __float__(self):
+            return self.value
+
+    angle_module.Bearing = FakeBearing
+    types_module.angle = angle_module
 
     sensordata_module = ModuleType("stonesoup.types.sensordata")
     sensordata_module.SensorData = type("SensorData", (), {})
@@ -75,6 +90,7 @@ def _install_fake_passive_dependencies(monkeypatch) -> None:
     monkeypatch.setitem(sys.modules, "stonesoup.reader.base", reader_base_module)
     monkeypatch.setitem(sys.modules, "stonesoup.types", types_module)
     monkeypatch.setitem(sys.modules, "stonesoup.types.detection", detection_module)
+    monkeypatch.setitem(sys.modules, "stonesoup.types.angle", angle_module)
     monkeypatch.setitem(sys.modules, "stonesoup.types.sensordata", sensordata_module)
 
     # Stub bluepebble.types.sensordata so that loading passive.py does not import
@@ -225,6 +241,8 @@ def test_detections_gen_emits_bearing_detections_with_snr_metadata(monkeypatch) 
     detection = next(iter(detections))
     assert detection.timestamp == timestamp
     assert float(detection.state_vector[0, 0]) == pytest.approx(0.5)
+    # A Bearing, so trackers wrap innovations at +-180 degrees.
+    assert type(detection.state_vector[0, 0]).__name__ == "FakeBearing"
     assert detection.metadata["snr_db"] == pytest.approx(4.0)
 
 

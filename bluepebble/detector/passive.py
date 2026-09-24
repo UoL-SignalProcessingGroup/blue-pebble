@@ -10,6 +10,7 @@ from numpy.typing import ArrayLike, NDArray
 from stonesoup.base import Base, Property
 from stonesoup.buffered_generator import BufferedGenerator
 from stonesoup.reader.base import DetectionReader
+from stonesoup.types.angle import Bearing
 from stonesoup.types.detection import Detection
 from tqdm import tqdm
 
@@ -185,8 +186,10 @@ class PassiveSonarDetector(DetectionReader):
     This detector takes ``PassiveSonarSensorData`` as input and runs a single CFAR-family
     ``detector`` directly against each frame's raw beamformed power map. Frame integration,
     local noise-floor estimation, and wrap-aware peak consolidation are all handled internally
-    by the detector (see :mod:`.algorithms`). Detections are produced with bearing values
-    derived from the provided steering azimuths.
+    by the detector (see :mod:`.algorithms`). Each detection's state vector holds one element,
+    the detecting beam's steering azimuth as a Stone Soup
+    :class:`~stonesoup.types.angle.Bearing`, so a tracker's innovations wrap correctly at
+    +/-180 degrees instead of reading a small step across the wrap as a jump of nearly 360.
 
     In sonar terms this is noise normalisation across bearing followed by a detection threshold
     on the normalised beam powers; CA-CFAR corresponds to a split-window normaliser. See
@@ -259,7 +262,7 @@ class PassiveSonarDetector(DetectionReader):
 
         Iterates through ``sensor_data_gen`` and runs ``detector`` directly against each
         frame's raw beamformed data, yielding Stone Soup ``Detection`` objects (bearing-only
-        measurements).
+        measurements, each a :class:`~stonesoup.types.angle.Bearing`).
 
         Parameters
         ----------
@@ -309,7 +312,7 @@ class PassiveSonarDetector(DetectionReader):
 
                         detections.add(
                             Detection(
-                                state_vector=[[bearing_rad]],
+                                state_vector=[[Bearing(bearing_rad)]],
                                 timestamp=sensor_data.timestamp,
                                 metadata={"snr_db": raw_det[1]},
                             )
@@ -462,6 +465,8 @@ class MultibandPassiveSonarDetector(DetectionReader):
     iterating any of them.
 
     Each reader may be iterated once, as the underlying sensor-data generator is consumed.
+    Detections hold their bearing as a :class:`~stonesoup.types.angle.Bearing`, as in
+    :class:`PassiveSonarDetector`.
     """
 
     band_detectors: dict[str, BandDetector] = Property(
@@ -600,7 +605,9 @@ class MultibandPassiveSonarDetector(DetectionReader):
                     for raw_det in raw_detections:
                         detections_by_band[band_label].add(
                             Detection(
-                                state_vector=[[self.steering_azimuths_rad[int(raw_det[0])]]],
+                                state_vector=[
+                                    [Bearing(self.steering_azimuths_rad[int(raw_det[0])])]
+                                ],
                                 timestamp=sensor_data.timestamp,
                                 metadata={"band": band_label, "snr_db": float(raw_det[1])},
                             )
