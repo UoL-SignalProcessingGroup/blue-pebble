@@ -200,7 +200,7 @@ class ContinuousSTFTPassiveSonarArraySimulator(PassiveSonarArraySimulatorBase):
         frame_spec: ComplexArray,
         frame_len: int,
         num_freq_bins: int,
-    ) -> ComplexArray | FloatArray:
+    ) -> ComplexArray | NDArray[np.floating[Any]]:
         """Inverse-transform one STFT frame.
 
         Parameters

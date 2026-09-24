@@ -1834,7 +1834,7 @@ def plot_roc(
         else:
             target_fig.add_trace(diagonal_trace)
 
-    xaxis_kwargs = dict(
+    xaxis_kwargs: dict[str, Any] = dict(
         title_text="False Positive Rate",
         range=[0.0, 1.0],
         showgrid=True,
@@ -1843,7 +1843,7 @@ def plot_roc(
         linewidth=1,
         linecolor=axis_line,
     )
-    yaxis_kwargs = dict(
+    yaxis_kwargs: dict[str, Any] = dict(
         title_text="True Positive Rate",
         range=[0.0, 1.05],
         showgrid=True,
@@ -1933,7 +1933,7 @@ def plot_pr(
         else:
             target_fig.add_trace(trace)
 
-    xaxis_kwargs = dict(
+    xaxis_kwargs: dict[str, Any] = dict(
         title_text="Recall",
         range=[0.0, 1.0],
         showgrid=True,
@@ -1942,7 +1942,7 @@ def plot_pr(
         linewidth=1,
         linecolor=axis_line,
     )
-    yaxis_kwargs = dict(
+    yaxis_kwargs: dict[str, Any] = dict(
         title_text="Precision",
         range=[0.0, 1.05],
         showgrid=True,
@@ -2023,7 +2023,8 @@ def plot_roc_pr(
     using_subplot_target = fig is not None
     if using_subplot_target:
         target_fig = fig
-        roc_row, pr_row = row, row + 1
+        roc_row = cast(int, row)  # validated above: row is given whenever fig is
+        pr_row = roc_row + 1
     else:
         target_fig = make_subplots(rows=2, cols=1, subplot_titles=("ROC Curve", "PR Curve"))
         roc_row, pr_row = 1, 2
