@@ -634,3 +634,163 @@ def test_plot_btr_rejects_invalid_color_limits(monkeypatch) -> None:
             data=data,
             cmax=np.inf,
         )
+
+
+def _heading_platform(headings_deg: dict) -> SimpleNamespace:
+    """Fake platform whose heading (azimuth, degrees) is looked up by timestamp."""
+
+    def get_platform_state_at(timestamp):
+        if timestamp not in headings_deg:
+            return None
+        heading_rad = np.deg2rad(headings_deg[timestamp])
+        return SimpleNamespace(host=SimpleNamespace(heading_rad=heading_rad))
+
+    return SimpleNamespace(get_platform_state_at=get_platform_state_at)
+
+
+def test_plot_btr_true_bearings_reorder_the_heatmap_and_convert_overlays(monkeypatch) -> None:
+    """True bearings are clockwise from north: azimuth 90 (north) is 000, azimuth 0 (east) 090."""
+    plotter = _load_plotter(monkeypatch)
+    t0 = datetime(2026, 1, 1, 12, 0, 0)
+    steering = np.array([-180.0, -90.0, 0.0, 90.0, 180.0])
+    data = np.array([[1.0, 2.0, 3.0, 4.0, 5.0]])
+    detections = [SimpleNamespace(state_vector=np.array([0.0]), timestamp=t0)]
+
+    fig = plotter.plot_btr(
+        timesteps=np.array([t0]),
+        steering_azimuths=steering,
+        data=data,
+        detections=detections,
+        bearing_convention="true",
+    )
+
+    heatmap = fig.data[0]
+    # 90 -> 000, 0 -> 090, -90 -> 180, -180 and 180 -> 270 (one kept).
+    assert list(heatmap.x) == [0.0, 90.0, 180.0, 270.0]
+    assert list(heatmap.z[0]) == [4.0, 3.0, 2.0, 1.0]
+    assert list(fig.data[1].x) == [90.0]
+    assert fig.layout.xaxis.title.text == "True bearing (°, clockwise from north)"
+    assert list(fig.layout.xaxis.range) == [0.0, 360.0]
+    # Labelled every 30 degrees from 000; the right-hand edge is 000 again, so it is unlabelled.
+    assert list(fig.layout.xaxis.ticktext) == [f"{b:03d}" for b in range(0, 360, 30)]
+    assert fig.layout.xaxis.minor.dtick == 10.0
+
+
+def test_plot_btr_relative_bearings_follow_the_platform_heading(monkeypatch) -> None:
+    """Relative bearings are clockwise from the heading, so a turn moves a fixed source."""
+    plotter = _load_plotter(monkeypatch)
+    t0 = datetime(2026, 1, 1, 12, 0, 0)
+    t1 = datetime(2026, 1, 1, 12, 1, 0)
+    platform = _heading_platform({t0: 90.0, t1: 0.0})  # heading north, then east
+    steering = np.arange(-180.0, 180.0, 90.0)
+    data = np.array([[0.0, 0.0, 1.0, 0.0], [0.0, 0.0, 1.0, 0.0]])  # a source due east
+    detections = [
+        SimpleNamespace(state_vector=np.array([0.0]), timestamp=t0),
+        SimpleNamespace(state_vector=np.array([0.0]), timestamp=t1),
+    ]
+
+    fig = plotter.plot_btr(
+        timesteps=np.array([t0, t1]),
+        steering_azimuths=steering,
+        data=data,
+        detections=detections,
+        bearing_convention="relative",
+        platform=platform,
+    )
+
+    heatmap = fig.data[0]
+    # Heading north, east is to starboard (090); heading east, it is dead ahead (000).
+    assert list(fig.data[1].x) == [90.0, 0.0]
+    peak_bearings = [heatmap.x[int(np.argmax(row))] for row in heatmap.z]
+    assert peak_bearings == [90.0, 0.0]
+    assert fig.layout.xaxis.title.text == "Relative bearing (°, clockwise from heading)"
+
+
+def test_plot_btr_half_plane_uses_only_the_arc_it_spans(monkeypatch) -> None:
+    """A starboard-only grid (azimuths -180 to 0) spans true bearings 090 to 270, not 000-360."""
+    plotter = _load_plotter(monkeypatch)
+    t0 = datetime(2026, 1, 1, 12, 0, 0)
+    steering = np.linspace(-180.0, 0.0, 19)
+
+    fig = plotter.plot_btr(
+        timesteps=np.array([t0]),
+        steering_azimuths=steering,
+        data=np.zeros((1, steering.size)),
+        bearing_convention="true",
+    )
+
+    assert list(fig.layout.xaxis.range) == [90.0, 270.0]
+
+
+def test_plot_btr_narrow_arcs_are_labelled_every_10_degrees(monkeypatch) -> None:
+    """An arc of 90 degrees or less has room for 10 degree labels, so needs no minor ticks."""
+    plotter = _load_plotter(monkeypatch)
+    t0 = datetime(2026, 1, 1, 12, 0, 0)
+    steering = np.linspace(-60.0, 0.0, 61)  # true bearings 090 to 150
+
+    fig = plotter.plot_btr(
+        timesteps=np.array([t0]),
+        steering_azimuths=steering,
+        data=np.zeros((1, steering.size)),
+        bearing_convention="true",
+    )
+
+    assert list(fig.layout.xaxis.ticktext) == [f"{b:03d}" for b in range(90, 151, 10)]
+    assert fig.layout.xaxis.minor.dtick is None
+
+
+def test_plot_btr_arc_across_north_is_labelled_modulo_360(monkeypatch) -> None:
+    """An arc through north runs past 360 on the axis but is labelled 000 there."""
+    plotter = _load_plotter(monkeypatch)
+    t0 = datetime(2026, 1, 1, 12, 0, 0)
+    steering = np.linspace(0.0, 180.0, 19)  # true bearings 090 back through 000 to 270
+    detections = [SimpleNamespace(state_vector=np.array([np.deg2rad(90.0)]), timestamp=t0)]
+
+    fig = plotter.plot_btr(
+        timesteps=np.array([t0]),
+        steering_azimuths=steering,
+        data=np.zeros((1, steering.size)),
+        detections=detections,
+        bearing_convention="true",
+    )
+
+    xaxis = fig.layout.xaxis
+    assert list(xaxis.range) == [270.0, 450.0]
+    assert dict(zip(xaxis.tickvals, xaxis.ticktext, strict=True))[360.0] == "000"
+    assert list(fig.data[1].x) == [360.0]  # due north sits mid-arc, not at the edge
+
+
+def test_plot_btr_defaults_to_the_mathematical_convention(monkeypatch) -> None:
+    """By default the axis and overlays keep the input azimuths, and the title says so."""
+    plotter = _load_plotter(monkeypatch)
+    t0 = datetime(2026, 1, 1, 12, 0, 0)
+    steering = np.array([-180.0, 0.0, 180.0])
+    detections = [SimpleNamespace(state_vector=np.array([np.deg2rad(45.0)]), timestamp=t0)]
+
+    fig = plotter.plot_btr(
+        timesteps=np.array([t0]),
+        steering_azimuths=steering,
+        data=np.zeros((1, 3)),
+        detections=detections,
+    )
+
+    assert list(fig.data[0].x) == [-180.0, 0.0, 180.0]
+    assert list(fig.data[1].x) == [45.0]
+    assert fig.layout.xaxis.title.text == "Bearing (°, anticlockwise from +x)"
+    assert list(fig.layout.xaxis.range) == [-180.0, 180.0]
+
+
+def test_plot_btr_rejects_bad_bearing_conventions(monkeypatch) -> None:
+    """Unknown conventions, relative without a platform, and missing headings all raise."""
+    plotter = _load_plotter(monkeypatch)
+    t0 = datetime(2026, 1, 1, 12, 0, 0)
+    common = dict(timesteps=np.array([t0]), steering_azimuths=np.array([0.0, 90.0]))
+
+    with pytest.raises(ValueError, match="bearing_convention must be"):
+        plotter.plot_btr(**common, bearing_convention="compass")
+    with pytest.raises(ValueError, match="bearing_convention must be"):
+        plotter.plot_btr(**common, bearing_convention=None)
+    with pytest.raises(ValueError, match="needs a platform"):
+        plotter.plot_btr(**common, bearing_convention="relative")
+    with pytest.raises(ValueError, match="no state at"):
+        plotter.plot_btr(**common, bearing_convention="relative", platform=_heading_platform({}))
