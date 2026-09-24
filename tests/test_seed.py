@@ -246,7 +246,6 @@ def test_synthetic_anthropogenic_rng_reproducible_with_global_seed():
         sampling_rate_hz=500,
         frame_len=50,
         hop_factor=4,
-        noise_amplitude_upa=1.0,
     )
     draw_a = sig_a._rng.uniform()
 
@@ -259,7 +258,6 @@ def test_synthetic_anthropogenic_rng_reproducible_with_global_seed():
         sampling_rate_hz=500,
         frame_len=50,
         hop_factor=4,
-        noise_amplitude_upa=1.0,
     )
     draw_b = sig_b._rng.uniform()
 
@@ -278,7 +276,6 @@ def test_synthetic_anthropogenic_independent_from_white_noise():
         sampling_rate_hz=500,
         frame_len=50,
         hop_factor=4,
-        noise_amplitude_upa=1.0,
     )
     assert white._rng.uniform() != synth._rng.uniform()
 
@@ -388,7 +385,6 @@ def test_mixed_signal_types_all_reproducible_from_single_set_seed():
             sampling_rate_hz=500,
             frame_len=50,
             hop_factor=4,
-            noise_amplitude_upa=1.0,
         )
         reverb = Reverb(duration_s=0.01, wet_dry_mix=0.3)
         return (

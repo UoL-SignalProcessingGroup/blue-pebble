@@ -83,24 +83,33 @@ def test_anthropogenic_base_caches_and_resets(monkeypatch) -> None:
     assert model.calls == 2
 
 
+def _source(**overrides) -> SimpleNamespace:
+    """Return a one-tonal source whose metadata fully describes what it emits."""
+    metadata = {
+        "amplitudes_upa": np.array([1.0]),
+        "frequencies_hz": np.array([4.0]),
+        "phases_rad": np.array([0.0]),
+        "tonal_bandwidth_hz": 2.0,
+        "noise_amplitude_upa": 0.0,
+        "noise_spectral_exponent": -1.0,
+    }
+    metadata.update(overrides)
+    return SimpleNamespace(metadata=metadata)
+
+
+def _synthetic_model(anthropogenic_models, **kwargs):
+    """Return a small SyntheticAnthropogenicSignal; kwargs add constructor arguments."""
+    return anthropogenic_models.SyntheticAnthropogenicSignal(
+        duration_s=1.0, sampling_rate_hz=16, frame_len=8, hop_factor=2, **kwargs
+    )
+
+
 def test_synthetic_signal_compute_stft_contract(monkeypatch) -> None:
     """SyntheticSignal should expose STFT outputs and cache source signal."""
     _, anthropogenic_models, _ = _load_anthropogenic_modules(monkeypatch)
 
-    source = SimpleNamespace(
-        metadata={
-            "amplitudes_upa": np.array([1.0]),
-            "frequencies_hz": np.array([4.0]),
-            "phases_rad": np.array([0.0]),
-        }
-    )
-    model = anthropogenic_models.SyntheticAnthropogenicSignal(
-        duration_s=1.0,
-        sampling_rate_hz=16,
-        frame_len=8,
-        hop_factor=2,
-        noise_amplitude_upa=0.0,
-    )
+    source = _source()
+    model = _synthetic_model(anthropogenic_models)
 
     stft, frequencies, hop, window = model.compute_stft(source)
 
@@ -112,17 +121,12 @@ def test_synthetic_signal_compute_stft_contract(monkeypatch) -> None:
 
 
 def test_synthetic_signal_rejects_non_positive_tonal_bandwidth(monkeypatch) -> None:
-    """SyntheticAnthropogenicSignal should reject non-positive tonal bandwidth."""
+    """A source whose metadata gives a non-positive tonal bandwidth is rejected."""
     _, anthropogenic_models, _ = _load_anthropogenic_modules(monkeypatch)
+    model = _synthetic_model(anthropogenic_models)
 
     with pytest.raises(ValueError, match="tonal_bandwidth_hz must be finite and > 0"):
-        anthropogenic_models.SyntheticAnthropogenicSignal(
-            duration_s=1.0,
-            sampling_rate_hz=16,
-            frame_len=8,
-            hop_factor=2,
-            tonal_bandwidth_hz=0.0,
-        )
+        model.compute_stft(_source(tonal_bandwidth_hz=0.0))
 
 
 def test_synthetic_signal_rejects_negative_noise_variance(monkeypatch) -> None:
@@ -139,50 +143,74 @@ def test_synthetic_signal_rejects_negative_noise_variance(monkeypatch) -> None:
         )
 
 
-def test_synthetic_signal_rejects_invalid_tonal_bandwidth_after_init(monkeypatch) -> None:
-    """Generation should fail if tonal bandwidth becomes invalid after init."""
+def test_synthetic_signal_needs_its_source_characteristics_in_metadata(monkeypatch) -> None:
+    """Missing tonal bandwidth or noise level is an error, naming each missing key."""
+    _, anthropogenic_models, _ = _load_anthropogenic_modules(monkeypatch)
+    source = _source()
+    del source.metadata["tonal_bandwidth_hz"]
+    del source.metadata["noise_amplitude_upa"]
+
+    with pytest.raises(ValueError, match="tonal_bandwidth_hz, noise_amplitude_upa"):
+        _synthetic_model(anthropogenic_models).compute_stft(source)
+
+
+def test_noise_spectral_exponent_is_only_needed_when_there_is_noise(monkeypatch) -> None:
+    """With no broadband noise there is nothing to shape, so the exponent may be omitted."""
     _, anthropogenic_models, _ = _load_anthropogenic_modules(monkeypatch)
 
-    source = SimpleNamespace(
-        metadata={
-            "amplitudes_upa": np.array([1.0]),
-            "frequencies_hz": np.array([4.0]),
-            "phases_rad": np.array([0.0]),
-        }
-    )
-    model = anthropogenic_models.SyntheticAnthropogenicSignal(
-        duration_s=1.0,
-        sampling_rate_hz=16,
-        frame_len=8,
-        hop_factor=2,
-        tonal_bandwidth_hz=2.0,
-        noise_amplitude_upa=0.0,
-    )
-    model.tonal_bandwidth_hz = 0.0
+    quiet = _source(noise_amplitude_upa=0.0)
+    del quiet.metadata["noise_spectral_exponent"]
+    _synthetic_model(anthropogenic_models).compute_stft(quiet)
 
-    with pytest.raises(ValueError, match="tonal_bandwidth_hz must be finite and > 0"):
+    noisy = _source(noise_amplitude_upa=1.0)
+    del noisy.metadata["noise_spectral_exponent"]
+    with pytest.raises(ValueError, match="noise_spectral_exponent"):
+        _synthetic_model(anthropogenic_models).compute_stft(noisy)
+
+
+def test_synthetic_signal_rejects_negative_noise_amplitude(monkeypatch) -> None:
+    """A negative broadband noise amplitude in metadata is rejected."""
+    _, anthropogenic_models, _ = _load_anthropogenic_modules(monkeypatch)
+
+    with pytest.raises(ValueError, match="noise_amplitude_upa must be finite and >= 0"):
+        _synthetic_model(anthropogenic_models).compute_stft(_source(noise_amplitude_upa=-1.0))
+
+
+def test_deprecated_constructor_characteristics_warn_and_fill_only_missing_keys(
+    monkeypatch,
+) -> None:
+    """The old constructor arguments still work for one release, but metadata takes priority."""
+    _, anthropogenic_models, _ = _load_anthropogenic_modules(monkeypatch)
+
+    with pytest.warns(DeprecationWarning, match="noise_amplitude_upa"):
+        model = _synthetic_model(anthropogenic_models, noise_amplitude_upa=5.0)
+    source = _source(noise_amplitude_upa=0.0)
+    del source.metadata["tonal_bandwidth_hz"]  # neither given: still an error
+    with pytest.raises(ValueError, match="tonal_bandwidth_hz"):
         model.compute_stft(source)
+
+    with pytest.warns(DeprecationWarning, match="tonal_bandwidth_hz"):
+        bridged = _synthetic_model(anthropogenic_models, tonal_bandwidth_hz=2.0)
+    source = _source(noise_amplitude_upa=0.0)
+    del source.metadata["tonal_bandwidth_hz"]  # filled from the deprecated argument
+    bridged.compute_stft(source)
+
+    # When both are given, the metadata wins: a zero-noise source gets no broadband noise even
+    # though the deprecated argument asks for some. The same seed makes the tonals identical.
+    with pytest.warns(DeprecationWarning):
+        both = _synthetic_model(anthropogenic_models, noise_amplitude_upa=5.0, seed=0)
+    both.compute_stft(_source(noise_amplitude_upa=0.0))
+    reference = _synthetic_model(anthropogenic_models, seed=0)
+    reference.compute_stft(_source(noise_amplitude_upa=0.0))
+    np.testing.assert_allclose(both.get_source_signal(), reference.get_source_signal())
 
 
 def test_synthetic_signal_rejects_invalid_noise_variance_after_init(monkeypatch) -> None:
     """Generation should fail if noise variance becomes invalid after init."""
     _, anthropogenic_models, _ = _load_anthropogenic_modules(monkeypatch)
 
-    source = SimpleNamespace(
-        metadata={
-            "amplitudes_upa": np.array([1.0]),
-            "frequencies_hz": np.array([4.0]),
-            "phases_rad": np.array([0.0]),
-        }
-    )
-    model = anthropogenic_models.SyntheticAnthropogenicSignal(
-        duration_s=1.0,
-        sampling_rate_hz=16,
-        frame_len=8,
-        hop_factor=2,
-        noise_amplitude_upa=1.0,
-        noise_variance=1.0,
-    )
+    source = _source(noise_amplitude_upa=1.0)
+    model = _synthetic_model(anthropogenic_models, noise_variance=1.0)
     model.noise_variance = -1.0
 
     with pytest.raises(ValueError, match="noise_variance must be finite and >= 0"):

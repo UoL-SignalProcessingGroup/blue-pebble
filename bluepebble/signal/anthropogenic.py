@@ -78,6 +78,11 @@ def _extract_tonal_metadata(
     )
 
 
+# Source characteristics read from metadata alongside the tonals. Their same-named constructor
+# arguments on SyntheticAnthropogenicSignal are deprecated.
+_SOURCE_METADATA_KEYS = ("tonal_bandwidth_hz", "noise_amplitude_upa", "noise_spectral_exponent")
+
+
 class AnthropogenicSignal(Signal, ABC):
     """Base class for STFT-first anthropogenic signal models.
 
@@ -298,6 +303,13 @@ class SyntheticAnthropogenicSignal(AnthropogenicSignal):
     2. Wideband coloured noise
     3. STFT-based frequency-domain processing for efficient propagation
 
+    What the source emits comes from the source state's metadata: the tonals
+    (``amplitudes_upa``, ``frequencies_hz``, ``phases_rad``), their ``tonal_bandwidth_hz``, and
+    the broadband noise, ``noise_amplitude_upa`` (0 for none) and ``noise_spectral_exponent``
+    (needed only when ``noise_amplitude_upa`` is positive). A missing key raises
+    ``ValueError``. This model holds only how the waveform is synthesised. The propagation
+    model also reads ``position_mapping`` from the metadata, to locate the source.
+
     Parameters
     ----------
     frame_len : int, optional
@@ -306,14 +318,12 @@ class SyntheticAnthropogenicSignal(AnthropogenicSignal):
         Hop factor, where hop size = frame_len // hop_factor. Default is 4.
     window_type : str, optional
         Window type for STFT (e.g., 'hann'). Default is 'hann'.
-    tonal_bandwidth_hz : float, optional
-        Bandwidth of each tonal component in Hz. Creates realistic spectral spreading around
-        nominal frequencies. Default is 2.0.
-    noise_amplitude_upa : float, optional
-        RMS amplitude of background noise in µPa. Set to 0.0 to disable noise. Default is 0.0.
-    noise_spectral_exponent : float, optional
-        Spectral shape exponent for coloured noise. -1.0 is pink noise (1/f), -2.0 is
-        red/brownian noise (1/f^2), and 0.0 is white. Default is -1.0.
+    tonal_bandwidth_hz, noise_amplitude_upa, noise_spectral_exponent : float, optional
+        Deprecated: set these in the source's metadata instead. Until their removal in the next
+        release, each is used only for a source whose metadata lacks that key. In metadata,
+        ``tonal_bandwidth_hz`` is each tonal's bandwidth in Hz, ``noise_amplitude_upa`` the
+        broadband noise's RMS amplitude in µPa, and ``noise_spectral_exponent`` its spectral
+        slope (-1 pink, -2 red/brownian, 0 white).
     noise_freq_range_hz : tuple, optional
         Tuple of (min_freq, max_freq) for noise generation. Default is (20.0, 200.0), covering
         typical machinery noise ranges.
@@ -336,28 +346,42 @@ class SyntheticAnthropogenicSignal(AnthropogenicSignal):
 
     Examples
     --------
-    Merchant vessel with propeller tonals and machinery noise:
+    Merchant vessel with propeller tonals and machinery noise. The source is described in its
+    state's metadata:
+
+    >>> metadata = {
+    ...     "amplitudes_upa": [10**(110/20), 10**(105/20)],
+    ...     "frequencies_hz": [50.0, 100.0],
+    ...     "phases_rad": [0.0, 0.0],
+    ...     "tonal_bandwidth_hz": 3.0,  # Broader tonals
+    ...     "noise_amplitude_upa": 10**(50/20),  # 50 dB re 1 µPa broadband noise
+    ...     "noise_spectral_exponent": -1.0,  # Pink noise
+    ...     "position_mapping": [0, 2, 4],
+    ... }
+
+    and the model says how to synthesise it:
 
     >>> signal_model = SyntheticAnthropogenicSignal(
     ...     duration_s=60.0,
     ...     sampling_rate_hz=500.0,
     ...     frame_len=500,
     ...     hop_factor=4,
-    ...     tonal_bandwidth_hz=3.0,  # Broader tonals
-    ...     noise_amplitude_upa=10**(50/20),  # 50 dB re 1 µPa background
-    ...     noise_spectral_exponent=-1.0,  # Pink noise
     ...     noise_freq_range_hz=(30.0, 150.0)
     ... )
 
     """
 
-    tonal_bandwidth_hz: float = Property(default=2.0, doc="Bandwidth of each tonal component (Hz)")
-    noise_amplitude_upa: float = Property(
-        default=0.0, doc="RMS amplitude of background noise (µPa)"
+    tonal_bandwidth_hz: float | None = Property(
+        default=None,
+        doc="Deprecated: set in the source's metadata. Used only when the metadata lacks it.",
     )
-    noise_spectral_exponent: float = Property(
-        default=-1.0,
-        doc="Spectral shape exponent (-1=pink, -2=red/brownian, 0=white)",
+    noise_amplitude_upa: float | None = Property(
+        default=None,
+        doc="Deprecated: set in the source's metadata. Used only when the metadata lacks it.",
+    )
+    noise_spectral_exponent: float | None = Property(
+        default=None,
+        doc="Deprecated: set in the source's metadata. Used only when the metadata lacks it.",
     )
     noise_freq_range_hz: tuple[float, float] = Property(
         default=(20.0, 200.0), doc="Frequency range for noise (Hz)"
@@ -397,7 +421,18 @@ class SyntheticAnthropogenicSignal(AnthropogenicSignal):
     def __init__(self, *args: object, **kwargs: object) -> None:
         """Initialise realistic ship signal generator."""
         super().__init__(*args, **kwargs)
-        self._validate_tonal_bandwidth(self.tonal_bandwidth_hz)
+        deprecated = [key for key in _SOURCE_METADATA_KEYS if getattr(self, key) is not None]
+        if deprecated:
+            warnings.warn(
+                f"Passing {', '.join(deprecated)} to SyntheticAnthropogenicSignal is deprecated "
+                "and will be removed in the next release: set them in each source's metadata "
+                "instead, alongside the tonals. Until then they are used only for sources whose "
+                "metadata lacks them.",
+                DeprecationWarning,
+                stacklevel=2,
+            )
+        if self.tonal_bandwidth_hz is not None:
+            self._validate_tonal_bandwidth(self.tonal_bandwidth_hz)
         self._validate_noise_variance(self.noise_variance)
         self._rng = _spawn_rng(self.seed)
         self._noise_realization: ComplexArray | None = None
@@ -420,6 +455,34 @@ class SyntheticAnthropogenicSignal(AnthropogenicSignal):
             msg = "noise_variance must be finite and >= 0"
             raise ValueError(msg)
         return variance
+
+    def _source_characteristics(self, source: "State") -> tuple[float, float, float | None]:
+        """Return ``(tonal_bandwidth_hz, noise_amplitude_upa, noise_spectral_exponent)``.
+
+        Read from the source's metadata; a key it lacks falls back to the deprecated constructor
+        argument of the same name, if given. ``noise_spectral_exponent`` is ``None`` when there
+        is no broadband noise to shape.
+        """
+        metadata = _get_source_metadata(source)
+
+        def read(key: str) -> float | None:
+            value = metadata[key] if key in metadata else getattr(self, key)
+            return None if value is None else float(value)
+
+        bandwidth_hz = read("tonal_bandwidth_hz")
+        amplitude_upa = read("noise_amplitude_upa")
+        exponent = read("noise_spectral_exponent")
+        required = {"tonal_bandwidth_hz": bandwidth_hz, "noise_amplitude_upa": amplitude_upa}
+        missing = [key for key, value in required.items() if value is None]
+        if amplitude_upa is not None and amplitude_upa > 0 and exponent is None:
+            missing.append("noise_spectral_exponent")
+        if missing:
+            raise ValueError(f"Source metadata missing required keys: {', '.join(missing)}")
+        amplitude_upa = cast(float, amplitude_upa)
+        if not np.isfinite(amplitude_upa) or amplitude_upa < 0:
+            raise ValueError("noise_amplitude_upa must be finite and >= 0")
+        bandwidth_hz = self._validate_tonal_bandwidth(cast(float, bandwidth_hz))
+        return bandwidth_hz, amplitude_upa, exponent
 
     def _generate_band_limited_tonal(self, freq_hz: float, bandwidth_hz: float) -> ComplexArray:
         """Generate a unit-RMS band-limited noise component centred on ``freq_hz``.
@@ -461,6 +524,7 @@ class SyntheticAnthropogenicSignal(AnthropogenicSignal):
         frequencies_hz: "FloatArray",
         amplitudes_upa: "FloatArray",
         phases_rad: "FloatArray",
+        bandwidth_hz: float,
     ) -> ComplexArray:
         """Build the combined tonal signal, using the tonal noise cache when available.
 
@@ -472,6 +536,8 @@ class SyntheticAnthropogenicSignal(AnthropogenicSignal):
             Amplitude of each tonal in µPa.
         phases_rad : FloatArray
             Phase offset of each tonal in radians.
+        bandwidth_hz : float
+            Bandwidth of each tonal in Hz.
 
         Returns
         -------
@@ -494,7 +560,7 @@ class SyntheticAnthropogenicSignal(AnthropogenicSignal):
             base_noise = (
                 cached[idx]
                 if cached is not None
-                else self._generate_band_limited_tonal(freq, float(self.tonal_bandwidth_hz))
+                else self._generate_band_limited_tonal(freq, bandwidth_hz)
             )
             if self.tonal_noise_is_constant and cached is None:
                 new_cache.append(base_noise)
@@ -505,7 +571,9 @@ class SyntheticAnthropogenicSignal(AnthropogenicSignal):
 
         return cast(ComplexArray, signal)
 
-    def _generate_coloured_noise(self, amplitude_upa: float) -> ComplexArray:
+    def _generate_coloured_noise(
+        self, amplitude_upa: float, spectral_exponent: float
+    ) -> ComplexArray:
         """Generate wideband coloured noise scaled to ``amplitude_upa``.
 
         Builds a power-law spectral envelope with a bandpass mask, then either
@@ -517,6 +585,8 @@ class SyntheticAnthropogenicSignal(AnthropogenicSignal):
         ----------
         amplitude_upa : float
             Target RMS amplitude of the output noise in µPa.
+        spectral_exponent : float
+            Power-law slope of the noise spectrum (-1 pink, -2 red/brownian, 0 white).
 
         Returns
         -------
@@ -531,7 +601,7 @@ class SyntheticAnthropogenicSignal(AnthropogenicSignal):
         freq_abs = np.abs(freq_bins)
         freq_abs[freq_abs < 1.0] = 1.0  # avoid division by zero at DC
 
-        spectral_shape = freq_abs ** (float(self.noise_spectral_exponent) / 2.0)
+        spectral_shape = freq_abs ** (spectral_exponent / 2.0)
         freq_min, freq_max = self.noise_freq_range_hz
         bandpass = np.where((freq_abs >= freq_min) & (freq_abs <= freq_max), 1.0, 0.0)
         noise_filter = spectral_shape * bandpass
@@ -571,13 +641,15 @@ class SyntheticAnthropogenicSignal(AnthropogenicSignal):
 
         """
         amplitudes_upa, frequencies_hz, phases_rad = _extract_tonal_metadata(source)
-        signal = self._generate_tonal_signal(frequencies_hz, amplitudes_upa, phases_rad)
+        bandwidth_hz, noise_amplitude_upa, noise_exponent = self._source_characteristics(source)
+        signal = self._generate_tonal_signal(
+            frequencies_hz, amplitudes_upa, phases_rad, bandwidth_hz
+        )
 
-        noise_amplitude_upa = float(self.noise_amplitude_upa)
         if noise_amplitude_upa > 0:
-            signal = cast(
-                ComplexArray, signal + self._generate_coloured_noise(noise_amplitude_upa)
-            )
+            # _source_characteristics requires an exponent whenever there is noise to shape.
+            noise = self._generate_coloured_noise(noise_amplitude_upa, cast(float, noise_exponent))
+            signal = cast(ComplexArray, signal + noise)
 
         return signal
 
