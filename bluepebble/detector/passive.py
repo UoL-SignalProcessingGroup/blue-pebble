@@ -330,7 +330,9 @@ class BandDetector(Base):
     Noise statistics differ between bands, so a ``noise_calibration`` is per band: calibrate
     each band's detector with :class:`~.calibration.NoiseCalibrator` on that band's slices of
     noise-only multiband output, selected with
-    ``beamformed_scans_from_sensor_data(sensor_data_gen, band_label=...)``.
+    ``beamformed_scans_from_sensor_data(sensor_data_gen, band_label=...)``. Each band's detector
+    picks its threshold mode independently, and a band in fixed mode (``threshold_factor``) needs
+    no calibration.
     """
 
     detector: _CFARDetectorBase = Property(

@@ -1,30 +1,13 @@
-"""Signal detection algorithms for 1D time-series and beamformed data.
+"""CFAR (Constant False Alarm Rate) detectors for raw 2-D beamformed data.
 
-Live detection here always calibrates alpha (the threshold multiplier applied to the local noise
-estimate) empirically (see ``noise_calibration`` and :class:`NoiseCalibration`), never from a
-model. The i.i.d.-Gamma model that :func:`~._theory.solve_ca_cfar_alpha` and
-:func:`~._theory.solve_os_cfar_alpha` still implement is used only for theoretical ROC curves
-(:mod:`._theory`) and as the correctness reference the empirical calibration is tested against;
-it does not constrain live detection here.
-
-Assumptions (of the i.i.d.-Gamma model above, not of live detection)
----------------------------------------------------------------------
-- Noise statistics: reference cells and the CUT are i.i.d. Exponential(1) per look.
-- Independence across looks: the M frames averaged into a cell are statistically independent.
-- Independence across cells: the CUT and every reference cell are mutually independent.
-- Homogeneous reference window: all N reference cells share the CUT's underlying noise level.
-
-Beamformer output violates all four to varying degrees; ``noise_calibration`` (see
-:mod:`.calibration`) measures around this rather than assuming it away.
-
-Pd (as opposed to Pfa/alpha) additionally depends on how the target's amplitude fluctuates from
-look to look, handled separately by :class:`~._theory.FluctuationModel`. Nothing in this module
-calls a Pd function; only :mod:`._theory`'s theoretical ROC curve functions do.
+Alpha, the threshold multiplier applied to the local noise estimate, is either given directly
+(``threshold_factor``) or calibrated empirically from noise-only scans (``target_pfa`` with
+``noise_calibration``); see "Threshold modes" in :class:`_CFARDetectorBase`.
 """
 
 import warnings
 from abc import ABC, abstractmethod
-from typing import Any, TypeAlias
+from typing import Any, TypeAlias, cast
 
 import numpy as np
 from numpy.lib.stride_tricks import sliding_window_view
@@ -81,11 +64,6 @@ def _directional_power(data: ArrayLike) -> np.ndarray:
 
 # Parameters removed by the single-detector refactor, mapped to what replaces them.
 _REMOVED_DETECTOR_KWARGS = {
-    "threshold_factor": (
-        "Thresholds are now calibrated from a false-alarm rate: pass target_pfa instead. "
-        "There is no fixed conversion, the equivalent alpha depends on num_training_cells "
-        "and the number of frames integrated."
-    ),
     "mode": (
         "Edge handling is set by the circular flag: circular=True wraps (a full 360-degree "
         "bearing sweep), circular=False pads at the edges."
@@ -167,137 +145,177 @@ class DetectionAlgorithm(Base, ABC):
 
 
 class _CFARDetectorBase(DetectionAlgorithm, ABC):
-    """Shared plumbing for CFAR-family detectors on beamformed data.
+    """Shared implementation of the CFAR detectors on beamformed data.
 
-    Handles threshold application, dB conversion, and wrap-aware peak consolidation. Concrete
-    subclasses supply only the noise-floor estimator and alpha calibration strategy.
+    A cell is detected when its power, averaged over the frames of one timestep, exceeds a
+    multiple (alpha) of the local noise estimate from the training cells either side of it::
 
-    peak_distance vs peak_prominence
-    --------------------------------
-    These two parameters constitute independent filtering criteria addressing distinct failure
-    modes in peak consolidation.
+        power > alpha * noise_estimate
 
-    ``peak_distance`` imposes a fixed lower bound on angular separation, determined by the array's
-    resolution. Candidates separated by less than this value are attributed to a single physical
-    source irrespective of the magnitude of any intervening minimum. This criterion is required
-    because the null between a mainlobe and its adjacent sidelobe constitutes a genuine reduction
-    in received power rather than measurement noise, and is therefore indistinguishable from an
-    independent source on the basis of prominence alone.
+    Subclasses supply only the noise estimate: the training-cell mean for CA-CFAR, a ranked
+    training cell (order statistic) for OS-CFAR. This class sets alpha, applies the threshold,
+    reports SNR in dB relative to the noise estimate, and consolidates peaks.
 
-    ``peak_prominence`` imposes an adaptive threshold on the magnitude of a candidate's local
-    maximum relative to its surrounding minimum, thereby accommodating sidelobe leakage whose
-    spatial extent varies with source strength.
+    Attributes
+    ----------
+    consolidate_peaks : bool
+        Whether to reduce threshold crossings to one detection per source. See Peak
+        consolidation.
+    peak_distance : int
+        Minimum separation, in bearing bins, between distinct detections, set by array
+        resolution rather than source strength. See Peak consolidation.
+    peak_prominence : float, optional
+        Minimum prominence, in dB, for a candidate to count as an independent detection. See
+        Peak consolidation.
+    wrap_pad_width : int, optional
+        Bearing-bin margin for circular wrap-padding; must cover the widest expected candidate
+        cluster (worst-case leakage/sidelobe footprint), the same sizing consideration as
+        num_guard_cells. Deliberately decoupled from peak_distance so narrowing peak_distance to
+        a resolution floor doesn't silently shrink the wrap safety margin too. Defaults to
+        peak_distance if unset, which is only safe if peak_distance itself is still sized for
+        worst-case leakage rather than pure angular resolution.
+    circular : bool
+        Whether the bearing axis wraps (True for a full -180..180 sweep).
+    num_guard_cells : int
+        CFAR guard cells on each side of the CUT (cell under test), in bearing bins. Size to the
+        worst-case (strong-source) sidelobe leakage extent, the same sizing consideration as
+        wrap_pad_width (peak consolidation side vs. CFAR side).
+    num_training_cells : int
+        CFAR reference cells on each side of the guard cells.
+    threshold_factor : float, optional
+        Alpha, given directly, for fixed mode. See Threshold modes.
+    target_pfa : float, optional
+        Desired noise-only probability of false alarm, for calibrated mode. See Threshold modes.
+    noise_calibration : NoiseCalibration, optional
+        Empirical calibration from noise-only scans, for calibrated mode. See Noise calibration.
 
-    The two criteria should be applied jointly; neither is sufficient to address the failure mode
-    associated with the other.
+    Threshold modes
+    ---------------
+    Alpha is set in one of two ways:
 
-    Turning consolidation off
-    -------------------------
+    - **Calibrated:** ``target_pfa`` with ``noise_calibration``, and ``threshold_factor`` left
+      as ``None``. Alpha is read from the calibration for the requested Pfa at each frame count
+      (see Noise calibration), so the noise-only false-alarm rate is the one requested, within
+      the limits :mod:`.calibration` documents.
+    - **Fixed:** ``threshold_factor`` alone, with ``target_pfa`` and ``noise_calibration`` left
+      as ``None``. Alpha is ``threshold_factor`` at every frame count, and nothing ties it to a
+      false-alarm rate: the same factor gives a different Pfa as ``num_frames``, the training
+      window, ``rank`` or the noise spectrum changes. It suits data with no noise-only segment
+      to calibrate on, or cases where alpha itself must stay fixed. Factors from releases
+      before v0.3.0 are not directly comparable, since those thresholded a precomputed SNR map
+      rather than frame-averaged power.
+
+    Any other combination raises ``ValueError``. Construction rejects setting both or neither of
+    ``threshold_factor`` and ``target_pfa``. A calibration is normally attached after
+    construction, so every ``detect()`` checks the full combination again, which also catches
+    properties changed after construction.
+    :meth:`~.NoiseCalibrator.calibrate_from_noise` refuses a detector in fixed mode.
+
+    Noise calibration
+    -----------------
+    Calibrated mode needs a :class:`~.NoiseCalibration` because no single look count makes an
+    i.i.d.-Gamma model exact on beamformer output: correlation between beams and a
+    heavier-than-Gamma tail remain regardless (see :mod:`._theory` for that model). Build one
+    with ``NoiseCalibrator(detector).calibrate_from_noise(noise_scans)`` on noise-only scans
+    produced exactly like the operational data; alpha for any ``target_pfa`` is then read from
+    the measured distribution (generalised Pareto tail below the directly observable rate), so
+    one calibration serves every ``target_pfa``. A calibration is specific to the detector's
+    window, rank and edge handling and to the frame count; a mismatch raises at detection time.
+
+    Sidelobe false alarms
+    ---------------------
+    Pfa, whether requested through ``target_pfa`` or implied by ``threshold_factor``, is the
+    noise-only false-alarm rate: the probability that a cell containing only noise crosses the
+    threshold, as in the CFAR literature's definition. It does not cover every false alarm in a
+    scene: sidelobes, leakage and multipath from real sources cross the threshold at bearings
+    where no source is present. They are false alarms, and are counted as false positives by
+    :mod:`.metrics`, but they are not noise, so neither threshold mode controls them. Their rate
+    depends on source strength and array design. With many looks a calibrated alpha approaches 1
+    (0 dB), which is correct for noise, and every sidelobe of a strong source crosses. Reduce
+    sidelobes at the beamformer (``DelayAndSumBeamformer(shading=...)``). ``peak_prominence``
+    also rejects them, but as a fixed dB criterion outside the Pfa model.
+
+    Peak consolidation
+    ------------------
+    Neighbouring cells that cross the threshold are reduced to one detection per source by two
+    independent criteria. They address different failure modes, so apply them together; neither
+    is sufficient for the other's.
+
+    - ``peak_distance`` is a fixed lower bound on angular separation, set by the array's
+      resolution. Candidates closer than this are attributed to one source whatever the depth
+      of any minimum between them. It is needed because the null between a mainlobe and its
+      adjacent sidelobe is a genuine drop in received power, not measurement noise, so
+      prominence alone cannot tell a sidelobe from an independent source.
+    - ``peak_prominence`` is an adaptive threshold on how far a candidate's local maximum rises
+      above its surrounding minimum, which accommodates sidelobe leakage whose extent varies
+      with source strength.
+
     ``consolidate_peaks=False`` reports every cell above the threshold instead of one per
-    source. This exists to make the Pfa calibration observable: consolidation merges adjacent
-    crossings, so the number of reported detections falls below the requested rate as soon as
+    source. This exists to make the achieved Pfa observable: consolidation merges adjacent
+    crossings, so the number of reported detections falls below the per-cell rate as soon as
     crossings stop being sparse. Measured on noise-only data at 361 beams, reported detections
     hold at the requested Pfa up to about 0.05, then fall away: roughly 78% of crossings at
-    Pfa 0.2, 57% at 0.5, and 37% at 0.9. Unconsolidated output tracks the requested Pfa across
-    that whole range, which is what makes it useful for verifying calibration, for ROC/PR
-    sweeps that need the full false-positive range, and for comparison against theoretical
-    curves.
+    Pfa 0.2, 57% at 0.5, and 37% at 0.9. Unconsolidated output tracks the per-cell rate across
+    that whole range, which makes it the way to verify a calibration, to measure the Pfa a
+    fixed ``threshold_factor`` achieves, to run ROC/PR sweeps that need the full
+    false-positive range, and to compare against theoretical curves.
 
     It is a diagnostic mode, not an operational one. Without consolidation a single source
     reports once per bearing bin its mainlobe and sidelobes cover, so anything downstream that
     assumes one detection per source (a tracker's data associator above all) will be
     swamped. Leave it True for detection; switch it off to measure.
 
-    Attributes
-    ----------
-    peak_distance : int
-        A fixed lower bound, in bearing bins, on the angular separation between distinct
-        detections, determined by array resolution rather than source strength. See class
-        docstring.
-    peak_prominence : float, optional
-        An adaptive threshold, in decibels, on the prominence a candidate cluster must exhibit to
-        be classified as an independent detection. See class docstring.
-    wrap_pad_width : int, optional
-        Bearing-bin margin for circular wrap-padding; must cover the widest expected candidate
-        cluster (worst-case leakage/sidelobe footprint), the same sizing consideration as
-        num_guard_cells on CFAR subclasses. Deliberately decoupled from peak_distance so narrowing
-        peak_distance to a resolution floor doesn't silently shrink wrap safety margin too.
-        Defaults to peak_distance if unset, which is only safe if peak_distance itself is still
-        sized for worst-case leakage rather than pure angular resolution.
-    circular : bool
-        Whether the bearing axis wraps (True for a full -180..180 sweep).
-    num_guard_cells : int
-        CFAR guard cells on each side of the CUT, in bearing bins. Size to the worst-case
-        (strong-source) sidelobe leakage extent, the same sizing consideration as
-        wrap_pad_width above (peak consolidation side vs. CFAR side).
-    num_training_cells : int
-        CFAR reference cells on each side of the guard cells.
-    target_pfa : float
-        Desired probability of false alarm. Alpha is calibrated automatically per num_frames seen
-        at each detect() call.
-
-    Threshold margin and sidelobes
-    ------------------------------
-    ``target_pfa`` sets the noise-only false-alarm rate: the probability that a cell containing
-    only noise crosses the threshold, as in the CFAR literature's definition of Pfa. It does not
-    cover every false alarm in a scene: sidelobes, leakage and multipath from real sources cross
-    the threshold at bearings where no source is present. They are false alarms, and are counted
-    as false positives by :mod:`.metrics`, but they are not noise, so no choice of target_pfa or
-    noise calibration controls them. Their rate depends on source strength and array design. With
-    many looks alpha approaches 1 (0 dB), which is correct for noise, and every sidelobe of a
-    strong source crosses. Reduce sidelobes at the beamformer
-    (``DelayAndSumBeamformer(shading=...)``). ``peak_prominence`` also rejects them, but as a
-    fixed dB criterion outside the Pfa model.
-
-    Noise calibration
-    -----------------
-    ``noise_calibration`` is required (see :class:`NoiseCalibration`), because no single look
-    count makes an i.i.d.-Gamma model exact on beamformer output: correlation between beams and a
-    heavier-than-Gamma tail remain regardless (see :mod:`._theory` for that model). Build one with
-    ``calibration.NoiseCalibrator(detector).calibrate_from_noise(noise_scans)``, run on noise-only
-    scans produced exactly like the operational data; alpha for any ``target_pfa`` is then read
-    from the measured distribution (generalised Pareto tail below the directly observable rate).
-    ``target_pfa`` stays the only detection parameter. A calibration is specific to the detector's
-    window, rank and edge handling and to the frame count; a mismatch raises at detection time.
+    Assumptions
+    -----------
+    - The training cells see the same noise level as the CUT. Where the noise level changes
+      within the window (near a strong interferer, or at the edges of a non-circular sweep),
+      the noise estimate and hence the threshold are biased.
+    - The guard cells cover the target's own spread. A target leaking into the training cells
+      raises its noise estimate and can mask itself; OS-CFAR tolerates up to
+      ``2 * num_training_cells - rank`` contaminated training cells, CA-CFAR none.
+    - In calibrated mode, the operational noise matches the calibration scans in everything
+      :mod:`.calibration` lists (array, shading, beamformer, band, ambient spectrum, scan
+      length). The detector checks only the settings it can see: its window, rank, edge
+      handling and the frame count.
 
     Relation to sonar noise normalisation
     -------------------------------------
     In sonar, estimating the local background and dividing each cell by it is called
-    normalisation [2]_, and it is applied across bearing to beamformed towed-array data as well
-    as across frequency [1]_. [2]_ (Sects. 8.6 and 9.3) names the sonar normalisers after the CFAR
-    processors directly, as cell-averaging and order-statistic CFAR normalisers, and takes the
+    normalisation [NN2]_, and it is applied across bearing to beamformed towed-array data as well
+    as across frequency [NN1]_. [NN2]_ (Sects. 8.6 and 9.3) names the sonar normalisers after the
+    CFAR processors directly, as cell-averaging and order-statistic CFAR normalisers, and takes the
     auxiliary data for broadband energy detection from nearby beams (Sect. 9.3.1). These
     detectors perform that normalisation across bearing: the power-to-noise-estimate ratio they
     threshold is the normalised output, and alpha is the detection threshold applied to it.
 
     - CA-CFAR corresponds to a split-window normaliser: the noise estimate averages beams either
-      side of the cell of interest, excluding a central gap (the guard cells), which [2]_
+      side of the cell of interest, excluding a central gap (the guard cells), which [NN2]_
       (Fig. 8.23) places to account for signal spreading. The two-pass split-window normaliser
-      of [1]_ also replaces cells above a "shearing threshold" with the local mean before
+      of [NN1]_ also replaces cells above a "shearing threshold" with the local mean before
       averaging again, to keep strong signals out of the estimate; CA-CFAR has no such pass and
       relies on the guard cells alone.
-    - OS-CFAR is the order-statistic normaliser of [2]_ (Sect. 8.6.3), which trades some
+    - OS-CFAR is the order-statistic normaliser of [NN2]_ (Sect. 8.6.3), which trades some
       performance in a benign background for robustness to interfering signals in the
-      auxiliary data. [2]_ (Sect. 8.6.3.3) recommends a rank between 3/4 and 7/8 of the
+      auxiliary data. [NN2]_ (Sect. 8.6.3.3) recommends a rank between 3/4 and 7/8 of the
       reference cells.
 
-    [1]_ reports that strong signals near endfire leak into neighbouring beams and bias
+    [NN1]_ reports that strong signals near endfire leak into neighbouring beams and bias
     split-window noise estimates, and that the few beams in a broadband bearing record make the
     edge beams hard to normalise, which bears on ``circular`` and on sidelobe-induced false
     alarms. Its shearing threshold is derived assuming Rayleigh-distributed envelope noise
     averaged over a known number of statistically independent beams, the same kind of
     assumption that ``noise_calibration`` removes, and it does not set the detection threshold
-    for a stated false-alarm rate. [2]_ does, with the same closed forms used here
+    for a stated false-alarm rate. [NN2]_ does, with the same closed forms used here
     (Eqs. (8.336) and (8.372) for single-look CA and OS), assuming independent exponentially
     distributed auxiliary data that is also independent of the test cell.
 
     References
     ----------
-    .. [1] Stergiopoulos, S. "Noise normalization technique for beamformed towed array data."
-           Journal of the Acoustical Society of America, 97(4), 2334-2345, 1995.
-           doi:10.1121/1.411958
-    .. [2] Abraham, D. A. "Underwater Acoustic Signal Processing: Modeling, Detection, and
-           Estimation." Springer, Cham, 2019. doi:10.1007/978-3-319-92983-5
+    .. [NN1] Stergiopoulos, S. "Noise normalization technique for beamformed towed array data."
+             Journal of the Acoustical Society of America, 97(4), 2334-2345, 1995.
+             doi:10.1121/1.411958
+    .. [NN2] Abraham, D. A. "Underwater Acoustic Signal Processing: Modeling, Detection, and
+             Estimation." Springer, Cham, 2019. doi:10.1007/978-3-319-92983-5
 
     """
 
@@ -334,27 +352,38 @@ class _CFARDetectorBase(DetectionAlgorithm, ABC):
     num_training_cells: int = Property(
         doc="CFAR reference cells on each side of the guard cells.",
     )
-    target_pfa: float = Property(
+    threshold_factor: float | None = Property(
+        default=None,
+        doc="Linear threshold multiplier (alpha) on the local noise estimate, used as given with "
+        "no false-alarm guarantee. Set alone, never with target_pfa or noise_calibration.",
+    )
+    target_pfa: float | None = Property(
+        default=None,
         doc="Desired probability of false alarm. Alpha is calibrated automatically per num_frames "
-        "seen at each detect() call.",
+        "seen at each detect() call. Requires noise_calibration; never set with "
+        "threshold_factor.",
     )
     noise_calibration: NoiseCalibration | None = Property(
         default=None,
         doc="Empirical calibration from noise-only scans (see calibration.NoiseCalibrator). "
         "Must match this detector's window, rank, edge handling and the data's frame count. "
-        "Required before detect() or detection_snr_map() can be called.",
+        "Required with target_pfa; must be None when threshold_factor is set.",
     )
 
     def __init__(self, *args: object, **kwargs: object) -> None:
         # Caught before Stone Soup's Base sees them: an unknown kwarg there surfaces as
-        # "missing a required argument: 'target_pfa'", which names the replacement but not
-        # the actual mistake.
+        # "unexpected keyword argument", which names the mistake but not its replacement.
         for removed, guidance in _REMOVED_DETECTOR_KWARGS.items():
             if removed in kwargs:
                 raise TypeError(
                     f"{removed} is no longer a parameter of {type(self).__name__}. {guidance}"
                 )
+
         super().__init__(*args, **kwargs)
+
+        # A missing calibration is not checked here: NoiseCalibrator normally attaches it after
+        # construction. _alpha_for repeats the full check before every detection.
+        self._check_threshold_mode(require_calibration=False)
         if self.peak_distance < 1:
             raise ValueError(f"peak_distance ({self.peak_distance}) must be >= 1")
         if self.wrap_pad_width is not None and self.wrap_pad_width < 1:
@@ -363,8 +392,16 @@ class _CFARDetectorBase(DetectionAlgorithm, ABC):
             raise ValueError(f"num_guard_cells ({self.num_guard_cells}) must be >= 0")
         if self.num_training_cells < 1:
             raise ValueError(f"num_training_cells ({self.num_training_cells}) must be >= 1")
-        if not 0 < self.target_pfa < 1:
-            raise ValueError(f"target_pfa ({self.target_pfa}) must be in (0, 1)")
+        if self.threshold_factor is not None:
+            if not self.threshold_factor > 0:
+                raise ValueError(f"threshold_factor ({self.threshold_factor}) must be > 0")
+            # Stored as float so an integer factor (e.g. 2) isn't treated as an integer
+            # parameter by sweep_detection_parameter, which would reject fractional values.
+            self.threshold_factor = float(self.threshold_factor)
+        if self.target_pfa is not None:
+            if not 0 < self.target_pfa < 1:
+                raise ValueError(f"target_pfa ({self.target_pfa}) must be in (0, 1)")
+
         # Alpha depends only on num_frames and the calibration parameters (not on the data
         # itself), so it's cheap to memoize across detect() calls that share a frame count.
         # Avoids re-solving/re-simulating. The cache is keyed by num_frames and invalidated
@@ -407,33 +444,64 @@ class _CFARDetectorBase(DetectionAlgorithm, ABC):
         """
         return "wrap" if self.circular else "edge"
 
-    def _alpha_for(self, num_frames: int) -> float:
-        """Return the calibrated threshold multiplier for a given number of frames.
+    def _check_threshold_mode(self, require_calibration: bool = True) -> None:
+        """Raise unless threshold_factor xor (target_pfa and noise_calibration) is set."""
+        name = type(self).__name__
+        if self.threshold_factor is not None and self.target_pfa is not None:
+            raise ValueError(
+                f"{name} has both threshold_factor and target_pfa set. Use threshold_factor "
+                "alone for a fixed threshold, or target_pfa with a noise_calibration for a "
+                "calibrated one."
+            )
+        if self.threshold_factor is not None and self.noise_calibration is not None:
+            raise ValueError(
+                f"{name} has threshold_factor set and a noise_calibration attached; a "
+                "calibration only applies with target_pfa. Remove the calibration, or set "
+                "threshold_factor to None and target_pfa instead."
+            )
+        if self.threshold_factor is None and self.target_pfa is None:
+            raise ValueError(
+                f"{name} needs a threshold: set threshold_factor for a fixed one, or target_pfa "
+                "with a noise_calibration for a calibrated one."
+            )
+        if require_calibration and self.target_pfa is not None and self.noise_calibration is None:
+            raise ValueError(
+                f"{name} has target_pfa set but no noise_calibration. Build one with "
+                "calibration.NoiseCalibrator(detector).calibrate_from_noise(noise_scans) before "
+                "calling detect(), or set threshold_factor (and target_pfa to None) for a fixed "
+                "threshold."
+            )
 
-        Memoised per num_frames. Stone Soup properties are ordinary mutable attributes, so the
-        cache is discarded if any calibration parameter has changed since it was filled;
-        otherwise a detector reconfigured after first use (directly, or on a deep copy during a
-        sweep) would silently keep thresholding with the old alpha.
+    def _alpha_for(self, num_frames: int) -> float:
+        """Return the threshold multiplier for a given number of frames.
+
+        ``threshold_factor`` is returned as given when set. Otherwise alpha is read from
+        ``noise_calibration`` and memoised per num_frames. Stone Soup properties are ordinary
+        mutable attributes, so the cache is discarded if any calibration parameter has changed
+        since it was filled; otherwise a detector reconfigured after first use (directly, or on a
+        deep copy during a sweep) would silently keep thresholding with the old alpha.
         """
+        # Checked on every call, not just on a cache miss: a calibrated detector with a cached
+        # alpha that later has threshold_factor set must raise, not detect in a mixed mode.
+        self._check_threshold_mode()
+        if self.threshold_factor is not None:
+            return float(self.threshold_factor)
+
         signature = self._calibration_signature()
         if signature != self._alpha_cache_signature:
             self._alpha_cache = {}
             self._alpha_cache_signature = signature
         if num_frames not in self._alpha_cache:
-            if self.noise_calibration is None:
-                raise ValueError(
-                    f"{type(self).__name__} has no noise_calibration set. Build one with "
-                    "calibration.NoiseCalibrator(detector).calibrate_from_noise(noise_scans) "
-                    "before calling detect()."
-                )
-            mismatch = self.noise_calibration.matches(self, num_frames)
+            # Calibrated mode: _check_threshold_mode guarantees both are set.
+            calibration = cast(NoiseCalibration, self.noise_calibration)
+            mismatch = calibration.matches(self, num_frames)
             if mismatch is not None:
                 raise ValueError(
                     f"noise_calibration does not apply to this {type(self).__name__}: "
                     f"{mismatch}. Recalibrate with NoiseCalibrator for these settings."
                 )
-            self._alpha_cache[num_frames] = self.noise_calibration.alpha(
-                self.target_pfa, num_frames
+            self._alpha_cache[num_frames] = calibration.alpha(
+                cast(float, self.target_pfa), num_frames
             )
         return self._alpha_cache[num_frames]
 
@@ -561,8 +629,8 @@ class CACFARDetector(_CFARDetectorBase):
     a contaminated training cell the way OS-CFAR's order statistic can. Kept for
     codebase consistency and as a benchmark; see OSCFARDetector as the default choice.
 
-    See :class:`_CFARDetectorBase` for ``num_guard_cells``, ``num_training_cells``, and
-    ``target_pfa``; CA-CFAR adds no attributes of its own.
+    See :class:`~.algorithms._CFARDetectorBase` for ``num_guard_cells``, ``num_training_cells``,
+    ``threshold_factor`` and ``target_pfa``; CA-CFAR adds no attributes of its own.
 
     """
 
@@ -591,8 +659,8 @@ class OSCFARDetector(_CFARDetectorBase):
     one per physical source, even when sidelobe leakage causes multiple adjacent bearing bins to
     exceed the CFAR threshold.
 
-    See :class:`_CFARDetectorBase` for ``num_guard_cells``, ``num_training_cells``, and
-    ``target_pfa``.
+    See :class:`~.algorithms._CFARDetectorBase` for ``num_guard_cells``, ``num_training_cells``,
+    ``threshold_factor`` and ``target_pfa``.
 
     Attributes
     ----------
@@ -609,10 +677,11 @@ class OSCFARDetector(_CFARDetectorBase):
 
     Notes
     -----
-    Alpha is memoised per ``num_frames``, so calibration is paid once per distinct frame count
-    per detector instance rather than on every :meth:`detect` call. Subsequent calls at the same
-    frame count cost microseconds. Changing a calibration parameter (``target_pfa``,
-    ``num_training_cells`` or ``rank``) discards the memoised values.
+    In calibrated mode, alpha is memoised per ``num_frames``, so calibration is paid once per
+    distinct frame count per detector instance rather than on every :meth:`detect` call.
+    Subsequent calls at the same frame count cost microseconds. Changing a calibration parameter
+    (``target_pfa``, ``num_training_cells`` or ``rank``) discards the memoised values. In fixed
+    mode alpha is ``threshold_factor`` itself and nothing is memoised.
 
     :func:`~.metrics.sweep_detection_parameter` deep-copies the detector per swept value, so a
     sweep pays calibration once per point.

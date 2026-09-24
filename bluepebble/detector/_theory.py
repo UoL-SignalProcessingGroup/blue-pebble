@@ -1,4 +1,4 @@
-"""Detection probability (Pd) under different target fluctuation models.
+"""Theoretical CFAR model: alpha for a target Pfa, and Pd under target fluctuation models.
 
 A :class:`FluctuationModel` determines the H1 (target-present) statistics of the CUT, and
 therefore Pd, for a given detector, since Pd depends on how the target's amplitude fluctuates
@@ -9,6 +9,22 @@ statistics, which do not change with how the target fluctuates. Correspondingly,
 ``CACFARDetector``/``OSCFARDetector`` never call anything Pd-related in this module; only this
 module's own :func:`ca_cfar_roc`/:func:`os_cfar_roc` theoretical ROC curve functions do, via a
 ``model: FluctuationModel`` parameter rather than by selecting a Pd function by name.
+
+Assumptions
+-----------
+These cover the noise-only (H0) statistics that alpha and Pfa depend on; the target-present (H1)
+statistics are set by the fluctuation models below.
+
+- Noise statistics: reference cells and the CUT are i.i.d. Exponential(1) per look (see "Band
+  integration and signal bandwidth" for the number of looks per frame).
+- Independence across looks: the M frames averaged into a cell are statistically independent.
+- Independence across cells: the CUT and every reference cell are mutually independent.
+- Homogeneous reference window: all N reference cells share the CUT's underlying noise level.
+
+Beamformer output violates all four to varying degrees, so the CFAR detectors never take alpha
+from these solvers: they use either a given ``threshold_factor`` or an empirical noise calibration
+(:mod:`.calibration`). The model serves the theoretical ROC curves here, and the tests use it as
+the reference the empirical calibration is checked against.
 
 Fluctuation models
 -------------------
@@ -577,15 +593,16 @@ def os_cfar_roc(
     :class:`NonFluctuating`) still goes through this same per-point path,
     just falling back to its own independent Monte Carlo per point.
 
-    Otherwise alpha for each Pfa point comes from :func:`solve_os_cfar_alpha`,
-    the same deterministic calculation :class:`~.algorithms.OSCFARDetector` uses, so the curve
-    describes the detector's actual threshold. Pd has no closed form for OS-CFAR in this case
-    under any fluctuation model implemented here (see
-    :meth:`RayleighFluctuation.os_cfar_pd`), so it is estimated by Monte
-    Carlo. Reference-cell and H1 CUT samples are drawn ONCE and reused for every Pfa value,
-    which is cheaper than simulating each point and gives a smoother curve (adjacent points
-    share the same draws). The noise estimate's distribution does not depend on the hypothesis,
-    so sharing draws across points introduces no bias.
+    Otherwise alpha for each Pfa point comes from :func:`solve_os_cfar_alpha`, the i.i.d.-Gamma
+    model's threshold (see Assumptions in the module docstring). The curve therefore describes an
+    OS-CFAR detector on data that fits that model; :class:`~.algorithms.OSCFARDetector` itself
+    takes alpha from a noise calibration or ``threshold_factor``, not from this model. Pd has no
+    closed form for OS-CFAR in this case under any fluctuation model implemented here (see
+    :meth:`RayleighFluctuation.os_cfar_pd`), so it is estimated by Monte Carlo. Reference-cell
+    and H1 CUT samples are drawn ONCE and reused for every Pfa value, which is cheaper than
+    simulating each point and gives a smoother curve (adjacent points share the same draws). The
+    noise estimate's distribution does not depend on the hypothesis, so sharing draws across
+    points introduces no bias.
 
     Precision: Pd is a Monte Carlo fraction with standard error ``sqrt(Pd * (1 - Pd) /
     num_trials)``; alpha itself carries no sampling error.
@@ -684,7 +701,6 @@ def os_cfar_roc(
         for pfa in pfa_values
     ]
     return np.array(pds)
-
 
 
 def _resolve_look_counts(

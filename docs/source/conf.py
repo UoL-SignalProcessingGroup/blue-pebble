@@ -68,6 +68,17 @@ autodoc_typehints = "description"
 napoleon_google_docstring = False
 napoleon_numpy_docstring = True
 napoleon_use_ivar = True
+# Headings napoleon doesn't know are not section boundaries to it: anything after a standard
+# section (e.g. Attributes) runs on into it and renders as garbled fields. Registering them makes
+# each one end the previous section and render as its own rubric.
+napoleon_custom_sections = [
+    "Threshold modes",
+    "Noise calibration",
+    "Sidelobe false alarms",
+    "Peak consolidation",
+    "Assumptions",
+    "Relation to sonar noise normalisation",
+]
 
 html_theme = "sphinx_rtd_theme"
 html_title = f"{project} {release}"

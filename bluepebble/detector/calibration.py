@@ -28,9 +28,11 @@ detector processes them, and reads alpha off its distribution:
   estimate of [4]_, Eq. (15).
 
 Assign the result to a detector's ``noise_calibration`` and keep controlling detection with
-``target_pfa``. What becomes accurate is the noise-only false-alarm rate per cell, before peak
-consolidation. False alarms induced by real sources (sidelobes, leakage, multipath) add to it and
-are not controlled by any noise calibration.
+``target_pfa``. This applies only to a detector in calibrated mode; one with
+``threshold_factor`` set uses that alpha as given and refuses a calibration (see "Threshold
+modes" in :class:`~.algorithms._CFARDetectorBase`). What becomes accurate is the noise-only
+false-alarm rate per cell, before peak consolidation. False alarms induced by real sources
+(sidelobes, leakage, multipath) add to it and are not controlled by any noise calibration.
 
 :func:`~.metrics.estimate_effective_looks_per_frame` remains the model-based alternative:
 cheaper, but only as accurate as the Gamma model for the data at hand.
@@ -431,8 +433,8 @@ class NoiseCalibrator:
         Raises
         ------
         ValueError
-            If ``tail_pfa`` is not in (0, 1), the scans are empty or inconsistent, or they contain
-            too few cells to fit the tail.
+            If the detector has ``threshold_factor`` set, ``tail_pfa`` is not in (0, 1), the scans
+            are empty or inconsistent, or they contain too few cells to fit the tail.
 
         Notes
         -----
@@ -449,6 +451,14 @@ class NoiseCalibrator:
         >>> detector.target_pfa = 1e-4  # doctest: +SKIP
 
         """
+        # getattr: the detector is duck-typed and need not define threshold_factor at all.
+        if getattr(self.detector, "threshold_factor", None) is not None:
+            raise ValueError(
+                "The detector has threshold_factor set, so attaching a calibration would put it "
+                "in both threshold modes. Set threshold_factor to None and target_pfa instead, "
+                "then calibrate."
+            )
+
         if not 0 < tail_pfa < 1:
             raise ValueError(f"tail_pfa ({tail_pfa}) must be in (0, 1)")
 

@@ -256,7 +256,7 @@ def test_setting_or_replacing_calibration_and_changing_pfa_invalidate_alpha(monk
     # No model-based fallback remains: clearing the calibration must raise, not silently
     # thresholding on the wrong distribution.
     detector.noise_calibration = None
-    with pytest.raises(ValueError, match="no noise_calibration set"):
+    with pytest.raises(ValueError, match="target_pfa set but no noise_calibration"):
         detector._alpha_for(2)
 
 
@@ -292,6 +292,22 @@ def test_too_few_tail_exceedances_raises_with_guidance(monkeypatch) -> None:
 
     with pytest.raises(ValueError, match="cells"):
         calibration_module.NoiseCalibrator(detector).calibrate_from_noise(scans)
+
+
+def test_calibrating_a_fixed_mode_detector_is_refused(monkeypatch) -> None:
+    """Attaching a calibration would put a threshold_factor detector in both modes.
+
+    cell_noise_ratios attaches nothing, so it stays available for inspecting such a detector.
+    """
+    algorithms, calibration_module = _load(monkeypatch)
+    detector = _make_detector(algorithms, "ca", target_pfa=None, threshold_factor=2.0)
+    calibrator = calibration_module.NoiseCalibrator(detector)
+    scans = _gamma_scans(np.random.default_rng(6), 120, 200, 2)
+
+    with pytest.raises(ValueError, match="threshold_factor set"):
+        calibrator.calibrate_from_noise(scans, min_tail_exceedances=100)
+    assert detector.noise_calibration is None
+    assert calibrator.cell_noise_ratios(scans).shape == (120 * 200,)
 
 
 def test_mixed_frame_counts_empty_input_and_zero_noise_raise(monkeypatch) -> None:
@@ -748,10 +764,10 @@ def test_replaced_calibration_is_kept_alive_until_the_cache_is_revalidated(monke
     gc.collect()
     assert reference() is not None
 
-    # Revalidating the cache against the new (missing) calibration is what drops the last
-    # reference to the old one; that it also raises now, rather than falling back to a model
-    # alpha, is incidental to what this test checks.
-    with pytest.raises(ValueError, match="no noise_calibration set"):
-        detector._alpha_for(2)
+    # Revalidating the cache against a replacement calibration is what drops the last
+    # reference to the old one. A detection with no calibration raises before revalidating, so
+    # the old one outlives it; that is harmless, since it is released on the next valid call.
+    replacement = _small_calibration(algorithms, calibration_module, detector)
+    assert detector._alpha_for(2) == replacement.alpha(detector.target_pfa, 2)
     gc.collect()
     assert reference() is None

@@ -398,6 +398,42 @@ def test_clone_detector_with_param_recalibrates_instead_of_reusing_stale_alpha(
     assert recalibrated_alpha != stale_alpha
 
 
+def test_threshold_factor_sweep_runs_from_an_integer_factor(monkeypatch) -> None:
+    """A fixed-mode sweep over threshold_factor needs no calibration and accepts fractions.
+
+    The detector is built with an int factor; were it kept as an int, the sweep would treat
+    threshold_factor as an integer parameter and reject the fractional values.
+    """
+    algorithms, metrics = _load_detector_modules(monkeypatch)
+    num_beams, num_timesteps = 64, 5
+    rng = np.random.default_rng(0)
+    beamformed_data = [rng.exponential(size=(num_beams, 4)) for _ in range(num_timesteps)]
+    steering = np.linspace(-np.pi, np.pi, num_beams, endpoint=False)
+    ground_truth_paths = [
+        _FakePath(states=[_FakeState(np.array([0.0])) for _ in range(num_timesteps)])
+    ]
+    spec = metrics.SweepSpec(
+        detector=algorithms.CACFARDetector(
+            num_guard_cells=1, num_training_cells=4, threshold_factor=2, consolidate_peaks=False
+        ),
+        param_name="threshold_factor",
+        param_values=np.array([0.5, 1.0, 1.5, 2.5]),
+    )
+
+    (result,) = metrics.sweep_detection_parameter(
+        beamformed_data=beamformed_data,
+        sweep_specs=[spec],
+        ground_truth_paths=ground_truth_paths,
+        steering_azimuths_rad=steering,
+        association_threshold_rad=0.01,
+    )
+
+    # Without consolidation a higher factor reports a subset of the lower one's crossings.
+    detections = result.tp + result.fp
+    assert np.all(np.diff(detections) <= 0)
+    assert detections[0] > detections[-1]
+
+
 def test_clone_detector_with_param_tolerates_detectors_without_alpha_cache(
     monkeypatch,
 ) -> None:

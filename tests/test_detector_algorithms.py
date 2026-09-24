@@ -280,6 +280,154 @@ def test_oscfar_detector_warns_on_low_rank(monkeypatch) -> None:
 
 
 # --------------------------------------------------------------------------
+# Threshold modes: threshold_factor XOR (target_pfa and noise_calibration)
+# --------------------------------------------------------------------------
+
+
+# Beam 2 sits well above a unit background; with one training cell per side and no guard cells
+# its noise estimate is 1, so any threshold_factor below 20 detects it and nothing else.
+_ISOLATED_PEAK = np.array([[1.0], [1.0], [20.0], [1.0], [1.0]])
+
+
+@pytest.mark.parametrize(
+    ("mode_kwargs", "match"),
+    [({"threshold_factor": 2.0, "target_pfa": 0.1}, "both"), ({}, "needs a threshold")],
+)
+def test_construction_rejects_both_or_neither_threshold_mode(
+    monkeypatch, mode_kwargs, match
+) -> None:
+    """Exactly one of threshold_factor and target_pfa may be given at construction."""
+    algorithms = _load_detector_algorithms(monkeypatch)
+
+    with pytest.raises(ValueError, match=match):
+        algorithms.CACFARDetector(num_guard_cells=0, num_training_cells=1, **mode_kwargs)
+
+
+@pytest.mark.parametrize("threshold_factor", [0.0, -1.0])
+def test_threshold_factor_must_be_positive(monkeypatch, threshold_factor) -> None:
+    """A non-positive multiplier would put the threshold at or below zero."""
+    algorithms = _load_detector_algorithms(monkeypatch)
+
+    with pytest.raises(ValueError, match="threshold_factor"):
+        algorithms.CACFARDetector(
+            num_guard_cells=0, num_training_cells=1, threshold_factor=threshold_factor
+        )
+
+
+def test_integer_threshold_factor_is_stored_as_float(monkeypatch) -> None:
+    """An int factor would make parameter sweeps reject fractional values."""
+    algorithms = _load_detector_algorithms(monkeypatch)
+
+    detector = algorithms.CACFARDetector(
+        num_guard_cells=0, num_training_cells=1, threshold_factor=2
+    )
+
+    assert isinstance(detector.threshold_factor, float)
+
+
+def test_fixed_mode_detects_without_calibration_at_any_frame_count(monkeypatch) -> None:
+    """threshold_factor is alpha as given: no calibration, and no dependence on num_frames."""
+    algorithms = _load_detector_algorithms(monkeypatch)
+    detector = algorithms.CACFARDetector(
+        num_guard_cells=0, num_training_cells=1, threshold_factor=2.0
+    )
+
+    detections = detector.detect(_ISOLATED_PEAK)
+
+    assert detections[:, 0].tolist() == [2.0]
+    assert detector._alpha_for(1) == detector._alpha_for(7) == 2.0
+    assert detector._alpha_cache == {}
+
+
+def test_changing_threshold_factor_between_calls_takes_effect(monkeypatch) -> None:
+    """A factor changed after a detect() call is used on the next one, not a stale alpha."""
+    algorithms = _load_detector_algorithms(monkeypatch)
+    detector = algorithms.CACFARDetector(
+        num_guard_cells=0, num_training_cells=1, threshold_factor=2.0
+    )
+    assert detector.detect(_ISOLATED_PEAK).shape == (1, 2)
+
+    detector.threshold_factor = 30.0
+
+    assert detector.detect(_ISOLATED_PEAK).shape == (0, 2)
+
+
+def _fixed_and_calibrated_detectors(algorithms, calibration):
+    """Build a fixed-mode detector and a calibrated twin with the same window."""
+    fixed = algorithms.CACFARDetector(
+        num_guard_cells=0, num_training_cells=1, threshold_factor=2.0
+    )
+    calibrated = algorithms.CACFARDetector(
+        num_guard_cells=0, num_training_cells=1, target_pfa=0.1
+    )
+    _calibrate(calibrated, calibration, seed=3)
+    return fixed, calibrated
+
+
+# Stands in for the calibrated twin's noise_calibration, which only exists once the test runs.
+_ITS_CALIBRATION = object()
+
+
+@pytest.mark.parametrize(
+    ("which", "changes", "match"),
+    [
+        ("fixed", {"target_pfa": 0.1}, "both"),
+        ("fixed", {"noise_calibration": _ITS_CALIBRATION}, "noise_calibration attached"),
+        ("fixed", {"threshold_factor": None}, "needs a threshold"),
+        ("calibrated", {"noise_calibration": None}, "target_pfa set but no noise_calibration"),
+    ],
+    ids=["factor+pfa", "factor+calibration", "neither", "pfa-without-calibration"],
+)
+def test_detect_rejects_invalid_modes_reached_after_construction(
+    monkeypatch, which, changes, match
+) -> None:
+    """Properties set after construction are checked in full on every detect()."""
+    algorithms, calibration = _load_detector_algorithms_and_calibration(monkeypatch)
+    fixed, calibrated = _fixed_and_calibrated_detectors(algorithms, calibration)
+    detector = fixed if which == "fixed" else calibrated
+
+    for name, value in changes.items():
+        if value is _ITS_CALIBRATION:
+            value = calibrated.noise_calibration
+        setattr(detector, name, value)
+
+    with pytest.raises(ValueError, match=match):
+        detector.detect(_ISOLATED_PEAK)
+
+
+def test_setting_threshold_factor_on_a_detector_with_cached_alpha_raises(monkeypatch) -> None:
+    """The mode check runs before the alpha cache, so a cached alpha cannot mask a mixed mode."""
+    algorithms, calibration = _load_detector_algorithms_and_calibration(monkeypatch)
+    _, calibrated = _fixed_and_calibrated_detectors(algorithms, calibration)
+    calibrated.detect(_ISOLATED_PEAK)
+    assert 1 in calibrated._alpha_cache
+
+    calibrated.threshold_factor = 2.0
+
+    with pytest.raises(ValueError, match="both"):
+        calibrated.detect(_ISOLATED_PEAK)
+
+
+def test_switching_modes_by_setattr_works_once_the_final_state_is_valid(monkeypatch) -> None:
+    """Intermediate states between modes are fine; only detect() needs a valid combination."""
+    algorithms, calibration = _load_detector_algorithms_and_calibration(monkeypatch)
+    fixed, calibrated = _fixed_and_calibrated_detectors(algorithms, calibration)
+    noise_calibration = calibrated.noise_calibration
+
+    # Fixed to calibrated.
+    fixed.threshold_factor = None
+    fixed.target_pfa = 0.1
+    fixed.noise_calibration = noise_calibration
+    assert fixed._alpha_for(1) == noise_calibration.alpha(0.1, 1)
+
+    # Calibrated to fixed.
+    calibrated.noise_calibration = None
+    calibrated.target_pfa = None
+    calibrated.threshold_factor = 3.0
+    assert calibrated._alpha_for(1) == 3.0
+
+
+# --------------------------------------------------------------------------
 # CA-CFAR detection on beamformed data (shape: num_beams x num_frames)
 # --------------------------------------------------------------------------
 
@@ -937,12 +1085,12 @@ def test_detect_rejects_banded_3d_input_pointing_at_the_multiband_detector(monke
 
 @pytest.mark.parametrize(
     ("removed_kwarg", "value", "expected_guidance"),
-    [("threshold_factor", 1.05, "target_pfa"), ("mode", "wrap", "circular")],
+    [("mode", "wrap", "circular")],
 )
 def test_removed_detector_kwargs_name_their_replacement(
     monkeypatch, removed_kwarg: str, value: object, expected_guidance: str
 ) -> None:
-    """Stone Soup's Base reports these as a missing target_pfa, which hides the real mistake."""
+    """Stone Soup's Base reports these only as unexpected, without naming the replacement."""
     algorithms = _load_detector_algorithms(monkeypatch)
 
     with pytest.raises(TypeError, match=expected_guidance):

@@ -7,7 +7,7 @@ This module has two complementary halves:
   detections against ground-truth bearings (:class:`SweepSpec`, :func:`sweep_detection_parameter`,
   :func:`sweep_detection_parameter_multiband`).
 - **Theoretical**: compute the Pd-vs-Pfa curve directly from the closed-form/Monte Carlo
-  model in :mod:`.algorithms`, at an assumed target-power ratio and no data at all
+  model in :mod:`._theory`, at an assumed target-power ratio and no data at all
   (:func:`ca_cfar_roc`, :func:`os_cfar_roc`).
   :func:`snr_linear_from_ground_truth_bearing` bridges the two by estimating the
   snr_linear actually present in a simulated scenario, so a theoretical curve can be
@@ -77,12 +77,15 @@ class SweepSpec:
 
     Notes
     -----
-    A CFAR detector with a ``noise_calibration`` can sweep ``target_pfa`` (and any other setting
-    the calibration does not depend on). Sweeping a setting that changes the calibrated ratio
-    distribution (``num_guard_cells``, ``num_training_cells``, ``rank`` or ``circular``)
-    raises ``ValueError`` when the clone is made: the calibration no longer describes the swept
-    detector, and silently falling back to the noise model would change what the sweep measures.
-    Sweep such settings without a calibration, or calibrate each value separately.
+    A CFAR detector in calibrated mode can sweep ``target_pfa`` (and any other setting the
+    calibration does not depend on); one in fixed mode can sweep ``threshold_factor``, which is
+    the direct way to choose a factor for data with no noise-only segment. On a calibrated
+    detector, sweeping a setting that changes the calibrated ratio distribution
+    (``num_guard_cells``, ``num_training_cells``, ``rank`` or ``circular``) raises
+    ``ValueError`` when the clone is made, because the calibration no longer describes the swept
+    detector. Sweep such settings on a fixed-mode detector, or calibrate each value separately.
+    A swept parameter that belongs to the other threshold mode (e.g. ``target_pfa`` on a
+    fixed-mode detector) raises at the first ``detect()``.
 
     """
 
@@ -459,7 +462,7 @@ def _clone_detector_with_param(spec: SweepSpec, value: float) -> DetectionAlgori
             raise ValueError(
                 f"Sweeping {spec.param_name}={value!r} invalidates the detector's "
                 "noise_calibration, which was measured for a different window, rank or edge "
-                "handling. Sweep this parameter on a detector without noise_calibration, or "
+                "handling. Sweep this parameter on a fixed-mode detector (threshold_factor), or "
                 "calibrate each value separately with calibrate_from_noise."
             )
     # A CFAR detector invalidates its memoised alpha when a calibration parameter changes (see
@@ -601,6 +604,7 @@ def sweep_detection_parameter(
     --------
     >>> import numpy as np
     >>> from bluepebble.detector.algorithms import CACFARDetector, OSCFARDetector
+    >>> from bluepebble.detector.calibration import NoiseCalibrator
     >>> from bluepebble.detector.metrics import SweepSpec, sweep_detection_parameter
     >>> from bluepebble.plotter import plot_roc_pr
     >>>
@@ -610,19 +614,23 @@ def sweep_detection_parameter(
     ...     for sensor_data in sensor_data_set
     ... ]
     >>>
+    >>> common = dict(num_guard_cells=2, num_training_cells=10, target_pfa=1e-2, peak_distance=3)
+    >>> ca_cfar = CACFARDetector(**common)
+    >>> os_cfar = OSCFARDetector(rank=15, **common)
+    >>> # Sweeping target_pfa needs calibrated mode: calibrate each detector on noise-only
+    >>> # scans produced like beamformed_data (see beamformed_scans_from_sensor_data).
+    >>> for detector in (ca_cfar, os_cfar):
+    ...     _ = NoiseCalibrator(detector).calibrate_from_noise(noise_scans)
+    >>>
     >>> specs = [
     ...     SweepSpec(
-    ...         detector=CACFARDetector(
-    ...             num_guard_cells=2, num_training_cells=10, target_pfa=1e-2, peak_distance=3
-    ...         ),
+    ...         detector=ca_cfar,
     ...         param_name="target_pfa",
     ...         param_values=np.geomspace(1e-1, 1e-5, 80),
     ...         label="CA-CFAR",
     ...     ),
     ...     SweepSpec(
-    ...         detector=OSCFARDetector(
-    ...             num_guard_cells=2, num_training_cells=10, target_pfa=1e-2, peak_distance=3
-    ...         ),
+    ...         detector=os_cfar,
     ...         param_name="target_pfa",
     ...         param_values=np.geomspace(1e-1, 1e-5, 80),
     ...         label="OS-CFAR",
