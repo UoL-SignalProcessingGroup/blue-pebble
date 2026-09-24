@@ -85,11 +85,10 @@ target_metadata = {
     "amplitudes_upa": [10 ** (120 / 20)],
     "frequencies_hz": [200.0],
     "phases_rad": [np.pi],
-    "position_mapping": [0, 2, 4],
-    "velocity_mapping": [1, 3, 5],
     "tonal_bandwidth_hz": 1.0,
     "noise_amplitude_upa": 10 ** (90 / 20),
     "noise_spectral_exponent": -1.0,
+    "position_mapping": [0, 2, 4],
 }
 target_states = [
     GroundTruthState(target_start_vector, timestamp=timestamp, metadata=target_metadata)
@@ -120,9 +119,6 @@ def make_signal_model():
         sampling_rate_hz=sampling_rate_hz,
         frame_len=500,
         hop_factor=2,
-        tonal_bandwidth_hz=1.0,
-        noise_amplitude_upa=10 ** (90 / 20),
-        noise_spectral_exponent=-1.0,
         noise_freq_range_hz=(0.0, sampling_rate_hz / 2),
         tonal_noise_is_constant=True,
         noise_is_constant=True,

@@ -147,7 +147,6 @@ self_noise_states = [
         timestamp=state.timestamp,
         metadata={
             "position_mapping": platform_position_mapping,
-            "velocity_mapping": platform_velocity_mapping,
             "amplitudes_upa": ownship_amplitudes_upa,
             "frequencies_hz": ownship_frequencies_hz,
             "phases_rad": ownship_phases_rad,
@@ -165,7 +164,7 @@ self_noise_ground_truth = GroundTruthPath(self_noise_states)
 # ---------------------------------
 #
 # Three targets are created with reproducible randomised source metadata. Their
-# Cartesian trajectories are converted to relative bearing truths for detector
+# Cartesian trajectories are converted to bearing truths (bearings from the array) for detector
 # interpretation, then visualised to verify the simulation geometry. PassiveSonarDetector reports
 # bearing-state detections, so truth needs to be in the same space for any downstream comparison.
 
@@ -180,33 +179,28 @@ target_transition_model = CombinedLinearGaussianTransitionModel(
     [ConstantVelocity(0.0), ConstantVelocity(0.0), ConstantVelocity(0.0)]
 )
 target_position_mapping = [0, 2, 4]
-target_velocity_mapping = [1, 3, 5]
 
+# Tonal bandwidth and broadband noise, the same for every target
 shared_target_tonal_bandwidth_hz = rng.uniform(0.5, 2.0)
 shared_target_noise_amplitude_upa = 10 ** (90 / 20)
 shared_target_noise_spectral_exponent = -1.0
 
 target_ground_truths: list[GroundTruthPath] = []
-relative_bearing_ground_truths: list[GroundTruthPath] = []
+bearing_truths: list[GroundTruthPath] = []
 
 for target_start_vector in target_start_vectors:
     target_amplitudes_upa = 10 ** (rng.uniform(87, 102, 4) / 20)
     target_frequencies_hz = rng.uniform(50.0, 200.0, 4)
     target_phases_rad = rng.uniform(0, 2 * np.pi, 4)
-    target_tonal_bandwidth_hz = rng.uniform(0.5, 2.0)
-    target_noise_amplitude_upa = 10 ** (rng.uniform(65, 85) / 20)
 
     target_metadata = {
         "amplitudes_upa": target_amplitudes_upa,
         "frequencies_hz": target_frequencies_hz,
         "phases_rad": target_phases_rad,
-        "position_mapping": target_position_mapping,
-        "velocity_mapping": target_velocity_mapping,
-        "tonal_bandwidth_hz": target_tonal_bandwidth_hz,
-        "noise_amplitude_upa": target_noise_amplitude_upa,
-        "target_tonal_bandwidth_hz": shared_target_tonal_bandwidth_hz,
-        "target_noise_amplitude_upa": shared_target_noise_amplitude_upa,
+        "tonal_bandwidth_hz": shared_target_tonal_bandwidth_hz,
+        "noise_amplitude_upa": shared_target_noise_amplitude_upa,
         "noise_spectral_exponent": shared_target_noise_spectral_exponent,
+        "position_mapping": target_position_mapping,
     }
 
     target_states = [
@@ -247,7 +241,7 @@ for target_start_vector in target_start_vectors:
             GroundTruthState(np.array([bearing_rad]), timestamp=target_state.timestamp)
         )
 
-    relative_bearing_ground_truths.append(GroundTruthPath(bearing_states))
+    bearing_truths.append(GroundTruthPath(bearing_states))
 
 fig_world = plot_world(truths=target_ground_truths, platform=platform).update_layout(
     title="World Picture: Target and Platform Trajectories",
@@ -316,17 +310,13 @@ ambient_noise_model = ColouredNoiseSignal(
 
 def _make_signal_models() -> list[SyntheticAnthropogenicSignal]:
     models: list[SyntheticAnthropogenicSignal] = []
-    for target_ground_truth in target_ground_truths:
-        target_metadata = next(iter(target_ground_truth)).metadata
+    for _ in target_ground_truths:
         models.append(
             SyntheticAnthropogenicSignal(
                 duration_s=total_duration_s,
                 sampling_rate_hz=sampling_rate_hz,
                 frame_len=frame_len,
                 hop_factor=hop_factor,
-                tonal_bandwidth_hz=target_metadata["target_tonal_bandwidth_hz"],
-                noise_amplitude_upa=target_metadata["target_noise_amplitude_upa"],
-                noise_spectral_exponent=target_metadata["noise_spectral_exponent"],
                 noise_freq_range_hz=(0.0, sampling_rate_hz / 2),
                 tonal_noise_is_constant=True,
                 noise_is_constant=True,
@@ -341,9 +331,6 @@ def _make_self_noise_model() -> SyntheticAnthropogenicSignal:
         sampling_rate_hz=sampling_rate_hz,
         frame_len=frame_len,
         hop_factor=hop_factor,
-        tonal_bandwidth_hz=ownship_tonal_bandwidth_hz,
-        noise_amplitude_upa=ownship_noise_amplitude_upa,
-        noise_spectral_exponent=ownship_noise_spectral_exponent,
         noise_freq_range_hz=(0.0, sampling_rate_hz / 2),
         tonal_noise_is_constant=True,
         noise_is_constant=True,
@@ -360,7 +347,7 @@ def _make_self_noise_model() -> SyntheticAnthropogenicSignal:
 beamformer_type = "DAS"
 beamformer_shading = None
 beamformer_domain = "frequency"
-steering_azimuths_rad = np.linspace(-np.pi, np.pi, 181)
+steering_azimuths_rad = np.linspace(-np.pi, np.pi, 180, endpoint=False)
 
 shading = None
 if beamformer_shading is not None:
@@ -441,7 +428,7 @@ def _make_detector(
     own noise. Ownship noise is a propagated source, so, unlike the simulated ambient noise,
     it changes the noise field and the two scenarios need separate surveys. The survey covers
     the first ``num_survey_scans`` scans; the calibration needs about 20,000 cells at its
-    defaults, which is 111 scans of 181 beams.
+    defaults, which is 112 scans of 180 beams.
     """
     cfar_detector = CACFARDetector(
         num_guard_cells=cfar_num_guard_cells,

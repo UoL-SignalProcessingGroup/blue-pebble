@@ -137,8 +137,8 @@ for i in range(1, num_steps):
 # ---------------------------------
 #
 # Target kinematics and source metadata are generated here. Each target truth is
-# propagated over the full timeline, and the corresponding relative-bearing truth is
-# computed with respect to the array reference position.
+# propagated over the full timeline, and its bearing from the array's reference position is
+# computed at each timestep.
 
 target_start_vectors = [
     np.array([6000, 0.0, 1.0e3, 10, -5.0, 0.0]),
@@ -149,21 +149,19 @@ target_transition_model = CombinedLinearGaussianTransitionModel(
     [ConstantVelocity(0.0), ConstantVelocity(0.0), ConstantVelocity(0.0)]
 )
 target_position_mapping = [0, 2, 4]
-target_velocity_mapping = [1, 3, 5]
 
+# Tonal bandwidth and broadband noise, the same for every target
 shared_target_tonal_bandwidth_hz = rng.uniform(0.5, 2.0)
 shared_target_noise_amplitude_upa = 10 ** (90 / 20)
 shared_target_noise_spectral_exponent = -1.0
 
 target_ground_truths = []
-relative_bearing_ground_truths = []
+bearing_truths = []
 
 for target_start_vector in target_start_vectors:
     target_amplitudes_upa = 10 ** (rng.uniform(90, 102, 4) / 20)
     target_frequencies_hz = rng.uniform(120.0, 250.0, 4)
     target_phases_rad = rng.uniform(0, 2 * np.pi, 4)
-    target_tonal_bandwidth_hz = rng.uniform(0.5, 2.0)
-    target_noise_amplitude_upa = 10 ** (rng.uniform(70, 85) / 20)
 
     target_states = [
         GroundTruthState(
@@ -173,13 +171,10 @@ for target_start_vector in target_start_vectors:
                 "amplitudes_upa": target_amplitudes_upa,
                 "frequencies_hz": target_frequencies_hz,
                 "phases_rad": target_phases_rad,
-                "position_mapping": target_position_mapping,
-                "velocity_mapping": target_velocity_mapping,
-                "tonal_bandwidth_hz": target_tonal_bandwidth_hz,
-                "noise_amplitude_upa": target_noise_amplitude_upa,
-                "target_tonal_bandwidth_hz": shared_target_tonal_bandwidth_hz,
-                "target_noise_amplitude_upa": shared_target_noise_amplitude_upa,
+                "tonal_bandwidth_hz": shared_target_tonal_bandwidth_hz,
+                "noise_amplitude_upa": shared_target_noise_amplitude_upa,
                 "noise_spectral_exponent": shared_target_noise_spectral_exponent,
+                "position_mapping": target_position_mapping,
             },
         )
     ]
@@ -215,7 +210,7 @@ for target_start_vector in target_start_vectors:
             )
         )
 
-    relative_bearing_ground_truths.append(GroundTruthPath(bearing_states))
+    bearing_truths.append(GroundTruthPath(bearing_states))
 
 # %%
 # Propagation Model
@@ -396,17 +391,13 @@ ambient_noise_model = ColouredNoiseSignal(
 
 def _make_signal_models():
     models = []
-    for target_ground_truth in target_ground_truths:
-        target_metadata = next(iter(target_ground_truth)).metadata
+    for _ in target_ground_truths:
         models.append(
             SyntheticAnthropogenicSignal(
                 duration_s=total_duration_s,
                 sampling_rate_hz=sampling_rate_hz,
                 frame_len=frame_len,
                 hop_factor=hop_factor,
-                tonal_bandwidth_hz=target_metadata["target_tonal_bandwidth_hz"],
-                noise_amplitude_upa=target_metadata["target_noise_amplitude_upa"],
-                noise_spectral_exponent=target_metadata["noise_spectral_exponent"],
                 noise_freq_range_hz=(0.0, sampling_rate_hz / 2),
                 tonal_noise_is_constant=True,
                 noise_is_constant=True,
@@ -424,7 +415,7 @@ def _make_signal_models():
 # in arrival structure caused by the seabed is visible in the resulting bearing-time
 # record.
 
-steering_azimuths_rad = np.linspace(-np.pi, np.pi, 181)
+steering_azimuths_rad = np.linspace(-np.pi, np.pi, 180, endpoint=False)
 
 beamformer = DelayAndSumBeamformer(
     sampling_rate_hz=sampling_rate_hz,
@@ -488,7 +479,7 @@ def _make_cfar_detector() -> CACFARDetector:
 # ground_truth_paths, over the first 120 scans only. The simulator adds ambient noise at the
 # sensors without propagating it, so the seabed does not change it and one survey serves both
 # bathymetries; a real survey would be specific to the area. The calibration needs about
-# 20,000 cells at its defaults, which is 111 scans of 181 beams.
+# 20,000 cells at its defaults, which is 112 scans of 180 beams.
 num_survey_scans = 120
 
 survey_simulator = ContinuousSTFTPassiveSonarArraySimulator(

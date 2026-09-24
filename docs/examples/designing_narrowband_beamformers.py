@@ -199,11 +199,10 @@ for target_config in target_configs:
         ** (np.full(num_tonals_per_target, target_config["tonal_level_db"]) / 20),
         "frequencies_hz": list(frequencies),
         "phases_rad": list(rng.uniform(0.0, 2 * np.pi, num_tonals_per_target)),
-        "position_mapping": [0, 2, 4],
-        "velocity_mapping": [1, 3, 5],
         "tonal_bandwidth_hz": 2.0,
         "noise_amplitude_upa": 10 ** (target_config["noise_level_db"] / 20),
         "noise_spectral_exponent": -1.0,
+        "position_mapping": [0, 2, 4],
     }
 
 for target_config in target_configs:
@@ -211,7 +210,7 @@ for target_config in target_configs:
     print(f"{target_config['name']}: tonals at {tonal_text} Hz")
 
 target_ground_truths = []
-relative_bearing_ground_truths = []
+bearing_truths = []
 
 for target_config in target_configs:
     target_states = [
@@ -256,7 +255,7 @@ for target_config in target_configs:
             )
         )
 
-    relative_bearing_ground_truths.append(GroundTruthPath(bearing_states))
+    bearing_truths.append(GroundTruthPath(bearing_states))
 
 fig_world = plot_world(truths=target_ground_truths, platform=platform).update_layout(
     title="World Picture: Target and Platform Trajectories",
@@ -294,17 +293,13 @@ ambient_noise_model = ColouredNoiseSignal(
 def _make_signal_models():
     """Build one signal model per target."""
     models = []
-    for target_ground_truth in target_ground_truths:
-        target_metadata = next(iter(target_ground_truth)).metadata
+    for _ in target_ground_truths:
         models.append(
             SyntheticAnthropogenicSignal(
                 duration_s=total_duration_s,
                 sampling_rate_hz=sampling_rate_hz,
                 frame_len=frame_len,
                 hop_factor=hop_factor,
-                tonal_bandwidth_hz=target_metadata["tonal_bandwidth_hz"],
-                noise_amplitude_upa=target_metadata["noise_amplitude_upa"],
-                noise_spectral_exponent=target_metadata["noise_spectral_exponent"],
                 noise_freq_range_hz=(0.0, sampling_rate_hz / 2),
                 tonal_noise_is_constant=True,
                 noise_is_constant=True,
@@ -512,7 +507,7 @@ for col, band in enumerate(view_bands, start=1):
     )
     plot_btr(
         data=None,
-        truths=relative_bearing_ground_truths,
+        truths=bearing_truths,
         detections=detections_by_band[band.label],
         timesteps=np.array(timesteps[:map_rows]),
         steering_azimuths=np.rad2deg(steering_azimuths_rad),
@@ -536,7 +531,7 @@ plot_btr(
 )
 plot_btr(
     data=None,
-    truths=relative_bearing_ground_truths,
+    truths=bearing_truths,
     detections=collapsed_detections,
     timesteps=np.array(timesteps[:map_rows]),
     steering_azimuths=np.rad2deg(steering_azimuths_rad),
