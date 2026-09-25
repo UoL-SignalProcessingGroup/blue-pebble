@@ -105,7 +105,7 @@ class CACFARDetector(DetectionAlgorithm):
 
     This detector adapts its threshold by estimating the noise level from surrounding data cells.
     For each Cell Under Test (CUT), it calculates the mean of the training cells and multiplies it
-    by a threshold factor to set the detection threshold.
+    by a threshold factor to set the detection threshold [1].
 
     This implementation is a Cell-Averaging CFAR (CA-CFAR).
 
@@ -122,6 +122,11 @@ class CACFARDetector(DetectionAlgorithm):
     mode : str
         The convolution mode for boundary handling. Can be 'valid', 'same', or 'wrap'. Defaults to
         'wrap'.
+
+    References
+    ----------
+    [1] M. A. Richards et al., Fundamentals of radar signal processing. Mcgraw-hill New York, 2005,
+        vol. 1.
 
     """
 
@@ -211,7 +216,7 @@ class OSCFARDetector(DetectionAlgorithm):
     It estimates the noise level by sorting the values in the training
     cells and selecting the k-th smallest value (the 'rank'). This
     value is then scaled by the threshold factor to set the detection
-    threshold.
+    threshold [1].
 
     This implementation uses a 'wrap' mode for boundary handling, consistent
     with the 'wrap' mode in the CA-CFAR detector.
@@ -228,6 +233,11 @@ class OSCFARDetector(DetectionAlgorithm):
     threshold_factor : float
         A scaling factor (alpha) used to set the detection threshold above the estimated noise
         floor.
+
+    References
+    ----------
+    [1] H. Rohling, “Radar CFAR thresholding in clutter and multiple target situations,”
+        IEEE Transactions on Aerospace and Electronic Systems, vol. 19, no. 4, pp. 608–621, 1983.
 
     """
 

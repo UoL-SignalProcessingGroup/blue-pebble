@@ -439,6 +439,75 @@ class TestHydrophoneElement:
         hydro.states.append(s2)
         assert hydro.state is s2
 
+    def test_default_noise_sources_and_streamwise_are_none(self, monkeypatch):
+        """Noise properties default to None/absent until explicitly set."""
+        mod = _load_hydrophone_module(monkeypatch)
+        hydro = mod.Hydrophone(response=mod.HydrophoneResponse(sensitivity_db=0.0))
+        assert hydro.noise_sources is None
+        assert hydro.streamwise_position_m is None
+
+    def test_noise_psd_empty_when_no_sources(self, monkeypatch):
+        """noise_psd returns zeros when no sources are attached."""
+        mod = _load_hydrophone_module(monkeypatch)
+        hydro = mod.Hydrophone(response=mod.HydrophoneResponse(sensitivity_db=0.0))
+        freqs = np.array([100.0, 500.0, 2000.0])
+        state = State(state_vector=np.array([[0.0], [5.0], [0.0], [0.0], [0.0], [0.0]]))
+        psd = hydro.noise_psd(freqs, state, "pressure")
+        np.testing.assert_array_equal(psd, np.zeros(3))
+
+    def test_noise_psd_sums_matching_domain(self, monkeypatch):
+        """noise_psd sums sources with matching domain, ignoring others."""
+        mod = _load_hydrophone_module(monkeypatch)
+        from bluepebble.sensor.noise import SensorNoiseSpectrum
+
+        freqs = np.array([100.0, 1000.0])
+
+        class ConstantPressure(SensorNoiseSpectrum):
+            domain = "pressure"
+            level: float = 2.0
+
+            def psd(self, frequencies_hz, platform_state, *, streamwise_position_m=None):
+                return np.full_like(np.asarray(frequencies_hz, dtype=float), self.level)
+
+        class ConstantVoltage(SensorNoiseSpectrum):
+            domain = "voltage"
+
+            def psd(self, frequencies_hz, platform_state, *, streamwise_position_m=None):
+                return np.full_like(np.asarray(frequencies_hz, dtype=float), 7.0)
+
+        hydro = mod.Hydrophone(
+            response=mod.HydrophoneResponse(sensitivity_db=0.0),
+            noise_sources=[ConstantPressure(), ConstantPressure(), ConstantVoltage()],
+        )
+        state = State(state_vector=np.array([[0.0], [5.0], [0.0], [0.0], [0.0], [0.0]]))
+
+        # Two pressure sources at 2.0 each sum to 4.0; voltage source is skipped.
+        np.testing.assert_allclose(hydro.noise_psd(freqs, state, "pressure"), np.full(2, 4.0))
+        np.testing.assert_allclose(hydro.noise_psd(freqs, state, "voltage"), np.full(2, 7.0))
+
+    def test_noise_psd_forwards_streamwise_position(self, monkeypatch):
+        """noise_psd passes its streamwise_position_m to each source."""
+        mod = _load_hydrophone_module(monkeypatch)
+        from bluepebble.sensor.noise import SensorNoiseSpectrum
+
+        captured: dict = {}
+
+        class CapturingNoise(SensorNoiseSpectrum):
+            domain = "pressure"
+
+            def psd(self, frequencies_hz, platform_state, *, streamwise_position_m=None):
+                captured["streamwise_position_m"] = streamwise_position_m
+                return np.zeros_like(np.asarray(frequencies_hz, dtype=float))
+
+        hydro = mod.Hydrophone(
+            response=mod.HydrophoneResponse(sensitivity_db=0.0),
+            noise_sources=[CapturingNoise()],
+            streamwise_position_m=3.25,
+        )
+        state = State(state_vector=np.array([[0.0], [5.0], [0.0], [0.0], [0.0], [0.0]]))
+        hydro.noise_psd(np.array([100.0]), state, "pressure")
+        assert captured["streamwise_position_m"] == 3.25
+
 
 # ---------------------------------------------------------------------------
 # LinearHydrophoneArray
@@ -463,6 +532,28 @@ class TestLinearHydrophoneArray:
         """num_elements equals len(elements)."""
         arr = _make_array(8, 0.15)
         assert arr.num_elements == 8
+
+    def test_leading_edge_offset_sets_streamwise_positions(self):
+        """array_leading_edge_offset_m populates each element's streamwise_position_m."""
+        from bluepebble.sensor.array import LinearHydrophoneArray
+        from bluepebble.sensor.hydrophone import Hydrophone, HydrophoneResponse
+
+        elements = [Hydrophone(response=HydrophoneResponse()) for _ in range(4)]
+        arr = LinearHydrophoneArray(
+            elements=elements,
+            element_spacing_m=0.5,
+            array_leading_edge_offset_m=2.0,
+        )
+        positions = [e.streamwise_position_m for e in arr.elements]
+        assert positions == [2.0, 2.5, 3.0, 3.5]
+        # Also exposed on the array itself.
+        assert arr.array_leading_edge_offset_m == 2.0
+
+    def test_leading_edge_offset_default_leaves_positions_unset(self):
+        """Without array_leading_edge_offset_m, element streamwise positions stay None."""
+        arr = _make_array(3, 0.5)
+        assert all(e.streamwise_position_m is None for e in arr.elements)
+        assert arr.array_leading_edge_offset_m is None
 
     def test_state_none_before_move(self):
         """State is None before move() is called."""

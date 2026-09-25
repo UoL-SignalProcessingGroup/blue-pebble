@@ -1,4 +1,16 @@
-"""Defines bathymetry models for representing seafloor topography."""
+"""Bathymetry models for representing seafloor topography.
+
+The module provides a small family of seafloor models that share a common
+interface via :class:`Bathymetry`:
+
+- analytical models for synthetic experiments (`FlatBathymetry`,
+  `WedgeBathymetry`, `SeamountBathymetry`)
+- a data-driven model backed by GEBCO NetCDF grids (`GEBCOBathymetry`)
+
+All depths follow the Blue Pebble sign convention where underwater values are
+non-positive (``-z`` downward).
+
+"""
 
 from abc import ABC, abstractmethod
 from pathlib import Path
@@ -15,7 +27,13 @@ GridResult: TypeAlias = tuple[FloatArray, FloatArray, FloatArray]
 
 
 class Bathymetry(ABC, Base):
-    """Abstract base class for bathymetry models."""
+    """Abstract base class for bathymetry models.
+
+    Subclasses must provide point sampling via :meth:`get_depth` and regular grid generation via
+    :meth:`get_grid`. The API is intentionally minimal so components such as propagation and
+    plotting can use analytical and dataset-backed bathymetry interchangeably.
+
+    """
 
     resolution: float = Property(
         default=1000.0, doc="Default grid resolution in meters for gridded outputs"
@@ -35,11 +53,13 @@ class Bathymetry(ABC, Base):
         Returns
         -------
         float
-            Depth in meters (positive value below surface).
+            Depth in meters at ``(x, y)`` using the Blue Pebble sign convention
+            (typically non-positive underwater).
 
         Notes
         -----
-        Implementations must override this abstract method.
+        Implementations should be deterministic for fixed inputs and should honour the model's
+        configured sign convention and parameter bounds.
 
         """
         ...
@@ -63,11 +83,14 @@ class Bathymetry(ABC, Base):
             ``(x_grid, y_grid, z_grid)`` where
             - ``x_grid`` : 1D array of x coordinates
             - ``y_grid`` : 1D array of y coordinates
-            - ``z_grid`` : 2D array of depths (positive, below surface)
+                        - ``z_grid`` : 2D array of depths with shape
+                            ``(len(x_grid), len(y_grid))``
 
         Notes
         -----
-        Implementations must override this abstract method.
+        Implementations should ensure that ``z_grid[i, j]`` corresponds to
+        ``(x_grid[i], y_grid[j])`` and that output ranges include the provided
+        end points.
 
         """
         ...
@@ -81,6 +104,11 @@ class FlatBathymetry(Bathymetry):
     depth : float
         The constant depth of the seafloor in meters. Must be negative
         (below surface, Blue Pebble ``-z`` convention). Defaults to -5000.0 m.
+
+    Notes
+    -----
+    This model is useful as a baseline environment for algorithm validation, because it removes
+    terrain-driven variability from acoustic behaviour.
 
     """
 
@@ -155,6 +183,12 @@ class WedgeBathymetry(Bathymetry):
     y_gradient : float
         Depth gradient in the y direction (m/m). Defaults to 0.001 (1 m increase per 1000 m in y).
 
+    Notes
+    -----
+    The surface is an affine plane:
+    ``z(x, y) = depth_at_origin + x_gradient * x + y_gradient * y``.
+    Output is clipped at ``0.0`` so that above-surface values are not emitted.
+
     """
 
     depth_at_origin: float = Property(default=-1000.0, doc="Depth at the origin (0, 0) in meters")
@@ -217,7 +251,7 @@ class WedgeBathymetry(Bathymetry):
 
 
 class SeamountBathymetry(Bathymetry):
-    """A bathymetry model with an idealized seamount feature.
+    """A bathymetry model with an idealized conical seamount feature.
 
     Attributes
     ----------
@@ -228,6 +262,12 @@ class SeamountBathymetry(Bathymetry):
         Radius of the seamount in meters. Defaults to 15000.0 m.
     plateau_depth : float
         Depth at the surrounding plateau in meters. Defaults to -5000.0 m.
+
+    Notes
+    -----
+    Inside the seamount radius, depth varies linearly with radial distance from the summit. Outside
+    the radius, depth is constant at ``plateau_depth``. This provides a smooth, controlled
+    topographic feature suitable for sensitivity studies.
 
     """
 
@@ -326,10 +366,29 @@ class SeamountBathymetry(Bathymetry):
 class GEBCOBathymetry(Bathymetry):
     """Bathymetry model backed by a GEBCO NetCDF dataset.
 
+    Parameters
+    ----------
+    file_path : str
+        Path to a GEBCO NetCDF file containing ``lat``, ``lon`` and ``elevation`` variables.
+    reference_lat_deg : float | None
+        Reference latitude for local tangent-plane conversion. If ``None``, the dataset latitude
+        midpoint is used.
+    reference_lon_deg : float | None
+        Reference longitude for local tangent-plane conversion. If ``None``, the dataset longitude
+        midpoint is used.
+
     Notes
     -----
     - Coordinates are converted from lat/lon to local Cartesian meters.
-    - Internally and at output, depth follows the Nereus convention (``-z`` underwater).
+        - Sampling uses nearest-neighbour lookup in local x/y space.
+        - Internally and at output, depth follows the Blue Pebble convention (``-z`` underwater).
+        - Data loading is eager at construction and also guarded by lazy checks for robustness when
+          objects are deserialised.
+
+    References
+    ----------
+    [1] General Bathymetric Chart of the Oceans (GEBCO), IHO/IOC bathymetric data product.
+        https://www.gebco.net
 
     """
 
@@ -344,7 +403,22 @@ class GEBCOBathymetry(Bathymetry):
     )
 
     def _load_data(self) -> None:
-        """Load and cache GEBCO bathymetry data."""
+        """Load and cache GEBCO bathymetry data.
+
+        The method validates array dimensionality, converts geodetic axes to local Cartesian
+        coordinates, and stores a clipped depth grid in memory for fast nearest-neighbour sampling.
+
+        Raises
+        ------
+        FileNotFoundError
+            If the configured NetCDF file does not exist.
+        ImportError
+            If ``netCDF4`` is unavailable in the current environment.
+        ValueError
+            If required variables are missing expected dimensions or if converted x/y axes are not
+            strictly increasing.
+
+        """
         path = Path(self.file_path)
         if not path.exists():
             raise FileNotFoundError(f"GEBCO bathymetry file not found: {path}")
@@ -393,17 +467,22 @@ class GEBCOBathymetry(Bathymetry):
         if np.any(np.diff(self._x_m) <= 0.0) or np.any(np.diff(self._y_m) <= 0.0):
             raise ValueError("Converted GEBCO x/y axes must be strictly increasing.")
 
-        # GEBCO elevation: underwater is negative. Nereus convention is -z underwater.
+        # GEBCO elevation: underwater is negative. Blue Pebble convention is -z underwater.
         self._z_grid_yx = np.minimum(elev_m, 0.0)
         self._is_loaded = True
 
     def __post_init__(self) -> None:
-        """Attempt eager load; get_depth/get_grid also support lazy loading."""
+        """Initialise runtime cache state and perform eager data loading.
+
+        Eager loading surfaces configuration and file issues early, while :meth:`_ensure_loaded`
+        keeps point/grid query methods safe for instances restored from serialised state.
+
+        """
         self._is_loaded = False
         self._load_data()
 
     def _ensure_loaded(self) -> None:
-        """Ensure cached GEBCO arrays are loaded."""
+        """Ensure cached GEBCO arrays are loaded before query operations."""
         if getattr(self, "_is_loaded", False):
             return
         self._load_data()
@@ -415,7 +494,30 @@ class GEBCOBathymetry(Bathymetry):
         lat0_deg: float,
         lon0_deg: float,
     ) -> tuple[FloatArray, FloatArray]:
-        """Convert geodetic coordinates to local tangent-plane x/y in meters."""
+        """Convert geodetic coordinates to local tangent-plane x/y in meters.
+
+        Parameters
+        ----------
+        lat_deg : ArrayLike
+            Latitude values in degrees.
+        lon_deg : ArrayLike
+            Longitude values in degrees.
+        lat0_deg : float
+            Reference latitude in degrees.
+        lon0_deg : float
+            Reference longitude in degrees.
+
+        Returns
+        -------
+        tuple[FloatArray, FloatArray]
+            Arrays ``(x_m, y_m)`` measured from the reference location.
+
+        Notes
+        -----
+        Uses an ellipsoidal local linearisation derived from WGS84 constants, with meridional and
+        prime-vertical radii of curvature evaluated at the reference latitude.
+
+        """
         lat_array = np.asarray(lat_deg, dtype=float)
         lon_array = np.asarray(lon_deg, dtype=float)
         lat0_rad = np.deg2rad(lat0_deg)
@@ -437,7 +539,22 @@ class GEBCOBathymetry(Bathymetry):
 
     @staticmethod
     def _nearest_indices(old_axis: FloatArray, new_axis: FloatArray) -> IntArray:
-        """Map target coordinates to nearest indices on a monotonic source axis."""
+        """Map target coordinates to nearest indices on a monotonic source axis.
+
+        Parameters
+        ----------
+        old_axis : FloatArray
+            Strictly increasing source coordinate axis.
+        new_axis : FloatArray
+            Target coordinates to map.
+
+        Returns
+        -------
+        IntArray
+            Integer indices into ``old_axis`` corresponding to nearest-neighbour locations for each
+            element of ``new_axis``.
+
+        """
         idx = np.searchsorted(old_axis, new_axis)
         idx = np.clip(idx, 1, len(old_axis) - 1)
         left = old_axis[idx - 1]
@@ -446,14 +563,43 @@ class GEBCOBathymetry(Bathymetry):
         return np.where(choose_left, idx - 1, idx)
 
     def get_depth(self, x: float, y: float) -> float:
-        """Get nearest-neighbour GEBCO depth at ``(x, y)`` in meters (Nereus ``-z``)."""
+        """Get nearest-neighbour GEBCO depth at ``(x, y)``.
+
+        Parameters
+        ----------
+        x : float
+            Local Cartesian x coordinate in meters.
+        y : float
+            Local Cartesian y coordinate in meters.
+
+        Returns
+        -------
+        float
+            Depth in meters following Blue Pebble ``-z`` convention.
+
+        """
         self._ensure_loaded()
         ix = int(self._nearest_indices(self._x_m, np.asarray([x], dtype=float))[0])
         iy = int(self._nearest_indices(self._y_m, np.asarray([y], dtype=float))[0])
         return float(min(0.0, self._z_grid_yx[iy, ix]))
 
     def get_grid(self, x_range: Range1D, y_range: Range1D) -> GridResult:
-        """Get a regular GEBCO bathymetry grid for the requested x/y extent."""
+        """Get a regular GEBCO bathymetry grid for the requested x/y extent.
+
+        Parameters
+        ----------
+        x_range : Range1D
+            Requested ``(x_min, x_max)`` bounds in meters.
+        y_range : Range1D
+            Requested ``(y_min, y_max)`` bounds in meters.
+
+        Returns
+        -------
+        GridResult
+            ``(x_grid, y_grid, z_grid)`` sampled with nearest-neighbour lookup from the source
+            GEBCO grid and shaped as ``(len(x_grid), len(y_grid))``.
+
+        """
         self._ensure_loaded()
         x_min, x_max = x_range
         y_min, y_max = y_range

@@ -10,8 +10,10 @@ from numpy.typing import NDArray
 from stonesoup.base import Property
 from stonesoup.simulator.base import SensorSimulator
 
+from .._seed import _spawn_rng
 from ..models.propagation import AcousticPropagationModel
 from ..platform import TowedArrayPlatform
+from ..sensor.noise import NoiseDomain
 from ..signal.random import RandomSignal
 from ..sigproc.beamformer import Beamformer, SteeringCalculator
 from ..types.sensordata import PassiveSonarSensorData
@@ -19,6 +21,8 @@ from ..types.sensordata import PassiveSonarSensorData
 if TYPE_CHECKING:
     from stonesoup.types.groundtruth import GroundTruthPath
     from stonesoup.types.state import State
+
+FloatArray: TypeAlias = NDArray[np.floating[Any]]
 
 ComplexArray: TypeAlias = NDArray[np.complexfloating[Any, Any]]
 SensorBatch: TypeAlias = tuple[datetime, set[PassiveSonarSensorData]]
@@ -230,6 +234,145 @@ class PassiveSonarArraySimulatorBase(SensorSimulator):
         H_c64 = np.asarray(H, dtype=np.complex64)
         s_fft = np.fft.fft(sensor_signals, axis=1)
         return np.fft.ifft(s_fft * H_c64, axis=1).astype(np.complex64)
+
+    def _platform_state_at(self, timestamp: datetime) -> "State | None":
+        """Return the platform movement state at a given timestamp, if present.
+
+        Parameters
+        ----------
+        timestamp : datetime
+            Snapshot timestamp to look up in the platform's movement controller.
+
+        Returns
+        -------
+        State or None
+            Matching platform state if one has been recorded at ``timestamp``;
+            otherwise ``None``.
+
+        """
+        for state in self.platform.movement_controller.states:
+            if state.timestamp == timestamp:
+                return state
+        return None
+
+    def _self_noise_rng(self) -> np.random.Generator:
+        """Return (and lazily construct) the RNG used for sensor self-noise synthesis.
+
+        The generator follows :func:`bluepebble.set_seed` when set, otherwise it
+        is non-deterministic, matching the convention used by
+        :class:`~bluepebble.signal.random.RandomSignal`.
+        """
+        rng = getattr(self, "__self_noise_rng", None)
+        if rng is None:
+            rng = _spawn_rng(None)
+            object.__setattr__(self, "__self_noise_rng", rng)
+        return rng
+
+    def _generate_sensor_self_noise(
+        self,
+        timestamp: datetime,
+        num_samples: int,
+        sampling_rate_hz: float,
+        domain: NoiseDomain,
+    ) -> ComplexArray | None:
+        """Synthesise a time-domain sensor self-noise realisation for one snapshot.
+
+        Queries each hydrophone's :meth:`~bluepebble.sensor.hydrophone.Hydrophone.noise_psd`
+        in the selected ``domain`` and draws an independent complex-Gaussian
+        realisation whose periodogram matches the returned one-sided PSD.
+
+        The synthesis uses FFT bin variances
+        :math:`\\sigma_k^2 = N \\cdot f_s \\cdot S_1(|f_k|) / 2` with real and
+        imaginary parts drawn iid :math:`\\mathcal{N}(0, \\sigma_k^2 / 2)`, so
+        the expected time-domain power integrates :math:`S_1` over the positive
+        Nyquist band.
+
+        Parameters
+        ----------
+        timestamp : datetime
+            Snapshot timestamp, used to look up the platform state.
+        num_samples : int
+            Length of the noise chunk in samples.
+        sampling_rate_hz : float
+            Sampling rate used to build the FFT frequency grid.
+        domain : {"pressure", "voltage"}
+            Noise-domain tag forwarded to each element's ``noise_psd``.
+
+        Returns
+        -------
+        numpy.ndarray or None
+            Complex noise array of shape ``(num_sensors, num_samples)``, or
+            ``None`` when no element contributes any power in ``domain`` or
+            the platform state is unavailable.
+
+        """
+        if num_samples <= 0:
+            return None
+        elements = self.platform.sensor_array.elements
+        if not any(getattr(el, "noise_sources", None) for el in elements):
+            return None
+        platform_state = self._platform_state_at(timestamp)
+        if platform_state is None:
+            return None
+
+        frequencies_hz = np.fft.fftfreq(num_samples, d=1.0 / sampling_rate_hz)
+        psd_rows = np.stack(
+            [el.noise_psd(frequencies_hz, platform_state, domain) for el in elements],
+            axis=0,
+        ).astype(float)
+        if not np.any(psd_rows > 0.0):
+            return None
+
+        rng = self._self_noise_rng()
+        sigma = np.sqrt(psd_rows * num_samples * sampling_rate_hz / 2.0)
+        real = rng.standard_normal(psd_rows.shape)
+        imag = rng.standard_normal(psd_rows.shape)
+        spectrum = sigma * (real + 1j * imag) / np.sqrt(2.0)
+        return np.fft.ifft(spectrum, axis=1).astype(np.complex64)
+
+    def _inject_self_noise_and_apply_hydrophone(
+        self,
+        timestamp: datetime,
+        sensor_signals: ComplexArray,
+        sampling_rate_hz: float,
+    ) -> ComplexArray:
+        """Inject sensor self-noise around the hydrophone transfer-function stage.
+
+        Pressure-domain self-noise is added to ``sensor_signals`` before the
+        hydrophone transfer function is applied, so it is coloured by the
+        same :math:`H(f)` as the acoustic signal and ambient noise.
+        Voltage-domain self-noise is added afterwards, bypassing the
+        transducer response.
+
+        Parameters
+        ----------
+        timestamp : datetime
+            Snapshot timestamp, forwarded to the self-noise synthesis.
+        sensor_signals : numpy.ndarray
+            Complex sensor data in the pressure domain, shape
+            ``(num_sensors, num_samples)``.
+        sampling_rate_hz : float
+            Sampling rate in Hz.
+
+        Returns
+        -------
+        numpy.ndarray
+            Complex sensor data in the voltage domain, same shape as input.
+
+        """
+        num_samples = sensor_signals.shape[1]
+        pressure_noise = self._generate_sensor_self_noise(
+            timestamp, num_samples, sampling_rate_hz, "pressure"
+        )
+        if pressure_noise is not None:
+            sensor_signals = sensor_signals + pressure_noise
+        sensor_signals = self._apply_hydrophone_to_chunk(sensor_signals, sampling_rate_hz)
+        voltage_noise = self._generate_sensor_self_noise(
+            timestamp, num_samples, sampling_rate_hz, "voltage"
+        )
+        if voltage_noise is not None:
+            sensor_signals = sensor_signals + voltage_noise
+        return sensor_signals
 
     def _beamform_if_configured(
         self,

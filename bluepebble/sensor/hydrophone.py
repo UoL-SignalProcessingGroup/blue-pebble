@@ -1,16 +1,14 @@
 r"""Hydrophone models for converting acoustic pressure to voltage.
 
-A hydrophone is modelled as a linear time-invariant (LTI) system whose
-transfer function maps received acoustic pressure (in uPa) to output
-voltage (in V).  The combined transfer function is:
+A hydrophone is modelled as a linear time-invariant (LTI) system whose transfer function maps
+received acoustic pressure (in uPa) to output voltage (in V). The combined transfer function is:
 
 .. math::
 
     H_{\text{hydrophone}}(f) = S \cdot R(f) \cdot e^{j\varphi}
 
-where *S* is the scalar sensitivity (V/uPa, converted from dB re 1 V/uPa),
-*R(f)* is a frequency-dependent complex response, and :math:`\varphi` is a
-constant phase offset in radians.
+where *S* is the scalar sensitivity (V/uPa, converted from dB re 1 V/uPa), *R(f)* is a
+frequency-dependent complex response, and :math:`\varphi` is a constant phase offset in radians.
 
 Classes
 -------
@@ -40,6 +38,8 @@ from numpy.typing import ArrayLike, NDArray
 from stonesoup.base import Base, Property
 from stonesoup.types.state import State
 
+from .noise import NoiseDomain, SensorNoiseSpectrum
+
 if TYPE_CHECKING:
     pass
 
@@ -50,11 +50,10 @@ FloatArray: TypeAlias = NDArray[np.floating[Any]]
 class FrequencyResponse(ABC, Base):
     """Abstract base class for hydrophone frequency response models.
 
-    A frequency response model describes how a hydrophone's sensitivity
-    varies with frequency.  These variations are intrinsic physical
-    properties of the transducer and its mechanical structure, not
-    manufacturing defects.  Subclasses implement :meth:`evaluate` to return
-    a complex transfer function at a given set of frequencies.
+    A frequency response model describes how a hydrophone's sensitivity varies with frequency.
+    These variations are intrinsic physical properties of the transducer and its mechanical
+    structure, not manufacturing defects. Subclasses implement :meth:`evaluate` to return a complex
+    transfer function at a given set of frequencies.
     """
 
     @abstractmethod
@@ -78,8 +77,7 @@ class FrequencyResponse(ABC, Base):
 class FlatFrequencyResponse(FrequencyResponse):
     """Flat (unity) frequency response model.
 
-    Models an ideal hydrophone with no frequency-dependent variation in
-    response.  This is the default when no measured response is available.
+    Models an ideal hydrophone with no frequency-dependent variation in response.
     """
 
     def evaluate(self, frequencies_hz: ArrayLike) -> ComplexArray:
@@ -103,27 +101,22 @@ class FlatFrequencyResponse(FrequencyResponse):
 class TabulatedFrequencyResponse(FrequencyResponse):
     """Frequency response interpolated from tabulated measurements.
 
-    Represents the measured intrinsic frequency response of a physical
-    hydrophone, typically obtained from manufacturer datasheets or
-    calibration certificates (e.g. per IEC 60565-1).  The tabulated
-    data captures the combined effect of piezoelectric conversion
-    (the transducer's ability to turn pressure into voltage),
-    mechanical resonances (frequencies at which the element's
-    structure vibrates preferentially, amplifying or attenuating the
-    response) and acoustic loading (the coupling between the element
-    and the surrounding water).
+    Represents the measured intrinsic frequency response of a physical hydrophone, typically
+    obtained from manufacturer datasheets or calibration certificates (e.g. per IEC 60565-1). The
+    tabulated data captures the combined effect of piezoelectric conversion (the transducer's
+    ability to turn pressure into voltage), mechanical resonances (frequencies at which the
+    element's structure vibrates preferentially, amplifying or attenuating the response) and
+    acoustic loading (the coupling between the element and the surrounding water).
 
-    Accepts magnitude in dB and optional phase in degrees, matching the
-    format commonly found on hydrophone datasheets.  Interpolation is
-    performed independently in the dB and degree domains before conversion
-    to a complex transfer function.
+    Accepts magnitude in dB and optional phase in degrees, matching the format commonly found on
+    hydrophone datasheets. Interpolation is performed independently in the dB and degree domains
+    before conversion to a complex transfer function.
 
-    Frequencies outside the tabulated range are extrapolated using the
-    nearest endpoint value (``np.interp`` default behaviour).
+    Frequencies outside the tabulated range are extrapolated using the nearest endpoint value
+    (``np.interp`` default behaviour).
 
-    For query frequencies that are negative (e.g. from ``np.fft.fftfreq``),
-    the absolute value is used under the assumption that the hydrophone
-    response is symmetric about zero frequency.
+    For query frequencies that are negative (e.g. from ``np.fft.fftfreq``), the absolute value is
+    used under the assumption that the hydrophone response is symmetric about zero frequency.
     """
 
     frequencies_hz: NDArray = Property(
@@ -171,50 +164,43 @@ class TabulatedFrequencyResponse(FrequencyResponse):
 class FirstOrderHighPassResponse(FrequencyResponse):
     r"""First-order high-pass frequency response.
 
-    Models the low-frequency acoustic coupling cutoff of a hydrophone.
-    This roll-off is an intrinsic physical property of the transducer:
-    below a minimum frequency, the piezoelectric element cannot
-    efficiently convert incident pressure into voltage. Two physical
-    mechanisms set this limit:
+    Models the low-frequency acoustic coupling cutoff of a hydrophone. This roll-off is an
+    intrinsic physical property of the transducer: below a minimum frequency, the piezoelectric
+    element cannot efficiently convert incident pressure into voltage. Two physical mechanisms set
+    this limit:
 
-    - **Mechanical compliance**: the element's stiffness (its resistance
-      to deformation) determines the minimum pressure variation that
-      produces a measurable electrical response.  At very low
-      frequencies the acoustic wavelength is so large relative to the
-      element that the resulting strain is negligible.
-    - **Acoustic loading**: the interaction between the element and the
-      surrounding water column.  At low frequencies the element
-      radiates (and therefore receives) inefficiently because it is
+    - **Mechanical compliance**: the element's stiffness (its resistance to deformation) determines
+      the minimum pressure variation that produces a measurable electrical response. At very low
+      frequencies the acoustic wavelength is so large relative to the element that the resulting
+      strain is negligible.
+    - **Acoustic loading**: the interaction between the element and the surrounding water column.
+      At low frequencies the element radiates (and therefore receives) inefficiently because it is
       small compared with the wavelength.
 
-    The cutoff frequency is determined by the element geometry, mounting
-    and backing structure. Below the cutoff the response rolls off at
-    +20 dB/decade; above it the response is flat (unity magnitude, zero
-    phase).
+    The cutoff frequency is determined by the element geometry, mounting and backing structure.
+    Below the cutoff the response rolls off at +20 dB/decade; above it the response is flat (unity
+    magnitude, zero phase).
 
-    The model is called "first-order" because the denominator of the
-    transfer function is first-degree in frequency, producing a single
-    20 dB/decade asymptotic slope.  This is a simplified approximation
-    valid away from resonance; hydrophones operating near a mechanical
-    resonance would require higher-order models whose denominators
-    contain higher powers of frequency, producing steeper roll-offs and
-    resonant peaks.
+    The model is called "first-order" because the denominator of the transfer function is
+    first-degree in frequency, producing a single 20 dB/decade asymptotic slope.  This is a
+    simplified approximation valid away from resonance; hydrophones operating near a mechanical
+    resonance would require higher-order models whose denominators contain higher powers of
+    frequency, producing steeper roll-offs and resonant peaks.
 
     .. math::
 
         H(f) = \frac{j f / f_c}{1 + j f / f_c}
 
-    At :math:`f = f_c` the magnitude evaluates to :math:`1/\sqrt{2}`,
-    which is approximately -3 dB — the half-power point.  This is not
-    an arbitrary convention but a mathematical consequence of the
-    transfer function: at the cutoff frequency the output power is
-    exactly half the passband power.
+    At :math:`f = f_c` the magnitude evaluates to :math:`1/\sqrt{2}`, which is approximately -3 dB
+    - the half-power point.  This is not an arbitrary convention but a mathematical consequence of
+    the transfer function: at the cutoff frequency the output power is exactly half the passband
+    power.
 
     Parameters
     ----------
     cutoff_hz : float
-        Cutoff frequency in Hz.  At this frequency the response
-        magnitude is :math:`1/\sqrt{2}` (-3 dB), i.e. half-power.
+        Cutoff frequency in Hz.  At this frequency the response magnitude is :math:`1/\sqrt{2}`
+        (-3 dB), i.e. half-power.
 
     """
 
@@ -247,33 +233,27 @@ class FirstOrderHighPassResponse(FrequencyResponse):
 class FirstOrderLowPassResponse(FrequencyResponse):
     r"""First-order low-pass frequency response.
 
-    Models the high-frequency roll-off of a hydrophone.  This roll-off is
-    an intrinsic physical property of the transducer arising from two
-    mechanisms:
+    Models the high-frequency roll-off of a hydrophone.  This roll-off is an intrinsic physical
+    property of the transducer arising from two mechanisms:
 
-    - **Mechanical inertia**: the physical mass of the piezoelectric
-      element resists the rapid accelerations required to follow
-      high-frequency pressure variations.  As frequency increases, the
-      element's displacement amplitude decreases for a given pressure
-      amplitude, reducing the generated voltage.
-    - **Thickness-mode resonance**: the natural vibration frequency of
-      the element along its thickness dimension, determined by the
-      element's thickness and the speed of sound in the piezoelectric
-      material.  Well above this resonance the element can no longer
-      respond coherently to the incident pressure wave.
+    - **Mechanical inertia**: the physical mass of the piezoelectric element resists the rapid
+      accelerations required to follow high-frequency pressure variations.  As frequency increases,
+      the element's displacement amplitude decreases for a given pressure amplitude, reducing the
+      generated voltage.
+    - **Thickness-mode resonance**: the natural vibration frequency of the element along its
+      thickness dimension, determined by the element's thickness and the speed of sound in the
+      piezoelectric material.  Well above this resonance the element can no longer respond
+      coherently to the incident pressure wave.
 
-    The cutoff frequency is determined by the element mass, stiffness
-    and acoustic loading.  Below the cutoff the response is flat (unity
-    magnitude, zero phase); above it the response rolls off at
-    -20 dB/decade.
+    The cutoff frequency is determined by the element mass, stiffness and acoustic loading. Below
+    the cutoff the response is flat (unity magnitude, zero phase); above it the response rolls off
+    at -20 dB/decade.
 
-    The model is called "first-order" because the denominator of the
-    transfer function is first-degree in frequency, producing a single
-    20 dB/decade asymptotic slope.  This is a simplified approximation
-    valid away from resonance; hydrophones operating near a mechanical
-    resonance would require higher-order models whose denominators
-    contain higher powers of frequency, producing steeper roll-offs and
-    resonant peaks.
+    The model is called "first-order" because the denominator of the transfer function is
+    first-degree in frequency, producing a single 20 dB/decade asymptotic slope.  This is a
+    simplified approximation valid away from resonance; hydrophones operating near a mechanical
+    resonance would require higher-order models whose denominators contain higher powers of
+    frequency, producing steeper roll-offs and resonant peaks.
 
     .. math::
 
@@ -318,19 +298,16 @@ class FirstOrderLowPassResponse(FrequencyResponse):
         return (1.0 / (1.0 + 1j * f / self.cutoff_hz)).astype(np.complex128)
 
 
-class SecondOrderBandPassResponse(FrequencyResponse):
+class CascadedFirstOrderBandPassResponse(FrequencyResponse):
     r"""Second-order band-pass frequency response.
 
-    Models the usable bandwidth of a hydrophone by combining the
-    low-frequency and high-frequency roll-offs into a single response.
-    Every physical hydrophone has a finite passband bounded at both ends:
-    the low-frequency cutoff arises from mechanical compliance and
-    acoustic loading (see :class:`FirstOrderHighPassResponse`), while the
-    high-frequency cutoff arises from mechanical inertia and proximity to
-    the thickness-mode resonance (see :class:`FirstOrderLowPassResponse`).
+    Models the usable bandwidth of a hydrophone by combining the low-frequency and high-frequency
+    roll-offs into a single response. Every physical hydrophone has a finite passband bounded at
+    both ends: the low-frequency cutoff arises from mechanical compliance and acoustic loading (see
+    :class:`FirstOrderHighPassResponse`), while the high-frequency cutoff arises from mechanical
+    inertia and proximity to the thickness-mode resonance (see :class:`FirstOrderLowPassResponse`).
 
-    The transfer function is the product of a first-order high-pass and
-    a first-order low-pass:
+    The transfer function is the product of a first-order high-pass and a first-order low-pass:
 
     .. math::
 
@@ -338,19 +315,17 @@ class SecondOrderBandPassResponse(FrequencyResponse):
                \cdot
                \frac{1}{1 + j f / f_{\text{hi}}}
 
-    This gives +20 dB/decade roll-off below :math:`f_{\text{lo}}` and
-    -20 dB/decade roll-off above :math:`f_{\text{hi}}`, with a flat
-    passband between the two when :math:`f_{\text{lo}} \ll f_{\text{hi}}`.
+    This gives +20 dB/decade roll-off below :math:`f_{\text{lo}}` and -20 dB/decade roll-off above
+    :math:`f_{\text{hi}}`, with a flat passband between the two when
+    :math:`f_{\text{lo}} \ll f_{\text{hi}}`.
 
-    The model is called "second-order" because the expanded denominator
-    is second-degree in frequency (one first-degree factor from each
-    constituent first-order stage).  Like the constituent models, this
-    is a simplified approximation valid away from resonance; it does
-    not capture resonant peaks or anti-resonances that would require
-    higher-order transfer functions.
+    The model is called "second-order" because the expanded denominator is second-degree in
+    frequency (one first-degree factor from each constituent first-order stage).  Like the
+    constituent models, this is a simplified approximation valid away from resonance; it does not
+    capture resonant peaks or anti-resonances that would require higher-order transfer functions.
 
-    At each cutoff the corresponding first-order factor evaluates to a
-    magnitude of :math:`1/\sqrt{2}` (-3 dB), the half-power point.
+    At each cutoff the corresponding first-order factor evaluates to a magnitude of
+    :math:`1/\sqrt{2}` (-3 dB), the half-power point.
 
     Parameters
     ----------
@@ -421,24 +396,21 @@ class SecondOrderBandPassResponse(FrequencyResponse):
 class HydrophoneResponse(Base):
     """Electro-acoustic response model of a single hydrophone transducer.
 
-    Combines a scalar sensitivity with a frequency response to produce
-    a complex transfer function that maps received acoustic pressure
-    (in uPa) to voltage (in V).
+    Combines a scalar sensitivity with a frequency response to produce a complex transfer function
+    that maps received acoustic pressure (in uPa) to voltage (in V).
 
     Parameters
     ----------
     sensitivity_db : float, optional
-        Hydrophone sensitivity in dB re 1 V/uPa.  Defaults to ``0.0``, which
-        applies no additional scaling and is equivalent to running a simulation
-        without an explicit hydrophone model.
+        Hydrophone sensitivity in dB re 1 V/uPa.  Defaults to ``0.0``, which applies no additional
+        scaling and is equivalent to running a simulation without an explicit hydrophone model.
     frequency_response : FrequencyResponse or None
-        Frequency-dependent response model.  Defaults to
-        :class:`FlatFrequencyResponse` when ``None``.
+        Frequency-dependent response model.  Defaults to :class:`FlatFrequencyResponse` when
+        ``None``.
     phase_offset_deg : float
-        Constant phase offset in degrees applied uniformly across all
-        frequencies.  Use this to model inter-element phase mismatch from
-        sources such as cable length variation or connector tolerances.
-        Defaults to 0.
+        Constant phase offset in degrees applied uniformly across all frequencies. Use this to
+        model inter-element phase mismatch from sources such as cable length variation or connector
+        tolerances. Defaults to 0.
 
     """
 
@@ -494,27 +466,214 @@ class HydrophoneResponse(Base):
         )
 
 
+class FourthOrderResonantResponse(FrequencyResponse):
+    r"""Wideband piezoceramic hydrophone response with low-frequency rolloff
+    and a high-frequency resonance peak.
+
+    Models a wideband hydrophone with integrated preamplifier (e.g. Teledyne
+    RESON TC4032, Bruel & Kjaer 8104/8106) as a fourth-order minimum-phase
+    rational transfer function in the Laplace variable :math:`s = j 2\pi f`:
+
+    .. math::
+
+        R(s) = \frac{s^2}{s^2 + 2 \zeta_{\text{lf}} \omega_{\text{lf}} s
+                          + \omega_{\text{lf}}^2}
+               \cdot
+               \frac{\omega_{\text{r}}^2}{s^2 + 2 \zeta_{\text{r}} \omega_{\text{r}} s
+                                                + \omega_{\text{r}}^2}
+
+    The first factor is a second-order high-pass that captures the
+    low-frequency coupling cutoff set by the preamplifier input impedance and
+    the element's source capacitance; the double zero at the origin gives a
+    +40 dB/decade asymptotic rise below :math:`\omega_{\text{lf}}`.  The second
+    factor is a second-order low-pass with conjugate poles that captures the
+    radial/thickness mechanical resonance of the piezoelectric element; for
+    :math:`\zeta_{\text{r}} \lesssim 0.5` the magnitude exhibits a peak just
+    below the natural frequency, then rolls off at -40 dB/decade above it.
+
+    Both factors are normalized so the passband magnitude is unity, so this
+    class composes cleanly with ``HydrophoneResponse.sensitivity_db``.
+
+    Because :math:`R(s)` is rational and all poles lie in the left half plane,
+    the response is causal and minimum-phase: the phase is determined by the
+    magnitude via the Hilbert transform, and the impulse response is
+    realisable.  This is essential for time-domain simulation and for
+    calibration-inversion studies — a tabulated magnitude with arbitrary phase
+    is generally not minimum-phase, and inverting it produces non-causal
+    artefacts that bias miscalibration analysis.
+
+    Parameters
+    ----------
+    lf_cutoff_hz : float
+        Low-frequency natural frequency in Hz.  Sets the location of the
+        second-order high-pass corner.  Typical values: 1-10 Hz for
+        high-impedance preamps; 50-100 Hz for AC-coupled preamps.
+    lf_damping : float
+        Damping ratio of the low-frequency stage.  ``0.707`` gives a maximally
+        flat (Butterworth) knee; values below ``0.5`` produce a peak at the
+        corner that is rarely physical.  Default ``0.707``.
+    resonance_hz : float
+        High-frequency resonance frequency in Hz, set by the element's radial
+        or thickness mode.  Typical values: 80-150 kHz for general-purpose
+        hydrophones; up to 480 kHz for spherical broadband types.
+    resonance_damping : float
+        Damping ratio at resonance.  Lightly damped ceramics give
+        ``0.05-0.15`` (sharp 6-10 dB peak).  Rubber-encapsulated wideband
+        designs give ``0.3-0.5`` (broad, low peak, used as a feature for flat
+        response).  Default ``0.3``.
+
+    Raises
+    ------
+    ValueError
+        If any frequency is non-positive, if any damping is non-positive, or
+        if ``lf_cutoff_hz >= resonance_hz``.
+
+    Notes
+    -----
+    This is the simplest physically motivated model that captures both the
+    low-frequency coupling rolloff and the high-frequency element resonance.
+    It is an approximation: real hydrophones may show a second resonance, a
+    cable resonance, or directional anti-resonances at off-axis angles.  For
+    a per-unit fit, use :class:`TabulatedFrequencyResponse` with the
+    calibration certificate; for a calibration-study reference truth, use
+    this class.
+
+    Examples
+    --------
+    A TC4032-class device:
+
+    >>> resp = FourthOrderResonantResponse(
+    ...     lf_cutoff_hz=5.0, lf_damping=0.707,
+    ...     resonance_hz=100_000.0, resonance_damping=0.3,
+    ... )
+
+    A sharp uncompensated reference hydrophone (e.g. TC4013):
+
+    >>> resp = FourthOrderResonantResponse(
+    ...     lf_cutoff_hz=1.0, lf_damping=0.707,
+    ...     resonance_hz=170_000.0, resonance_damping=0.1,
+    ... )
+
+    """
+
+    lf_cutoff_hz: float = Property(
+        doc="Low-frequency natural frequency in Hz (preamp coupling corner).",
+    )
+    lf_damping: float = Property(
+        default=0.707,
+        doc="Damping ratio of the low-frequency stage. 0.707 gives a Butterworth knee.",
+    )
+    resonance_hz: float = Property(
+        doc="High-frequency resonance frequency in Hz (element radial/thickness mode).",
+    )
+    resonance_damping: float = Property(
+        default=0.3,
+        doc="Damping ratio at resonance. Lower values give sharper peaks.",
+    )
+
+    def __init__(self, *args: object, **kwargs: object) -> None:
+        super().__init__(*args, **kwargs)
+        if self.lf_cutoff_hz <= 0.0:
+            msg = f"lf_cutoff_hz must be positive, got {self.lf_cutoff_hz}"
+            raise ValueError(msg)
+        if self.resonance_hz <= 0.0:
+            msg = f"resonance_hz must be positive, got {self.resonance_hz}"
+            raise ValueError(msg)
+        if self.lf_damping <= 0.0:
+            msg = f"lf_damping must be positive, got {self.lf_damping}"
+            raise ValueError(msg)
+        if self.resonance_damping <= 0.0:
+            msg = f"resonance_damping must be positive, got {self.resonance_damping}"
+            raise ValueError(msg)
+        if self.lf_cutoff_hz >= self.resonance_hz:
+            msg = (
+                f"lf_cutoff_hz ({self.lf_cutoff_hz}) must be strictly less "
+                f"than resonance_hz ({self.resonance_hz})"
+            )
+            raise ValueError(msg)
+
+    def evaluate(self, frequencies_hz: ArrayLike):
+        """Evaluate the fourth-order resonant response.
+
+        Parameters
+        ----------
+        frequencies_hz : ArrayLike
+            Frequencies in Hz.  May contain negative values (e.g. from
+            ``np.fft.fftfreq``); these are evaluated as ``s = j 2 pi f`` so
+            that the response is the conjugate of the positive-frequency
+            response, preserving Hermitian symmetry for real-valued
+            time-domain signals.
+
+        Returns
+        -------
+        ComplexArray
+            Complex frequency response, shape ``(num_frequencies,)``,
+            normalized so the passband magnitude is unity.
+
+        """
+        f = np.asarray(frequencies_hz, dtype=float)
+        s = 1j * 2.0 * np.pi * f
+
+        w_lf = 2.0 * np.pi * self.lf_cutoff_hz
+        w_r = 2.0 * np.pi * self.resonance_hz
+
+        # Second-order high-pass: numerator s^2 cancels the w_lf^2 in
+        # denominator at high frequency, giving unity passband.
+        hp = (s * s) / (s * s + 2.0 * self.lf_damping * w_lf * s + w_lf * w_lf)
+
+        # Second-order low-pass: numerator w_r^2 normalises DC gain to unity.
+        lp = (w_r * w_r) / (s * s + 2.0 * self.resonance_damping * w_r * s + w_r * w_r)
+
+        return (hp * lp).astype(np.complex128)
+
+
 class Hydrophone(Base):
     """A single physical hydrophone element.
 
-    Pairs an electro-acoustic response model with a dynamic position state.
-    Position state is managed externally by :class:`LinearHydrophoneArray`
-    via repeated calls to its :meth:`~LinearHydrophoneArray.move` method.
+    Pairs an electro-acoustic response model with a dynamic position state and an optional
+    collection of self-noise sources.  Position state is managed externally by
+    :class:`LinearHydrophoneArray` via repeated calls to its :meth:`~LinearHydrophoneArray.move`
+    method, which also sets :attr:`streamwise_position_m` when the array's leading-edge offset is
+    configured.
 
     Parameters
     ----------
     response : HydrophoneResponse
         Electro-acoustic transducer model for this element.
+    noise_sources : list of SensorNoiseSpectrum, optional
+        Self-noise models for this element.  Multiple sources are combined incoherently (summed as
+        power) via :meth:`noise_psd`. Defaults to an empty list.
+    streamwise_position_m : float, optional
+        Distance from the boundary layer origin (typically the leading edge of the array tube or
+        host hull) to this element along the flow direction, in m.  Required by flow-type noise
+        sources such as :class:`~bluepebble.sensor.noise.GoodyFlowNoiseSpectrum`. Defaults to
+        ``None``; :class:`LinearHydrophoneArray` will populate this value automatically when
+        configured with an ``array_leading_edge_offset_m``.
 
     Notes
     -----
-    Each ``Hydrophone`` instance must be a distinct object.  Sharing one
-    instance across multiple elements in an array will cause all elements
-    to accumulate states on the same list.
+    Each ``Hydrophone`` instance must be a distinct object. Sharing one instance across multiple
+    elements in an array will cause all elements to accumulate states on the same list.
 
     """
 
     response: HydrophoneResponse = Property(doc="Electro-acoustic transducer model.")
+    noise_sources: list[SensorNoiseSpectrum] | None = Property(
+        default=None,
+        doc=(
+            "Self-noise models for this element.  Multiple sources combine "
+            "incoherently via noise_psd().  Defaults to no sources."
+        ),
+    )
+    streamwise_position_m: float | None = Property(
+        default=None,
+        doc=(
+            "Distance from the boundary layer origin to this element along "
+            "the flow direction in m.  Required by flow-type noise sources; "
+            "normally set by LinearHydrophoneArray from its "
+            "array_leading_edge_offset_m."
+        ),
+    )
 
     def __init__(self, *args: object, **kwargs: object) -> None:
         """Initialise the hydrophone with an empty state history.
@@ -542,3 +701,46 @@ class Hydrophone(Base):
 
         """
         return self.states[-1] if self.states else None
+
+    def noise_psd(
+        self,
+        frequencies_hz: ArrayLike,
+        platform_state: State,
+        domain: NoiseDomain,
+    ) -> FloatArray:
+        """Sum one-sided self-noise PSDs across sources matching ``domain``.
+
+        Noise sources combine incoherently: their one-sided PSDs add as power. Sources with a
+        different :attr:`~SensorNoiseSpectrum.domain` are skipped, allowing the simulator to inject
+        pressure-domain noise before the hydrophone transfer function and voltage-domain noise
+        after it via two separate calls.
+
+        Parameters
+        ----------
+        frequencies_hz : ArrayLike
+            Frequencies in Hz at which to evaluate the combined PSD.
+        platform_state : stonesoup.types.state.State
+            Platform state at the evaluation time, forwarded to each source.
+        domain : {"pressure", "voltage"}
+            Select which noise sources contribute to this sum.
+
+        Returns
+        -------
+        FloatArray
+            One-sided combined PSD, shape ``(num_frequencies,)``. Zeros when no sources match
+            ``domain`` (including the case where :attr:`noise_sources` is ``None`` or empty).
+
+        """
+        frequencies = np.abs(np.asarray(frequencies_hz, dtype=float))
+        total = np.zeros_like(frequencies)
+        if not self.noise_sources:
+            return total
+        for source in self.noise_sources:
+            if source.domain != domain:
+                continue
+            total = total + source.psd(
+                frequencies,
+                platform_state,
+                streamwise_position_m=self.streamwise_position_m,
+            )
+        return total

@@ -216,8 +216,8 @@ class Linear(SoundSpeedProfile):
 class Arctan(SoundSpeedProfile):
     """Arctan sound speed profile model.
 
-    This model describes the sound speed profile using an arctangent function,
-    which can represent a smooth transition in sound speed with depth.
+    This model describes the sound speed profile using an arctangent function, which can represent
+    a smooth transition in sound speed with depth.
 
     Attributes
     ----------
@@ -271,6 +271,11 @@ class Munk(SoundSpeedProfile):
     surface_speed : float
         The speed of sound at the surface in m/s. Defaults to 1500.0 m/s.
 
+    References
+    ----------
+    [1] Munk, W. (1981). "Sound Channel in an Exponentially Stratified Ocean."
+        Journal of the Acoustical Society of America 70(3): 655-667.
+
     """
 
     surface_speed: float = Property(default=1500.0, doc="Speed of sound at the surface in m/s")
@@ -304,6 +309,12 @@ class Mackenzie(SoundSpeedProfile):
     This model calculates the sound speed using the nine-term Mackenzie equation, which is an
     empirical formula based on temperature, salinity, and depth. This implementation uses internal
     models for temperature and salinity as a function of depth.
+
+    References
+    ----------
+    [1] Mackenzie, K. V. (1981). "Nine-term Equation for Sound Speed in the Oceans."
+        Journal of the Acoustical Society of America 70(3): 807-812.
+
     """
 
     def calculate(self, depth: DepthInput) -> SpeedOutput:

@@ -45,6 +45,36 @@ class LinearHydrophoneArray(Base):
         default=0,
         doc="Index of the element used as the array phase reference.",
     )
+    array_leading_edge_offset_m: float | None = Property(
+        default=None,
+        doc=(
+            "Streamwise distance in metres from the array's effective boundary "
+            "layer origin (typically the nose of the streamer tube) to element "
+            "0.  When set, the array populates each element's "
+            "streamwise_position_m as "
+            "``array_leading_edge_offset_m + i * element_spacing_m``, which "
+            "flow-noise models consume.  Defaults to ``None`` (no streamwise "
+            "positions assigned), appropriate when no flow-type noise is modelled."
+        ),
+    )
+
+    def __init__(self, *args: object, **kwargs: object) -> None:
+        """Initialise the array and, if configured, set element streamwise offsets.
+
+        Parameters
+        ----------
+        *args : object
+            Positional arguments forwarded to ``Base``.
+        **kwargs : object
+            Keyword arguments forwarded to ``Base``.
+
+        """
+        super().__init__(*args, **kwargs)
+        if self.array_leading_edge_offset_m is not None:
+            for i, element in enumerate(self.elements):
+                element.streamwise_position_m = (
+                    self.array_leading_edge_offset_m + i * self.element_spacing_m
+                )
 
     @property
     def num_elements(self) -> int:

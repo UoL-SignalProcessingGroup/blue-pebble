@@ -2,15 +2,17 @@
 
 from .array import LinearHydrophoneArray
 from .hydrophone import (
+    CascadedFirstOrderBandPassResponse,
     FirstOrderHighPassResponse,
     FirstOrderLowPassResponse,
     FlatFrequencyResponse,
+    FourthOrderResonantResponse,
     FrequencyResponse,
     Hydrophone,
     HydrophoneResponse,
-    SecondOrderBandPassResponse,
     TabulatedFrequencyResponse,
 )
+from .noise import GoodyFlowNoiseSpectrum, SensorNoiseSpectrum
 
 __all__ = [
     "FrequencyResponse",
@@ -18,8 +20,11 @@ __all__ = [
     "TabulatedFrequencyResponse",
     "FirstOrderHighPassResponse",
     "FirstOrderLowPassResponse",
-    "SecondOrderBandPassResponse",
+    "CascadedFirstOrderBandPassResponse",
     "HydrophoneResponse",
     "Hydrophone",
     "LinearHydrophoneArray",
+    "SensorNoiseSpectrum",
+    "GoodyFlowNoiseSpectrum",
+    "FourthOrderResonantResponse",
 ]
