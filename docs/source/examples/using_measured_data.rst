@@ -1,12 +1,16 @@
 .. _using_measured_data:
 
-Using Measured Environmental Data
-==================================
+Using GEBCO and Copernicus Environmental Data
+=============================================
 
-This example runs one scenario using measured environmental inputs:
+This example runs one scenario in the environment of a real area south of the Faroe Islands,
+built from oceanographic datasets:
 
 - GEBCO bathymetry (seafloor)
-- Copernicus temperature/salinity converted to sound speed via Leroy's equation
+- Copernicus temperature/salinity converted to sound speed via the NPL equation
+
+Only the environment comes from data. The target signals, ambient noise and array output are
+simulated, as in the other examples.
 
 It demonstrates how to wire real geophysical datasets into the Blue Pebble pipeline,
 replacing the analytical models used in the other examples with data-driven alternatives
@@ -15,8 +19,8 @@ for bathymetry and sound speed profile.
 .. note::
 
    This example requires external data files (GEBCO bathymetry and Copernicus ocean
-   reanalysis) that are not bundled with the repository.  The figures below were
-   pre-generated from a local run with the measured data.  To regenerate them, run
+   analysis) that are not bundled with the repository.  The figures below were
+   pre-generated from a local run with the data files.  To regenerate them, run
    ``docs/scripts/generate_using_measured_data_figs.py`` with the data files present.
 
    Data can be obtained from:

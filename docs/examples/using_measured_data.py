@@ -1,18 +1,22 @@
 """
-=================================
-Using Measured Environmental Data
-=================================
+=============================================
+Using GEBCO and Copernicus Environmental Data
+=============================================
 
-This example runs one scenario using measured environmental inputs:
+This example runs one scenario in the environment of a real area south of the Faroe Islands,
+built from oceanographic datasets:
 
 - GEBCO bathymetry (seafloor)
-- Copernicus temperature/salinity converted to sound speed via Leroy's equation
+- Copernicus temperature/salinity converted to sound speed via the NPL equation
+
+Only the environment comes from data. The target signals, ambient noise and array output are
+simulated, as in the other examples.
 
 .. note::
 
    This example requires external data files (GEBCO bathymetry and Copernicus ocean
-   reanalysis) that are not bundled with the repository.  The figures below are
-   pre-generated from a local run with the measured data.  To regenerate them, run
+   analysis) that are not bundled with the repository.  The figures below are
+   pre-generated from a local run with the data files.  To regenerate them, run
    ``docs/scripts/generate_using_measured_data_figs.py`` with the data files present.
 """  # noqa: D205, D212, D400, D415
 
@@ -40,7 +44,7 @@ from bluepebble.detector import (
     PassiveSonarDetector,
     beamformed_scans_from_sensor_data,
 )
-from bluepebble.models.environment import GEBCOBathymetry, LeroyCopernicusSoundSpeedProfile
+from bluepebble.models.environment import NPL, CopernicusSoundSpeedProfile, GEBCOBathymetry
 from bluepebble.models.propagation import rtrsAcousticPropagationModel
 from bluepebble.platform import TowedArrayPlatform
 from bluepebble.plotter import (
@@ -78,11 +82,11 @@ num_steps = int(sim_length_s / sim_rate_s)
 total_duration_s = num_steps * time_interval.total_seconds()
 
 # %%
-# Measured Data Path Resolution
-# -----------------------------
+# Data Path Resolution
+# --------------------
 #
 # The NetCDF file paths are resolved here. The bathymetry is from GEBCO 2024 for a region south of
-# the Faroe Islands; the temperature and salinity reanalysis are from the Copernicus Marine
+# the Faroe Islands; the temperature and salinity analysis are from the Copernicus Marine
 # Service for the same region and date.
 #
 # Files can be downloaded from:
@@ -204,9 +208,9 @@ for i in range(1, num_steps):
 # ---------------------------------
 #
 # Target kinematics and source metadata are generated here, along with bearing truth
-# sequences (bearings from the array) used for BTR overlays. The measured bathymetry and
-# sound speed profile are also constructed at the end of this section - they are needed for
-# the world overview figure and are reused by the propagation model that follows.
+# sequences (bearings from the array) used for BTR overlays. The GEBCO bathymetry and
+# Copernicus sound speed profile are also constructed at the end of this section - they are
+# needed for the world overview figure and are reused by the propagation model that follows.
 
 target_start_vectors = [
     np.array([-15000, 10.0, 20000, 10, -5.0, 0.0]),
@@ -281,9 +285,10 @@ bathymetry = GEBCOBathymetry(
     resolution=500.0,
 )
 
-ssp = LeroyCopernicusSoundSpeedProfile(
+ssp = CopernicusSoundSpeedProfile(
     temperature_file_path=str(cop_temp_file),
     salinity_file_path=str(cop_sal_file),
+    equation_cls=NPL,
     reference_lat_deg=bathymetry.reference_lat_deg,
     reference_lon_deg=bathymetry.reference_lon_deg,
 )
@@ -302,7 +307,7 @@ fig_world = plot_world(
 
 # %%
 # .. image:: ../_static/measured_data_figs/using_measured_data_world.png
-#    :alt: Platform and target trajectories overlaid on measured GEBCO bathymetry
+#    :alt: Platform and target trajectories overlaid on GEBCO bathymetry
 
 # %%
 # Bathymetry and Sound Speed Viewer
@@ -336,7 +341,7 @@ else:
 # Propagation Model
 # -----------------
 #
-# RTRS ray-tracing is used because it natively accepts the measured bathymetry and
+# RTRS ray-tracing is used because it natively accepts the gridded bathymetry and
 # sound speed profile objects built above, supporting range-varying environments
 # without approximation.
 
@@ -469,9 +474,9 @@ cfar_detector = CACFARDetector(
 # recorded beforehand with the same array, beamformer, steering and scan length. Here it comes
 # from the same platform with no ground_truth_paths, over the first 120 scans only, with noise
 # drawn independently of the scenario's. The simulator adds ambient noise at the sensors
-# without propagating it, so the measured bathymetry and sound-speed profile do not change
-# it; a real survey would be specific to the area. The calibration needs about 20,000 cells at
-# its defaults, which is 112 scans of 180 beams.
+# without propagating it, so the GEBCO bathymetry and Copernicus sound-speed profile do not
+# change it; a real survey would be specific to the area. The calibration needs about 20,000
+# cells at its defaults, which is 112 scans of 180 beams.
 from itertools import islice
 
 num_survey_scans = 120
@@ -516,24 +521,19 @@ detections = [d for _, detection_set in all_detections for d in detection_set]
 print(f"Total no. of detections: {len(detections)}")
 
 # %%
-# Results: Measured Environment Scenario
-# --------------------------------------
+# Results
+# -------
 #
 # **What**:
-# This figure presents results from a measured environment. The left panel shows the recorded
-# bearing-time SNR, while the right panel shows the extracted detections overlaid on the
-# ground-truth target tracks. Unlike a synthetic scenario, the data contains irregular background
-# structure, persistent interference, and scattered detections in addition to the target
-# signatures, reflecting the complexity of real measurements.
+# The left panel shows the simulated bearing-time SNR, and the right panel the detections
+# overlaid on the ground-truth target bearings.
 #
 # **Why**:
-# This is important because it demonstrates algorithm performance under realistic operating
-# conditions rather than in an idealised simulated scene. The figure shows not only whether the
-# targets can be observed, but also how well they can be distinguished from genuine clutter and
-# nuisance returns present in measured data. Detections that cluster near a dashed truth line
-# indicate successful target observation, whereas detections scattered away from the truth tracks
-# are more likely to represent clutter, false alarms, multipath effects, or other environmental
-# interference.
+# The target signals propagate through the area's range-dependent bathymetry and sound speed,
+# so their received levels and multipath depend on this environment rather than an idealised
+# one. Detections that cluster near a dashed truth line are target detections; those away from
+# the truth tracks are false alarms from the ambient noise, or the targets' own sidelobes and
+# multipath.
 
 fig_results = make_subplots(
     rows=1,
@@ -576,7 +576,7 @@ apply_shared_colourscale(
 
 fig_results.update_yaxes(title_text="", showticklabels=False, row=1, col=2)
 fig_results.update_layout(
-    title="Results: Measured Environment Scenario",
+    title="Results",
     template="plotly_white",
     autosize=True,
     width=None,
@@ -587,7 +587,7 @@ fig_results.update_layout(
 
 # %%
 # .. image:: ../_static/measured_data_figs/using_measured_data_results.png
-#    :alt: SNR map and detections for the measured environment scenario
+#    :alt: SNR map and detections for the GEBCO and Copernicus scenario
 
 # %%
 # Acknowledgement
