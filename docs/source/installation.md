@@ -21,7 +21,7 @@ python3 -m pip install -e ".[dev]"
 
 ## Documentation and examples
 
-If you are working with the published notebooks or building the documentation locally, install the docs and examples extras:
+If you are running the tutorials and examples or building the documentation locally, install the docs and examples extras:
 
 ```bash
 python3 -m pip install -e ".[docs,examples]"

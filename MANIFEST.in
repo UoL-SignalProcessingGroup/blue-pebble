@@ -4,3 +4,4 @@
 # all, so they inflate the sdist for no one's benefit. The example sources stay.
 prune docs/source/_static/acoustic_source_figs
 prune docs/source/_static/measured_data_figs
+prune docs/source/_static/thumbnails

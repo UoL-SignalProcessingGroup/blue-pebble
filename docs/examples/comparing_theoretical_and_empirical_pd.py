@@ -19,6 +19,7 @@ assumptions, and with the noise and signal statistics measured from the simulate
 
 from datetime import datetime, timedelta
 
+# sphinx_gallery_thumbnail_path = "_static/thumbnails/comparing_theoretical_and_empirical_pd.png"
 import numpy as np
 import plotly.graph_objects as go
 from scipy.stats import binomtest

@@ -20,6 +20,8 @@ geometry rather than to a different signal-processing chain.
 #
 # All dependencies are consolidated here for convenience.
 from copy import deepcopy
+
+# sphinx_gallery_thumbnail_path = "_static/thumbnails/comparing_bathymetry.png"
 from datetime import datetime, timedelta
 from itertools import islice
 

@@ -121,6 +121,8 @@ sphinx_gallery_conf = {
     # PlotlyScraper.  Without this, a go.Figure that is the last expression in
     # a cell is captured twice (once by PlotlyScraper, once by capture_repr).
     "capture_repr": (),
+    # Strip "# sphinx_gallery_thumbnail_path = ..." and similar lines from the rendered code.
+    "remove_config_comments": True,
     # Resolve bluepebble class links in code blocks against the local build.
     # Without this entry, Sphinx-Gallery falls back to intersphinx and links
     # bluepebble classes to Stone Soup's Base class instead.

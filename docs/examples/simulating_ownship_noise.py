@@ -20,6 +20,8 @@ present in ambient-only simulations.
 # All dependencies are consolidated here for convenience.
 
 from datetime import datetime, timedelta
+
+# sphinx_gallery_thumbnail_path = "_static/thumbnails/simulating_ownship_noise.png"
 from itertools import islice
 
 import numpy as np
