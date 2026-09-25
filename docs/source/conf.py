@@ -77,6 +77,7 @@ napoleon_custom_sections = [
     "Sidelobe false alarms",
     "Peak consolidation",
     "Assumptions",
+    "Choosing an equation",
     "Relation to sonar noise normalisation",
 ]
 

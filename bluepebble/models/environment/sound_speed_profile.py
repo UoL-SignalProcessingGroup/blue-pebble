@@ -1,22 +1,7 @@
 """Defines a collection of sound speed profile (SSP) models.
 
-Choosing between the empirical equations
----------------------------------------
-UNESCO (Chen-Millero) and Del Grosso are independent fits to different sets of experiments, and
-each carries its own uncertainty. UNESCO is the International Standard, but its accuracy and
-range of applicability relative to Del Grosso's equation remain debated, and some researchers
-prefer Del Grosso, particularly for calculations inside its own domain of validity. The two
-differ by a few tenths of a m/s in the open ocean, growing with pressure.
-
-There is therefore no universally correct choice here: it depends on the accuracy and precision
-acceptable for the application. Mackenzie, Coppens and NPL are simplified fits rather than
-independent measurement campaigns, so agreement between them and the equations they were fitted
-against is partly by construction.
-
-For the debate, see Dushaw et al. (1993), Meinen and Watts (1997), Millero and Xu Li (1994),
-Spiesberger and Metzger (1991a, 1991b) and Spiesberger (1993). Pike and Beiboer (1993), for the
-Hydrographic Society, summarise the main algorithms with fuller advice on domains of validity
-and on depth-to-pressure conversion than is reproduced here.
+The empirical equations share :class:`EmpiricalSoundSpeedProfile`, whose docstring covers
+choosing between them.
 """
 
 import warnings
@@ -116,7 +101,7 @@ class EquationProfile(Protocol):
     ``_valid_ranges`` records the published range of validity as ``{input: (low, high)}`` in the
     units ``_equation`` accepts, and may cover only some inputs (NPL, for instance, constrains
     salinity alone). It documents where the fit was established, not where it is accurate; see
-    :meth:`SoundSpeedProfile._check_ranges`.
+    :meth:`EmpiricalSoundSpeedProfile._check_ranges`.
     """
 
     _required_inputs: ClassVar[tuple[str, ...]]
@@ -126,103 +111,6 @@ class EquationProfile(Protocol):
 
 class SoundSpeedProfile(ABC, Base):
     """Abstract base class for sound speed profile models."""
-
-    temperature_profile: ProfileCallable | None = Property(
-        default=None,
-        doc="Optional callable mapping positive depth (m) to measure or forecast temperature "
-        "(degrees °C). If not provided, falls back to an idealised internal approximation.",
-    )
-    salinity_profile: ProfileCallable | None = Property(
-        default=None,
-        doc="Optional callable mapping positive depth (m) to measure or forecast salinity "
-        "(practical salinity units). If not provided, falls back to an idealised internal "
-        "approximation.",
-    )
-    latitude: float = Property(
-        default=45.0,
-        doc="Latitude in degrees. Used by the depth-to-pressure conversion, and by the NPL "
-        "equation's depth-latitude term. Defaults to 45.0, at which the gravity scaling and the "
-        "NPL term both vanish.",
-    )
-    pressure_region: str = Property(
-        default="common",
-        doc="Which Leroy and Parthiot (1998) Table II correction to apply when converting depth "
-        "to pressure; a key of PRESSURE_REGION_CORRECTIONS. Defaults to 'common', the open "
-        "oceans between 60N and 40S. Use a named sea such as 'baltic' or 'mediterranean' for a "
-        "closed basin, or 'standard' for the uncorrected standard ocean.",
-    )
-    pressure_profile: ProfileCallable | None = Property(
-        default=None,
-        doc="Optional callable mapping positive depth (m) to measured pressure (bar). If not "
-        "provided, falls back to converting depth with Leroy and Parthiot (1998) at `latitude`, "
-        "corrected for `pressure_region`.",
-    )
-    validate_ranges: bool = Property(
-        default=True,
-        doc="Whether to emit a SoundSpeedRangeWarning when an input falls outside the "
-        "equation's published range of validity. Only affects the empirical equation models; "
-        "set False to silence the check for deliberate extrapolation.",
-    )
-
-    def _check_ranges(self, equation_cls: type[EquationProfile], **values: ArrayLike) -> None:
-        """Warn once per call if any input falls outside the equation's published range.
-
-        The check is deliberately coarse: it reports the observed extremes of each input against
-        the range over which the equation was fitted, aggregated into a single warning per call
-        so that array and grid evaluations cannot produce a warning per element. Non-finite
-        values are ignored, so masked Copernicus cells do not count as violations.
-
-        Staying inside these ranges is necessary but not sufficient for accuracy. The equations
-        drift apart continuously with depth, by of order 1 m/s at 4000 m, well inside every
-        stated range, so absence of a warning is not a guarantee of agreement.
-
-        Parameters
-        ----------
-        equation_cls : type[EquationProfile]
-            Class whose ``_valid_ranges`` are applied. Equations that declare no ranges are
-            skipped.
-        **values : ArrayLike
-            Input values by keyword name, in the units ``_equation`` accepts.
-
-        """
-        if not self.validate_ranges:
-            return
-
-        ranges = getattr(equation_cls, "_valid_ranges", None)
-        if not ranges:
-            return
-
-        breaches = []
-        for name, value in values.items():
-            bounds = ranges.get(name)
-            if bounds is None:
-                continue
-            low, high = bounds
-            array = np.asarray(value, dtype=float)
-            finite = array[np.isfinite(array)]
-            if finite.size == 0:
-                continue
-            observed_min, observed_max = float(finite.min()), float(finite.max())
-            if observed_min < low or observed_max > high:
-                unit = EQUATION_INPUT_UNITS.get(name, "")
-                # Ranges may be one-sided (NPL bounds salinity only from above).
-                if np.isneginf(low):
-                    limit = f"valid up to {high:g}"
-                elif np.isposinf(high):
-                    limit = f"valid from {low:g}"
-                else:
-                    limit = f"valid {low:g} to {high:g}"
-                breaches.append(f"{name} {observed_min:g} to {observed_max:g} {unit} ({limit})")
-
-        if breaches:
-            name = getattr(equation_cls, "__name__", repr(equation_cls))
-            warnings.warn(
-                f"{name} evaluated outside its published range of validity: "
-                f"{'; '.join(breaches)}. Results are extrapolated and may be inaccurate; "
-                f"set validate_ranges=False to silence this.",
-                SoundSpeedRangeWarning,
-                stacklevel=3,
-            )
 
     @abstractmethod
     def calculate(self, depth: DepthInput) -> SpeedOutput:
@@ -303,6 +191,203 @@ class SoundSpeedProfile(ABC, Base):
         c_grid_flat = c_grid_3d.flatten(order="C")
 
         return x_grid, y_grid, z_grid, c_grid_flat
+
+
+class EmpiricalSoundSpeedProfile(SoundSpeedProfile):
+    """Base class for models that evaluate an empirical sound speed equation.
+
+    Holds the inputs such an equation needs besides depth: temperature, salinity, latitude and
+    pressure, with range validation. The analytic profiles (``Constant``, ``Linear``,
+    ``Arctan``, ``Munk``) take none of these, so derive from ``SoundSpeedProfile`` directly.
+
+    Choosing an equation
+    --------------------
+    UNESCO (Chen-Millero) and Del Grosso are independent fits to different sets of experiments,
+    and each carries its own uncertainty. UNESCO is the international standard, but its accuracy
+    and range of applicability relative to Del Grosso's equation remain debated, and some
+    researchers prefer Del Grosso, particularly for calculations inside its own domain of
+    validity. The two differ by a few tenths of a m/s in the open ocean, growing with pressure.
+
+    There is therefore no universally correct choice here: it depends on the accuracy and
+    precision acceptable for the application. Mackenzie, Coppens and NPL are simplified fits
+    rather than independent measurement campaigns, so agreement between them and the equations
+    they were fitted against is partly by construction.
+
+    For the debate, see Dushaw et al. (1993), Meinen and Watts (1997), Millero and Li (1994),
+    Spiesberger and Metzger (1991a, 1991b) and Spiesberger (1993). Pike and Beiboer (1993), for
+    the Hydrographic Society, summarise the main algorithms with fuller advice on domains of
+    validity and on depth-to-pressure conversion than is reproduced here.
+
+    References
+    ----------
+    Dushaw, B. D., Worcester, P. F., Cornuelle, B. D. and Howe, B. M. (1993). On equations for
+    the speed of sound in seawater. Journal of the Acoustical Society of America, 93(1),
+    255-275.
+
+    Meinen, C. S. and Watts, D. R. (1997). Further evidence that the sound-speed algorithm of
+    Del Grosso is more accurate than that of Chen and Millero. Journal of the Acoustical Society
+    of America, 102(4), 2058-2062.
+
+    Millero, F. J. and Li, X. (1994). Comments on "On equations for the speed of sound in
+    seawater". Journal of the Acoustical Society of America, 95(5), 2757-2759.
+
+    Pike, J. M. and Beiboer, F. L. (1993). A comparison between algorithms for the speed of
+    sound in seawater. The Hydrographic Society, Special Publication No. 34.
+
+    Spiesberger, J. L. and Metzger, K. (1991a). New estimates of sound speed in water. Journal
+    of the Acoustical Society of America, 89(4), 1697-1700.
+
+    Spiesberger, J. L. and Metzger, K. (1991b). A new algorithm for sound speed in seawater.
+    Journal of the Acoustical Society of America, 89(6), 2677-2687.
+
+    Spiesberger, J. L. (1993). Is Del Grosso's sound-speed algorithm correct? Journal of the
+    Acoustical Society of America, 93(4), 2235-2237.
+
+    """
+
+    temperature_profile: ProfileCallable | None = Property(
+        default=None,
+        doc="Optional callable mapping positive depth (m) to measured or forecast in-situ "
+        "temperature (°C). Convert potential temperature, as Copernicus and many gridded "
+        "products supply, to in-situ first. If not provided, falls back to an idealised "
+        "internal approximation.",
+    )
+    salinity_profile: ProfileCallable | None = Property(
+        default=None,
+        doc="Optional callable mapping positive depth (m) to measured or forecast salinity "
+        "(practical salinity units). If not provided, falls back to an idealised internal "
+        "approximation.",
+    )
+    latitude: float = Property(
+        default=45.0,
+        doc="Latitude in degrees. Used by the depth-to-pressure conversion, and by the NPL "
+        "equation's depth-latitude term. Defaults to 45.0, at which the gravity scaling and the "
+        "NPL term both vanish.",
+    )
+    pressure_region: str = Property(
+        default="common",
+        doc="Which Leroy and Parthiot (1998) Table II correction to apply when converting depth "
+        "to pressure; a key of PRESSURE_REGION_CORRECTIONS. Defaults to 'common', the open "
+        "oceans between 60N and 40S. Use a named sea such as 'baltic' or 'mediterranean' for a "
+        "closed basin, or 'standard' for the uncorrected standard ocean.",
+    )
+    pressure_profile: ProfileCallable | None = Property(
+        default=None,
+        doc="Optional callable mapping positive depth (m) to measured pressure (bar). If not "
+        "provided, falls back to converting depth with Leroy and Parthiot (1998) at `latitude`, "
+        "corrected for `pressure_region`.",
+    )
+    validate_ranges: bool = Property(
+        default=True,
+        doc="Whether to emit a SoundSpeedRangeWarning when an input falls outside the "
+        "equation's published range of validity. Only affects the empirical equation models; "
+        "set False to silence the check for deliberate extrapolation.",
+    )
+
+    # The inputs above that only some models use; validate_ranges applies to all of them.
+    _optional_inputs: ClassVar[tuple[str, ...]] = (
+        "temperature_profile",
+        "salinity_profile",
+        "latitude",
+        "pressure_region",
+        "pressure_profile",
+    )
+    # A supplied input the model ignores is a warning by default, so that one set of arguments
+    # can be passed to several equations when comparing them.
+    _reject_unused_inputs: ClassVar[bool] = False
+
+    def __init__(self, *args, **kwargs) -> None:
+        """Initialise, then flag any supplied input this model does not use."""
+        super().__init__(*args, **kwargs)
+        used = self._used_inputs()
+        unused = [
+            name
+            for name in self._optional_inputs
+            if name not in used and getattr(self, name) != getattr(type(self), name).default
+        ]
+        if not unused:
+            return
+        message = (
+            f"{type(self).__name__} does not use {', '.join(unused)}, so "
+            f"{'it has' if len(unused) == 1 else 'they have'} no effect."
+        )
+        if self._reject_unused_inputs:
+            raise TypeError(message)
+        warnings.warn(message, UserWarning, stacklevel=3)
+
+    def _used_inputs(self) -> frozenset[str]:
+        """Return the optional inputs this model reads, from its equation's ``_required_inputs``.
+
+        Temperature and salinity profiles are always read. Pressure inputs matter only to an
+        equation that takes pressure, and ``latitude`` to one that takes pressure or latitude.
+        """
+        required = set(getattr(self, "_required_inputs", ()))
+        used = {"temperature_profile", "salinity_profile"}
+        if "pressure" in required:
+            used |= {"latitude", "pressure_region", "pressure_profile"}
+        if "latitude" in required:
+            used.add("latitude")
+        return frozenset(used)
+
+    def _check_ranges(self, equation_cls: type[EquationProfile], **values: ArrayLike) -> None:
+        """Warn once per call if any input falls outside the equation's published range.
+
+        The check is deliberately coarse: it reports the observed extremes of each input against
+        the range over which the equation was fitted, aggregated into a single warning per call
+        so that array and grid evaluations cannot produce a warning per element. Non-finite
+        values are ignored, so masked Copernicus cells do not count as violations.
+
+        Staying inside these ranges is necessary but not sufficient for accuracy. The equations
+        drift apart continuously with depth, by of order 1 m/s at 4000 m, well inside every
+        stated range, so absence of a warning is not a guarantee of agreement.
+
+        Parameters
+        ----------
+        equation_cls : type[EquationProfile]
+            Class whose ``_valid_ranges`` are applied. Equations that declare no ranges are
+            skipped.
+        **values : ArrayLike
+            Input values by keyword name, in the units ``_equation`` accepts.
+
+        """
+        if not self.validate_ranges:
+            return
+
+        ranges = getattr(equation_cls, "_valid_ranges", None)
+        if not ranges:
+            return
+
+        breaches = []
+        for name, value in values.items():
+            bounds = ranges.get(name)
+            if bounds is None:
+                continue
+            low, high = bounds
+            array = np.asarray(value, dtype=float)
+            finite = array[np.isfinite(array)]
+            if finite.size == 0:
+                continue
+            observed_min, observed_max = float(finite.min()), float(finite.max())
+            if observed_min < low or observed_max > high:
+                unit = EQUATION_INPUT_UNITS.get(name, "")
+                # Ranges may be one-sided (NPL bounds salinity only from above).
+                if np.isneginf(low):
+                    limit = f"valid up to {high:g}"
+                elif np.isposinf(high):
+                    limit = f"valid from {low:g}"
+                else:
+                    limit = f"valid {low:g} to {high:g}"
+                breaches.append(f"{name} {observed_min:g} to {observed_max:g} {unit} ({limit})")
+
+        if breaches:
+            name = getattr(equation_cls, "__name__", repr(equation_cls))
+            warnings.warn(
+                f"{name} evaluated outside its published range of validity: "
+                f"{'; '.join(breaches)}. Results are extrapolated and may be inaccurate; "
+                f"set validate_ranges=False to silence this.",
+                SoundSpeedRangeWarning,
+                stacklevel=3,
+            )
 
     def _get_temperature(self, depth: DepthInput) -> SpeedOutput:
         """Return temperature at depth, using the supplied profile if given.
@@ -605,16 +690,27 @@ class Munk(SoundSpeedProfile):
     """Munk sound speed profile model.
 
     This model describes the sound speed profile using an analytical equation proposed by Walter
-    Munk. It is characterised by a deep sound channel axis and is widely used in ocean acoustics.
+    Munk (1974). It is characterised by a deep sound channel axis and is widely used in ocean
+    acoustics.
 
     Attributes
     ----------
     surface_speed : float
-        The speed of sound at the surface in m/s. Defaults to 1500.0 m/s.
+        Sound speed at the channel axis (1300 m), the profile's minimum, in m/s. Despite the
+        name, this is not the surface speed, which is about 3 per cent higher.
+
+    References
+    ----------
+    Munk, W. H. (1974). Sound channel in an exponentially stratified ocean, with application to
+    SOFAR. Journal of the Acoustical Society of America, 55(2), 220-226.
 
     """
 
-    surface_speed: float = Property(default=1500.0, doc="Speed of sound at the surface in m/s")
+    surface_speed: float = Property(
+        default=1500.0,
+        doc="Sound speed at the channel axis (1300 m), the profile's minimum, in m/s. Despite "
+        "the name, not the surface speed.",
+    )
 
     def calculate(self, depth: DepthInput) -> SpeedOutput:
         """Calculate sound speed using the Munk equation.
@@ -639,16 +735,27 @@ class Munk(SoundSpeedProfile):
         return c
 
 
-class Mackenzie(SoundSpeedProfile):
+class Mackenzie(EmpiricalSoundSpeedProfile):
     """Mackenzie sound speed profile model.
 
-    This model calculates the sound speed using the nine-term Mackenzie equation, which is an
-    empirical formula based on temperature, salinity, and depth. This implementation uses
-    internal models for temperature and salinity as a function of depth unless
-    ``temperature_profile`` and ``salinity_profile`` are supplied.
+    Evaluates the nine-term equation of Mackenzie (1981)::
 
-    The equation is valid for temperatures of 2 to 30 degrees Celsius, salinities of 25 to 40
-    PSU, and depths of 0 to 8000 m.
+        c = 1448.96 + 4.591 T - 5.304e-2 T^2 + 2.374e-4 T^3 + 1.340 (S - 35)
+            + 1.630e-2 D + 1.675e-7 D^2 - 1.025e-2 T (S - 35) - 7.139e-13 T D^3
+
+    with c in m/s, T in degrees Celsius, S in PSU and D the depth in metres.
+    Temperature and salinity come from ``temperature_profile`` and ``salinity_profile`` when
+    supplied, and from idealised internal profiles otherwise.
+
+    Assumptions
+    -----------
+    - Temperature is in-situ, not potential.
+    - Inputs lie within the published range of validity: 2 to 30 degC, 25 to 40 PSU and 0 to
+      8000 m. Outside it the result is extrapolated, and ``SoundSpeedRangeWarning`` is raised.
+    - Depth enters directly, with no latitude or regional term, so variations in the
+      depth-pressure relation (see ``_calc_pressure``) are not represented.
+    - Temperature is on IPTS-68, the scale in use in 1981. ITS-90 temperatures, as modern data
+      supply, are lower by 0.024 per cent (0.0072 degC at 30 degC), under 0.02 m/s here.
 
     References
     ----------
@@ -726,18 +833,30 @@ class Mackenzie(SoundSpeedProfile):
         return c
 
 
-class Coppens(SoundSpeedProfile):
+class Coppens(EmpiricalSoundSpeedProfile):
     """Coppens sound speed profile model.
 
-    This model calculates the sound speed using the empirical equation of Coppens (1981), a
-    compact formula based on temperature, salinity, and depth. The original equation is written
-    in terms of ``T/10`` and depth in kilometres; ``_equation`` accepts degrees Celsius and
-    metres and rescales internally, so its signature matches the other equations here. This
-    implementation uses internal models for temperature and salinity as a function of depth
-    unless ``temperature_profile`` and ``salinity_profile`` are supplied.
+    Evaluates the equation of Coppens (1981), written in t = T/10 and depth D in kilometres::
 
-    The equation is valid for temperatures of 0 to 35 degrees Celsius, salinities of 0 to 45
-    PSU, and depths of 0 to 4000 m.
+        c(D, S, t) = c(0, S, t) + (16.23 + 0.253 t) D + (0.213 - 0.1 t) D^2
+                     + (0.016 + 0.0002 (S - 35)) (S - 35) t D
+        c(0, S, t) = 1449.05 + 45.7 t - 5.21 t^2 + 0.23 t^3
+                     + (1.333 - 0.126 t + 0.009 t^2) (S - 35)
+
+    with c in m/s, T in degrees Celsius and S in PSU. ``_equation`` takes degrees Celsius and
+    metres and rescales internally, so its signature matches the other equations here.
+    Temperature and salinity come from ``temperature_profile`` and ``salinity_profile`` when
+    supplied, and from idealised internal profiles otherwise.
+
+    Assumptions
+    -----------
+    - Temperature is in-situ, not potential.
+    - Inputs lie within the published range of validity: 0 to 35 degC, 0 to 45 PSU and 0 to
+      4000 m. Outside it the result is extrapolated, and ``SoundSpeedRangeWarning`` is raised.
+    - Depth enters directly, with no latitude or regional term, so variations in the
+      depth-pressure relation (see ``_calc_pressure``) are not represented.
+    - Temperature is on IPTS-68, the scale in use in 1981. ITS-90 temperatures, as modern data
+      supply, are lower by 0.024 per cent (0.0084 degC at 35 degC), under 0.02 m/s here.
 
     References
     ----------
@@ -819,23 +938,37 @@ class Coppens(SoundSpeedProfile):
         return c
 
 
-class UNESCO(SoundSpeedProfile):
+class UNESCO(EmpiricalSoundSpeedProfile):
     """UNESCO (Chen-Millero) sound speed profile model.
 
-    This model calculates the sound speed using the UNESCO algorithm of Chen and Millero (1977),
-    the standard international equation, which is expressed in terms of temperature, salinity
-    and pressure rather than depth. Pressure is taken from ``pressure_profile`` when supplied,
-    and otherwise converted from depth by the base class for ``latitude`` and
-    ``pressure_region``. This implementation uses internal models for temperature and salinity
-    as a function of depth unless ``temperature_profile`` and ``salinity_profile`` are supplied.
+    Evaluates the UNESCO algorithm of Chen and Millero (1977), the international standard,
+    which uses pressure rather than depth::
 
-    The equation is valid for temperatures of 0 to 40 degrees Celsius, salinities of 0 to 40
-    PSU, and pressures of 0 to 1000 bar.
+        c = C_w(T, P) + A(T, P) S + B(T, P) S^(3/2) + D(T, P) S^2
+
+    where C_w, A, B and D are polynomials in T and P with 42 coefficients in all (see
+    ``_equation``), T is in degrees Celsius, S in PSU and P in bar. The coefficients are Wong
+    and Zhu's (1995) refit for the 1990 International Temperature Scale (ITS-90), not Chen and
+    Millero's originals; the two agree to within 0.01 m/s. Pressure comes from
+    ``pressure_profile`` when supplied, and is otherwise converted from depth.
+    Temperature and salinity come from ``temperature_profile`` and ``salinity_profile`` when
+    supplied, and from idealised internal profiles otherwise.
+
+    Assumptions
+    -----------
+    - Temperature is in-situ, not potential, and on ITS-90.
+    - Inputs lie within the published range of validity: 0 to 40 degC, 0 to 40 PSU and 0 to
+      1000 bar. Outside it the result is extrapolated, and ``SoundSpeedRangeWarning`` is raised.
+    - Pressure is relative to atmospheric. When converted from depth, the ``latitude`` and
+      ``pressure_region`` correction suit the area; see ``_calc_pressure``.
 
     References
     ----------
     Chen, C.-T. and Millero, F. J. (1977). Speed of sound in seawater at high pressures. Journal
     of the Acoustical Society of America, 62(5), 1129-1135.
+
+    Wong, G. S. K. and Zhu, S. (1995). Speed of sound in seawater as a function of salinity,
+    temperature, and pressure. Journal of the Acoustical Society of America, 97(3), 1732-1736.
 
     """
 
@@ -856,7 +989,7 @@ class UNESCO(SoundSpeedProfile):
         Parameters
         ----------
         temp : ArrayLike
-            Temperature in degrees Celsius.
+            Temperature in degrees Celsius (ITS-90).
         salt : ArrayLike
             Salinity in PSU.
         pressure : ArrayLike
@@ -945,30 +1078,44 @@ class UNESCO(SoundSpeedProfile):
         return c
 
 
-class DelGrosso(SoundSpeedProfile):
+class DelGrosso(EmpiricalSoundSpeedProfile):
     """Del Grosso sound speed profile model.
 
-    This model calculates the sound speed using the equation of Del Grosso (1974), fitted to a
-    separate set of experiments from the UNESCO algorithm and over a narrower range of
-    conditions. Some researchers prefer it to UNESCO, particularly for calculations inside its
-    own domain of validity, but the relative accuracy of the two is a live question in the
-    literature rather than a settled one; see the module docstring. Del Grosso's coefficients
-    are defined for pressure in kg/cm^2; ``_equation`` accepts bar and converts internally, so
-    its signature matches UNESCO. Pressure is taken from ``pressure_profile`` when supplied, and
-    otherwise converted from depth by the base class. This implementation uses internal models
-    for temperature and salinity as a function of depth unless ``temperature_profile`` and
-    ``salinity_profile`` are supplied.
+    Evaluates the equation of Del Grosso (1974), which uses pressure rather than depth::
 
-    The equation is valid for temperatures of 0 to 30 degrees Celsius, salinities of 30 to 40
-    PSU, and pressures of 0 to 1000 kg/cm^2 (approximately 981 bar). It should be expected to
-    drift from the other models outside that range. Since the case for preferring it is tied to
-    its domain, ``SoundSpeedRangeWarning`` is worth heeding for this model in particular.
+        c = C_000 + dC_T(T) + dC_S(S) + dC_P(P) + dC_STP(S, T, P)
+
+    where the terms are polynomials with 19 coefficients in all (see ``_equation``), T is in
+    degrees Celsius, S in PSU and P in kg/cm^2. ``_equation`` takes bar and converts
+    internally, so its signature matches UNESCO. The coefficients are Wong and Zhu's (1995)
+    refit for ITS-90, not Del Grosso's originals. Pressure comes from ``pressure_profile`` when
+    supplied, and is otherwise converted from depth.
+    Temperature and salinity come from ``temperature_profile`` and ``salinity_profile`` when
+    supplied, and from idealised internal profiles otherwise.
+
+    Del Grosso fitted a separate set of experiments from the UNESCO algorithm, over a narrower
+    range of conditions. Some researchers prefer it to UNESCO inside that range, but the
+    relative accuracy of the two is a live question in the literature rather than a settled
+    one; see :class:`EmpiricalSoundSpeedProfile`.
+
+    Assumptions
+    -----------
+    - Temperature is in-situ, not potential, and on ITS-90.
+    - Inputs lie within the published range of validity: 0 to 30 degC, 30 to 40 PSU and 0 to
+      1000 kg/cm^2 (about 981 bar). Outside it the result is extrapolated, and
+      ``SoundSpeedRangeWarning`` is raised. Since the case for preferring this equation is
+      tied to its range, the warning matters more here than for the others.
+    - Pressure is relative to atmospheric. When converted from depth, the ``latitude`` and
+      ``pressure_region`` correction suit the area; see ``_calc_pressure``.
 
     References
     ----------
     Del Grosso, V. A. (1974). New equation for the speed of sound in natural waters (with
     comparisons to other equations). Journal of the Acoustical Society of America, 56(4),
     1084-1091.
+
+    Wong, G. S. K. and Zhu, S. (1995). Speed of sound in seawater as a function of salinity,
+    temperature, and pressure. Journal of the Acoustical Society of America, 97(3), 1732-1736.
 
     """
 
@@ -991,7 +1138,7 @@ class DelGrosso(SoundSpeedProfile):
         Parameters
         ----------
         temp : ArrayLike
-            Temperature in degrees Celsius.
+            Temperature in degrees Celsius (ITS-90).
         salt : ArrayLike
             Salinity in PSU.
         pressure : ArrayLike
@@ -1059,20 +1206,28 @@ class DelGrosso(SoundSpeedProfile):
         return c
 
 
-class NPL(SoundSpeedProfile):
+class NPL(EmpiricalSoundSpeedProfile):
     """NPL (Leroy-Robinson-Goldsmith) sound speed profile model.
 
-    This model calculates the sound speed using the equation of Leroy, Robinson and Goldsmith
-    (2008), designed for a single global fit across ordinary ocean conditions (salinity up to 42
-    ppt). Unlike the other empirical models here, it uses depth and latitude directly rather than
-    pressure. This implementation uses internal models for temperature and salinity as a function
-    of depth.
+    Evaluates the equation of Leroy, Robinson and Goldsmith (2008), designed as a single fit for
+    all oceans and seas, in depth and latitude::
 
-    Attributes
-    ----------
-    latitude : float
-        Latitude in degrees, used in the depth-latitude correction term. Defaults to 45.0, at
-        which this term vanishes.
+        c = 1402.5 + 5 T - 5.44e-2 T^2 + 2.1e-4 T^3 + 1.33 S - 1.23e-2 S T + 8.7e-5 S T^2
+            + 1.56e-2 Z + 2.55e-7 Z^2 - 7.3e-12 Z^3 + 1.2e-6 Z (phi - 45)
+            - 9.5e-13 T Z^3 + 3e-7 T^2 Z + 1.43e-5 S Z
+
+    with c in m/s, T in degrees Celsius, S in PSU, Z the depth in metres and phi the
+    ``latitude`` in degrees. The latitude term stands in for the latitude dependence of the
+    depth-pressure relation, and vanishes at 45 degrees.
+    Temperature and salinity come from ``temperature_profile`` and ``salinity_profile`` when
+    supplied, and from idealised internal profiles otherwise.
+
+    Assumptions
+    -----------
+    - Temperature is in-situ, not potential.
+    - Salinity does not exceed 42 PSU, the one limit the equation states. It is stated for any
+      ocean or sea, excluding abnormal hot spots of high temperature and salinity.
+    - ``latitude`` is a single value for the whole profile.
 
     References
     ----------
@@ -1092,8 +1247,7 @@ class NPL(SoundSpeedProfile):
         """Evaluate the Leroy-Robinson-Goldsmith polynomial.
 
         Pure function of already-positive depth, temperature, salinity, and latitude, with no
-        depth-sign handling or data lookup. Shared with LeroyCopernicusSoundSpeedProfile so the
-        two implementations cannot drift apart; do not duplicate this expression elsewhere.
+        depth-sign handling or data lookup.
 
         Parameters
         ----------
@@ -1164,7 +1318,7 @@ class NPL(SoundSpeedProfile):
         return c
 
 
-class CopernicusSoundSpeedProfile(SoundSpeedProfile):
+class CopernicusSoundSpeedProfile(EmpiricalSoundSpeedProfile):
     """SSP model built from Copernicus temperature/salinity, evaluated with a chosen equation.
 
     Notes
@@ -1174,8 +1328,11 @@ class CopernicusSoundSpeedProfile(SoundSpeedProfile):
     - ``get_3d_grid`` returns ``z_grid`` in RTRS convention (``+z`` downward).
     - Copernicus provides no pressure field; where the chosen equation requires pressure, it is
       obtained from ``pressure_profile`` if supplied, otherwise converted from depth for
-      ``latitude`` and ``pressure_region`` (see SoundSpeedProfile._calc_pressure). Both are
-      single values rather than taken from the grid, so set them to suit the extract.
+      ``latitude`` and ``pressure_region`` (see EmpiricalSoundSpeedProfile._calc_pressure).
+      Both are single values rather than taken from the grid, so set them to suit the extract.
+    - Copernicus ``thetao`` is potential temperature, but every equation here expects in-situ
+      temperature, so it is converted first (see ``_in_situ_temperature``). Used unconverted,
+      it would underestimate sound speed by a few tenths of a m/s at 1000 m, more deeper down.
 
     """
 
@@ -1200,6 +1357,71 @@ class CopernicusSoundSpeedProfile(SoundSpeedProfile):
         doc="Fallback fill value for columns with no finite Copernicus values.",
     )
 
+    # Temperature and salinity come from the files, so a supplied profile would be silently
+    # overridden; that is never what the caller meant, so it is an error rather than a warning.
+    _reject_unused_inputs: ClassVar[bool] = True
+
+    def _used_inputs(self) -> frozenset[str]:
+        """Return the optional inputs read: pressure and latitude, for the in-situ conversion."""
+        return frozenset({"latitude", "pressure_region", "pressure_profile"})
+
+    @staticmethod
+    def _in_situ_temperature(
+        theta_zyx: ArrayLike, sal_zyx: ArrayLike, pressure_bar: ArrayLike
+    ) -> FloatArray:
+        """Convert potential temperature to in-situ temperature with TEOS-10.
+
+        Moves each parcel adiabatically from the surface, where potential temperature is
+        defined, down to its in-situ pressure, via Conservative Temperature:
+        ``t = t_from_CT(S_R, CT_from_pt(S_R, theta), p)`` in the Gibbs SeaWater toolbox
+        (``gsw``). The EOS-80 equivalent (Fofonoff and Millard, 1983) agrees to within a few
+        millikelvin down to 6000 m.
+
+        Assumptions
+        -----------
+        - Reference Salinity ``S_R``, scaled from practical salinity, stands in for Absolute
+          Salinity. This skips the regional salinity-anomaly lookup, which changed the result by
+          0.03 mK at 4000 m in a North Atlantic check.
+        - The pressure is the one the equation itself is given, so both steps see one pressure.
+
+        Parameters
+        ----------
+        theta_zyx : ArrayLike
+            Potential temperature in degrees Celsius (ITS-90), referenced to the surface.
+        sal_zyx : ArrayLike
+            Practical salinity, broadcastable against theta_zyx.
+        pressure_bar : ArrayLike
+            Sea pressure in bar, broadcastable against theta_zyx.
+
+        Returns
+        -------
+        FloatArray
+            In-situ temperature in degrees Celsius (ITS-90). Non-finite inputs stay NaN.
+
+        References
+        ----------
+        IOC, SCOR and IAPSO (2010). The international thermodynamic equation of seawater - 2010:
+        Calculation and use of thermodynamic properties. Intergovernmental Oceanographic
+        Commission, Manuals and Guides No. 56, UNESCO.
+
+        """
+        try:
+            import gsw
+        except ImportError as exc:
+            raise ImportError(
+                "gsw is required for CopernicusSoundSpeedProfile. Install with `pip install gsw`."
+            ) from exc
+
+        reference_salinity = gsw.SR_from_SP(np.asarray(sal_zyx, dtype=float))
+        conservative_temperature = gsw.CT_from_pt(
+            reference_salinity, np.asarray(theta_zyx, dtype=float)
+        )
+        pressure_dbar = np.asarray(pressure_bar, dtype=float) * 10.0
+        return np.asarray(
+            gsw.t_from_CT(reference_salinity, conservative_temperature, pressure_dbar),
+            dtype=float,
+        )
+
     def _evaluate_equation(
         self,
         z_m: ArrayLike,
@@ -1211,14 +1433,14 @@ class CopernicusSoundSpeedProfile(SoundSpeedProfile):
 
         Builds every quantity a supported equation might need (temp, salt, depth, pressure,
         latitude) at the correct broadcastable shape, then passes only the subset named in
-        equation_cls._required_inputs.
+        equation_cls._required_inputs. Temperature is converted from potential to in-situ first.
 
         Parameters
         ----------
         z_m : ArrayLike
             1D array of positive depths in meters.
         temp_zyx : ArrayLike
-            3D array of temperature, shape (depth, lat, lon).
+            3D array of potential temperature, as Copernicus ``thetao``, shape (depth, lat, lon).
         sal_zyx : ArrayLike
             3D array of salinity, matching temp_zyx.
         lat_deg : ArrayLike
@@ -1247,7 +1469,7 @@ class CopernicusSoundSpeedProfile(SoundSpeedProfile):
         pressure4 = self._get_pressure(depth4)
 
         available = {
-            "temp": np.asarray(temp_zyx, dtype=float),
+            "temp": self._in_situ_temperature(temp_zyx, sal_zyx, pressure4),
             "salt": np.asarray(sal_zyx, dtype=float),
             "depth": depth4,
             "pressure": pressure4,
@@ -1361,8 +1583,10 @@ class CopernicusSoundSpeedProfile(SoundSpeedProfile):
                 )
         self._is_loaded = True
 
-    def __post_init__(self) -> None:
-        """Attempt eager load; public methods also support lazy loading."""
+    def __init__(self, *args, **kwargs) -> None:
+        """Initialise, then load the Copernicus files so bad inputs fail at construction."""
+        # Stone Soup's Base never calls __post_init__, so loading here is what makes it eager.
+        super().__init__(*args, **kwargs)
         self._is_loaded = False
         self._load_data()
 
@@ -1568,25 +1792,51 @@ class CopernicusSoundSpeedProfile(SoundSpeedProfile):
 class LeroyCopernicusSoundSpeedProfile(CopernicusSoundSpeedProfile):
     """Deprecated alias for ``CopernicusSoundSpeedProfile(equation_cls=NPL)``.
 
-    Kept for backward compatibility, and equivalent in every respect to the class it aliases.
-    Prefer ``CopernicusSoundSpeedProfile`` directly, naming ``equation_cls`` explicitly. The
-    "Leroy" in the name refers to the NPL equation of Leroy, Robinson and Goldsmith (2008); see
-    :class:`NPL`.
+    Kept for backward compatibility, and equivalent to the class it aliases except that
+    positional arguments bind in v0.4.0's order: the two file paths, ``reference_lat_deg``,
+    ``reference_lon_deg``, then ``fill_speed_m_s``. Prefer ``CopernicusSoundSpeedProfile``
+    directly, naming ``equation_cls`` explicitly. The "Leroy" in the name refers to the NPL
+    equation of Leroy, Robinson and Goldsmith (2008); see :class:`NPL`.
 
-    .. deprecated::
-        Use ``CopernicusSoundSpeedProfile(equation_cls=NPL)`` instead. Instantiating this class
-        emits a ``DeprecationWarning``.
+    .. deprecated:: 0.5.0
+        Use ``CopernicusSoundSpeedProfile(equation_cls=NPL)`` instead; this alias will be
+        removed in 0.6.0. Instantiating it emits a ``DeprecationWarning``.
 
     """
 
-    equation_cls: type[EquationProfile] = Property(default=NPL, doc="Fixed to NPL.")
+    equation_cls: type[EquationProfile] = Property(
+        default=NPL,
+        doc="Which empirical equation class to evaluate. Defaults to NPL, the equation the "
+        "'Leroy' in this class's name refers to.",
+    )
+
+    # The inherited equation inputs now precede reference_lat_deg in the generated signature, so
+    # positional calls written against v0.4.0 would silently bind to the wrong properties.
+    _v040_positional: ClassVar[tuple[str, ...]] = (
+        "temperature_file_path",
+        "salinity_file_path",
+        "reference_lat_deg",
+        "reference_lon_deg",
+        "fill_speed_m_s",
+    )
 
     def __init__(self, *args, **kwargs) -> None:
-        """Warn that this alias is deprecated, then initialise as usual."""
+        """Warn that this alias is deprecated, then initialise with v0.4.0's argument order."""
         warnings.warn(
-            "LeroyCopernicusSoundSpeedProfile is deprecated; use "
+            "LeroyCopernicusSoundSpeedProfile is deprecated and will be removed in v0.6.0; use "
             "CopernicusSoundSpeedProfile(equation_cls=NPL) instead.",
             DeprecationWarning,
             stacklevel=2,
         )
-        super().__init__(*args, **kwargs)
+        if len(args) > len(self._v040_positional):
+            raise TypeError(
+                f"LeroyCopernicusSoundSpeedProfile takes at most {len(self._v040_positional)} "
+                f"positional arguments ({len(args)} given)."
+            )
+        for name, value in zip(self._v040_positional, args, strict=False):
+            if name in kwargs:
+                raise TypeError(
+                    f"LeroyCopernicusSoundSpeedProfile got multiple values for argument {name!r}."
+                )
+            kwargs[name] = value
+        super().__init__(**kwargs)

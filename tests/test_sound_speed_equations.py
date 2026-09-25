@@ -114,6 +114,47 @@ def test_unesco_matches_canonical_seawater_value(monkeypatch) -> None:
 
 
 @pytest.mark.parametrize(
+    ("class_name", "temp", "salt", "pressure_bar", "expected"),
+    [
+        ("UNESCO", 10.0, 35.0, 500.0, 1573.4190244),
+        ("UNESCO", 40.0, 40.0, 1000.0, 1732.0174842),
+        ("DelGrosso", 10.0, 35.0, 500.0, 1572.9948492),
+        ("DelGrosso", 25.0, 38.0, 900.0, 1686.5725136),
+    ],
+)
+def test_pressure_equations_match_npl_calculator_at_depth(
+    monkeypatch, class_name: str, temp: float, salt: float, pressure_bar: float, expected: float
+) -> None:
+    """UNESCO and Del Grosso match NPL's calculator at high pressure, where most terms act.
+
+    No worked examples for Wong and Zhu's ITS-90 coefficients were found in print, so these
+    values come from running the calculator code on NPL's "Speed of sound in sea water" page.
+    That is independent of this module's transcription and unit handling (the calculator takes
+    kPa and converts to bar and kg/cm^2 itself), though not of NPL's coefficient tables; its
+    UNESCO table matches Echoview's.
+    """
+    ssp = _load(monkeypatch, f"npl_calculator_{class_name.lower()}_{pressure_bar:g}")
+
+    equation_cls = getattr(ssp, class_name)
+
+    assert equation_cls._equation(temp, salt, pressure_bar) == pytest.approx(expected, abs=1e-6)
+
+
+def test_unesco_refit_reproduces_the_1977_check_value(monkeypatch) -> None:
+    """Wong and Zhu's refit stays within 0.01 m/s of the original equation's check value.
+
+    Fofonoff and Millard (1983) give c(S=40, T68=40 degC, P=1000 bar) = 1731.995 m/s for Chen and
+    Millero's 1977 coefficients. The ITS-90 refit is not exact: it differs from the original by
+    up to about 0.009 m/s across the range of validity, hence the tolerance.
+    """
+    ssp = _load(monkeypatch, "unesco_1977_check")
+
+    temp_its90 = 40.0 / 1.00024  # T68 = 1.00024 * T90
+
+    assert ssp.UNESCO._equation(temp_its90, 40.0, 1000.0) == pytest.approx(1731.995, abs=0.01)
+
+
+@pytest.mark.parametrize(
     ("class_name", "expected"),
     [("UNESCO", 1402.388), ("DelGrosso", 1402.392)],
 )
@@ -364,6 +405,72 @@ def test_copernicus_evaluates_each_equation(monkeypatch, tmp_path, class_name: s
     assert finite.max() < 1600.0
 
 
+def test_in_situ_temperature_inverts_potential_temperature(monkeypatch) -> None:
+    """Potential temperature made from known in-situ values must convert back to them."""
+    gsw = pytest.importorskip("gsw")
+    ssp = _load(monkeypatch, "in_situ_round_trip")
+
+    rng = np.random.default_rng(0)
+    practical_salinity = rng.uniform(30.0, 40.0, 200)
+    in_situ = rng.uniform(-1.5, 30.0, 200)
+    pressure_bar = rng.uniform(0.0, 600.0, 200)
+    # The usual direction, in-situ to potential, which gsw's function is named for.
+    theta = gsw.pt_from_t(gsw.SR_from_SP(practical_salinity), in_situ, pressure_bar * 10.0, 0.0)
+
+    converted = ssp.CopernicusSoundSpeedProfile._in_situ_temperature(
+        theta, practical_salinity, pressure_bar
+    )
+
+    np.testing.assert_allclose(converted, in_situ, atol=1e-10)
+
+
+def test_copernicus_converts_potential_temperature_before_evaluating(
+    monkeypatch, tmp_path
+) -> None:
+    """The conversion leaves the surface alone and raises sound speed at depth."""
+    pytest.importorskip("gsw")
+    ssp = _load(monkeypatch, "copernicus_in_situ")
+    temperature_path, salinity_path = _write_copernicus_pair(tmp_path, mask_column=False)
+    paths = {
+        "temperature_file_path": temperature_path,
+        "salinity_file_path": salinity_path,
+        "equation_cls": ssp.UNESCO,
+    }
+
+    converted = ssp.CopernicusSoundSpeedProfile(**paths)
+    converted._ensure_loaded()
+    monkeypatch.setattr(
+        ssp.CopernicusSoundSpeedProfile,
+        "_in_situ_temperature",
+        staticmethod(lambda theta, salinity, pressure: np.asarray(theta, dtype=float)),
+    )
+    unconverted = ssp.CopernicusSoundSpeedProfile(**paths)
+    unconverted._ensure_loaded()
+
+    difference = converted._c_zyx - unconverted._c_zyx
+    # Potential and in-situ temperature coincide at the surface (the fixture's first level).
+    np.testing.assert_allclose(difference[0], 0.0, atol=1e-9)
+    # At 2000 m in water near 3 degC, in-situ runs about 0.16 degC warm, or about 0.7 m/s.
+    assert np.all((difference[-1] > 0.3) & (difference[-1] < 1.5))
+
+
+def test_copernicus_loads_at_construction(tmp_path) -> None:
+    """A missing file should fail when the profile is built, not at its first use.
+
+    Needs the real Stone Soup: its Base never calls __post_init__, which the fake does, so only
+    the real one shows whether loading is actually eager.
+    """
+    from bluepebble.models.environment import CopernicusSoundSpeedProfile
+
+    temperature_path, _ = _write_copernicus_pair(tmp_path)
+
+    with pytest.raises(FileNotFoundError, match="salinity"):
+        CopernicusSoundSpeedProfile(
+            temperature_file_path=temperature_path,
+            salinity_file_path=str(tmp_path / "missing.nc"),
+        )
+
+
 def test_copernicus_preserves_land_mask(monkeypatch, tmp_path) -> None:
     """Masked Copernicus cells should stay NaN rather than being silently filled."""
     ssp = _load(monkeypatch, "copernicus_mask")
@@ -457,14 +564,12 @@ def test_copernicus_rejects_equation_class_without_contract(
     ssp = _load(monkeypatch, f"copernicus_reject_{class_name.lower()}")
     temperature_path, salinity_path = _write_copernicus_pair(tmp_path)
 
-    # Loading is eager or lazy depending on whether the base class runs __post_init__, so the
-    # error may surface from either construction or the explicit load.
     with pytest.raises(TypeError, match="does not satisfy the EquationProfile contract"):
         ssp.CopernicusSoundSpeedProfile(
             temperature_file_path=temperature_path,
             salinity_file_path=salinity_path,
             equation_cls=getattr(ssp, class_name),
-        )._ensure_loaded()
+        )
 
 
 def test_copernicus_rejects_unknown_required_input(monkeypatch, tmp_path) -> None:
@@ -484,7 +589,7 @@ def test_copernicus_rejects_unknown_required_input(monkeypatch, tmp_path) -> Non
             temperature_file_path=temperature_path,
             salinity_file_path=salinity_path,
             equation_cls=BadEquation,
-        )._ensure_loaded()
+        )
 
 
 # ---------------------------------------------------------------------------
@@ -496,9 +601,161 @@ def test_new_equations_are_publicly_exported() -> None:
     """The equation models should be reachable from the environment package API."""
     from bluepebble.models import environment
 
-    for name in (*EQUATION_CLASS_NAMES, "CopernicusSoundSpeedProfile"):
+    for name in (
+        *EQUATION_CLASS_NAMES,
+        "CopernicusSoundSpeedProfile",
+        "EmpiricalSoundSpeedProfile",
+    ):
         assert name in environment.__all__
         assert hasattr(environment, name)
+
+
+@pytest.mark.parametrize(
+    ("class_name", "args", "expected"),
+    [
+        ("Constant", (1480.0,), {"speed": 1480.0}),
+        ("Linear", (1490.0, 0.02), {"surface_speed": 1490.0, "gradient": 0.02}),
+        (
+            "Arctan",
+            (1490.0, 900.0, 0.01),
+            {"surface_speed": 1490.0, "mid_depth": 900.0, "steepness": 0.01},
+        ),
+        ("Munk", (1490.0,), {"surface_speed": 1490.0}),
+    ],
+)
+def test_analytic_profiles_keep_v040_positional_order(
+    class_name: str, args: tuple[float, ...], expected: dict[str, float]
+) -> None:
+    """The equation inputs must not shift the analytic profiles' positional arguments.
+
+    Needs the real Stone Soup: the fake doesn't generate a signature from the properties.
+    """
+    from bluepebble.models import environment
+
+    profile = getattr(environment, class_name)(*args)
+
+    for name, value in expected.items():
+        assert getattr(profile, name) == value
+
+
+def test_legacy_alias_binds_positional_arguments_in_v040_order(tmp_path) -> None:
+    """Positional calls written against v0.4.0 must bind to the same properties as before."""
+    from bluepebble.models.environment import LeroyCopernicusSoundSpeedProfile
+
+    temperature_path, salinity_path = _write_copernicus_pair(tmp_path)
+
+    with pytest.deprecated_call():
+        profile = LeroyCopernicusSoundSpeedProfile(
+            temperature_path, salinity_path, 61.0, -8.0, 1490.0
+        )
+
+    assert profile.reference_lat_deg == 61.0
+    assert profile.reference_lon_deg == -8.0
+    assert profile.fill_speed_m_s == 1490.0
+    assert profile.temperature_profile is None
+
+
+def test_legacy_alias_rejects_an_argument_given_twice(tmp_path) -> None:
+    """Mapping positional arguments by name must not let a keyword silently override one."""
+    from bluepebble.models.environment import LeroyCopernicusSoundSpeedProfile
+
+    temperature_path, salinity_path = _write_copernicus_pair(tmp_path)
+
+    with pytest.deprecated_call(), pytest.raises(TypeError, match="reference_lat_deg"):
+        LeroyCopernicusSoundSpeedProfile(
+            temperature_path, salinity_path, 61.0, reference_lat_deg=60.0
+        )
+
+
+# ---------------------------------------------------------------------------
+# Supplied inputs a model does not use
+# ---------------------------------------------------------------------------
+# These use the real Stone Soup: the warning's stacklevel counts the __init__ frame it generates
+# for each class, which the fake does not.
+
+_PRESSURE_INPUTS = {
+    "latitude": 60.0,
+    "pressure_region": "baltic",
+    "pressure_profile": lambda depth: np.asarray(depth, dtype=float) / 10.0,
+}
+
+
+@pytest.mark.parametrize(
+    ("class_name", "ignored"),
+    [
+        ("Mackenzie", ("latitude", "pressure_region", "pressure_profile")),
+        ("Coppens", ("latitude", "pressure_region", "pressure_profile")),
+        ("NPL", ("pressure_region", "pressure_profile")),
+        ("UNESCO", ()),
+        ("DelGrosso", ()),
+    ],
+)
+def test_equations_warn_about_pressure_inputs_they_ignore(
+    class_name: str, ignored: tuple[str, ...]
+) -> None:
+    """Each equation names exactly the supplied inputs it ignores, at the caller's line."""
+    from bluepebble.models import environment
+
+    with warnings.catch_warnings(record=True) as recorded:
+        warnings.simplefilter("always")
+        getattr(environment, class_name)(**_PRESSURE_INPUTS)
+
+    unused = [entry for entry in recorded if "does not use" in str(entry.message)]
+    if not ignored:
+        assert not unused
+        return
+    assert len(unused) == 1
+    message = str(unused[0].message)
+    for name in _PRESSURE_INPUTS:
+        assert (name in message) == (name in ignored)
+    assert unused[0].filename == __file__
+
+
+def test_equations_do_not_warn_at_their_defaults() -> None:
+    """Only a supplied value counts as use: defaults must never warn."""
+    from bluepebble.models import environment
+
+    with warnings.catch_warnings(record=True) as recorded:
+        warnings.simplefilter("always")
+        for class_name in EQUATION_CLASS_NAMES:
+            getattr(environment, class_name)()
+
+    assert not [entry for entry in recorded if "does not use" in str(entry.message)]
+
+
+@pytest.mark.parametrize("profile_name", ["temperature_profile", "salinity_profile"])
+def test_copernicus_rejects_temperature_and_salinity_profiles(tmp_path, profile_name) -> None:
+    """The files supply T and S, so a profile would be silently overridden; that is an error.
+
+    The paths do not exist, so the TypeError also shows the check runs before any loading.
+    """
+    from bluepebble.models.environment import CopernicusSoundSpeedProfile
+
+    with pytest.raises(TypeError, match=profile_name):
+        CopernicusSoundSpeedProfile(
+            temperature_file_path=str(tmp_path / "missing_temperature.nc"),
+            salinity_file_path=str(tmp_path / "missing_salinity.nc"),
+            **{profile_name: lambda depth: np.full_like(np.asarray(depth, dtype=float), 10.0)},
+        )
+
+
+def test_copernicus_uses_pressure_inputs_whatever_the_equation(tmp_path) -> None:
+    """The in-situ conversion needs pressure, so even a depth-only equation must not warn."""
+    from bluepebble.models.environment import CopernicusSoundSpeedProfile, Mackenzie
+
+    temperature_path, salinity_path = _write_copernicus_pair(tmp_path)
+
+    with warnings.catch_warnings(record=True) as recorded:
+        warnings.simplefilter("always")
+        CopernicusSoundSpeedProfile(
+            temperature_file_path=temperature_path,
+            salinity_file_path=salinity_path,
+            equation_cls=Mackenzie,
+            latitude=50.0,
+            pressure_region="north_eastern_atlantic",
+        )
+
+    assert not [entry for entry in recorded if "does not use" in str(entry.message)]
 
 
 # ---------------------------------------------------------------------------
@@ -656,7 +913,7 @@ def test_copernicus_grid_warns_once_and_ignores_masked_cells(monkeypatch, tmp_pa
 
     # The fixture's salinity sits near 34.8, inside Del Grosso's range, so force a breach with a
     # supplied pressure profile while leaving the masked column NaN. Construction is inside the
-    # block because loading is eager or lazy depending on whether the base runs __post_init__.
+    # block because it loads the files and evaluates the equation.
     with pytest.warns(ssp.SoundSpeedRangeWarning, match="pressure") as recorded:
         profile = ssp.CopernicusSoundSpeedProfile(
             temperature_file_path=temperature_path,
