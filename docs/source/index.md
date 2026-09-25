@@ -13,6 +13,8 @@ Designed as a plugin for [Stone Soup](https://stonesoup.rtfd.io/), Blue Pebble s
 
 > **Naming conventions:** The project is referred to as **Blue Pebble** throughout documentation. The repository and PyPI package use the hyphenated form **blue-pebble** (e.g., `pip install blue-pebble`). Within Python code, the package is imported as **bluepebble** (e.g., `import bluepebble`).
 
+New to Blue Pebble? Start with the {doc}`Getting Started tutorial <auto_tutorials/getting_started>`.
+
 ---
 
 ## Research Applications
@@ -47,15 +49,14 @@ This separation enables systematic experimentation across modelling assumptions 
 
 Implemented capabilities include:
 
-- Multi-body kinematic modelling for flexible towed arrays  
-- Analytical spreading models and external ray-tracing integration (e.g., rtrs)  
-- Configurable source signature synthesis  
-- Ambient, biological, and ownship noise modelling  
-- Multiple beamforming algorithms  
-- Detection algorithms with performance metrics  
-- Passive sonar simulation pipelines  
-- Native integration with Stone Soup tracking workflows  
-- Plotting utilities for bearings and Cartesian tracks  
+- Multi-body kinematic modelling for flexible towed arrays
+- Acoustic propagation, from analytical spreading laws to ray tracing with rtrs
+- Environments built from analytical profiles or measured bathymetry and sound-speed data
+- Source and noise synthesis, including biological, anthropogenic and ownship noise
+- Delay-and-sum and MVDR (Minimum Variance Distortionless Response) beamforming, single-band or multiband
+- CFAR (Constant False Alarm Rate) detection, calibrated from noise or with a fixed threshold, with performance metrics
+- Detections that feed straight into Stone Soup trackers
+- Plotting utilities for bearing-time records, world geometry and detector performance
 - Gallery-based tutorials and worked examples
 
 ```{toctree}
