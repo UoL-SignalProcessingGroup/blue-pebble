@@ -20,6 +20,7 @@ into a single set of detections for downstream tracking.
 
 from datetime import datetime, timedelta
 
+# sphinx_gallery_thumbnail_path = "_static/thumbnails/designing_narrowband_beamformers.png"
 import numpy as np
 from plotly.subplots import make_subplots
 from stonesoup.models.transition.linear import (

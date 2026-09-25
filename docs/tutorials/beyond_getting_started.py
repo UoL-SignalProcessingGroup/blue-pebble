@@ -24,6 +24,7 @@ Beyond Getting Started: Multiple Targets and Ambiguity
 # %%
 from datetime import datetime, timedelta
 
+# sphinx_gallery_thumbnail_path = "_static/thumbnails/beyond_getting_started.png"
 import numpy as np
 
 import bluepebble

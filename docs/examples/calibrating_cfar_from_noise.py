@@ -30,6 +30,8 @@ Three thresholds are compared for each beamformer domain and ambient spectrum:
 # -------
 
 import pickle
+
+# sphinx_gallery_thumbnail_path = "_static/thumbnails/calibrating_cfar_from_noise.png"
 import tempfile
 import time
 import warnings

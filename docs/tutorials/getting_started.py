@@ -38,6 +38,7 @@ Getting Started with Blue Pebble
 # %%
 from datetime import datetime, timedelta
 
+# sphinx_gallery_thumbnail_path = "_static/thumbnails/getting_started.png"
 import numpy as np
 
 import bluepebble
