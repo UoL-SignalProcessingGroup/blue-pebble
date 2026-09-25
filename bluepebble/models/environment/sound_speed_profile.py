@@ -642,18 +642,24 @@ class Linear(SoundSpeedProfile):
 class Arctan(SoundSpeedProfile):
     """Arctan sound speed profile model.
 
-    This model describes the sound speed profile using an arctangent function,
-    which can represent a smooth transition in sound speed with depth.
+    A simple smooth step in sound speed, starting from ``surface_speed`` at the surface and
+    centred on ``mid_depth``::
+
+        c = surface_speed + 50 (arctan(steepness (z - mid_depth)) - arctan(-steepness mid_depth))
+
+    with c in m/s and z the depth in metres. It is an idealised shape rather than a published
+    model. The speed rises through the step for positive ``steepness`` and falls for negative,
+    by less than 50 pi (about 157 m/s) in total, and the profile has no minimum, so it cannot
+    represent a sound channel.
 
     Attributes
     ----------
     surface_speed : float
-        The speed of sound at the surface in m/s. Defaults to 1500.0 m/s.
+        Sound speed at the surface, in m/s.
     mid_depth : float
-        The depth at which the sound speed transition occurs in meters. Defaults to 1000.0 m.
+        Depth of the centre of the transition, in meters.
     steepness : float
-        The steepness of the transition. Higher values result in a sharper transition.
-        Defaults to 0.005.
+        Steepness of the transition, in 1/m. Higher values give a sharper transition.
 
     """
 
@@ -680,8 +686,10 @@ class Arctan(SoundSpeedProfile):
         """
         # Convert negative z-coordinate to positive depth below surface
         depth_positive = abs(depth)
-        c = self.surface_speed + 50.0 * np.arctan(
-            self.steepness * (depth_positive - self.mid_depth)
+        # The second arctan offsets the step so the profile starts at surface_speed.
+        c = self.surface_speed + 50.0 * (
+            np.arctan(self.steepness * (depth_positive - self.mid_depth))
+            - np.arctan(-self.steepness * self.mid_depth)
         )
         return c
 
@@ -689,15 +697,18 @@ class Arctan(SoundSpeedProfile):
 class Munk(SoundSpeedProfile):
     """Munk sound speed profile model.
 
-    This model describes the sound speed profile using an analytical equation proposed by Walter
-    Munk (1974). It is characterised by a deep sound channel axis and is widely used in ocean
-    acoustics.
+    The canonical profile of Munk (1974), with a deep sound channel axis::
+
+        c = axis_speed (1 + eps (eta - 1 + exp(-eta))),  eta = 2 (z - z_1) / B
+
+    with c in m/s, z the depth in metres, the axis depth z_1 = 1300 m, the stratification scale
+    B = 1300 m and eps = 0.00737. The speed is lowest at the axis, and about 3 per cent higher
+    at the surface.
 
     Attributes
     ----------
-    surface_speed : float
-        Sound speed at the channel axis (1300 m), the profile's minimum, in m/s. Despite the
-        name, this is not the surface speed, which is about 3 per cent higher.
+    axis_speed : float
+        Sound speed at the channel axis (1300 m), the profile's minimum, in m/s.
 
     References
     ----------
@@ -706,11 +717,50 @@ class Munk(SoundSpeedProfile):
 
     """
 
-    surface_speed: float = Property(
+    axis_speed: float = Property(
         default=1500.0,
-        doc="Sound speed at the channel axis (1300 m), the profile's minimum, in m/s. Despite "
-        "the name, not the surface speed.",
+        doc="Sound speed at the channel axis (1300 m), the profile's minimum, in m/s.",
     )
+
+    def __init__(self, *args, **kwargs) -> None:
+        """Initialise, accepting the deprecated ``surface_speed`` for ``axis_speed``."""
+        # Taken from kwargs rather than declared, so the old name stays out of the generated
+        # signature and the API docs. Remove in v0.6.0.
+        if "surface_speed" in kwargs:
+            if "axis_speed" in kwargs:
+                raise TypeError(
+                    "Munk got both surface_speed (deprecated) and axis_speed; pass only "
+                    "axis_speed."
+                )
+            warnings.warn(
+                "Munk(surface_speed=...) is deprecated and will be removed in v0.6.0; use "
+                "axis_speed. It has always set the speed at the channel axis, not the surface "
+                "speed.",
+                DeprecationWarning,
+                stacklevel=2,
+            )
+            kwargs["axis_speed"] = kwargs.pop("surface_speed")
+        super().__init__(*args, **kwargs)
+
+    @property
+    def surface_speed(self) -> float:
+        """Deprecated alias for ``axis_speed``; remove in v0.6.0."""
+        warnings.warn(
+            "Munk.surface_speed is deprecated and will be removed in v0.6.0; use axis_speed, "
+            "which is what it has always returned.",
+            DeprecationWarning,
+            stacklevel=2,
+        )
+        return self.axis_speed
+
+    @surface_speed.setter
+    def surface_speed(self, value: float) -> None:
+        warnings.warn(
+            "Munk.surface_speed is deprecated and will be removed in v0.6.0; set axis_speed.",
+            DeprecationWarning,
+            stacklevel=2,
+        )
+        self.axis_speed = value
 
     def calculate(self, depth: DepthInput) -> SpeedOutput:
         """Calculate sound speed using the Munk equation.
@@ -731,7 +781,7 @@ class Munk(SoundSpeedProfile):
         depth_positive = abs(depth)
 
         zt = 2.0 * (depth_positive - 1300.0) / 1300.0
-        c = self.surface_speed * (1.0 + 0.00737 * (zt - 1.0 + np.exp(-zt)))
+        c = self.axis_speed * (1.0 + 0.00737 * (zt - 1.0 + np.exp(-zt)))
         return c
 
 

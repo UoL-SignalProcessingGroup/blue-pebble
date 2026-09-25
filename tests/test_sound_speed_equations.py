@@ -620,7 +620,7 @@ def test_new_equations_are_publicly_exported() -> None:
             (1490.0, 900.0, 0.01),
             {"surface_speed": 1490.0, "mid_depth": 900.0, "steepness": 0.01},
         ),
-        ("Munk", (1490.0,), {"surface_speed": 1490.0}),
+        ("Munk", (1490.0,), {"axis_speed": 1490.0}),
     ],
 )
 def test_analytic_profiles_keep_v040_positional_order(
@@ -636,6 +636,39 @@ def test_analytic_profiles_keep_v040_positional_order(
 
     for name, value in expected.items():
         assert getattr(profile, name) == value
+
+
+def test_munk_accepts_surface_speed_with_a_warning() -> None:
+    """surface_speed still sets the axis speed for a release, as it always did."""
+    from bluepebble.models.environment import Munk
+
+    with pytest.warns(DeprecationWarning, match="axis_speed") as recorded:
+        profile = Munk(surface_speed=1490.0)
+
+    assert profile.axis_speed == 1490.0
+    assert profile.calculate(1300.0) == pytest.approx(1490.0)
+    assert recorded[0].filename == __file__
+
+
+def test_munk_rejects_both_speed_names() -> None:
+    """Passing the old and new names together is ambiguous, so it must fail."""
+    from bluepebble.models.environment import Munk
+
+    with pytest.raises(TypeError, match="pass only"):
+        Munk(surface_speed=1490.0, axis_speed=1500.0)
+
+
+def test_munk_surface_speed_attribute_reads_and_writes_axis_speed() -> None:
+    """Reading or setting surface_speed goes through to axis_speed, with a warning."""
+    from bluepebble.models.environment import Munk
+
+    profile = Munk(axis_speed=1490.0)
+
+    with pytest.warns(DeprecationWarning, match="axis_speed"):
+        assert profile.surface_speed == 1490.0
+    with pytest.warns(DeprecationWarning, match="axis_speed"):
+        profile.surface_speed = 1470.0
+    assert profile.axis_speed == 1470.0
 
 
 def test_legacy_alias_binds_positional_arguments_in_v040_order(tmp_path) -> None:
