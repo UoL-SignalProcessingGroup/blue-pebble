@@ -1,7 +1,7 @@
 """
-=============================================
-Single Target Passive-Sonar Tracking Tutorial
-=============================================
+================================
+Getting Started with Blue Pebble
+================================
 """  # noqa: D205, D212, D400, D415
 
 # %%
@@ -19,20 +19,6 @@ Single Target Passive-Sonar Tracking Tutorial
 # beamforming, and passive-sonar detection utilities. Stone Soup still provides the
 # state representations, motion models, data-association logic, and trackers.
 #
-# The key integration patterns to keep in mind are:
-#
-# - :class:`~.TowedArrayPlatform` is the plugin entry point for representing a passive towed
-#   array as a Stone Soup-compatible moving platform.
-# - :class:`~stonesoup.types.groundtruth.GroundTruthState` and :class:`~stonesoup.types.groundtruth.GroundTruthPath` remain  # noqa: E501
-#   standard Stone Soup types; Blue Pebble reads extra acoustic metadata from their `metadata`
-#   fields.
-# - :class:`~.ContinuousSTFTPassiveSonarArraySimulator` is the integration point that combines
-#   platform geometry, propagation, source models, noise, steering, and beamforming
-#   into beamformed data products.
-# - The detection and tracking stages stay close to normal Stone Soup usage:
-#   Blue Pebble produces passive-sonar detections, and Stone Soup consumes them in
-#   the tracker.
-#
 # In this tutorial you will assemble the following pipeline:
 #
 # - A towed array platform.
@@ -48,10 +34,6 @@ Single Target Passive-Sonar Tracking Tutorial
 # Start by defining the timing configuration shared by every plugin component. In
 # Blue Pebble, the integration interval drives more than state propagation: it also
 # sets the cadence for signal generation, beamforming, and detection.
-#
-# Keeping these values explicit at the top of the tutorial makes the later plugin
-# configuration easier to follow, because platform motion, source/noise duration,
-# simulator output, and tracker updates all use the same `timesteps` sequence.
 
 # %%
 from datetime import datetime, timedelta
@@ -59,7 +41,7 @@ from datetime import datetime, timedelta
 import numpy as np
 
 import bluepebble
-from bluepebble.detector.algorithms import OSCFARDetector
+from bluepebble.detector import CACFARDetector
 
 # Random seed for reproducibility
 seed = 42
@@ -90,11 +72,6 @@ timesteps = np.array([start_time + i * time_interval for i in range(num_steps)],
 # - `cable_length_m`
 # - `sensor_spacing_m`
 # - `array_depth_m`
-#
-# This is a useful mental model for the whole plugin: keep the Stone Soup state and
-# motion abstractions, then add passive-sonar domain detail where it matters. Once
-# constructed, the platform is propagated using the same timestamp-driven workflow you
-# would use elsewhere in Stone Soup.
 
 # %%
 from stonesoup.models.transition.linear import (
@@ -116,7 +93,9 @@ platform_transition_model = CombinedLinearGaussianTransitionModel(
 # Define the towed array parameters
 num_sensors = 64
 tow_cable_length_m = 100.0
-sensor_spacing_m = 0.5
+# 3 m spacing makes a long (189 m) array for sharp bearings, while staying fine enough for the
+# highest frequency simulated (250 Hz).
+sensor_spacing_m = 3.0
 array_depth_m = -50.0
 
 # Create the towed array platform and simulate its movement over time
@@ -144,11 +123,7 @@ for timestamp in timesteps[1:]:
 # The plugin-specific step is to attach acoustic source parameters to each state's `metadata` so
 # the signal model and simulator can interpret the target as an emitting underwater source.
 #
-# In this tutorial the metadata describes a broadband ship-like source with tonal
-# components, tonal bandwidth, and a stochastic noise term. That split is important
-# when using Blue Pebble: kinematics stay in the state vector, while source
-# characteristics live in metadata that downstream acoustic components can read without
-# changing the Stone Soup truth classes themselves.
+# Here the metadata describes a ship-like source: a few tonals over broadband noise.
 
 # %%
 from stonesoup.types.groundtruth import GroundTruthPath
@@ -156,14 +131,13 @@ from stonesoup.types.groundtruth import GroundTruthPath
 from bluepebble.plotter import plot_world
 
 # Define the target's initial state and transition model
-target_start_vector = np.array([0.0, 0.0, 0.0, 8.0, -5.0, 0.0])
+target_start_vector = np.array([500.0, 0.0, 0.0, -3.0, -5.0, 0.0])
 target_transition_model = CombinedLinearGaussianTransitionModel(
     [ConstantVelocity(0), ConstantVelocity(0), ConstantVelocity(0)]
 )
 target_position_mapping = [0, 2, 4]
-target_velocity_mapping = [1, 3, 5]
 
-# Define the target's signal parameters
+# What the target emits, carried in its metadata: tonals, their bandwidth, broadband noise
 target_amplitudes_upa = 10 ** (rng.uniform(97, 112, 4) / 20)
 target_frequencies_hz = rng.uniform(25.0, 200.0, 4)
 target_phases_rad = rng.uniform(0, 2 * np.pi, 4)
@@ -175,11 +149,10 @@ target_metadata = {
     "amplitudes_upa": target_amplitudes_upa,
     "frequencies_hz": target_frequencies_hz,
     "phases_rad": target_phases_rad,
-    "position_mapping": target_position_mapping,
-    "velocity_mapping": target_velocity_mapping,
     "tonal_bandwidth_hz": target_tonal_bandwidth_hz,
     "noise_amplitude_upa": target_noise_amplitude_upa,
     "noise_spectral_exponent": target_noise_spectral_exponent,
+    "position_mapping": target_position_mapping,
 }
 
 # Simulate the target's movement over time and create a ground truth path
@@ -208,15 +181,14 @@ plot_world(truths=target_truths, platform=platform)
 # the underwater-propagation physics that sit outside Stone Soup's core remit.
 #
 # This tutorial uses :class:`~.CylindricalAcousticPropagationModel` with a simple linear sound-speed  # noqa: E501
-# profile and flat bathymetry. Once you provide a propagation model, the simulator can
+# profile. Once you provide a propagation model, the simulator can
 # use it to convert target/platform geometry into array-level acoustic observations.
 
 # %%
-from bluepebble.models.environment import FlatBathymetry, Linear
+from bluepebble.models.environment import Linear
 from bluepebble.models.propagation import CylindricalAcousticPropagationModel
 
 ssp = Linear(surface_speed=1500.0, gradient=0.2)
-bathymetry = FlatBathymetry(depth=-150.0)
 attenuation_factor = 0.5
 
 propagation_model = CylindricalAcousticPropagationModel(
@@ -238,9 +210,6 @@ propagation_model = CylindricalAcousticPropagationModel(
 #   integration interval at a time.
 # - Target emissions are modelled explicitly with :class:`~.SyntheticAnthropogenicSignal`, using
 #   the metadata attached to the Stone Soup truth states.
-#
-# Together, these models provide the simulator with physically meaningful inputs while preserving
-# the Stone Soup truth and tracking abstractions around them.
 
 # %%
 from bluepebble.signal.anthropogenic import SyntheticAnthropogenicSignal
@@ -266,9 +235,6 @@ signal_model = SyntheticAnthropogenicSignal(
     sampling_rate_hz=sampling_rate_hz,
     frame_len=frame_len,
     hop_factor=hop_factor,
-    tonal_bandwidth_hz=target_tonal_bandwidth_hz,
-    noise_amplitude_upa=target_noise_amplitude_upa,
-    noise_spectral_exponent=target_noise_spectral_exponent,
     noise_freq_range_hz=(0.0, sampling_rate_hz / 2),
     tonal_noise_is_constant=True,
     noise_is_constant=True,
@@ -283,33 +249,38 @@ signal_model = SyntheticAnthropogenicSignal(
 # calculation, and beamformer to produce beamformed sonar output over time.
 #
 # Once the simulator is in place, :class:`~.PassiveSonarDetector` applies a single CFAR-family
-# ``detector`` (here, :class:`~.CACFARDetector`) directly to those outputs. Thresholding and
-# wrap-aware peak consolidation both happen inside the detector's own ``detect()`` call, so no
-# separate peak-picking stage is needed. The important usage pattern is that Blue Pebble handles
+# ``detector`` (here, :class:`~.CACFARDetector`) directly to those outputs. Blue Pebble handles
 # the signal-processing and detection side, then returns timestamped detections that can be
 # analysed directly or passed into Stone Soup tracking components.
 
 # %%
 from bluepebble.detector import PassiveSonarDetector
-from bluepebble.plotter import apply_shared_colourscale, plot_btr
+from bluepebble.plotter import plot_btr
 from bluepebble.sigproc import (
-    MinimumVarianceDistortionlessResponseBeamformer,
+    DelayAndSumBeamformer,
     SteeringCalculator,
     beams_per_mainlobe,
     cfar_window_for_mainlobe,
 )
 from bluepebble.simulator import ContinuousSTFTPassiveSonarArraySimulator
 
-shading = None  # noqa: F841
-beamforming_domain = "broadband_power"  # noqa: F841
-steering_azimuths_rad = np.linspace(-np.pi, np.pi, 181)
+# Hann weights suppress the beams' sidelobes (see the notes under the plot).
+shading = np.hanning(num_sensors)
+beamforming_domain = "broadband_power"
+# A line array cannot tell which side of it a sound came from, so steer only the side the
+# target is on: starboard, in 1 degree steps. Steering angles are azimuths, anticlockwise from
+# east, so for this east-heading platform starboard is -180 to 0 degrees.
+steering_azimuths_rad = np.linspace(-np.pi, 0.0, 181)
+# Up to just below the highest simulated frequency (250 Hz), covering the target's tonals.
 fmin = 100.0
-fmax = 125.0
+fmax = 245.0
 
-beamformer = MinimumVarianceDistortionlessResponseBeamformer(
+beamformer = DelayAndSumBeamformer(
     sampling_rate_hz=sampling_rate_hz,
     fmin=fmin,
     fmax=fmax,
+    shading=shading,
+    domain=beamforming_domain,
 )
 
 steering_calculator = SteeringCalculator(
@@ -328,45 +299,35 @@ simulator = ContinuousSTFTPassiveSonarArraySimulator(
     fade_in_ms=fade_in_ms,
 )
 
-# Guard and training cells follow from the array rather than being chosen: a source spans a
-# mainlobe in bearing, so the guard band has to reach past it or the training cells measure
-# the target and compress the reported SNR. Evaluated at 100 Hz: the lower edge of the band
-# this example's MVDR beamformer passes, and so the widest lobe it can produce. The target
-# tonals reach down to 25 Hz, but nothing below 100 Hz survives the beamformer to reach the
-# detector. peak_distance comes from the same width, since two candidates closer than a
-# mainlobe are not resolvable as separate sources.
+# The CFAR window and peak spacing are sized from the beam width at the lowest frequency, so
+# the target's own beam stays out of its noise estimate.
 mainlobe_beams = beams_per_mainlobe(
     aperture_m=(num_sensors - 1) * sensor_spacing_m,
-    frequency_hz=100.0,
+    frequency_hz=fmin,
     beam_spacing_rad=float(np.diff(steering_azimuths_rad)[0]),
     sound_speed_ms=1500.0,
+    shading_factor=1.44,  # Hann; uniform weights would be 0.886
 )
 num_guard_cells, num_training_cells, peak_distance = cfar_window_for_mainlobe(mainlobe_beams)
-target_pfa = 0.05
-# OS-CFAR takes the k-th smallest training cell, so rank scales with the window; 0.75 of
-# the total is the usual starting point.
-rank = round(0.75 * 2 * num_training_cells)
+# Detect where a beam's power exceeds 1.5x its local noise estimate (about 1.8 dB). The
+# detector API docs describe calibrating to a false-alarm rate instead.
+threshold_factor = 1.5
 
-cfar_detector = OSCFARDetector(
+cfar_detector = CACFARDetector(
     num_guard_cells=num_guard_cells,
     num_training_cells=num_training_cells,
-    rank=rank,
-    target_pfa=target_pfa,
+    threshold_factor=threshold_factor,
     peak_distance=peak_distance,
+    circular=False,  # half a circle of bearings does not wrap round
 )
 
-# reported_snr_reference only sets what reported_snr_history reports; thresholding always uses the
-# detector's
-# own local estimate. "global" measures every beam against a single percentile of the whole
-# scan, which keeps the bearing-time record readable -- see the notes under the figure.
 detector = PassiveSonarDetector(
     detector=cfar_detector,
-    sensor_data_gen=simulator.sensor_data_gen(),
+    sensor_data_gen=simulator.sensor_data_gen(progress_bar=True),
     steering_azimuths_rad=steering_azimuths_rad,
-    reported_snr_reference="global",
 )
 
-all_detections = list(detector.detections_gen(progress_bar=False))
+all_detections = list(detector.detections_gen(progress_bar=True, total_timesteps=num_steps))
 reported_snr = detector.reported_snr_history
 
 detections_for_plotter = [d for _, detections in all_detections for d in detections]
@@ -374,92 +335,41 @@ detections_for_plotter = [d for _, detections in all_detections for d in detecti
 print(f"Total no. of detections: {len(detections_for_plotter)}")
 
 # %%
-from plotly.subplots import make_subplots
-
-fig_btr = make_subplots(
-    rows=1,
-    cols=2,
-    shared_yaxes=True,
-    subplot_titles=("SNR Map", "SNR Map w/ Detections"),
-)
-
-plot_btr(
-    data=reported_snr,
-    timesteps=timesteps,
-    steering_azimuths=np.rad2deg(steering_azimuths_rad),
-    fig=fig_btr,
-    row=1,
-    col=1,
-)
 plot_btr(
     data=reported_snr,
     detections=detections_for_plotter,
     timesteps=timesteps,
     steering_azimuths=np.rad2deg(steering_azimuths_rad),
-    fig=fig_btr,
-    row=1,
-    col=2,
-)
-
-apply_shared_colourscale(
-    fig_btr,
-    colorbar=dict(
-        title=dict(text="SNR (dB)", side="right"),
-        x=1.02,
-        xanchor="left",
-        y=0.5,
-        yanchor="middle",
-        len=1.0,
-        thickness=24,
-    ),
-)
-
-fig_btr.update_layout(
+    bearing_convention="true",
+).update_layout(
     template="plotly_white",
     autosize=True,
     width=None,
     height=700,
-    showlegend=False,
-    margin=dict(r=80),
-    yaxis2=dict(title=""),
 )
-
 
 # %%
 # Reading the Bearing-Time Record
 # --------------------------------
 #
-# Two features of this plot are worth naming, because both recur across the examples and
-# neither is a fault in the simulation.
+# The plots show true bearings, clockwise from north, as a sonar display would. The platform
+# heads east, so dead ahead is 090 and starboard broadside 180.
 #
-# **There are two tracks, and only one target.** A straight line of hydrophones cannot tell
-# which side of itself a sound came from: a source and its reflection in the array axis give
-# identical delays across every sensor, so the beamformer reports both at equal strength.
-# The pair is symmetric about the array axis and the two merge whenever the target passes
-# through endfire -- dead ahead or dead astern. Resolving the ambiguity takes either a
-# manoeuvre, since the ghost swings differently from the real bearing once the array turns,
-# or a second array that is not collinear with the first.
-# :class:`~.SteeringCalculator` can steer only half the plane instead
-# (``mirror_half_plane``), which hides the ghost and halves the beamforming cost. It is left
-# off here because the ambiguity is a permanent feature of towed-array data and is better met
-# early, with an explanation, than met later without one.
+# **The target is a band, not a line.** Each beam listens over a spread of bearings rather
+# than a single one, so the target lights up several neighbouring beams. How wide that spread
+# is depends on the array's length measured in wavelengths: a longer array, or a higher
+# frequency, gives narrower beams. The band also widens towards the array axis (090, dead
+# ahead). A line array judges bearing from the differences in arrival time along its length,
+# and those change quickly with bearing broadside to the array (180) but hardly at all near
+# its axis. That is why the trace is broader early in the run, when the
+# target is closer to dead ahead.
 #
-# **The colour scale is SNR against a scan-wide noise floor, not against the detector's own
-# estimate.** That is what ``reported_snr_reference="global"`` selects above -- the default, stated
-# explicitly here because the distinction matters for reading the plot below. A CFAR
-# detector judges each beam against the training cells
-# around it, between ``num_guard_cells`` and ``num_guard_cells + num_training_cells`` bins
-# away. Any beam whose training window happens to contain the target measures the target as
-# noise, and so reports a lower SNR for itself: plotting that estimate directly paints dark
-# bands at exactly those offsets either side of every track, deepening with target strength
-# and deepest where the real and ghost tracks converge and each sits inside the other's
-# window. They are an artefact of the measurement, not quiet water, and they make the
-# picture harder to read.
+# **Faint copies either side are sidelobes.** An array of finite length also picks up a
+# little of the target at bearings well away from it. The Hann shading set above keeps these
+# sidelobes weak, but they can still show as faint streaks beside the main trace.
 #
-# Detection is unaffected by the choice. Thresholding always uses the local estimate, which
-# is the point of CFAR: a scan-wide floor cannot follow noise that varies with bearing. Only
-# the reported map changes. Set ``reported_snr_reference="local"`` to see what the detector itself
-# works with -- useful when the question is why a particular cell did or did not fire.
+# **Colour shows SNR against the scan's overall noise floor**: the dark background is ambient
+# noise, and the bright band is the target.
 
 # %%
 # Feed Blue Pebble Detections into a Stone Soup Tracker
@@ -475,8 +385,8 @@ fig_btr.update_layout(
 # - Blue Pebble models the acoustic sensing process and detection generation.
 # - Stone Soup models the Bayesian tracking logic once measurements exist.
 #
-# For plotting on the same axes, we also convert Cartesian truth to relative bearing
-# truth with respect to the array reference position at each timestep.
+# For plotting on the same axes, we also convert the target's true position to its bearing
+# from the array at each timestep.
 
 # %%
 bearing_states = []
@@ -489,8 +399,8 @@ for target_state in target_truth:
     bearing = np.arctan2(relative_position[1], relative_position[0])
     bearing_states.append(GroundTruthState(np.array([bearing]), timestamp=target_state.timestamp))
 
-relative_bearing_truth = GroundTruthPath(bearing_states)
-relative_bearing_truths = [relative_bearing_truth]
+bearing_truth = GroundTruthPath(bearing_states)
+bearing_truths = [bearing_truth]
 
 # %%
 from stonesoup.dataassociator.probability import PDA
@@ -523,7 +433,7 @@ hypothesiser = PDAHypothesiser(
 )
 data_associator = PDA(hypothesiser=hypothesiser)
 
-initial_bearing = float(relative_bearing_truth[0].state_vector[0])
+initial_bearing = float(bearing_truth[0].state_vector[0])
 
 prior_state = GaussianState(
     np.array([initial_bearing, 0.0]),
@@ -547,9 +457,6 @@ kf = SingleTargetMixtureTracker(
     updater=updater,
 )
 
-seed_track = Track(states=[prior_state])
-kf._track = seed_track
-
 tracks: set[Track] = set()
 
 for _, current_tracks in kf:
@@ -560,7 +467,8 @@ for _, current_tracks in kf:
 plot_btr(
     timesteps=timesteps,
     steering_azimuths=np.rad2deg(steering_azimuths_rad),
-    truths=relative_bearing_truths,
+    bearing_convention="true",
+    truths=bearing_truths,
     detections=detections_for_plotter,
     tracks=tracks,
 ).update_layout(
@@ -571,8 +479,8 @@ plot_btr(
 )
 
 # %%
-# Adapting This Tutorial
-# ----------------------
+# Summary
+# -------
 #
 # You now have the minimal single-target plugin workflow:
 #

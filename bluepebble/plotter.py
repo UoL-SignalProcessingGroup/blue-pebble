@@ -53,6 +53,57 @@ class _BathymetryGridProvider(Protocol):
         ...
 
 
+class _PlatformStateProvider(Protocol):
+    """Protocol for platforms whose heading ``plot_btr`` reads for relative bearings."""
+
+    def get_platform_state_at(self, timestamp: datetime) -> Any:
+        """Return the state at ``timestamp``, with ``host.heading_rad``, or ``None``."""
+        ...
+
+
+_BEARING_CONVENTIONS = ("mathematical", "true", "relative")
+_BEARING_AXIS_TITLES = {
+    "mathematical": "Bearing (°, anticlockwise from +x)",
+    "true": "True bearing (°, clockwise from north)",
+    "relative": "Relative bearing (°, clockwise from heading)",
+}
+
+
+def _convert_azimuth_deg(
+    azimuth_deg: ArrayLike, convention: str, heading_deg: float | None = None
+) -> np.ndarray:
+    """Convert world azimuths (anticlockwise from +x) to a clockwise bearing in [0, 360).
+
+    ``"true"`` is clockwise from +y (north, with +x east): ``(90 - azimuth) mod 360``.
+    ``"relative"`` is clockwise from the heading, itself an azimuth:
+    ``(heading - azimuth) mod 360``.
+    """
+    azimuth = np.asarray(azimuth_deg, dtype=float)
+    if convention == "true":
+        return (90.0 - azimuth) % 360.0
+    if heading_deg is None:
+        raise ValueError("relative bearings need a heading")
+    return (heading_deg - azimuth) % 360.0
+
+
+def _bearing_window(bearings_deg: np.ndarray) -> tuple[float, float]:
+    """Return the smallest arc ``(start, end)`` holding every bearing, ``end`` <= ``start + 360``.
+
+    The arc starts after the widest empty gap between bearings, so a half-plane grid that
+    straddles north gives e.g. ``(270, 450)`` rather than the whole circle. A grid with no gap
+    wider than twice its typical spacing is treated as the full circle, ``(0, 360)``.
+    """
+    unique = np.unique(np.round(bearings_deg % 360.0, 9))
+    if unique.size < 2:
+        return float(unique[0]), float(unique[0])
+    gaps = np.diff(np.append(unique, unique[0] + 360.0))
+    widest = int(np.argmax(gaps))
+    if gaps[widest] <= 2.0 * float(np.median(gaps)):
+        return 0.0, 360.0
+    start = float(unique[(widest + 1) % unique.size])
+    return start, start + 360.0 - float(gaps[widest])
+
+
 def _get_cmocean_topo_cmap() -> _ColormapCallable:
     """Return the cmocean topo colormap with runtime validation."""
     cmap = getattr(cmocean.cm, "topo", None)
@@ -1028,6 +1079,8 @@ def plot_btr(
     fig: go.Figure | None = None,
     row: int | None = None,
     col: int | None = None,
+    bearing_convention: str = "mathematical",
+    platform: _PlatformStateProvider | None = None,
 ) -> go.Figure:
     """Plot the bearing-time record (BTR) of the beamformed data.
 
@@ -1074,11 +1127,31 @@ def plot_btr(
         Subplot row when ``fig`` is provided.
     col : int | None
         Subplot column when ``fig`` is provided.
+    bearing_convention : {"mathematical", "true", "relative"}
+        How bearings are shown. ``"mathematical"`` (the default) plots the inputs as given:
+        azimuths anticlockwise from the +x axis, from -180 to 180 degrees. ``"true"`` plots true
+        bearings, clockwise from north (+y, with +x east). ``"relative"`` plots relative
+        bearings, clockwise from the platform's heading: 000 dead ahead, 090 to starboard.
+        Converted bearings run from 000 to 360; the axis covers only the arc the steering
+        azimuths span. Detections, tracks and truths are converted with the same convention.
+    platform : TowedArrayPlatform, optional
+        Source of the heading at each plotted time, read from
+        ``get_platform_state_at(timestamp).host.heading_rad`` (the direction of travel, not
+        the towed array's axis, which lags it through a turn). Required when
+        ``bearing_convention="relative"``; ignored otherwise. Because the heading changes
+        from row to row, the heatmap is resampled onto a fixed relative-bearing grid for
+        display.
 
     Returns
     -------
     go.Figure
         A Plotly figure object containing the BTR plot.
+
+    Raises
+    ------
+    ValueError
+        If ``bearing_convention`` is not one of the above, ``"relative"`` is requested without
+        a ``platform``, or the platform has no state at a plotted time.
 
     """
 
@@ -1136,6 +1209,76 @@ def plot_btr(
         data=data,
     )
 
+    if bearing_convention not in _BEARING_CONVENTIONS:
+        raise ValueError(
+            "bearing_convention must be 'mathematical', 'true' or 'relative', "
+            f"got {bearing_convention!r}"
+        )
+    if bearing_convention == "relative" and platform is None:
+        raise ValueError("bearing_convention='relative' needs a platform to read headings from")
+
+    heading_cache: dict[Any, float] = {}
+
+    def _heading_deg(timestamp: Any) -> float:
+        """Return the platform heading (azimuth, degrees) at ``timestamp``."""
+        if isinstance(timestamp, np.generic):
+            timestamp = timestamp.item()
+        if timestamp not in heading_cache:
+            state = platform.get_platform_state_at(timestamp)  # pyright: ignore[reportOptionalMemberAccess]
+            if state is None:
+                raise ValueError(
+                    f"platform has no state at {timestamp}; relative bearings need its "
+                    "heading at every plotted time"
+                )
+            heading_cache[timestamp] = float(np.rad2deg(state.host.heading_rad))
+        return heading_cache[timestamp]
+
+    def _converted(azimuth_deg: ArrayLike, timestamp: Any) -> np.ndarray:
+        """Convert azimuths to ``bearing_convention`` at ``timestamp``, in [0, 360)."""
+        heading = _heading_deg(timestamp) if bearing_convention == "relative" else None
+        return _convert_azimuth_deg(azimuth_deg, bearing_convention, heading)
+
+    window_start, window_end = 0.0, 360.0
+    if bearing_convention != "mathematical":
+        rows = timesteps_array if bearing_convention == "relative" else timesteps_array[:1]
+        window_start, window_end = _bearing_window(
+            np.concatenate([_converted(steering_array, t) for t in rows])
+        )
+
+    def _in_window(bearing_deg: ArrayLike) -> np.ndarray:
+        """Place bearings on the plotted arc, which may run past 360 (e.g. 270 to 450)."""
+        return window_start + (np.asarray(bearing_deg, dtype=float) - window_start) % 360.0
+
+    def _display_bearing(azimuth_rad: Any, timestamp: Any) -> float:
+        """Return the plotted x-position of an overlay point given as an azimuth in radians."""
+        azimuth_deg = float(np.rad2deg(azimuth_rad))
+        if bearing_convention == "mathematical":
+            return _wrap_bearing_deg(azimuth_deg)
+        return float(_in_window(_converted(azimuth_deg, timestamp)))
+
+    heatmap_x: np.ndarray = steering_array
+    heatmap_z = data_array
+    if data_array is not None and bearing_convention == "true":
+        # Every row converts identically, so reordering the columns is exact. A full-circle
+        # grid's -180 and 180 both become 270; np.unique keeps one of them.
+        converted = np.round(_in_window(_converted(steering_array, None)), 9)
+        _, keep = np.unique(converted, return_index=True)
+        heatmap_x, heatmap_z = converted[keep], data_array[:, keep]
+    elif data_array is not None and bearing_convention == "relative":
+        unique_steering = np.unique(np.round(steering_array % 360.0, 9))
+        spacing = float(np.median(np.diff(unique_steering))) if unique_steering.size > 1 else 1.0
+        heatmap_x = np.arange(window_start, window_end + spacing / 2.0, spacing)
+        full_circle = window_end - window_start >= 360.0
+        heatmap_z = np.empty((timesteps_array.size, heatmap_x.size))
+        for i, timestamp in enumerate(timesteps_array):
+            row_x = _in_window(_converted(steering_array, timestamp))
+            row_x, keep = np.unique(np.round(row_x, 9), return_index=True)
+            row_z = np.asarray(data_array[i], dtype=float)[keep]
+            if full_circle:
+                heatmap_z[i] = np.interp(heatmap_x, row_x, row_z, period=360.0)
+            else:
+                heatmap_z[i] = np.interp(heatmap_x, row_x, row_z, left=np.nan, right=np.nan)
+
     target_fig = go.Figure() if fig is None else fig
     using_subplot_target = fig is not None
     existing_group_counts: dict[str, int] = {}
@@ -1186,9 +1329,9 @@ def plot_btr(
 
     if data_array is not None:
         heatmap = go.Heatmap(
-            z=data_array,
+            z=heatmap_z,
             y=timesteps_array,
-            x=steering_array,
+            x=heatmap_x,
             colorscale=colorscale,
             zmin=cmin,
             zmax=cmax,
@@ -1207,7 +1350,7 @@ def plot_btr(
             target_fig.add_trace(heatmap)
 
     if detections is not None:
-        det_x = [_wrap_bearing_deg(float(np.rad2deg(det.state_vector[0]))) for det in detections]
+        det_x = [_display_bearing(det.state_vector[0], det.timestamp) for det in detections]
         det_y = [det.timestamp for det in detections]
         _det_name = "Detection"
         detection_trace = go.Scatter(
@@ -1235,9 +1378,7 @@ def plot_btr(
                     len(track_color_map) % len(track_colorway)
                 ]
             track_color = track_color_map[track_key]
-            track_x = [
-                _wrap_bearing_deg(float(np.rad2deg(state.state_vector[0]))) for state in track
-            ]
+            track_x = [_display_bearing(state.state_vector[0], state.timestamp) for state in track]
             track_y = [state.timestamp for state in track]
             track_x, track_y = _split_wrapped_line(track_x, track_y)
             _track_name = f"Track {idx + 1}" if len(tracks) > 1 else "Track"
@@ -1261,7 +1402,7 @@ def plot_btr(
         # Reuse colors for repeated truth objects when multiple overlays are added.
         truth_color_map: dict[int, str] = {}
         gt_x = [
-            [_wrap_bearing_deg(float(np.rad2deg(state.state_vector[0]))) for state in truth]
+            [_display_bearing(state.state_vector[0], state.timestamp) for state in truth]
             for truth in truths
         ]
         gt_y = [[state.timestamp for state in truth] for truth in truths]
@@ -1288,32 +1429,50 @@ def plot_btr(
             else:
                 target_fig.add_trace(truth_trace)
 
-    bearing_min = float(np.min(steering_array))
-    bearing_max = float(np.max(steering_array))
-    bearing_span = bearing_max - bearing_min
-    bearing_start = float(steering_array[0])
-    bearing_end = float(steering_array[-1])
-
-    if using_subplot_target:
-        target_fig.update_xaxes(
-            range=[bearing_start, bearing_end],
+    if bearing_convention == "mathematical":
+        bearing_span = float(np.max(steering_array)) - float(np.min(steering_array))
+        bearing_start = float(steering_array[0])
+        xaxis_ticks: dict[str, Any] = dict(
+            range=[bearing_start, float(steering_array[-1])],
             tickmode="linear",
             tick0=bearing_start,
             dtick=bearing_span / 6.0 if bearing_span > 0 else 1.0,
+        )
+    else:
+        # Compass-style labels, modulo 360 so an arc across north reads ..., 330, 000, 030, ....
+        # 10 degree labels crowd a linear axis wider than 90 degrees, so wider arcs are labelled
+        # every 30 with unlabelled 10 degree minor ticks. A full circle stops labelling before
+        # its right-hand edge, which is 000 again.
+        span = window_end - window_start
+        step = 30.0 if span > 90.0 else 10.0
+        tickvals = np.arange(np.ceil(window_start / step) * step, window_end + 1e-9, step)
+        if span >= 360.0:
+            tickvals = tickvals[tickvals < window_end - 1e-9]
+        xaxis_ticks = dict(
+            range=[window_start, window_end],
+            tickmode="array",
+            tickvals=tickvals.tolist(),
+            ticktext=[f"{value % 360.0:03.0f}" for value in tickvals],
+        )
+        if step > 10.0:
+            xaxis_ticks["minor"] = dict(
+                tickmode="linear", tick0=0.0, dtick=10.0, ticks="outside", ticklen=4
+            )
+
+    if using_subplot_target:
+        target_fig.update_xaxes(
+            **xaxis_ticks,
             tickangle=-45,
-            title="Bearing (°)",
+            title=_BEARING_AXIS_TITLES[bearing_convention],
             showline=True,
             row=row,
             col=col,
         )
     else:
         target_fig.update_xaxes(
-            range=[bearing_start, bearing_end],
-            tickmode="linear",
-            tick0=bearing_start,
-            dtick=bearing_span / 6.0 if bearing_span > 0 else 1.0,
+            **xaxis_ticks,
             tickangle=-45,
-            title="Bearing (°)",
+            title=_BEARING_AXIS_TITLES[bearing_convention],
             showline=True,
             domain=[0.0, 0.9],
         )
@@ -1675,7 +1834,7 @@ def plot_roc(
         else:
             target_fig.add_trace(diagonal_trace)
 
-    xaxis_kwargs = dict(
+    xaxis_kwargs: dict[str, Any] = dict(
         title_text="False Positive Rate",
         range=[0.0, 1.0],
         showgrid=True,
@@ -1684,7 +1843,7 @@ def plot_roc(
         linewidth=1,
         linecolor=axis_line,
     )
-    yaxis_kwargs = dict(
+    yaxis_kwargs: dict[str, Any] = dict(
         title_text="True Positive Rate",
         range=[0.0, 1.05],
         showgrid=True,
@@ -1774,7 +1933,7 @@ def plot_pr(
         else:
             target_fig.add_trace(trace)
 
-    xaxis_kwargs = dict(
+    xaxis_kwargs: dict[str, Any] = dict(
         title_text="Recall",
         range=[0.0, 1.0],
         showgrid=True,
@@ -1783,7 +1942,7 @@ def plot_pr(
         linewidth=1,
         linecolor=axis_line,
     )
-    yaxis_kwargs = dict(
+    yaxis_kwargs: dict[str, Any] = dict(
         title_text="Precision",
         range=[0.0, 1.05],
         showgrid=True,
@@ -1864,7 +2023,8 @@ def plot_roc_pr(
     using_subplot_target = fig is not None
     if using_subplot_target:
         target_fig = fig
-        roc_row, pr_row = row, row + 1
+        roc_row = cast(int, row)  # validated above: row is given whenever fig is
+        pr_row = roc_row + 1
     else:
         target_fig = make_subplots(rows=2, cols=1, subplot_titles=("ROC Curve", "PR Curve"))
         roc_row, pr_row = 1, 2

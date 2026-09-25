@@ -475,8 +475,20 @@ class rtrsAcousticPropagationModel(AcousticPropagationModel, SpectrumPropagation
         TL values. If False, use only the loudest frequency.
     water_density_g_cm3 : float | None
         Optional water density value passed to rtrs bathymetry config.
-    bottom_model : dict
-        Bottom boundary model configuration for rtrs (e.g., rigid/acoustic/elastic).
+    bottom_model : dict | None
+        Seabed boundary for rtrs, given as ``{"model": ...}`` plus that model's parameters.
+
+        - ``"rigid"`` takes no parameters and reflects all energy.
+        - ``"acoustic"`` requires ``compressional_speed_m_s``, ``density_g_cm3`` and
+          ``compressional_attenuation_db_per_wavelength``.
+        - ``"elastic"`` requires the acoustic parameters plus ``shear_speed_m_s`` and
+          ``shear_attenuation_db_per_wavelength``.
+
+        ``None`` gives a rigid seabed. Since it absorbs nothing, steep multipath arrives far
+        stronger than over a real sediment, which can bias bearings towards broadside, most
+        strongly near endfire (coning error). Sand, for example, is ``{"model": "acoustic",
+        "compressional_speed_m_s": 1650.0, "density_g_cm3": 1.9,
+        "compressional_attenuation_db_per_wavelength": 0.8}``.
     store_ray_paths : bool
         Whether rtrs should store full ray paths.
     integration_method : str
@@ -514,7 +526,8 @@ class rtrsAcousticPropagationModel(AcousticPropagationModel, SpectrumPropagation
     )
     bottom_model: dict[str, object] | None = Property(
         default=None,
-        doc="Bottom boundary model dictionary for rtrs",
+        doc="Seabed boundary model dictionary for rtrs. None gives a rigid seabed, which "
+        "absorbs nothing",
     )
     store_ray_paths: bool = Property(
         default=False,
@@ -535,7 +548,7 @@ class rtrsAcousticPropagationModel(AcousticPropagationModel, SpectrumPropagation
             raise ValueError("bottom_model must be a dict containing at least a 'model' key.")
 
     def _resolved_bottom_model(self) -> dict[str, object]:
-        """Return bottom model config with a safe default."""
+        """Return the bottom model config, rigid when ``bottom_model`` is unset."""
         if self.bottom_model is None:
             return {"model": "rigid"}
         return dict(self.bottom_model)
@@ -557,7 +570,9 @@ class rtrsAcousticPropagationModel(AcousticPropagationModel, SpectrumPropagation
         Returns
         -------
         list
-            Azimuth angles in degrees.
+            Launch azimuths in degrees in rtrs's convention, clockwise from +y (north), not
+            Blue Pebble's anticlockwise-from-+x frame (see Coordinate frames in
+            :mod:`bluepebble`).
 
         """
         # Calculate the direct azimuth to the receiver
@@ -577,6 +592,7 @@ class rtrsAcousticPropagationModel(AcousticPropagationModel, SpectrumPropagation
             direct_azimuth - half_width, direct_azimuth + half_width, num_angles
         )
 
+        # Blue Pebble's frame to rtrs's: anticlockwise from +x -> clockwise from +y.
         azimuths = -azimuths + 90
 
         return azimuths.tolist()

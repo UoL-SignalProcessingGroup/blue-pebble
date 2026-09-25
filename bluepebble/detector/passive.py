@@ -10,6 +10,7 @@ from numpy.typing import ArrayLike, NDArray
 from stonesoup.base import Base, Property
 from stonesoup.buffered_generator import BufferedGenerator
 from stonesoup.reader.base import DetectionReader
+from stonesoup.types.angle import Bearing
 from stonesoup.types.detection import Detection
 from tqdm import tqdm
 
@@ -23,6 +24,27 @@ DetectionBatch: TypeAlias = tuple[datetime, set[Detection]]
 _BandedStep: TypeAlias = tuple[datetime, dict[str, set[Detection]]]
 
 
+def _lazy_progress_bar(iterable: Iterable, desc: str, total: int | None) -> Iterable:
+    """Wrap ``iterable`` with a progress bar that only appears once the first item arrives.
+
+    A plain ``tqdm(iterable)`` renders its 0% frame the moment it's constructed, before the
+    wrapped iterable has produced anything. That's misleading when the iterable's own first
+    ``next()`` call blocks on something that reports its own progress -- e.g. a simulator's
+    ``sensor_data_gen(progress_bar=True)`` building target propagation up front -- since the
+    two bars would then interleave instead of appearing in sequence.
+    """
+    bar: tqdm | None = None
+    try:
+        for item in iterable:
+            if bar is None:
+                bar = tqdm(desc=desc, total=total)
+            yield item
+            bar.update(1)
+    finally:
+        if bar is not None:
+            bar.close()
+
+
 def beam_power(beamformed_data: ArrayLike, decibels: bool = False) -> FloatArray:
     """Per-beam power, averaged over frames.
 
@@ -32,7 +54,7 @@ def beam_power(beamformed_data: ArrayLike, decibels: bool = False) -> FloatArray
     the result is measured against:
 
     ==============================  ======================================================
-    :func:`beam_power`              nothing -- absolute power
+    :func:`beam_power`              nothing, absolute power
     :func:`beam_snr`                a percentile of the whole scan, so bearings compare
     :meth:`~.algorithms._CFARDetectorBase.detection_snr_map`
                                     the detector's own local training cells, which is what
@@ -45,7 +67,7 @@ def beam_power(beamformed_data: ArrayLike, decibels: bool = False) -> FloatArray
 
     Use this rather than computing ``|data|**2`` directly. ``BeamformedData`` is deliberately
     either complex amplitude or already-real power depending on the beamformer, and squaring
-    the real-power case a second time double-applies the power law -- see
+    the real-power case a second time double-applies the power law; see
     :func:`~.algorithms._directional_power`. That mistake is invisible in the output and
     silently breaks any Pfa calibration downstream, so the distinction is worth keeping in one
     place.
@@ -116,7 +138,7 @@ def _reported_snr_map(
     """Per-beam SNR against the requested noise reference.
 
     The two answer different questions. ``"local"`` is the detector's own training-cell
-    estimate -- the quantity its threshold was actually compared against, and the one that
+    estimate, the quantity its threshold was actually compared against, and the one that
     follows a noise field varying with bearing. ``"global"`` measures every beam against a
     single percentile of the whole scan, which is comparable across bearings and over time
     but blind to a noisy sector.
@@ -164,8 +186,15 @@ class PassiveSonarDetector(DetectionReader):
     This detector takes ``PassiveSonarSensorData`` as input and runs a single CFAR-family
     ``detector`` directly against each frame's raw beamformed power map. Frame integration,
     local noise-floor estimation, and wrap-aware peak consolidation are all handled internally
-    by the detector (see :mod:`.algorithms`). Detections are produced with bearing values
-    derived from the provided steering azimuths.
+    by the detector (see :mod:`.algorithms`). Each detection's state vector holds one element,
+    the detecting beam's steering azimuth as a Stone Soup
+    :class:`~stonesoup.types.angle.Bearing`, so a tracker's innovations wrap correctly at
+    +/-180 degrees instead of reading a small step across the wrap as a jump of nearly 360.
+
+    In sonar terms this is noise normalisation across bearing followed by a detection threshold
+    on the normalised beam powers; CA-CFAR corresponds to a split-window normaliser. See
+    "Relation to sonar noise normalisation" in :class:`~.algorithms._CFARDetectorBase` and
+    Stergiopoulos (1995) and Abraham (2019), cited there.
 
     Attributes
     ----------
@@ -175,7 +204,7 @@ class PassiveSonarDetector(DetectionReader):
     sensor_data_gen : Generator[SensorDataStep, None, None]
         Generator yielding sensor-data batches.
     steering_azimuths_rad : FloatArray
-        An array of steering azimuth angles in radians corresponding to the beams.
+        Steering azimuth of each beam, in radians (see Coordinate frames in :mod:`bluepebble`).
 
     """
 
@@ -186,7 +215,8 @@ class PassiveSonarDetector(DetectionReader):
         doc="Generator that yields PassiveSonarSensorData objects",
     )
     steering_azimuths_rad: FloatArray = Property(
-        doc="Array of steering azimuth angles in radians.",
+        doc="Steering azimuth of each beam, in radians anticlockwise from +x (see "
+        "Coordinate frames in bluepebble).",
     )
     reported_snr_reference: str = Property(
         default="global",
@@ -233,7 +263,7 @@ class PassiveSonarDetector(DetectionReader):
 
         Iterates through ``sensor_data_gen`` and runs ``detector`` directly against each
         frame's raw beamformed data, yielding Stone Soup ``Detection`` objects (bearing-only
-        measurements).
+        measurements, each a :class:`~stonesoup.types.angle.Bearing`).
 
         Parameters
         ----------
@@ -250,8 +280,8 @@ class PassiveSonarDetector(DetectionReader):
         """
         sensor_data_iterator: Iterable[SensorDataStep] = self.sensor_data_gen
         if progress_bar:
-            sensor_data_iterator = tqdm(
-                sensor_data_iterator, desc="Generating Detections", total=total_timesteps
+            sensor_data_iterator = _lazy_progress_bar(
+                sensor_data_iterator, "Generating Detections", total_timesteps
             )
 
         for timestamp, sensor_data_set in sensor_data_iterator:
@@ -264,7 +294,7 @@ class PassiveSonarDetector(DetectionReader):
                 if beamformed_data is None or beamformed_data.size == 0:
                     continue
 
-                # detection_snr_map() and detect() each estimate the noise floor independently -- a
+                # detection_snr_map() and detect() each estimate the noise floor independently, a
                 # modest redundant computation in exchange for keeping "report the full
                 # picture" and "decide detections" as separate concerns. Worth revisiting if
                 # this shows up in profiling.
@@ -283,7 +313,7 @@ class PassiveSonarDetector(DetectionReader):
 
                         detections.add(
                             Detection(
-                                state_vector=[[bearing_rad]],
+                                state_vector=[[Bearing(bearing_rad)]],
                                 timestamp=sensor_data.timestamp,
                                 metadata={"snr_db": raw_det[1]},
                             )
@@ -300,6 +330,13 @@ class BandDetector(Base):
     Each band of a multiband beamformer gets its own instance, so bands can differ in
     sensitivity (guard/training cell sizing, target Pfa, etc). Bands are matched to detectors
     by label; see :class:`MultibandPassiveSonarDetector`.
+
+    Noise statistics differ between bands, so a ``noise_calibration`` is per band: calibrate
+    each band's detector with :class:`~.calibration.NoiseCalibrator` on that band's slices of
+    noise-only multiband output, selected with
+    ``beamformed_scans_from_sensor_data(sensor_data_gen, band_label=...)``. Each band's detector
+    picks its threshold mode independently, and a band in fixed mode (``threshold_factor``) needs
+    no calibration.
     """
 
     detector: _CFARDetectorBase = Property(
@@ -429,6 +466,8 @@ class MultibandPassiveSonarDetector(DetectionReader):
     iterating any of them.
 
     Each reader may be iterated once, as the underlying sensor-data generator is consumed.
+    Detections hold their bearing as a :class:`~stonesoup.types.angle.Bearing`, as in
+    :class:`PassiveSonarDetector`.
     """
 
     band_detectors: dict[str, BandDetector] = Property(
@@ -438,7 +477,8 @@ class MultibandPassiveSonarDetector(DetectionReader):
         doc="Generator that yields PassiveSonarSensorData objects",
     )
     steering_azimuths_rad: FloatArray = Property(
-        doc="Array of steering azimuth angles in radians.",
+        doc="Steering azimuth of each beam, in radians anticlockwise from +x (see "
+        "Coordinate frames in bluepebble).",
     )
     default_detector: BandDetector | None = Property(
         default=None,
@@ -567,7 +607,9 @@ class MultibandPassiveSonarDetector(DetectionReader):
                     for raw_det in raw_detections:
                         detections_by_band[band_label].add(
                             Detection(
-                                state_vector=[[self.steering_azimuths_rad[int(raw_det[0])]]],
+                                state_vector=[
+                                    [Bearing(self.steering_azimuths_rad[int(raw_det[0])])]
+                                ],
                                 timestamp=sensor_data.timestamp,
                                 metadata={"band": band_label, "snr_db": float(raw_det[1])},
                             )
@@ -602,7 +644,7 @@ class MultibandPassiveSonarDetector(DetectionReader):
 
         steps: Iterable[_BandedStep] = self._pump.stream(self._subscriber_id)
         if progress_bar:
-            steps = tqdm(steps, desc="Generating Detections", total=total_timesteps)
+            steps = _lazy_progress_bar(steps, "Generating Detections", total_timesteps)
 
         for timestamp, detections_by_band in steps:
             combined: set[Detection] = set()

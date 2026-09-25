@@ -631,6 +631,84 @@ def test_broadband_truncates_long_noise(monkeypatch) -> None:
     assert second_data.beamformed_data is None
 
 
+def test_stft_progress_bar_does_not_change_output(monkeypatch) -> None:
+    """progress_bar is cosmetic: sensor_data_gen output must be identical with it on or off."""
+    acoustic = _load_acoustic_module(monkeypatch)
+    _install_fake_signal_utils(monkeypatch, reconstructed_signal=np.array([1, 2, 3, 4, 5]))
+    t0 = datetime(2026, 1, 1, 12, 0, 0)
+    t1 = t0 + timedelta(seconds=1)
+    platform = FakePlatform([t0, t1], num_sensors=1)
+    path = FakePath(states=[FakeState(timestamp=t0), FakeState(timestamp=t1)])
+
+    class FakePropagationModel(_spectrum_propagation_base()):
+        def propagate_spectrum(self, platform_state, target_state, frequencies):
+            return np.ones((1, len(frequencies)), dtype=np.complex64), 0.0
+
+    def build_simulator():
+        return acoustic.BroadbandPassiveSonarArraySimulator(
+            platform=platform,
+            propagation_model=FakePropagationModel(),
+            signal_models=[FakeBroadbandSignalModel()],
+            noise_model=None,
+            beamformer=None,
+            steering_calculator=None,
+            ground_truth_paths=[path],
+            fade_in_ms=0.0,
+        )
+
+    without_bar = list(build_simulator().sensor_data_gen(progress_bar=False))
+    with_bar = list(build_simulator().sensor_data_gen(progress_bar=True))
+
+    assert [ts for ts, _ in without_bar] == [ts for ts, _ in with_bar]
+    for (_, set_a), (_, set_b) in zip(without_bar, with_bar, strict=True):
+        data_a = next(iter(set_a))
+        data_b = next(iter(set_b))
+        np.testing.assert_array_equal(data_a.raw_signals, data_b.raw_signals)
+
+
+def test_fractional_delay_progress_bar_does_not_change_output(monkeypatch) -> None:
+    """progress_bar is cosmetic: sensor_data_gen output must be identical with it on or off."""
+    acoustic = _load_acoustic_module(monkeypatch)
+    t0 = datetime(2026, 1, 1, 12, 0, 0)
+    t1 = t0 + timedelta(seconds=1)
+    platform = FakePlatform([t0, t1], num_sensors=1)
+    path = FakePath(states=[FakeState(timestamp=t0), FakeState(timestamp=t1)])
+
+    class FakeSignalModel:
+        sampling_rate_hz = 4.0
+        frame_len = 4
+        num_samples = 4
+
+        def get_source_waveform(self, source):
+            return np.ones(4, dtype=np.float32)
+
+    class FakePropagationModel(_spectrum_propagation_base()):
+        def propagate_spectrum(self, platform_state, target_state, frequencies):
+            return np.ones((1, len(frequencies)), dtype=np.complex64), np.zeros(1)
+
+    def build_simulator():
+        return acoustic.FractionalDelayPassiveSonarArraySimulator(
+            platform=platform,
+            propagation_model=FakePropagationModel(),
+            signal_models=[FakeSignalModel()],
+            noise_model=None,
+            beamformer=None,
+            steering_calculator=None,
+            ground_truth_paths=[path],
+            fade_in_ms=0.0,
+            fade_out_ms=0.0,
+        )
+
+    without_bar = list(build_simulator().sensor_data_gen(progress_bar=False))
+    with_bar = list(build_simulator().sensor_data_gen(progress_bar=True))
+
+    assert [ts for ts, _ in without_bar] == [ts for ts, _ in with_bar]
+    for (_, set_a), (_, set_b) in zip(without_bar, with_bar, strict=True):
+        data_a = next(iter(set_a))
+        data_b = next(iter(set_b))
+        np.testing.assert_array_equal(data_a.raw_signals, data_b.raw_signals)
+
+
 def test_broadband_pads_short_noise_and_beamforms_real_part(monkeypatch) -> None:
     """Short noise should be zero-padded and beamforming should see real-valued signals."""
     acoustic = _load_acoustic_module(monkeypatch)

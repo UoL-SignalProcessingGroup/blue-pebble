@@ -34,7 +34,12 @@ from stonesoup.models.transition.linear import (
 from stonesoup.types.groundtruth import GroundTruthPath, GroundTruthState
 
 import bluepebble
-from bluepebble.detector import CACFARDetector, PassiveSonarDetector
+from bluepebble.detector import (
+    CACFARDetector,
+    NoiseCalibrator,
+    PassiveSonarDetector,
+    beamformed_scans_from_sensor_data,
+)
 from bluepebble.models.environment import GEBCOBathymetry, LeroyCopernicusSoundSpeedProfile
 from bluepebble.models.propagation import rtrsAcousticPropagationModel
 from bluepebble.platform import TowedArrayPlatform
@@ -198,10 +203,10 @@ for i in range(1, num_steps):
 # Ground Truth Setup and Generation
 # ---------------------------------
 #
-# Target kinematics and source metadata are generated here, along with relative-bearing
-# truth sequences used for BTR overlays. The measured bathymetry and sound speed profile
-# are also constructed at the end of this section - they are needed for the world
-# overview figure and are reused by the propagation model that follows.
+# Target kinematics and source metadata are generated here, along with bearing truth
+# sequences (bearings from the array) used for BTR overlays. The measured bathymetry and
+# sound speed profile are also constructed at the end of this section - they are needed for
+# the world overview figure and are reused by the propagation model that follows.
 
 target_start_vectors = [
     np.array([-15000, 10.0, 20000, 10, -5.0, 0.0]),
@@ -212,10 +217,9 @@ target_transition_model = CombinedLinearGaussianTransitionModel(
     [ConstantVelocity(0.0), ConstantVelocity(0.0), ConstantVelocity(0.0)]
 )
 target_position_mapping = [0, 2, 4]
-target_velocity_mapping = [1, 3, 5]
 
 target_ground_truths = []
-relative_bearing_ground_truths = []
+bearing_truths = []
 
 for target_start_vector in target_start_vectors:
     target_amplitudes_upa = 10 ** (rng.uniform(90, 102, 4) / 20)
@@ -232,11 +236,10 @@ for target_start_vector in target_start_vectors:
                 "amplitudes_upa": target_amplitudes_upa,
                 "frequencies_hz": target_frequencies_hz,
                 "phases_rad": target_phases_rad,
-                "position_mapping": target_position_mapping,
-                "velocity_mapping": target_velocity_mapping,
                 "tonal_bandwidth_hz": target_tonal_bandwidth_hz,
                 "noise_amplitude_upa": target_noise_amplitude_upa,
                 "noise_spectral_exponent": -1.0,
+                "position_mapping": target_position_mapping,
             },
         )
     ]
@@ -271,7 +274,7 @@ for target_start_vector in target_start_vectors:
             )
         )
 
-    relative_bearing_ground_truths.append(GroundTruthPath(bearing_states))
+    bearing_truths.append(GroundTruthPath(bearing_states))
 
 bathymetry = GEBCOBathymetry(
     file_path=str(gebco_file),
@@ -391,17 +394,13 @@ ambient_noise_model = ColouredNoiseSignal(
 )
 
 signal_models = []
-for target_ground_truth in target_ground_truths:
-    target_metadata = next(iter(target_ground_truth)).metadata
+for _ in target_ground_truths:
     signal_models.append(
         SyntheticAnthropogenicSignal(
             duration_s=total_duration_s,
             sampling_rate_hz=sampling_rate_hz,
             frame_len=frame_len,
             hop_factor=hop_factor,
-            tonal_bandwidth_hz=target_metadata["tonal_bandwidth_hz"],
-            noise_amplitude_upa=target_metadata["noise_amplitude_upa"],
-            noise_spectral_exponent=target_metadata["noise_spectral_exponent"],
             noise_freq_range_hz=(0.0, sampling_rate_hz / 2),
             tonal_noise_is_constant=True,
             noise_is_constant=True,
@@ -415,7 +414,7 @@ for target_ground_truth in target_ground_truths:
 # This section sets the beamforming parameters and builds the steering calculator.
 # An MVDR beamformer is used.
 
-steering_azimuths_rad = np.linspace(-np.pi, np.pi, 181)
+steering_azimuths_rad = np.linspace(-np.pi, np.pi, 180, endpoint=False)
 fmin = 120.0
 fmax = 250.0
 
@@ -441,9 +440,7 @@ steering_calculator = SteeringCalculator(
 
 cfar_num_guard_cells = 2
 cfar_num_training_cells = 5
-# Reproduces the pre-refactor threshold_factor=1.75 exactly, via CA-CFAR's single-look
-# Pfa = (1 + alpha/N)^-N with N = 2 * num_training_cells.
-cfar_target_pfa = 0.1994
+cfar_target_pfa = 1e-3
 cfar_circular = True
 peak_distance = 3
 
@@ -466,9 +463,39 @@ cfar_detector = CACFARDetector(
     peak_distance=peak_distance,
 )
 
+# CFAR thresholds a noise model that assumes independent beams and a known number of looks;
+# beamformer output satisfies neither, so noise_calibration must be measured on noise-only data
+# before the detector can run at all. Operationally that is a survey of the ambient noise
+# recorded beforehand with the same array, beamformer, steering and scan length. Here it comes
+# from the same platform with no ground_truth_paths, over the first 120 scans only, with noise
+# drawn independently of the scenario's. The simulator adds ambient noise at the sensors
+# without propagating it, so the measured bathymetry and sound-speed profile do not change
+# it; a real survey would be specific to the area. The calibration needs about 20,000 cells at
+# its defaults, which is 112 scans of 180 beams.
+from itertools import islice
+
+num_survey_scans = 120
+
+ambient_only_simulator = ContinuousSTFTPassiveSonarArraySimulator(
+    platform=platform,
+    propagation_model=prop_model,
+    signal_models=signal_models,
+    noise_model=ambient_noise_model,
+    beamformer=beamformer,
+    steering_calculator=steering_calculator,
+    ground_truth_paths=[],
+    fade_in_ms=fade_in_ms,
+)
+noise_scans = beamformed_scans_from_sensor_data(
+    islice(ambient_only_simulator.sensor_data_gen(), num_survey_scans),
+    progress_bar=True,
+    total=num_survey_scans,
+)
+NoiseCalibrator(cfar_detector).calibrate_from_noise(noise_scans)
+
 detector = PassiveSonarDetector(
     detector=cfar_detector,
-    sensor_data_gen=simulator.sensor_data_gen(),
+    sensor_data_gen=simulator.sensor_data_gen(progress_bar=True),
     steering_azimuths_rad=steering_azimuths_rad,
 )
 
@@ -526,7 +553,7 @@ plot_btr(
 plot_btr(
     data=reported_snr,
     detections=detections,
-    truths=relative_bearing_ground_truths,
+    truths=bearing_truths,
     timesteps=timesteps,
     steering_azimuths=steering_azimuths_deg,
     fig=fig_results,

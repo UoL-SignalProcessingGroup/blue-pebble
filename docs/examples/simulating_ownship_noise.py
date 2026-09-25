@@ -20,6 +20,7 @@ present in ambient-only simulations.
 # All dependencies are consolidated here for convenience.
 
 from datetime import datetime, timedelta
+from itertools import islice
 
 import numpy as np
 from plotly.subplots import make_subplots
@@ -32,7 +33,12 @@ from stonesoup.models.transition.linear import (
 from stonesoup.types.groundtruth import GroundTruthPath, GroundTruthState
 
 import bluepebble
-from bluepebble.detector import CACFARDetector, PassiveSonarDetector
+from bluepebble.detector import (
+    CACFARDetector,
+    NoiseCalibrator,
+    PassiveSonarDetector,
+    beamformed_scans_from_sensor_data,
+)
 from bluepebble.models.environment import FlatBathymetry, Linear
 from bluepebble.models.propagation import rtrsAcousticPropagationModel
 from bluepebble.platform import TowedArrayPlatform
@@ -141,7 +147,6 @@ self_noise_states = [
         timestamp=state.timestamp,
         metadata={
             "position_mapping": platform_position_mapping,
-            "velocity_mapping": platform_velocity_mapping,
             "amplitudes_upa": ownship_amplitudes_upa,
             "frequencies_hz": ownship_frequencies_hz,
             "phases_rad": ownship_phases_rad,
@@ -159,7 +164,7 @@ self_noise_ground_truth = GroundTruthPath(self_noise_states)
 # ---------------------------------
 #
 # Three targets are created with reproducible randomised source metadata. Their
-# Cartesian trajectories are converted to relative bearing truths for detector
+# Cartesian trajectories are converted to bearing truths (bearings from the array) for detector
 # interpretation, then visualised to verify the simulation geometry. PassiveSonarDetector reports
 # bearing-state detections, so truth needs to be in the same space for any downstream comparison.
 
@@ -174,33 +179,28 @@ target_transition_model = CombinedLinearGaussianTransitionModel(
     [ConstantVelocity(0.0), ConstantVelocity(0.0), ConstantVelocity(0.0)]
 )
 target_position_mapping = [0, 2, 4]
-target_velocity_mapping = [1, 3, 5]
 
+# Tonal bandwidth and broadband noise, the same for every target
 shared_target_tonal_bandwidth_hz = rng.uniform(0.5, 2.0)
 shared_target_noise_amplitude_upa = 10 ** (90 / 20)
 shared_target_noise_spectral_exponent = -1.0
 
 target_ground_truths: list[GroundTruthPath] = []
-relative_bearing_ground_truths: list[GroundTruthPath] = []
+bearing_truths: list[GroundTruthPath] = []
 
 for target_start_vector in target_start_vectors:
     target_amplitudes_upa = 10 ** (rng.uniform(87, 102, 4) / 20)
     target_frequencies_hz = rng.uniform(50.0, 200.0, 4)
     target_phases_rad = rng.uniform(0, 2 * np.pi, 4)
-    target_tonal_bandwidth_hz = rng.uniform(0.5, 2.0)
-    target_noise_amplitude_upa = 10 ** (rng.uniform(65, 85) / 20)
 
     target_metadata = {
         "amplitudes_upa": target_amplitudes_upa,
         "frequencies_hz": target_frequencies_hz,
         "phases_rad": target_phases_rad,
-        "position_mapping": target_position_mapping,
-        "velocity_mapping": target_velocity_mapping,
-        "tonal_bandwidth_hz": target_tonal_bandwidth_hz,
-        "noise_amplitude_upa": target_noise_amplitude_upa,
-        "target_tonal_bandwidth_hz": shared_target_tonal_bandwidth_hz,
-        "target_noise_amplitude_upa": shared_target_noise_amplitude_upa,
+        "tonal_bandwidth_hz": shared_target_tonal_bandwidth_hz,
+        "noise_amplitude_upa": shared_target_noise_amplitude_upa,
         "noise_spectral_exponent": shared_target_noise_spectral_exponent,
+        "position_mapping": target_position_mapping,
     }
 
     target_states = [
@@ -241,7 +241,7 @@ for target_start_vector in target_start_vectors:
             GroundTruthState(np.array([bearing_rad]), timestamp=target_state.timestamp)
         )
 
-    relative_bearing_ground_truths.append(GroundTruthPath(bearing_states))
+    bearing_truths.append(GroundTruthPath(bearing_states))
 
 fig_world = plot_world(truths=target_ground_truths, platform=platform).update_layout(
     title="World Picture: Target and Platform Trajectories",
@@ -310,17 +310,13 @@ ambient_noise_model = ColouredNoiseSignal(
 
 def _make_signal_models() -> list[SyntheticAnthropogenicSignal]:
     models: list[SyntheticAnthropogenicSignal] = []
-    for target_ground_truth in target_ground_truths:
-        target_metadata = next(iter(target_ground_truth)).metadata
+    for _ in target_ground_truths:
         models.append(
             SyntheticAnthropogenicSignal(
                 duration_s=total_duration_s,
                 sampling_rate_hz=sampling_rate_hz,
                 frame_len=frame_len,
                 hop_factor=hop_factor,
-                tonal_bandwidth_hz=target_metadata["target_tonal_bandwidth_hz"],
-                noise_amplitude_upa=target_metadata["target_noise_amplitude_upa"],
-                noise_spectral_exponent=target_metadata["noise_spectral_exponent"],
                 noise_freq_range_hz=(0.0, sampling_rate_hz / 2),
                 tonal_noise_is_constant=True,
                 noise_is_constant=True,
@@ -335,9 +331,6 @@ def _make_self_noise_model() -> SyntheticAnthropogenicSignal:
         sampling_rate_hz=sampling_rate_hz,
         frame_len=frame_len,
         hop_factor=hop_factor,
-        tonal_bandwidth_hz=ownship_tonal_bandwidth_hz,
-        noise_amplitude_upa=ownship_noise_amplitude_upa,
-        noise_spectral_exponent=ownship_noise_spectral_exponent,
         noise_freq_range_hz=(0.0, sampling_rate_hz / 2),
         tonal_noise_is_constant=True,
         noise_is_constant=True,
@@ -354,7 +347,7 @@ def _make_self_noise_model() -> SyntheticAnthropogenicSignal:
 beamformer_type = "DAS"
 beamformer_shading = None
 beamformer_domain = "frequency"
-steering_azimuths_rad = np.linspace(-np.pi, np.pi, 181)
+steering_azimuths_rad = np.linspace(-np.pi, np.pi, 180, endpoint=False)
 
 shading = None
 if beamformer_shading is not None:
@@ -413,14 +406,30 @@ mainlobe_beams = beams_per_mainlobe(
 cfar_num_guard_cells, cfar_num_training_cells, peak_distance = cfar_window_for_mainlobe(
     mainlobe_beams
 )
-# Preserves this example's pre-refactor operating point: the old threshold_factor=1.05 was
-# alpha applied to the training-cell mean, and CA-CFAR's single-look Pfa = (1 + alpha/N)^-N
-# with N = 2 * num_training_cells inverts it exactly. It is a deliberately permissive
-# threshold -- peak consolidation, not the threshold, does most of the rejection here.
+# A deliberately permissive per-cell Pfa: peak consolidation, not the threshold, does most of
+# the rejection here. The threshold it sets comes from the noise calibration, so it is measured
+# rather than derived from a noise model.
 cfar_target_pfa = 0.3594
+num_survey_scans = 120
 
 
-def _make_detector(simulator: ContinuousSTFTPassiveSonarArraySimulator) -> PassiveSonarDetector:
+def _make_detector(
+    simulator: ContinuousSTFTPassiveSonarArraySimulator,
+    noise_only_signal_models: list,
+    noise_only_ground_truth_paths: list,
+) -> PassiveSonarDetector:
+    """Create a PassiveSonarDetector, calibrated against this scenario's own background.
+
+    ``noise_only_signal_models``/``noise_only_ground_truth_paths`` describe what belongs to
+    the background (ambient noise, plus ownship self-noise where present) rather than the
+    real targets to be detected, so calibration measures the same clutter the detector
+    actually faces without baking the targets themselves into the noise floor. Operationally
+    this is a survey recorded beforehand under the same conditions, including the ownship's
+    own noise. Ownship noise is a propagated source, so, unlike the simulated ambient noise,
+    it changes the noise field and the two scenarios need separate surveys. The survey covers
+    the first ``num_survey_scans`` scans; the calibration needs about 20,000 cells at its
+    defaults, which is 112 scans of 180 beams.
+    """
     cfar_detector = CACFARDetector(
         num_guard_cells=cfar_num_guard_cells,
         num_training_cells=cfar_num_training_cells,
@@ -428,6 +437,23 @@ def _make_detector(simulator: ContinuousSTFTPassiveSonarArraySimulator) -> Passi
         peak_distance=peak_distance,
         circular=True,
     )
+
+    ambient_only_simulator = ContinuousSTFTPassiveSonarArraySimulator(
+        platform=simulator.platform,
+        propagation_model=simulator.propagation_model,
+        signal_models=noise_only_signal_models,
+        noise_model=simulator.noise_model,
+        beamformer=simulator.beamformer,
+        steering_calculator=simulator.steering_calculator,
+        ground_truth_paths=noise_only_ground_truth_paths,
+        fade_in_ms=simulator.fade_in_ms,
+    )
+    noise_scans = beamformed_scans_from_sensor_data(
+        islice(ambient_only_simulator.sensor_data_gen(), num_survey_scans),
+        progress_bar=True,
+        total=num_survey_scans,
+    )
+    NoiseCalibrator(cfar_detector).calibrate_from_noise(noise_scans)
 
     return PassiveSonarDetector(
         detector=cfar_detector,
@@ -458,8 +484,12 @@ simulator_with_ownship_noise = ContinuousSTFTPassiveSonarArraySimulator(
     fade_in_ms=fade_in_ms,
 )
 
-detector_without_ownship_noise = _make_detector(simulator_without_ownship_noise)
-detector_with_ownship_noise = _make_detector(simulator_with_ownship_noise)
+detector_without_ownship_noise = _make_detector(
+    simulator_without_ownship_noise, _make_signal_models(), []
+)
+detector_with_ownship_noise = _make_detector(
+    simulator_with_ownship_noise, [_make_self_noise_model()], [self_noise_ground_truth]
+)
 
 # %%
 # Run Detection on Simulated Data
@@ -469,12 +499,12 @@ detector_with_ownship_noise = _make_detector(simulator_with_ownship_noise)
 # side-by-side visual comparison.
 
 all_detections_without_ownship_noise = list(
-    detector_without_ownship_noise.detections_gen(progress_bar=False, total_timesteps=num_steps)
+    detector_without_ownship_noise.detections_gen(progress_bar=True, total_timesteps=num_steps)
 )
 reported_snr_without_ownship_noise = detector_without_ownship_noise.reported_snr_history
 
 all_detections_with_ownship_noise = list(
-    detector_with_ownship_noise.detections_gen(progress_bar=False, total_timesteps=num_steps)
+    detector_with_ownship_noise.detections_gen(progress_bar=True, total_timesteps=num_steps)
 )
 reported_snr_with_ownship_noise = detector_with_ownship_noise.reported_snr_history
 

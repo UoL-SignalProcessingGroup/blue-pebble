@@ -104,7 +104,8 @@ def test_detections_carry_band_and_snr_metadata(monkeypatch) -> None:
     assert isinstance(detection.metadata["snr_db"], float)
     assert detection.metadata["snr_db"] == pytest.approx(64.0)
     # The peak sits in beam index 2 of the 'low' band.
-    assert detection.state_vector[0][0] == pytest.approx(0.5)
+    assert float(detection.state_vector[0][0]) == pytest.approx(0.5)
+    assert type(detection.state_vector[0][0]).__name__ == "FakeBearing"
 
 
 def test_union_equals_the_sum_of_per_band_readers(monkeypatch) -> None:

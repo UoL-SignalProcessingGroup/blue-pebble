@@ -1,7 +1,8 @@
 """conventional beamforming."""
 
 import numpy as np
-from numba import njit, prange, types
+from numba import njit, prange
+from numba.core import types
 from numpy.typing import ArrayLike
 from stonesoup.base import Property
 

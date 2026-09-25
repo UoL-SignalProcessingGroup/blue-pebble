@@ -385,6 +385,18 @@ def test_get_platform_state_at_returns_state_for_matching_timestamp(monkeypatch)
     assert result.timestamp == _T1
 
 
+def test_heading_due_minus_x_is_minus_pi(monkeypatch) -> None:
+    """Heading follows the [-pi, pi) convention: due -x is -pi, not arctan2's +pi."""
+    module = _load_towedarray(monkeypatch)
+    platform = _make_platform(module, host_velocity_x=-5.0)
+    platform.move(_T1)
+
+    result = platform.get_platform_state_at(_T1)
+
+    assert result is not None
+    assert result.host.heading_rad == -np.pi
+
+
 def test_get_platform_state_at_returns_none_for_unknown_timestamp(monkeypatch) -> None:
     """get_platform_state_at should return None when the timestamp is not in history."""
     module = _load_towedarray(monkeypatch)

@@ -121,8 +121,10 @@ target_states = [
             "amplitudes_upa": 10 ** (np.array([100.0, 90.0, 100.0, 85.0]) / 20),
             "frequencies_hz": np.array([20.0, 140.0, 200.0, 500.0]),
             "phases_rad": rng.uniform(0, 2 * np.pi, 4),
+            "tonal_bandwidth_hz": 10.0,
+            "noise_amplitude_upa": 10 ** (80 / 20),
+            "noise_spectral_exponent": -1.0,
             "position_mapping": [0, 2, 4],
-            "velocity_mapping": [1, 3, 5],
         },
     )
 ]
@@ -179,9 +181,6 @@ frame_len = 500
 hop_factor = 4
 fade_in_ms = 100.0
 fade_out_ms = 100.0
-tonal_bandwidth_hz = 10.0
-noise_amplitude_upa = 10 ** (80 / 20)
-noise_spectral_exponent = -1.0
 
 wav_name = "SanctSound_CI05_03_largeship_20190925T135956Z.wav"
 
@@ -218,9 +217,6 @@ def _make_synthetic_signal_model():
         sampling_rate_hz=sampling_rate_hz,
         frame_len=frame_len,
         hop_factor=hop_factor,
-        tonal_bandwidth_hz=tonal_bandwidth_hz,
-        noise_amplitude_upa=noise_amplitude_upa,
-        noise_spectral_exponent=noise_spectral_exponent,
         noise_freq_range_hz=(0.0, sampling_rate_hz / 2),
         tonal_noise_is_constant=True,
         noise_is_constant=True,

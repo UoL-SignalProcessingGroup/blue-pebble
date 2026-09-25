@@ -152,7 +152,8 @@ class HostState:
     state : GroundTruthState
         The ground truth state of the host vehicle.
     heading_rad : float
-        The heading of the host vehicle in radians.
+        The host vehicle's direction of travel, in radians anticlockwise from +x, in
+        ``[-pi, pi)``.
 
     """
 
@@ -406,6 +407,8 @@ class TowedArrayPlatform(MultiTransitionMovingPlatform):
         velocity_mapping = self._resolved_velocity_mapping()
         host_vel_xy = host_state.state_vector[velocity_mapping[:2]]
         heading_rad = float(np.arctan2(host_vel_xy[1, 0], host_vel_xy[0, 0]))
+        # arctan2 returns +pi for due -x; wrap to [-pi, pi) like Stone Soup's Bearing.
+        heading_rad = (heading_rad + np.pi) % (2 * np.pi) - np.pi
 
         host_state_container = HostState(state=host_state, heading_rad=heading_rad)
 

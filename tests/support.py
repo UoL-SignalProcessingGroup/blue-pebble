@@ -5,7 +5,11 @@ from __future__ import annotations
 import importlib.util
 import sys
 import types
+from math import comb
 from pathlib import Path
+
+from scipy import integrate
+from scipy.stats import gamma as gamma_dist
 
 REPO_ROOT = Path(__file__).resolve().parents[1]
 
@@ -151,3 +155,44 @@ def load_package_module_from_repo(relative_path: str, module_name: str):
     sys.modules[module_name] = module
     spec.loader.exec_module(module)
     return module
+
+
+# CFAR Pfa references by numerical quadrature, independent of the library's closed forms.
+
+
+def ca_pfa_by_quadrature(alpha, num_training_total, total_looks):
+    """P(CUT > alpha * mean(refs)) with CUT, refs unit-mean Gamma(total_looks) cells.
+
+    Integrates over the sum of reference cells, S ~ Gamma(N * L, scale 1/L), of the CUT
+    survival function, CUT ~ Gamma(L, scale 1/L). Written without the Beta-distribution identity
+    used by solve_ca_cfar_alpha.
+    """
+    looks = total_looks
+    ref_sum = gamma_dist(a=num_training_total * looks, scale=1.0 / looks)
+    cut = gamma_dist(a=looks, scale=1.0 / looks)
+    upper = ref_sum.ppf(1 - 1e-14)
+
+    def integrand(s):
+        return ref_sum.pdf(s) * cut.sf(alpha * s / num_training_total)
+
+    value, _ = integrate.quad(integrand, 0.0, upper, limit=500, epsabs=1e-14, epsrel=1e-10)
+    return value
+
+
+def os_pfa_by_quadrature(alpha, num_training_total, rank, total_looks):
+    """P(CUT > alpha * X_(k)) for unit-mean Gamma(total_looks) cells, by quadrature.
+
+    X_(k), the k-th smallest of N iid cells with CDF F and PDF f, has density
+    ``k * C(N, k) * F^(k-1) * (1 - F)^(N-k) * f``.
+    """
+    n, k = num_training_total, rank
+    cell = gamma_dist(a=total_looks, scale=1.0 / total_looks)
+
+    def integrand(x):
+        f_cdf = cell.cdf(x)
+        density = k * comb(n, k) * f_cdf ** (k - 1) * (1 - f_cdf) ** (n - k) * cell.pdf(x)
+        return density * cell.sf(alpha * x)
+
+    upper = cell.ppf(1 - 1e-12)
+    value, _ = integrate.quad(integrand, 0.0, upper, limit=500, epsabs=1e-13, epsrel=1e-9)
+    return value

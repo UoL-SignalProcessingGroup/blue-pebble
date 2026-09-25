@@ -28,12 +28,15 @@ from stonesoup.models.transition.linear import (
     KnownTurnRate,
 )
 from stonesoup.types.groundtruth import GroundTruthPath, GroundTruthState
+from tqdm import tqdm
 
 import bluepebble
 from bluepebble.detector import (
     BandDetector,
     CACFARDetector,
     MultibandPassiveSonarDetector,
+    NoiseCalibrator,
+    beamformed_scans_from_sensor_data,
 )
 from bluepebble.models.environment import FlatBathymetry, Linear
 from bluepebble.models.propagation import CylindricalAcousticPropagationModel
@@ -196,11 +199,10 @@ for target_config in target_configs:
         ** (np.full(num_tonals_per_target, target_config["tonal_level_db"]) / 20),
         "frequencies_hz": list(frequencies),
         "phases_rad": list(rng.uniform(0.0, 2 * np.pi, num_tonals_per_target)),
-        "position_mapping": [0, 2, 4],
-        "velocity_mapping": [1, 3, 5],
         "tonal_bandwidth_hz": 2.0,
         "noise_amplitude_upa": 10 ** (target_config["noise_level_db"] / 20),
         "noise_spectral_exponent": -1.0,
+        "position_mapping": [0, 2, 4],
     }
 
 for target_config in target_configs:
@@ -208,7 +210,7 @@ for target_config in target_configs:
     print(f"{target_config['name']}: tonals at {tonal_text} Hz")
 
 target_ground_truths = []
-relative_bearing_ground_truths = []
+bearing_truths = []
 
 for target_config in target_configs:
     target_states = [
@@ -253,7 +255,7 @@ for target_config in target_configs:
             )
         )
 
-    relative_bearing_ground_truths.append(GroundTruthPath(bearing_states))
+    bearing_truths.append(GroundTruthPath(bearing_states))
 
 fig_world = plot_world(truths=target_ground_truths, platform=platform).update_layout(
     title="World Picture: Target and Platform Trajectories",
@@ -291,17 +293,13 @@ ambient_noise_model = ColouredNoiseSignal(
 def _make_signal_models():
     """Build one signal model per target."""
     models = []
-    for target_ground_truth in target_ground_truths:
-        target_metadata = next(iter(target_ground_truth)).metadata
+    for _ in target_ground_truths:
         models.append(
             SyntheticAnthropogenicSignal(
                 duration_s=total_duration_s,
                 sampling_rate_hz=sampling_rate_hz,
                 frame_len=frame_len,
                 hop_factor=hop_factor,
-                tonal_bandwidth_hz=target_metadata["tonal_bandwidth_hz"],
-                noise_amplitude_upa=target_metadata["noise_amplitude_upa"],
-                noise_spectral_exponent=target_metadata["noise_spectral_exponent"],
                 noise_freq_range_hz=(0.0, sampling_rate_hz / 2),
                 tonal_noise_is_constant=True,
                 noise_is_constant=True,
@@ -352,12 +350,9 @@ def _tonals_in_band(band: FrequencyBand) -> str:
 guard_scale = 2.0
 train_scale = 4.0
 # Calibrating on Pfa rather than a raw threshold multiplier matters more here than in the
-# single-band examples: because each band sizes its own training window, the shared
-# threshold_factor=1.75 this example used previously actually gave every band a slightly
-# different false-alarm rate (0.176 at the widest window, 0.190 at the narrowest). Asking
-# for a Pfa instead gives every band the same detection policy, whatever its window size.
-# 0.18 sits in the middle of that old spread, so the bands behave much as they did before.
-target_pfa = 0.18
+# single-band examples because each band sizes its own training window. For simplicity, we will
+# just use a single Pfa value.
+target_pfa = 1e-3
 
 
 def _band_detector(band: FrequencyBand) -> CACFARDetector:
@@ -388,26 +383,59 @@ band_cfar_detectors = {band.label: _band_detector(band) for band in view_bands}
 # Note that mirror half plane is set on the steering calculator. This mirrors the
 # beamformer using half the beams which is faster.
 
+beamformer = DelayAndSumBeamformer(
+    sampling_rate_hz=sampling_rate_hz,
+    domain="broadband_power",
+    nfft=frame_len,
+    overlap=frame_len // hop_factor,
+    bands=view_bands,
+)
+steering_calculator = SteeringCalculator(
+    ssp=ssp,
+    steering_azimuths_rad=steering_azimuths_rad,
+    mirror_half_plane=True,
+)
+
 simulator = ContinuousSTFTPassiveSonarArraySimulator(
     platform=platform,
     propagation_model=propagation_model,
     signal_models=_make_signal_models(),
     noise_model=ambient_noise_model,
-    beamformer=DelayAndSumBeamformer(
-        sampling_rate_hz=sampling_rate_hz,
-        domain="broadband_power",
-        nfft=frame_len,
-        overlap=frame_len // hop_factor,
-        bands=view_bands,
-    ),
-    steering_calculator=SteeringCalculator(
-        ssp=ssp,
-        steering_azimuths_rad=steering_azimuths_rad,
-        mirror_half_plane=True,
-        ),
+    beamformer=beamformer,
+    steering_calculator=steering_calculator,
     ground_truth_paths=target_ground_truths,
     fade_in_ms=fade_in_ms,
 )
+
+# Noise statistics differ between bands (each has its own bandwidth and mainlobe width), so
+# each band's detector gets its own noise_calibration rather than sharing one. Operationally
+# these come from a survey of the ambient noise recorded beforehand with the same array,
+# beamformer, steering and scan length; here the survey is the same platform with no
+# ground_truth_paths. It uses the whole run because 120 beams need about 167 scans to reach the
+# roughly 20,000 cells the calibration wants at its defaults. The ambient-only multiband run is
+# simulated once and cached, since it holds every band's data per timestep;
+# beamformed_scans_from_sensor_data then selects one band's slice per calibration.
+ambient_only_simulator = ContinuousSTFTPassiveSonarArraySimulator(
+    platform=platform,
+    propagation_model=propagation_model,
+    signal_models=_make_signal_models(),
+    noise_model=ambient_noise_model,
+    beamformer=beamformer,
+    steering_calculator=steering_calculator,
+    ground_truth_paths=[],
+    fade_in_ms=fade_in_ms,
+)
+noise_only_sensor_data = list(
+    tqdm(ambient_only_simulator.sensor_data_gen(), total=num_steps, desc="Noise calibration")
+)
+for label, cfar in band_cfar_detectors.items():
+    NoiseCalibrator(cfar).calibrate_from_noise(
+        beamformed_scans_from_sensor_data(noise_only_sensor_data, band_label=label),
+        # fade_in_ms truncates the very first scan to one fewer STFT frame (3 vs the nominal
+        # 4), a >25% spread the default tolerance rejects. The operational run has the same
+        # first-scan artifact, so this needs widening rather than dropping that scan here.
+        frame_count_tolerance=0.4,
+    )
 
 labels = [band.label for band in view_bands]
 
@@ -425,8 +453,7 @@ labels = [band.label for band in view_bands]
 # one. ``reported_snr_history`` records the per-band SNR maps as a side effect of the same pass.
 
 band_detectors = {
-    label: BandDetector(detector=cfar)
-    for label, cfar in band_cfar_detectors.items()
+    label: BandDetector(detector=cfar) for label, cfar in band_cfar_detectors.items()
 }
 
 detector = MultibandPassiveSonarDetector(
@@ -480,7 +507,7 @@ for col, band in enumerate(view_bands, start=1):
     )
     plot_btr(
         data=None,
-        truths=relative_bearing_ground_truths,
+        truths=bearing_truths,
         detections=detections_by_band[band.label],
         timesteps=np.array(timesteps[:map_rows]),
         steering_azimuths=np.rad2deg(steering_azimuths_rad),
@@ -495,23 +522,23 @@ for col, band in enumerate(view_bands, start=1):
         fig_bands.update_yaxes(title_text=None, row=2, col=col)
 
 plot_btr(
-        data=None,
-        timesteps=np.array(timesteps[:map_rows]),
-        steering_azimuths=np.rad2deg(steering_azimuths_rad),
-        fig=fig_bands,
-        row=1,
-        col=len(view_bands) + 1,
-    )
+    data=None,
+    timesteps=np.array(timesteps[:map_rows]),
+    steering_azimuths=np.rad2deg(steering_azimuths_rad),
+    fig=fig_bands,
+    row=1,
+    col=len(view_bands) + 1,
+)
 plot_btr(
-        data=None,
-        truths=relative_bearing_ground_truths,
-        detections=collapsed_detections,
-        timesteps=np.array(timesteps[:map_rows]),
-        steering_azimuths=np.rad2deg(steering_azimuths_rad),
-        fig=fig_bands,
-        row=2,
-        col=len(view_bands) + 1,
-    )
+    data=None,
+    truths=bearing_truths,
+    detections=collapsed_detections,
+    timesteps=np.array(timesteps[:map_rows]),
+    steering_azimuths=np.rad2deg(steering_azimuths_rad),
+    fig=fig_bands,
+    row=2,
+    col=len(view_bands) + 1,
+)
 
 fig_bands.update_yaxes(title_text=None, row=1, col=len(view_bands) + 1)
 fig_bands.update_yaxes(title_text=None, row=2, col=len(view_bands) + 1)
@@ -542,7 +569,6 @@ fig_bands.update_layout(
     title=f"N={band_count} band beamformer, with per band detections",
     legend=dict(x=0.5, y=-0.2, xanchor="center", yanchor="top", orientation="h"),
 )
-# fig_bands.show()
 
 # %%
 # Key Takeaways

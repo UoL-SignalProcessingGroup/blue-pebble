@@ -7,7 +7,7 @@ This module has two complementary halves:
   detections against ground-truth bearings (:class:`SweepSpec`, :func:`sweep_detection_parameter`,
   :func:`sweep_detection_parameter_multiband`).
 - **Theoretical**: compute the Pd-vs-Pfa curve directly from the closed-form/Monte Carlo
-  model in :mod:`.algorithms`, at an assumed target-power ratio and no data at all
+  model in :mod:`._theory`, at an assumed target-power ratio and no data at all
   (:func:`ca_cfar_roc`, :func:`os_cfar_roc`).
   :func:`snr_linear_from_ground_truth_bearing` bridges the two by estimating the
   snr_linear actually present in a simulated scenario, so a theoretical curve can be
@@ -32,10 +32,8 @@ from numpy.typing import ArrayLike, NDArray
 
 from .algorithms import (
     _directional_power,
-    solve_ca_cfar_alpha,
-    solve_os_cfar_alpha_single_look,
 )
-from .fluctuation_models import FluctuationModel, RayleighFluctuation
+from .calibration import detector_signature
 
 if TYPE_CHECKING:
     from .algorithms import DetectionAlgorithm
@@ -76,6 +74,18 @@ class SweepSpec:
     label : str | None
         Human-readable name used in plot legends.  Defaults to
         ``"<param_name> sweep"`` when ``None``.
+
+    Notes
+    -----
+    A CFAR detector in calibrated mode can sweep ``target_pfa`` (and any other setting the
+    calibration does not depend on); one in fixed mode can sweep ``threshold_factor``, which is
+    the direct way to choose a factor for data with no noise-only segment. On a calibrated
+    detector, sweeping a setting that changes the calibrated ratio distribution
+    (``num_guard_cells``, ``num_training_cells``, ``rank`` or ``circular``) raises
+    ``ValueError`` when the clone is made, because the calibration no longer describes the swept
+    detector. Sweep such settings on a fixed-mode detector, or calibrate each value separately.
+    A swept parameter that belongs to the other threshold mode (e.g. ``target_pfa`` on a
+    fixed-mode detector) raises at the first ``detect()``.
 
     """
 
@@ -176,7 +186,7 @@ def _safe_ratio(numerator: ArrayLike, denominator: ArrayLike, default: float) ->
 class SweepResult:
     """Aggregated detection metrics from a parameter sweep.
 
-    Constructed either from confusion-matrix counts (the empirical path -- see
+    Constructed either from confusion-matrix counts (the empirical path, see
     :func:`sweep_detection_parameter`) or directly from a theoretical Pd-vs-Pfa curve
     via :meth:`from_theoretical_roc`. Exactly one of the two must be supplied.
 
@@ -218,7 +228,7 @@ class SweepResult:
         if has_counts == has_theoretical:
             raise ValueError(
                 "SweepResult needs exactly one of confusion-matrix counts "
-                "(tp/fp/fn/tn) or a theoretical curve (via from_theoretical_roc) -- got "
+                "(tp/fp/fn/tn) or a theoretical curve (via from_theoretical_roc), got "
                 f"{'both' if has_counts else 'neither'}."
             )
 
@@ -230,7 +240,7 @@ class SweepResult:
 
         Unlike :func:`sweep_detection_parameter`, there are no confusion-matrix counts
         here: ``pfa`` IS the false-positive rate and ``pd`` IS the true-positive rate by
-        construction (alpha is calibrated exactly to each requested Pfa -- see
+        construction (alpha is calibrated exactly to each requested Pfa, see
         :func:`ca_cfar_roc`, :func:`os_cfar_roc`).
 
         ``.precision``, ``.f1``, and ``.auc_pr`` raise on the result this returns: a PR
@@ -241,7 +251,7 @@ class SweepResult:
         Parameters
         ----------
         pfa : ArrayLike
-            The swept Pfa values -- doubles as ``param_values`` and as the false-positive
+            The swept Pfa values, doubling as ``param_values`` and as the false-positive
             rate, since a Pfa/Pd curve is defined by Pfa directly.
         pd : ArrayLike
             Pd (true-positive rate) at each ``pfa`` entry.
@@ -267,7 +277,7 @@ class SweepResult:
         if self.tp is None:
             raise ValueError(
                 f"{prop_name} needs confusion-matrix counts (tp/fp/fn/tn), which this "
-                "SweepResult doesn't have -- it was built via from_theoretical_roc() from "
+                "SweepResult doesn't have; it was built via from_theoretical_roc() from "
                 "a pure Pfa/Pd curve. A PR curve needs an assumed target prevalence that "
                 "Pfa/Pd theory alone doesn't provide; use .fpr/.tpr/.auc_roc instead."
             )
@@ -324,8 +334,9 @@ class SweepResult:
     def auc_roc(self) -> float:
         """Area under the ROC curve over the full ``[0, 1]`` false-positive range.
 
-        Every detector's ROC passes through ``(0, 0)`` -- the threshold so strict it rejects
-        everything -- and ``(1, 1)`` -- the threshold so permissive it accepts everything.
+        Every detector's ROC passes through two degenerate points: ``(0, 0)``, the threshold
+        so strict it rejects everything, and ``(1, 1)``, the threshold so permissive it accepts
+        everything.
         Neither is an assumption about this detector; both are degenerate operating points any
         detector has. A parameter sweep, though, rarely reaches either end, so those two points
         are added before integrating.
@@ -347,7 +358,7 @@ class SweepResult:
         -----
         Between the last measured operating point and ``(1, 1)`` the curve is interpolated
         linearly, which corresponds to randomly mixing that operating point with the
-        accept-everything detector -- an achievable strategy, so the result is a valid lower
+        accept-everything detector, an achievable strategy, so the result is a valid lower
         bound rather than an optimistic guess. It does mean that when a sweep covers only a
         small part of the FPR range, most of the area comes from that interpolated segment
         rather than from measured points. Check the span of :attr:`fpr` before reading much
@@ -433,11 +444,30 @@ class SweepResult:
 def _clone_detector_with_param(spec: SweepSpec, value: float) -> DetectionAlgorithm:
     """Deep-copy a spec's detector with its swept parameter set to ``value``."""
     detector_copy = copy.deepcopy(spec.detector)
-    setattr(detector_copy, spec.param_name, float(value))
-    # A CFAR detector's alpha is memoized per num_frames (see _CFARDetectorBase). Deep-copying
-    # a detector that was already used to detect() carries that stale cache along with it, so
-    # the clone would keep reusing an alpha calibrated for the OLD parameter value instead of
-    # recalibrating for `value`. Not every DetectionAlgorithm has this cache, hence the guard.
+    current = getattr(detector_copy, spec.param_name)
+    # Integer parameters (num_training_cells, num_guard_cells, rank, peak_distance, ...) index
+    # and size arrays, so a float value would crash detect(); keep their type.
+    if isinstance(current, (int, np.integer)) and not isinstance(current, bool):
+        if not float(value).is_integer():
+            raise ValueError(
+                f"{spec.param_name} is an integer parameter; cannot sweep non-integer {value!r}"
+            )
+        setattr(detector_copy, spec.param_name, int(value))
+    else:
+        setattr(detector_copy, spec.param_name, float(value))
+    calibration = getattr(detector_copy, "noise_calibration", None)
+    if calibration is not None:
+        swept_signature = detector_signature(detector_copy)
+        if swept_signature != calibration.detector_signature:
+            raise ValueError(
+                f"Sweeping {spec.param_name}={value!r} invalidates the detector's "
+                "noise_calibration, which was measured for a different window, rank or edge "
+                "handling. Sweep this parameter on a fixed-mode detector (threshold_factor), or "
+                "calibrate each value separately with calibrate_from_noise."
+            )
+    # A CFAR detector invalidates its memoised alpha when a calibration parameter changes (see
+    # _CFARDetectorBase._alpha_for); clearing here as well keeps detectors that don't track
+    # that themselves safe. Not every DetectionAlgorithm has this cache, hence the guard.
     if hasattr(detector_copy, "_alpha_cache"):
         detector_copy._alpha_cache = {}
     return detector_copy
@@ -448,7 +478,7 @@ def _sweep_confusion_counts(
     detector_factory: Callable[[float], _DetectorState],
     detected_beams_at_t: Callable[[_DetectorState, int], IntArray],
     gt_bearings_per_t: list[FloatArray],
-    steering_azimuths: FloatArray,
+    steering_azimuths_rad: FloatArray,
     association_threshold_rad: float,
     num_timesteps: int,
     num_beams: int,
@@ -473,7 +503,7 @@ def _sweep_confusion_counts(
     gt_bearings_per_t : list[FloatArray]
         Ground-truth bearings per timestep, as returned by
         :func:`_bearings_from_ground_truth_paths`.
-    steering_azimuths : FloatArray
+    steering_azimuths_rad : FloatArray
         Beam steering angles in radians, shape ``(num_beams,)``.
     association_threshold_rad : float
         Maximum angular distance (rad) for a detection to count as a true positive.
@@ -499,7 +529,9 @@ def _sweep_confusion_counts(
         for t_idx in range(num_timesteps):
             beam_idx = detected_beams_at_t(detector_state, t_idx)
             det_bearings = (
-                steering_azimuths[beam_idx] if beam_idx.size > 0 else np.empty(0, dtype=np.float64)
+                steering_azimuths_rad[beam_idx]
+                if beam_idx.size > 0
+                else np.empty(0, dtype=np.float64)
             )
 
             m = _compute_timestep_metrics(
@@ -553,11 +585,11 @@ def sweep_detection_parameter(
         detector, parameter name, sweep range, and optional legend label.
     ground_truth_paths : Sequence[_GroundTruthPathLike]
         Stone Soup ground-truth paths whose state vectors carry bearing values —
-        typically ``relative_bearing_ground_truths`` from the simulation workflow.
+        typically the ``bearing_truths`` built in the examples and tutorials.
         The number of timesteps is inferred from ``beamformed_data``.
     steering_azimuths_rad : ArrayLike
-        Beam steering angles in radians, shape ``(N_beams,)``.  Maps a detection
-        index back to a physical bearing.
+        Beam steering angles in radians (see Coordinate frames in :mod:`bluepebble`),
+        shape ``(N_beams,)``. Maps a detection index back to a physical bearing.
     association_threshold_rad : float
         Maximum angular distance (rad) between a detection and a ground-truth
         bearing for the detection to count as a true positive.
@@ -574,6 +606,7 @@ def sweep_detection_parameter(
     --------
     >>> import numpy as np
     >>> from bluepebble.detector.algorithms import CACFARDetector, OSCFARDetector
+    >>> from bluepebble.detector.calibration import NoiseCalibrator
     >>> from bluepebble.detector.metrics import SweepSpec, sweep_detection_parameter
     >>> from bluepebble.plotter import plot_roc_pr
     >>>
@@ -583,19 +616,23 @@ def sweep_detection_parameter(
     ...     for sensor_data in sensor_data_set
     ... ]
     >>>
+    >>> common = dict(num_guard_cells=2, num_training_cells=10, target_pfa=1e-2, peak_distance=3)
+    >>> ca_cfar = CACFARDetector(**common)
+    >>> os_cfar = OSCFARDetector(rank=15, **common)
+    >>> # Sweeping target_pfa needs calibrated mode: calibrate each detector on noise-only
+    >>> # scans produced like beamformed_data (see beamformed_scans_from_sensor_data).
+    >>> for detector in (ca_cfar, os_cfar):
+    ...     _ = NoiseCalibrator(detector).calibrate_from_noise(noise_scans)
+    >>>
     >>> specs = [
     ...     SweepSpec(
-    ...         detector=CACFARDetector(
-    ...             num_guard_cells=2, num_training_cells=10, target_pfa=1e-2, peak_distance=3
-    ...         ),
+    ...         detector=ca_cfar,
     ...         param_name="target_pfa",
     ...         param_values=np.geomspace(1e-1, 1e-5, 80),
     ...         label="CA-CFAR",
     ...     ),
     ...     SweepSpec(
-    ...         detector=OSCFARDetector(
-    ...             num_guard_cells=2, num_training_cells=10, target_pfa=1e-2, peak_distance=3
-    ...         ),
+    ...         detector=os_cfar,
     ...         param_name="target_pfa",
     ...         param_values=np.geomspace(1e-1, 1e-5, 80),
     ...         label="OS-CFAR",
@@ -604,15 +641,15 @@ def sweep_detection_parameter(
     >>> results = sweep_detection_parameter(
     ...     beamformed_data=beamformed_data,
     ...     sweep_specs=specs,
-    ...     ground_truth_paths=relative_bearing_ground_truths,
+    ...     ground_truth_paths=bearing_truths,
     ...     steering_azimuths_rad=BF_PARAMS["steering_azimuths_rad"],
     ...     association_threshold_rad=np.deg2rad(3.0),
     ... )
     >>> plot_roc_pr(results).show()
 
     """
-    steering_azimuths = np.asarray(steering_azimuths_rad, dtype=np.float64)
-    num_beams = steering_azimuths.shape[0]
+    steering_azimuths_rad = np.asarray(steering_azimuths_rad, dtype=np.float64)
+    num_beams = steering_azimuths_rad.shape[0]
     num_timesteps = len(beamformed_data)
     frames = [np.asarray(d) for d in beamformed_data]
     gt_bearings_per_t = _bearings_from_ground_truth_paths(
@@ -639,7 +676,7 @@ def sweep_detection_parameter(
             detector_factory=lambda p_val, _spec=spec: _clone_detector_with_param(_spec, p_val),
             detected_beams_at_t=_detected_beams_at_t,
             gt_bearings_per_t=gt_bearings_per_t,
-            steering_azimuths=steering_azimuths,
+            steering_azimuths_rad=steering_azimuths_rad,
             association_threshold_rad=association_threshold_rad,
             num_timesteps=num_timesteps,
             num_beams=num_beams,
@@ -757,7 +794,8 @@ def sweep_detection_parameter_multiband(
     ground_truth_paths : Sequence
         Bearing ground-truth paths used to score detections.
     steering_azimuths_rad : ArrayLike
-        Beam azimuths in radians, of length ``num_beams``.
+        Beam azimuths in radians (see Coordinate frames in :mod:`bluepebble`), of length
+        ``num_beams``.
     association_threshold_rad : float
         Maximum bearing error for a detection to count as a true positive.
     bearing_state_index : int, optional
@@ -772,8 +810,8 @@ def sweep_detection_parameter_multiband(
 
     """
     param_values, num_timesteps = _validate_multiband_sweep_inputs(beamformed_data, sweep_specs)
-    steering_azimuths = np.asarray(steering_azimuths_rad, dtype=np.float64)
-    num_beams = steering_azimuths.shape[0]
+    steering_azimuths_rad = np.asarray(steering_azimuths_rad, dtype=np.float64)
+    num_beams = steering_azimuths_rad.shape[0]
     gt_bearings_per_t = _bearings_from_ground_truth_paths(
         ground_truth_paths, num_timesteps, bearing_state_index
     )
@@ -806,7 +844,7 @@ def sweep_detection_parameter_multiband(
         detector_factory=_detector_factory,
         detected_beams_at_t=_detected_beams_at_t,
         gt_bearings_per_t=gt_bearings_per_t,
-        steering_azimuths=steering_azimuths,
+        steering_azimuths_rad=steering_azimuths_rad,
         association_threshold_rad=association_threshold_rad,
         num_timesteps=num_timesteps,
         num_beams=num_beams,
@@ -860,213 +898,6 @@ def _bearings_from_ground_truth_paths(
 
 
 # ---------------------------------------------------------------------------
-# Theoretical Pd-vs-Pfa curves (no data, pure model -- see module docstring)
-# ---------------------------------------------------------------------------
-
-
-def ca_cfar_roc(
-    pfa_values: ArrayLike,
-    num_training_total: int,
-    num_frames: int,
-    snr_linear: float,
-    model: FluctuationModel | None = None,
-    effective_looks_per_frame: float = 1.0,
-    signal_looks_per_frame: float | None = None,
-) -> FloatArray:
-    """Pd vs Pfa sweep for CA-CFAR, at a fixed target-power ratio, under a fluctuation model.
-
-    Closed form throughout for the default :class:`~.fluctuation_models.RayleighFluctuation`
-    model (:func:`~.algorithms.solve_ca_cfar_alpha` +
-    :meth:`~.fluctuation_models.RayleighFluctuation.ca_cfar_pd`), so each point is independent
-    and exact -- no shared-simulation trick needed here, unlike :func:`os_cfar_roc` at
-    ``num_frames > 1``. A model without a closed form for CA-CFAR would fall back to its own
-    (independent, per-point) Monte Carlo instead.
-
-    Parameters
-    ----------
-    pfa_values : ArrayLike
-        Pfa operating points to evaluate Pd at, each in (0, 1).
-    num_training_total : int
-        Total number of reference cells (N).
-    num_frames : int
-        The number of frames incoherently integrated into this one look (M).
-    snr_linear : float
-        Target-power / noise-power ratio (linear). snr_linear = 10 ** (target_snr_db / 10).
-    model : FluctuationModel, optional
-        Target fluctuation model. Defaults to
-        :class:`~.fluctuation_models.RayleighFluctuation`.
-    effective_looks_per_frame : float, optional
-        Independent looks integrated into each per-frame sample (K_n), by default 1.0. Applied
-        to the threshold and the Pd alike, so the curve stays self-consistent.
-    signal_looks_per_frame : float or None, optional
-        Looks the target occupies (K_s), by default ``None`` meaning K_s = K_n. Affects only
-        Pd -- H0 has no signal in it, so the threshold is untouched. See the
-        :mod:`~.fluctuation_models` module docstring.
-
-    Returns
-    -------
-    FloatArray
-        Pd at each requested Pfa, same shape as ``pfa_values``.
-
-    """
-    model = model or RayleighFluctuation()
-    return np.array(
-        [
-            model.ca_cfar_pd(
-                solve_ca_cfar_alpha(
-                    pfa, num_training_total, num_frames, effective_looks_per_frame
-                ),
-                num_training_total,
-                num_frames,
-                snr_linear,
-                effective_looks_per_frame=effective_looks_per_frame,
-                signal_looks_per_frame=signal_looks_per_frame,
-            )
-            for pfa in pfa_values
-        ]
-    )
-
-
-def os_cfar_roc(
-    pfa_values: ArrayLike,
-    num_training_total: int,
-    rank: int,
-    num_frames: int,
-    snr_linear: float,
-    model: FluctuationModel | None = None,
-    num_trials: int = 1_000_000,
-    rng: np.random.Generator | None = None,
-    effective_looks_per_frame: float = 1.0,
-    signal_looks_per_frame: float | None = None,
-) -> FloatArray:
-    """Pd vs Pfa sweep for OS-CFAR, at a fixed target-power ratio, under a fluctuation model.
-
-    At ``num_frames == 1``, this is closed form throughout for the default
-    :class:`~.fluctuation_models.RayleighFluctuation` model -- each point is evaluated
-    independently via :func:`~.algorithms.solve_os_cfar_alpha_single_look` +
-    :meth:`model.os_cfar_pd() <.fluctuation_models.FluctuationModel.os_cfar_pd>`. A model
-    without a closed form at ``num_frames == 1`` (e.g.
-    :class:`~.fluctuation_models.NonFluctuating`) still goes through this same per-point path,
-    just falling back to its own independent Monte Carlo per point.
-
-    At ``num_frames > 1``, no closed form exists for OS-CFAR under any fluctuation model
-    implemented here (see :meth:`~.fluctuation_models.RayleighFluctuation.os_cfar_pd`).
-    Calling :func:`~.algorithms.calibrate_os_cfar_alpha_mc` and ``model.cut_power_samples``
-    once per Pfa point would run a fresh simulation for every point in the sweep; this instead
-    draws the reference-cell and CUT samples ONCE and reuses them for every Pfa value, which is
-    both cheaper and produces a smoother curve (adjacent points share the same underlying draws
-    instead of independent noise).
-
-    Validity of reusing the same noise_estimate draws for both alpha calibration and Pd
-    evaluation: noise_estimate's distribution doesn't depend on which hypothesis (H0/H1) the
-    CUT is under, so pairing the same reference-cell draws with an independent H1 CUT sample
-    introduces no bias. It's the same "common random numbers" idea used to reduce variance
-    when comparing scenarios, not a shortcut that changes what's being estimated. Cross-checked
-    numerically against independently-simulated per-point
-    :func:`~.algorithms.calibrate_os_cfar_alpha_mc` /
-    :meth:`~.fluctuation_models.RayleighFluctuation.os_cfar_pd` calls: both agree to within
-    Monte Carlo noise at 1e6 trials.
-
-    Precision floor: per calibrate_os_cfar_alpha_mc's rule of thumb, a stable quantile estimate
-    needs num_trials >= ~100/pfa. With the default 1e6 trials, don't trust points below roughly
-    pfa=1e-4. The quantile (and therefore Pd) estimate gets noisy below that without a much
-    larger (and much more memory-hungry) num_trials.
-
-    Parameters
-    ----------
-    pfa_values : ArrayLike
-        Pfa operating points to evaluate Pd at, each in (0, 1). See precision floor above.
-    num_training_total : int
-        Total number of reference cells (N).
-    rank : int
-        Order-statistic rank used as the noise estimate (k, 1-indexed).
-    num_frames : int
-        The number of frames incoherently integrated into this one look (M).
-    snr_linear : float
-        Target-power / noise-power ratio (linear). snr_linear = 10 ** (target_snr_db / 10).
-    model : FluctuationModel, optional
-        Target fluctuation model. Defaults to
-        :class:`~.fluctuation_models.RayleighFluctuation`.
-    num_trials : int, optional
-        Monte Carlo trial count, shared across every Pfa point when num_frames > 1 (and passed
-        through to ``model.os_cfar_pd`` when num_frames == 1), by default 1_000_000.
-    rng : np.random.Generator, optional
-        Random number generator for reproducibility, by default None.
-    effective_looks_per_frame : float, optional
-        Independent looks integrated into each per-frame sample (K_n), by default 1.0. Applied
-        to the threshold and the Pd alike, so the curve stays self-consistent. Match it to the
-        detector being compared against -- see
-        :func:`estimate_effective_looks_per_frame`.
-    signal_looks_per_frame : float or None, optional
-        Looks the target occupies (K_s), by default ``None`` meaning K_s = K_n. Affects only
-        Pd -- H0 has no signal in it, so the threshold is untouched. Set it well below K_n for
-        a narrowband target in a wide processing band. See the :mod:`~.fluctuation_models`
-        module docstring.
-
-    Returns
-    -------
-    FloatArray
-        Pd at each requested Pfa, same shape as ``pfa_values``.
-
-    """
-    model = model or RayleighFluctuation()
-    single_look = effective_looks_per_frame == 1.0 and signal_looks_per_frame in (None, 1.0)
-
-    if num_frames == 1 and single_look:
-        return np.array(
-            [
-                model.os_cfar_pd(
-                    solve_os_cfar_alpha_single_look(pfa, num_training_total, rank),
-                    num_training_total,
-                    rank,
-                    num_frames,
-                    snr_linear,
-                    num_trials=num_trials,
-                    rng=rng,
-                )
-                for pfa in pfa_values
-            ]
-        )
-
-    rng = rng or np.random.default_rng()
-
-    # Simulate M-frame-averaged noise-only training cells once; noise_estimate's distribution
-    # is the same under H0 and H1 (see fluctuation_models module docstring), so it's shared
-    # across every Pfa point.
-    ref = rng.gamma(
-        effective_looks_per_frame,
-        1.0 / effective_looks_per_frame,
-        size=(num_trials, num_training_total, num_frames),
-    ).mean(axis=2)
-    ref.sort(axis=1)
-    noise_estimate = ref[:, rank - 1]
-
-    # H0 CUT, used only to calibrate alpha per Pfa value via a quantile of this ratio. H0
-    # statistics don't depend on the fluctuation model or on the target's bandwidth, so this
-    # is always plain noise filling the band.
-    cut_h0 = rng.gamma(
-        effective_looks_per_frame,
-        1.0 / effective_looks_per_frame,
-        size=(num_trials, num_frames),
-    ).mean(axis=1)
-    ratio_h0 = cut_h0 / noise_estimate
-
-    # H1 CUT (target present at snr_linear), used to evaluate Pd once alpha is fixed per Pfa
-    # value. This is the only piece that depends on the fluctuation model.
-    cut_h1 = model.cut_power_samples(
-        num_trials,
-        num_frames,
-        snr_linear,
-        rng,
-        effective_looks_per_frame,
-        signal_looks_per_frame,
-    )
-
-    pds = [np.mean(cut_h1 > np.quantile(ratio_h0, 1 - pfa) * noise_estimate) for pfa in pfa_values]
-    return np.array(pds)
-
-
-# ---------------------------------------------------------------------------
 # Bridging simulation ground truth to the theoretical model
 # ---------------------------------------------------------------------------
 
@@ -1089,9 +920,11 @@ def snr_linear_from_ground_truth_bearing(
     beamformed_data : ArrayLike
         Raw beamformed data for one timestep, shape (num_beams, num_frames).
     true_bearing_rad : float
-        Ground-truth target bearing, radians, from the simulator (not detector output).
+        Ground-truth target bearing in radians (see Coordinate frames in
+        :mod:`bluepebble`), from the simulator (not detector output).
     steering_azimuths_rad : np.ndarray
-        Steering azimuths for each beam, radians. Assumed circular (spans a full -pi..pi sweep).
+        Steering azimuths for each beam, in radians (see Coordinate frames in
+        :mod:`bluepebble`). Assumed circular (spans a full -pi..pi sweep).
     validation_guard_bins : int
         Bins excluded on each side of the nearest-beam index when estimating the noise floor.
         Should be set wider than the operational detector's num_guard_cells. See Failure modes,
@@ -1112,7 +945,7 @@ def snr_linear_from_ground_truth_bearing(
     --------------------------------------------------------------
     1. Single noisy realisation, not the true injected value. The CUT's own power is itself random
        under H1 (Gamma-distributed, per the Rayleigh-fading target model documented in
-       fluctuation_models.RayleighFluctuation.ca_cfar_pd). One reading has real variance, not just
+       :meth:`~._theory.RayleighFluctuation.ca_cfar_pd`). One reading has real variance, not just
        measurement error. If this target persists across
        several scans, average snr_linear_hat across its associated readings for a stable estimate
        rather than trusting any single timestep.
@@ -1149,7 +982,7 @@ def snr_linear_from_ground_truth_bearing(
     if excluded.all():
         raise ValueError(
             f"validation_guard_bins ({validation_guard_bins}) excludes the entire "
-            f"array of {num_beams} beams -- reduce it."
+            f"array of {num_beams} beams; reduce it."
         )
 
     noise_estimate = np.percentile(directional_power[~excluded], noise_floor_percentile)
@@ -1164,9 +997,10 @@ def estimate_effective_looks_per_frame(
 ) -> float:
     """Estimate a detector's ``effective_looks_per_frame`` from noise-only simulated scans.
 
-    :func:`~.algorithms.calibrate_os_cfar_alpha_mc` models each per-frame power sample as
-    Gamma(K, 1/K) -- K independent unit-mean Exponential looks integrated per frame. K is 1
-    for classic narrowband square-law data, but a broadband STFT beamformer sums power over
+    The CFAR alpha calibrations (:func:`~._theory.solve_ca_cfar_alpha`,
+    :func:`~._theory.solve_os_cfar_alpha`) model each per-frame power sample as
+    Gamma(K, 1/K): K independent unit-mean Exponential looks integrated per frame. K is 1 for
+    classic narrowband square-law data, but a broadband STFT beamformer sums power over
     every active frequency bin before the detector sees it, making K far larger. This reads
     K back off the simulator's own output instead of assuming it, so alpha calibration
     describes the data the detector will actually be fed.
@@ -1178,7 +1012,7 @@ def estimate_effective_looks_per_frame(
 
     Using the spread of one beam ACROSS scans (rather than across beams within a scan)
     keeps the estimate free of the beam-to-beam variation in mean noise level that array
-    geometry imposes -- that variation is real structure, not the per-look fluctuation K
+    geometry imposes: that variation is real structure, not the per-look fluctuation K
     describes. The median across beams then rejects the minority of beams contaminated by
     target leakage. Both choices matter more the less homogeneous the scene is.
 
@@ -1190,7 +1024,7 @@ def estimate_effective_looks_per_frame(
     noise_only_mask : ArrayLike, optional
         Boolean array of shape (num_scans, num_beams), True where a cell is believed
         target-free. Defaults to using every cell, which is only appropriate when the run
-        genuinely contains no target -- otherwise mask out the target's bearing and a
+        genuinely contains no target; otherwise mask out the target's bearing and a
         generous guard around it, as ``validation_guard_bins`` does elsewhere in this module.
     min_scans_per_beam : int, optional
         Beams with fewer than this many unmasked scans are dropped, by default 10, since a
@@ -1201,8 +1035,8 @@ def estimate_effective_looks_per_frame(
     -------
     float
         Estimated effective independent looks per frame (K), to pass as
-        ``effective_looks_per_frame`` to :class:`~.algorithms.OSCFARDetector` or
-        :func:`~.algorithms.calibrate_os_cfar_alpha_mc`. Not generally an integer, and
+        ``effective_looks_per_frame`` to a CFAR detector or
+        :func:`~._theory.solve_os_cfar_alpha`. Not generally an integer, and
         typically well below the nominal in-band bin count, since window spectral leakage
         correlates neighbouring frequency bins.
 

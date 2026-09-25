@@ -104,6 +104,9 @@ def test_synthetic_signal_seed_gives_reproducible_output(monkeypatch) -> None:
             "amplitudes_upa": np.array([1.0]),
             "frequencies_hz": np.array([4.0]),
             "phases_rad": np.array([0.0]),
+            "tonal_bandwidth_hz": 2.0,
+            "noise_amplitude_upa": 1.0,
+            "noise_spectral_exponent": -1.0,
         }
     )
 
@@ -113,7 +116,6 @@ def test_synthetic_signal_seed_gives_reproducible_output(monkeypatch) -> None:
             sampling_rate_hz=32,
             frame_len=16,
             hop_factor=4,
-            noise_amplitude_upa=1.0,
             seed=seed,
         )
 

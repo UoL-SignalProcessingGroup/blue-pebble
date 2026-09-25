@@ -51,12 +51,27 @@ def _install_fake_passive_dependencies(monkeypatch) -> None:
         """Simple hashable detection object for set insertion assertions."""
 
         def __init__(self, state_vector, timestamp, metadata):
-            self.state_vector = np.asarray(state_vector, dtype=float)
+            # object dtype, as Stone Soup's StateVector keeps Bearing elements as Bearings.
+            self.state_vector = np.asarray(state_vector, dtype=object)
             self.timestamp = timestamp
             self.metadata = metadata
 
     detection_module.Detection = FakeDetection
     types_module.detection = detection_module
+
+    angle_module = ModuleType("stonesoup.types.angle")
+
+    class FakeBearing:
+        """Angle wrapped to [-pi, pi), standing in for Stone Soup's Bearing."""
+
+        def __init__(self, value):
+            self.value = (float(value) + np.pi) % (2 * np.pi) - np.pi
+
+        def __float__(self):
+            return self.value
+
+    angle_module.Bearing = FakeBearing
+    types_module.angle = angle_module
 
     sensordata_module = ModuleType("stonesoup.types.sensordata")
     sensordata_module.SensorData = type("SensorData", (), {})
@@ -75,6 +90,7 @@ def _install_fake_passive_dependencies(monkeypatch) -> None:
     monkeypatch.setitem(sys.modules, "stonesoup.reader.base", reader_base_module)
     monkeypatch.setitem(sys.modules, "stonesoup.types", types_module)
     monkeypatch.setitem(sys.modules, "stonesoup.types.detection", detection_module)
+    monkeypatch.setitem(sys.modules, "stonesoup.types.angle", angle_module)
     monkeypatch.setitem(sys.modules, "stonesoup.types.sensordata", sensordata_module)
 
     # Stub bluepebble.types.sensordata so that loading passive.py does not import
@@ -225,6 +241,8 @@ def test_detections_gen_emits_bearing_detections_with_snr_metadata(monkeypatch) 
     detection = next(iter(detections))
     assert detection.timestamp == timestamp
     assert float(detection.state_vector[0, 0]) == pytest.approx(0.5)
+    # A Bearing, so trackers wrap innovations at +-180 degrees.
+    assert type(detection.state_vector[0, 0]).__name__ == "FakeBearing"
     assert detection.metadata["snr_db"] == pytest.approx(4.0)
 
 
@@ -405,18 +423,24 @@ def test_detect_and_snr_map_are_independent_calls(monkeypatch) -> None:
 
 
 def test_detections_gen_progress_bar_wraps_iterator(monkeypatch) -> None:
-    """When progress_bar=True the sensor_data iterator should be wrapped with tqdm."""
+    """When progress_bar=True, one progress bar should be created for the whole run."""
     passive = _load_passive_detector_module(monkeypatch)
     timestamp = datetime(2026, 1, 1, 12, 0, 0)
     sensor_data = SimpleNamespace(beamformed_data=None, timestamp=timestamp)
 
-    wrapped = []
+    created = []
 
-    def fake_tqdm(iterable, **kwargs):
-        wrapped.append(kwargs)
-        return iterable
+    class FakeBar:
+        def __init__(self, **kwargs):
+            created.append(kwargs)
 
-    monkeypatch.setattr(passive, "tqdm", fake_tqdm)
+        def update(self, n):
+            pass
+
+        def close(self):
+            pass
+
+    monkeypatch.setattr(passive, "tqdm", FakeBar)
 
     detector = passive.PassiveSonarDetector(
         detector=_FakeDetector(detect_fn=lambda data: np.empty((0, 2))),
@@ -426,8 +450,52 @@ def test_detections_gen_progress_bar_wraps_iterator(monkeypatch) -> None:
 
     list(detector.detections_gen(progress_bar=True, total_timesteps=5))
 
-    assert len(wrapped) == 1
-    assert wrapped[0]["total"] == 5
+    assert len(created) == 1
+    assert created[0]["total"] == 5
+    assert created[0]["desc"] == "Generating Detections"
+
+
+def test_detections_gen_progress_bar_is_created_lazily(monkeypatch) -> None:
+    """The bar must not appear until sensor_data_gen yields its first item.
+
+    A plain ``tqdm(iterable)`` renders immediately on construction, which would print
+    "Generating Detections" before a slow upstream generator (e.g. one still building
+    target propagation) has produced anything -- interleaving with that generator's own
+    progress bar instead of appearing after it.
+    """
+    passive = _load_passive_detector_module(monkeypatch)
+    timestamp = datetime(2026, 1, 1, 12, 0, 0)
+    sensor_data = SimpleNamespace(beamformed_data=None, timestamp=timestamp)
+
+    events: list[tuple[str, object]] = []
+
+    class FakeBar:
+        def __init__(self, **kwargs):
+            events.append(("created", kwargs))
+
+        def update(self, n):
+            events.append(("update", n))
+
+        def close(self):
+            events.append(("close", None))
+
+    monkeypatch.setattr(passive, "tqdm", FakeBar)
+
+    def slow_sensor_data_gen():
+        events.append(("about_to_yield", None))
+        yield timestamp, [sensor_data]
+
+    detector = passive.PassiveSonarDetector(
+        detector=_FakeDetector(detect_fn=lambda data: np.empty((0, 2))),
+        sensor_data_gen=slow_sensor_data_gen(),
+        steering_azimuths_rad=np.array([0.1]),
+    )
+
+    list(detector.detections_gen(progress_bar=True, total_timesteps=1))
+
+    assert events[0] == ("about_to_yield", None)
+    assert events[1][0] == "created"
+    assert events[-1] == ("close", None)
 
 
 def test_snr_gives_identical_results_for_real_power_and_complex_amplitude(
