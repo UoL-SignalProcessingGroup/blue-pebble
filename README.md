@@ -2,64 +2,10 @@
 
 [![PyPI version](https://img.shields.io/pypi/v/blue-pebble.svg)](https://pypi.org/project/blue-pebble/)
 [![Python versions](https://img.shields.io/pypi/pyversions/blue-pebble.svg)](https://pypi.org/project/blue-pebble/)
-
+[![Documentation](https://readthedocs.org/projects/blue-pebble/badge/?version=latest)](https://blue-pebble.readthedocs.io/en/latest/)
 [![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](https://github.com/UoL-SignalProcessingGroup/blue-pebble/blob/main/LICENSE)
 
-**Blue Pebble** is a research-oriented simulation framework for underwater acoustic sensing, currently focused on passive sonar signal processing, acoustic propagation modelling, beamforming, detection, and multi-target tracking.
-
-Designed as a plugin for [Stone Soup](https://stonesoup.rtfd.io/), Blue Pebble supports research in:
-
-- Underwater acoustics
-- Passive sonar signal processing
-- Towed array modelling
-- Acoustic propagation modelling
-- Beamforming and detection theory
-- Target tracking and data association
-
-Blue Pebble provides modular acoustic propagation backends, ranging from analytical spreading laws to external ray-tracing solvers (e.g., rtrs), enabling trade-offs between physical fidelity and computational efficiency.
-
-> **Naming conventions:** The project is referred to as **Blue Pebble** throughout documentation. The repository and PyPI package use the hyphenated form **blue-pebble** (e.g., `pip install blue-pebble`). Within Python code, the package is imported as **bluepebble** (e.g., `import bluepebble`).
-
-## Research Applications
-
-Blue Pebble is intended for controlled, simulation-based studies, including:
-
-- Evaluation of tracking and data association algorithms  
-- End-to-end sonar performance analysis  
-- Synthetic dataset generation for validation  
-- Sensitivity analysis of propagation effects on detection and estimation  
-
-Although current functionality centres on passive sonar, the architecture supports extension to additional modalities (e.g., active or multistatic configurations).
-
-## Architecture
-
-Blue Pebble follows a modular design that separates physical modelling from signal processing and tracking logic. Core components include:
-
-- **Platform dynamics** - Kinematic modelling of ownship, targets, and arrays  
-- **Acoustic propagation** - Pluggable propagation backends (analytical or external solvers)  
-- **Signal generation** - Source modelling and noise synthesis  
-- **Beamforming** - Array processing algorithms  
-- **Detection** - Measurement formation and statistical thresholding  
-- **Tracking** - Integration with Stone Soup estimators and data association  
-
-This separation enables systematic experimentation across modelling assumptions and algorithmic choices without tightly coupling components.
-
-## Features
-
-Implemented capabilities include:
-
-- Multi-body kinematic modelling for flexible towed arrays  
-- Analytical spreading models and external ray-tracing integration (e.g., rtrs)  
-- Configurable source signature synthesis  
-- Ambient, biological, and ownship noise modelling  
-- Multiple beamforming algorithms  
-- Detection algorithms with performance metrics  
-- Passive sonar simulation pipelines  
-- Integration of real environmental datasets (bathymetry, range-dependent sound speed profiles)
-- Incorporation of measured source signatures
-- Native integration with Stone Soup tracking workflows  
-- Plotting utilities for bearings and Cartesian tracks  
-- Notebook-based tutorials and worked examples
+**Blue Pebble** is a research-oriented simulation framework for underwater acoustic sensing, built as a plugin for [Stone Soup](https://stonesoup.rtfd.io/). It currently focuses on passive sonar: acoustic propagation modelling, beamforming, detection and multi-target tracking.
 
 ## Installation
 
@@ -67,59 +13,25 @@ Implemented capabilities include:
 pip install blue-pebble
 ```
 
-## Development
+The package installs as `blue-pebble` and imports as `bluepebble`.
 
-### Recommended: Dev Container (Easiest Setup)
+## Getting Started
 
-For a fully configured development environment, use the included Dev Container.
+Start with the [Getting Started tutorial](https://blue-pebble.readthedocs.io/en/latest/auto_tutorials/getting_started.html), which simulates a towed array and beamforms, detects and tracks a single target. The [documentation](https://blue-pebble.readthedocs.io/en/latest/) also has further tutorials, worked examples and the API reference.
 
-#### Requirements
+## Features
 
-- Docker Engine (Docker Desktop on Windows/macOS, or Docker on Linux)
+- Towed-array kinematics for the ownship, targets and array elements
+- Acoustic propagation, from analytical spreading laws to ray tracing with [rtrs](https://pypi.org/project/rtrs/)
+- Environments built from analytical profiles or measured bathymetry and sound-speed data
+- Source and noise synthesis, including biological, anthropogenic and ownship noise
+- Delay-and-sum and MVDR (Minimum Variance Distortionless Response) beamforming
+- CFAR (Constant False Alarm Rate) detection, calibrated from noise or with a fixed threshold
+- Detections that feed straight into Stone Soup trackers
 
-Optional:
-- Visual Studio Code
-- VS Code Dev Containers extension
+## Contributing
 
-Clone the repository:
-```bash
-git clone https://github.com/UoL-SignalProcessingGroup/blue-pebble.git
-```
-
-#### Using the Dev Container (VS Code Workflow)
-
-If using Visual Studio Code with the Dev Containers extension:
-```bash
-cd blue-pebble
-code .
-```
-
-When prompted, select **"Reopen in Container."**
-
-VS Code will:
-- Build the Docker image
-- Start the container
-- Mount the repository
-- Configure the Python interpreter automatically
-
-This provides a fully configured development environment including:
-- Python
-- All required build dependencies including rtrs
-
-#### Using the Container Without VS Code (CLI Workflow)
-
-You can build and run the container manually:
-```bash
-docker build -t blue-pebble-dev .
-docker run -it --rm -v $(pwd):/workspace blue-pebble-dev
-```
-
-On Windows PowerShell:
-```bash
-docker run -it --rm -v ${PWD}:/workspace blue-pebble-dev
-```
-
-This starts an interactive shell inside the container.
+See [CONTRIBUTING.md](https://github.com/UoL-SignalProcessingGroup/blue-pebble/blob/main/CONTRIBUTING.md) for the development setup and workflow, and the [roadmap](https://blue-pebble.readthedocs.io/en/latest/roadmap.html) for planned extensions.
 
 ## Citation
 
@@ -136,37 +48,6 @@ If you use Blue Pebble in academic work, please cite the associated conference p
 }
 ```
 
-## License
+## Licence
 
-Blue Pebble is licensed under the MIT license.
-
-See `LICENSE` and `NOTICE.md` for details.
-
-## Third-Party Components
-
-**Software:** Blue Pebble depends on [rtrs](https://pypi.org/project/rtrs/), which is licensed under the MIT licence and installed automatically as a dependency.
-
-**Data:** Blue Pebble does not distribute external data in its PyPI package. Users are responsible for complying with the licences of any external data they utilise.
-
-## Future Enhancements
-
-Planned and potential extensions include:
-
-### Environmental Modelling
-- Coherent ambient noise modelling (wind, rain, wave-induced noise)
-- Systematic environmental uncertainty modelling (sound speed and sensor position errors)
-
-### Signal and Source Modelling
-- Expanded source directivity modelling
-
-### Detection and Performance Analysis
-- Alternative SNR and beam power outputs (e.g., angle-dependent CFAR variants)
-- Bearing × time × frequency output volume to support multi-band downstream processing
-- Multi-band detector operating across frequency bands simultaneously
-- 2D CFAR with training cells spanning both bearing and time, giving the detector access to a limited time history
-
-### Sensing Modalities
-- Active sonar modelling
-- Multistatic and bistatic configurations
-- Additional sensing geometries (hull-mounted arrays, sonobuoys, distributed arrays)
-- Explicit hydrophone modelling
+Blue Pebble is released under the MIT licence; see [LICENSE](https://github.com/UoL-SignalProcessingGroup/blue-pebble/blob/main/LICENSE) and [NOTICE.md](https://github.com/UoL-SignalProcessingGroup/blue-pebble/blob/main/NOTICE.md). Its ray-tracing dependency, [rtrs](https://pypi.org/project/rtrs/), is also MIT-licensed and installs automatically. The package includes no external data, so users are responsible for complying with the licences of any data they use with it.
