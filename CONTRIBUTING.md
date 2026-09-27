@@ -80,6 +80,10 @@ The build executes the tutorials but renders the examples as code only, since ru
 
 - Use `pytest`.
 - Add tests for new behaviour and regressions.
+- The tests, CI and the docs build never run the examples, so run any example you change end to
+  end. A cut-down version (fewer steps or trials) is enough.
+- For code that runs per scan, per trial or per frequency bin, or that a tutorial runs, see
+  [Profiling and Optimisation](docs/source/profiling.md).
 - Add tests for expected failures/exceptions where relevant.
 - For numerical methods, use deterministic checks and appropriate tolerances (`rtol`, `atol`).
 

@@ -69,6 +69,7 @@ auto_examples/index
 api/index
 development
 testing
+profiling
 citation
 roadmap
 ```
