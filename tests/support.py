@@ -8,6 +8,7 @@ import types
 from math import comb
 from pathlib import Path
 
+import numpy as np
 from scipy import integrate
 from scipy.stats import gamma as gamma_dist
 
@@ -155,6 +156,37 @@ def load_package_module_from_repo(relative_path: str, module_name: str):
     sys.modules[module_name] = module
     spec.loader.exec_module(module)
     return module
+
+
+def reference_stft_interp_receiver(ctx, targets_data, step_idx, alpha, inverse_stft):
+    """Synthesise ``stft_interp`` receiver signals the vectorised way, one sensor at a time.
+
+    This is how the simulator did it before the fused Numba kernel, so it is the reference the
+    kernel is checked against. Passing a fake ``inverse_stft`` lets simulator tests control the
+    reconstructed signals, as they did before.
+    """
+    signals = []
+    for s in range(ctx.num_sensors):
+        total = np.zeros((ctx.num_frames, ctx.num_freq_bins), dtype=np.complex64)
+        for target in targets_data:
+            tau = np.asarray(target.tau_hist[:, s], dtype=np.float64)
+            residual = target.H_hist[:, s, :] * np.exp(
+                2j * np.pi * tau[:, None] * ctx.frequencies[None, :]
+            )
+            mag = np.abs(residual).astype(np.float64)
+            phase = np.unwrap(np.angle(residual), axis=0).astype(np.float64)
+            w0 = 1.0 - alpha
+            m = mag[step_idx] * w0[:, None] + mag[step_idx + 1] * alpha[:, None]
+            p = phase[step_idx] * w0[:, None] + phase[step_idx + 1] * alpha[:, None]
+            t = tau[step_idx] * w0 + tau[step_idx + 1] * alpha
+            rerotate = np.exp(-2j * np.pi * t[:, None] * ctx.frequencies[None, :])
+            total += target.source_stft * (m * np.exp(1j * p) * rerotate)
+        signal = inverse_stft(total, ctx.frame_len, ctx.hop, ctx.window)
+        signals.append(np.asarray(signal, dtype=np.complex64))
+    length = max(len(signal) for signal in signals)
+    return np.array(
+        [np.concatenate([x, np.zeros(length - len(x), dtype=np.complex64)]) for x in signals]
+    )
 
 
 # CFAR Pfa references by numerical quadrature, independent of the library's closed forms.

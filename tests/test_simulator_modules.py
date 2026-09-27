@@ -15,6 +15,7 @@ from .support import (
     install_fake_stonesoup_simulator_modules,
     install_repo_package,
     load_package_module_from_repo,
+    reference_stft_interp_receiver,
 )
 
 
@@ -888,50 +889,92 @@ def test_fractional_delay_simulator_covers_errors_fallback_and_outputs(monkeypat
     assert all(np.isfinite(next(iter(payload)).raw_signals).all() for _, payload in generated)
 
 
-def test_continuous_stft_interp_pads_sensor_lengths_and_fractional_paths_without_options(
-    monkeypatch,
-) -> None:
-    """Cover STFT padding and fractional-delay branches with no fades/no noise/no beamforming."""
+def _stft_interp_inputs(continuous, two_sided: bool):
+    """Build a small, valid STFT context and two targets with drifting delays and phases."""
+    rng = np.random.default_rng(20260927)
+    frame_len, hop, n_frames, n_steps, n_sensors, fs = 16, 8, 12, 5, 3, 100.0
+    frequencies = (
+        np.fft.fftfreq(frame_len, 1 / fs) if two_sided else np.fft.rfftfreq(frame_len, 1 / fs)
+    )
+    duration_s = ((n_frames - 1) * hop + frame_len) / fs
+    ctx = continuous._STFTCommonContext(
+        all_timestamps=[datetime(2026, 1, 1, 12, 0, s) for s in range(n_steps)],
+        step_times_s=np.linspace(0.0, duration_s, n_steps),
+        n_steps=n_steps,
+        num_sensors=n_sensors,
+        num_frames=n_frames,
+        num_freq_bins=len(frequencies),
+        frame_len=frame_len,
+        fs=fs,
+        frequencies=np.asarray(frequencies, dtype=np.float64),
+        hop=hop,
+        window=np.hanning(frame_len),
+    )
+
+    def complex64(shape):
+        return (rng.standard_normal(shape) + 1j * rng.standard_normal(shape)).astype(np.complex64)
+
+    targets = [
+        continuous._STFTTargetHistory(
+            source_stft=complex64((n_frames, len(frequencies))),
+            H_hist=complex64((n_steps, n_sensors, len(frequencies))),
+            tau_hist=0.5 + np.cumsum(rng.standard_normal((n_steps, n_sensors)) * 0.01, axis=0),
+        )
+        for _ in range(2)
+    ]
+    return ctx, targets
+
+
+@pytest.mark.parametrize("two_sided", [True, False])
+def test_stft_interp_receiver_matches_vectorised_reference(monkeypatch, two_sided) -> None:
+    """The fused kernel must reproduce the vectorised synthesis to single-precision rounding."""
     _base, _discrete, continuous = _load_simulator_modules(monkeypatch)
     simulator = continuous.ContinuousSTFTPassiveSonarArraySimulator(
-        fade_in_ms=0.0,
-        fade_out_ms=0.0,
+        fade_in_ms=0.0, fade_out_ms=0.0
+    )
+    ctx, targets = _stft_interp_inputs(continuous, two_sided)
+    step_idx, alpha = simulator._frame_interp_indices(ctx)
+    real_utils = load_package_module_from_repo(
+        "bluepebble/signal/utils.py", "tests_reference_signal_utils"
     )
 
-    returns = [
-        np.array([1.0 + 0.0j, 2.0 + 0.0j], dtype=np.complex64),
-        np.array([3.0 + 0.0j], dtype=np.complex64),
-    ]
-
-    def fake_inverse_stft(stft, frame_len, hop, window):
-        _ = stft, frame_len, hop, window
-        return returns.pop(0)
-
-    monkeypatch.setattr(continuous, "inverse_stft", fake_inverse_stft)
-
-    ctx = continuous._STFTCommonContext(
-        all_timestamps=[datetime(2026, 1, 1, 12, 0, 0), datetime(2026, 1, 1, 12, 0, 1)],
-        step_times_s=np.array([0.0, 1.0], dtype=np.float64),
-        n_steps=2,
-        num_sensors=2,
-        num_frames=1,
-        num_freq_bins=1,
-        frame_len=2,
-        fs=1.0,
-        frequencies=np.array([0.0], dtype=np.float64),
-        hop=1,
-        window=np.ones(2, dtype=np.float32),
+    receiver = continuous._stft_interp_receiver(ctx, targets, step_idx, alpha)
+    expected = reference_stft_interp_receiver(
+        ctx, targets, step_idx, alpha, real_utils.inverse_stft
     )
-    targets_data = [
-        continuous._STFTTargetHistory(
-            source_stft=np.ones((1, 1), dtype=np.complex64),
-            H_hist=np.ones((2, 2, 1), dtype=np.complex64),
-            tau_hist=np.zeros((2, 2), dtype=np.float64),
-        )
-    ]
-    receiver, step_idx = simulator._synthesise_stft_interp(ctx, targets_data)
-    assert receiver.shape == (2, 2)
-    np.testing.assert_array_equal(step_idx, np.array([0, 1, 2], dtype=np.int64))
+
+    assert receiver.shape == expected.shape
+    assert receiver.dtype == np.complex64
+    np.testing.assert_allclose(receiver, expected, rtol=0, atol=1e-6 * np.abs(expected).max())
+
+
+def test_stft_interp_receiver_is_zero_without_targets(monkeypatch) -> None:
+    """With no targets the receiver is silent, with the length a reconstruction would have."""
+    _base, _discrete, continuous = _load_simulator_modules(monkeypatch)
+    ctx, _targets = _stft_interp_inputs(continuous, two_sided=True)
+    step_idx = np.zeros(ctx.num_frames, dtype=np.int32)
+    alpha = np.zeros(ctx.num_frames)
+
+    receiver = continuous._stft_interp_receiver(ctx, [], step_idx, alpha)
+
+    expected_len = (ctx.num_frames - 1) * ctx.hop + ctx.frame_len - 2 * ctx.hop
+    np.testing.assert_array_equal(receiver, np.zeros((ctx.num_sensors, expected_len)))
+
+
+def test_stft_interp_receiver_rejects_an_invalid_bin_count(monkeypatch) -> None:
+    """A spectrum that is neither one-sided nor two-sided for the frame length is rejected."""
+    _base, _discrete, continuous = _load_simulator_modules(monkeypatch)
+    ctx, targets = _stft_interp_inputs(continuous, two_sided=True)
+    ctx.num_freq_bins = 5
+    step_idx = np.zeros(ctx.num_frames, dtype=np.int32)
+
+    with pytest.raises(ValueError, match="Invalid STFT shape"):
+        continuous._stft_interp_receiver(ctx, targets, step_idx, np.zeros(ctx.num_frames))
+
+
+def test_continuous_fractional_delay_paths_without_options(monkeypatch) -> None:
+    """Cover fractional-delay branches with no fades, no noise and no beamforming."""
+    _base, _discrete, continuous = _load_simulator_modules(monkeypatch)
 
     t0 = datetime(2026, 1, 1, 12, 0, 0)
     t1 = t0 + timedelta(seconds=1)

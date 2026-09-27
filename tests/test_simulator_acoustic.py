@@ -15,6 +15,7 @@ from .support import (
     install_fake_stonesoup_simulator_modules,
     install_repo_package,
     load_package_module_from_repo,
+    reference_stft_interp_receiver,
 )
 
 
@@ -127,11 +128,19 @@ def _install_fake_signal_utils(
     monkeypatch.setitem(sys.modules, "bluepebble.signal.utils", utils_module)
 
     # continuous.py imports these callables directly; patch bound names when already loaded.
+    # The stft_interp synthesis runs in a compiled kernel that never calls inverse_stft, so it
+    # is replaced by the vectorised reference, which reconstructs through the fake instead.
     continuous_module = sys.modules.get("bluepebble.simulator.continuous")
     if continuous_module is not None:
         continuous_module.apply_fade_in = utils_module.apply_fade_in
         continuous_module.apply_fade_out = utils_module.apply_fade_out
-        continuous_module.inverse_stft = utils_module.inverse_stft
+        monkeypatch.setattr(
+            continuous_module,
+            "_stft_interp_receiver",
+            lambda ctx, targets_data, step_idx, alpha: reference_stft_interp_receiver(
+                ctx, targets_data, step_idx, alpha, utils_module.inverse_stft
+            ),
+        )
 
 
 @dataclass
