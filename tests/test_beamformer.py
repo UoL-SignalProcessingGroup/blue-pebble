@@ -413,6 +413,64 @@ def test_delay_and_sum_multiband_matches_separate_single_band_runs(monkeypatch) 
         np.testing.assert_array_equal(multiband[band_idx], single)
 
 
+@pytest.mark.parametrize(
+    ("f0", "fmin", "fmax"),
+    [
+        (0.0, 37.3, 190.0),  # starts between anchor bins and spans several anchors
+        (200.0, None, None),  # every bin, across the jump from positive to negative bins
+    ],
+)
+def test_delay_and_sum_broadband_power_matches_direct_steering(
+    monkeypatch, f0, fmin, fmax
+) -> None:
+    """Steering phases built by recurrence must match an exp per bin to rounding."""
+    beamformer = _load_beamformer_module(monkeypatch)
+    signals, delays = _multiband_test_inputs(num_sensors=6, num_samples=1024, num_dirs=7)
+    fs, nfft, overlap = 500.0, 256, 128
+    power = beamformer.DelayAndSumBeamformer(
+        sampling_rate_hz=fs,
+        domain="broadband_power",
+        nfft=nfft,
+        overlap=overlap,
+        f0=f0,
+        fmin=fmin,
+        fmax=fmax,
+    ).beamform(signals, delays)
+
+    stft = beamformer._stft(signals, nfft, overlap)
+    f_bins = beamformer._stft_bin_frequencies(nfft, fs, f0)
+    weights = np.full(signals.shape[0], 1.0 / signals.shape[0])
+    expected = np.zeros_like(power)
+    for i in beamformer._active_bin_indices(f_bins, fmin, fmax):
+        steering = np.exp(1j * 2 * np.pi * f_bins[i] * delays) * weights
+        expected += np.abs(steering @ stft[:, :, i]) ** 2
+
+    np.testing.assert_allclose(power, expected, rtol=1e-12)
+
+
+def test_delay_and_sum_multiband_bit_identical_when_band_starts_between_anchors(
+    monkeypatch,
+) -> None:
+    """A band's power must not depend on which other bands share its beamforming pass."""
+    beamformer = _load_beamformer_module(monkeypatch)
+    signals, delays = _multiband_test_inputs(num_sensors=6, num_samples=1024, num_dirs=7)
+    # Bins are 1.95 Hz apart, so "high" starts at bin 62, between the anchors at 32 and 64,
+    # and in the multiband run "wide" reaches that bin through the recurrence.
+    edges = [("wide", 30.0, 200.0), ("high", 120.0, 200.0), ("low", 30.0, 60.0)]
+    shared = dict(sampling_rate_hz=500.0, domain="broadband_power", nfft=256, overlap=128)
+
+    multiband = beamformer.DelayAndSumBeamformer(
+        bands=[beamformer.FrequencyBand(label=lbl, fmin=lo, fmax=hi) for lbl, lo, hi in edges],
+        **shared,
+    ).beamform(signals, delays)
+
+    for band_idx, (_, fmin, fmax) in enumerate(edges):
+        single = beamformer.DelayAndSumBeamformer(fmin=fmin, fmax=fmax, **shared).beamform(
+            signals, delays
+        )
+        np.testing.assert_array_equal(multiband[band_idx], single)
+
+
 def test_multiband_band_with_no_active_bins_yields_zero_slice(monkeypatch) -> None:
     """An out-of-range band should zero its own slice without affecting its neighbours."""
     beamformer = _load_beamformer_module(monkeypatch)

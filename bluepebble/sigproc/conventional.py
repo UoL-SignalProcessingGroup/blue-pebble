@@ -17,6 +17,10 @@ from .base import (
     _STFTBeamformer,
 )
 
+# Broadband DAS steering phases are recomputed exactly every this many STFT bins and built by
+# recurrence in between; the recurrence's rounding error grows by about one ulp per bin.
+_PHASE_ANCHOR_SPACING = 32
+
 
 class DelayAndSumBeamformer(_STFTBeamformer):
     """A Delay-and-Sum (DAS) beamformer.
@@ -268,21 +272,40 @@ class DelayAndSumBeamformer(_STFTBeamformer):
 
         w = shading_weights.reshape(1, M)  # (1, M), weights each sensor's steering phase
 
+        # Adjacent bins are df apart, so a bin's weighted steering phases are the previous bin's
+        # times exp(j*2*pi*df*sd): a complex multiply per element instead of an exp. They are
+        # recomputed exactly at anchor bins so rounding cannot build up. Anchors depend only on
+        # the bin index, never on which bins are selected, so a band's power is bit-identical
+        # whether it is beamformed alone or alongside other bands.
+        df = fs / nfft_actual
+        phase_step = np.exp(1j * 2 * np.pi * df * sd)  # (Ndir, M)
+        bin_idx = np.arange(nfft_actual)
+        is_anchor = bin_idx % _PHASE_ANCHOR_SPACING == 0
+        is_anchor[1:] |= ~np.isclose(np.diff(f_bins), df)  # e.g. the jump to negative bins
+        anchor_of = np.maximum.accumulate(np.where(is_anchor, bin_idx, 0))
+
+        # Weighted steering phases at bin A_bin, (Ndir, M). A_bin starts below every anchor, so
+        # the first bin always computes them exactly before they are used.
+        A = np.empty((Ndir, M), dtype=np.complex128)
+        A_bin = -1
+
         # Each bin in the union of all bands is steered once; the resulting power is then
         # accumulated into every band containing it, so overlapping bands cost nothing extra.
         for i in sorted(bins_to_bands):
-            f = f_bins[i]
+            if A_bin < anchor_of[i]:
+                A_bin = int(anchor_of[i])
+                A = np.exp(1j * 2 * np.pi * f_bins[A_bin] * sd) * w
+            while A_bin < i:
+                A *= phase_step
+                A_bin += 1
 
             # Snapshots at this bin: (M, n_frames)
             S = X[:, :, i]
 
-            # Steering phase for all dirs/sensors: (Ndir, M)
-            A = np.exp(1j * 2 * np.pi * f * sd)
-
-            # Beamform: Y = sum_m w_m * A(dir,m) * S(m,frame), as a matrix product rather than
-            # a broadcast (Ndir, M, n_frames) intermediate summed over M, which was far slower.
+            # Beamform: Y = sum_m A(dir,m) * S(m,frame), shading included in A, as a matrix
+            # product rather than a broadcast (Ndir, M, n_frames) intermediate summed over M.
             # Result: (Ndir, n_frames)
-            Y = (A * w) @ S
+            Y = A @ S
 
             # Accumulate power over frequency bins
             bin_power = np.abs(Y) ** 2
