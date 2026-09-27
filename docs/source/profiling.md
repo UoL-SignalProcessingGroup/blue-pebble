@@ -24,6 +24,11 @@ place. Time a plain run first, with no profiler attached, so you know the real t
 /usr/bin/time -p python docs/tutorials/getting_started.py
 ```
 
+Take baselines from plain runs like this, never from a profiler, since profilers add their own
+overhead (`cProfile` added about a fifth to one tutorial's run). To time the committed version
+plainly, copy the working file aside, put `git show HEAD:<path>` in its place, time it, and
+restore the copy.
+
 For a single function, time repeated calls and report the best and the median, since one run is
 noisy. The first call is often slower than the rest (Numba compiles kernels on first use unless
 they are cached, and NumPy and BLAS warm up), so make an untimed call before timing.
@@ -77,6 +82,32 @@ OldBeamformer = head.DelayAndSumBeamformer
 If the copied module contains Numba functions with `cache=True`, delete the `__pycache__` Numba
 writes next to the copy before each run, or Numba fails to reload its own cache.
 
+To test a function on the inputs it really meets, rather than synthetic ones, wrap it for one run
+of a script and pickle what it receives and returns. The prototype and the new version can then
+be run on exactly those inputs and compared with the saved result:
+
+```python
+import pickle
+import runpy
+
+import bluepebble.simulator.continuous as continuous
+
+simulator_class = continuous.ContinuousSTFTPassiveSonarArraySimulator
+original = simulator_class._synthesise_stft_interp
+
+
+def capture(self, ctx, targets_data):
+    result = original(self, ctx, targets_data)
+    if targets_data:  # keep a call that has targets; a noise survey has none
+        with open("synthesis_inputs.pkl", "wb") as f:
+            pickle.dump({"ctx": ctx, "targets": targets_data, "result": result}, f)
+    return result
+
+
+simulator_class._synthesise_stft_interp = capture
+runpy.run_path("docs/tutorials/getting_started.py", run_name="__main__")
+```
+
 ## 4. Find the expensive stage with `cProfile`
 
 `cProfile` is built into Python and records every function call, so it gives exact call counts
@@ -108,22 +139,36 @@ access a Python call, it roughly quadrupled the apparent cost. Confirm such find
 timing before acting on them. It also stops at function boundaries, so the NumPy work inside a
 function appears as a single number.
 
+Profile the same workload at four times its length too. A function whose share grows with the
+run is scanning a history on every step, a cost that is invisible in short runs and dominates long
+ones.
+
 ## 5. Find the expensive lines with Scalene
 
 [Scalene](https://github.com/plasma-umass/scalene) samples the running program instead of hooking
-every call, so its overhead is small. It reports time per line and splits it into Python time and
-native time (NumPy, BLAS, Numba and other compiled code), and it also profiles memory per line.
-That split shows whether a slow line is paying for the interpreter or for the numerical work
-itself, which decides the fix. It is not a project dependency, so install it in your own
-environment:
+every call. It reports time per line and splits it into Python time and native time (NumPy, BLAS,
+Numba and other compiled code), and it can also profile memory per line. That split shows
+whether a slow line is paying for the interpreter or for the numerical work itself, which decides
+the fix. High Python time calls for fewer Python-level operations, while all-native time means
+the work itself has to shrink. It is not a project dependency, so install it in your own
+environment. Scalene 2 records and displays in two steps:
 
 ```bash
 pip install scalene
-scalene --cli --reduced-profile --profile-only bluepebble docs/tutorials/getting_started.py
+scalene run --cpu-only --program-path . -o profile.json docs/tutorials/getting_started.py
+scalene view profile.json            # in the browser
+scalene view --cli -r profile.json   # in the terminal, active lines only
 ```
 
-`--profile-only bluepebble` restricts the report to package code, and `--reduced-profile` hides
-lines with little time. Run `scalene --help` for the options in your installed version.
+- `--program-path .` matters here. By default Scalene profiles only the files in the script's own
+  folder, so package code is charged to whichever script line called it. Filtering with
+  `--profile-only bluepebble` instead drops the script as well, since the repository folder is
+  spelled `blue-pebble-dev`, and leaves nothing to report.
+- `--cpu-only` skips memory profiling, which is much slower. Add memory only when you need it.
+- Arguments for the script go after `---`, e.g. `... benchmarks/das_beamformer.py --- --sensors 64`.
+
+Scalene's overhead falls unevenly across the code (one run took 24 s against 9 s plain), so read
+its figures as relative shares and measure gains with plain timing.
 
 ## 6. Watch a long run with `py-spy` (optional)
 
@@ -145,13 +190,24 @@ Most slow code in this package has turned out to be one of a few patterns.
 |---|---|---|
 | One line with large native time, building an array much bigger than its result | Broadcasting to a large intermediate, then summing it | A matrix product (`@`) or `np.einsum`. The broadband delay-and-sum beamformer went from `np.sum((A[:, :, None] * S[None]) * w, axis=1)` to `(A * w) @ S`, about 3x faster. |
 | Huge call counts to a small NumPy function inside a loop | Calling NumPy once per frame, bin or element | Pass the whole array in one call, e.g. `np.fft.ifft(stft, axis=1)` for every frame at once |
+| A Python loop over sensors (or targets) running several array operations each time | Every operation makes a full temporary array and passes over memory again | Fuse the per-sensor work into one `@njit(parallel=True)` kernel with `prange` over sensors. `rocket-fft`, already a dependency, makes `np.fft` available inside it. The `stft_interp` synthesis became 14-17x faster this way. |
 | A transcendental function (`np.exp`, `np.sin`) recomputed in a loop over evenly spaced values | Recomputing something that changes by a fixed factor each step | Hoist it out of the loop, or use a recurrence (for steering phases, `A_next = A * exp(j*2*pi*df*delays)`), recomputing exactly every few dozen steps so rounding cannot build up |
 | Time per step grows as the run gets longer | Scanning a history from the start on every step, so the total grows with the square of the run length | Keep the latest state, or index the history in a dictionary |
 | Millions of `StateVector.__getitem__` or `Base.__get__` calls | Reading Stone Soup states element by element in a hot loop | Convert to a NumPy array once, outside the loop |
 | The same expensive result computed again with identical inputs | Recomputing geometry or steering that has not changed | Cache it, with an explicit rule for when the cache is invalid, and check its memory cost first |
 
-Numba kernels, such as the time and frequency-domain delay-and-sum, appear as a single native
-block in every profiler. Time them directly.
+When writing a Numba kernel:
+
+- Compile on first use (`@njit(cache=True)` without a type signature). Explicit signatures compile
+  at import, which every user pays for whether or not they use the kernel.
+- Give each output element exactly one writer. Results then do not depend on the thread count,
+  which keeps seeded runs reproducible.
+- Coverage cannot see inside a compiled kernel, so its lines show as missed even when tests run
+  them. Measure coverage with `NUMBA_DISABLE_JIT=1` if you need the true figure.
+- Kernels use every core by default. For parallel simulations, run processes and set
+  `NUMBA_NUM_THREADS=1`; do not run kernels from several threads of one process, since Numba's
+  default `workqueue` threading layer aborts on concurrent use.
+- Profilers show a kernel as one native block, so time it directly.
 
 ## 8. Prototype the fix in isolation
 
@@ -173,6 +229,9 @@ Check that the change is numerically faithful, not just faster:
 - **Determinism.** Repeated calls, and a run with BLAS limited to one thread
   (`VECLIB_MAXIMUM_THREADS=1` on macOS, `OPENBLAS_NUM_THREADS=1` with OpenBLAS), should give
   identical output. Otherwise seeded runs stop being reproducible.
+- **The tests themselves.** Break the new code deliberately in the way each new test is meant to
+  catch, confirm that test fails, then restore the code. A test that has never failed has not
+  shown it can.
 - **The usual checks.** `ruff check .`, `pyright` and the full test suite.
 
 ## 10. Measure again and record the result
@@ -194,3 +253,6 @@ Put the before and after figures in the commit message, under a `perf` type, for
   libraries. Compare before and after on the same machine.
 - **Unrepresentative sizes.** A cost that is negligible at 32 sensors can dominate at 200, and
   anything that grows with the square of the run length only shows up in long runs.
+- **Stale caches.** A `__pycache__` copied with a checkout is reused while its source is unchanged,
+  so tracebacks can name a path from the other checkout. The code that runs is still correct;
+  delete the caches if the paths confuse.
