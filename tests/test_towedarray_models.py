@@ -405,6 +405,52 @@ def test_get_platform_state_at_returns_none_for_unknown_timestamp(monkeypatch) -
     assert platform.get_platform_state_at(_T2) is None
 
 
+def test_captured_states_match_every_sensor_over_several_moves(monkeypatch) -> None:
+    """Each captured PlatformState holds the host and sensor states at its own timestamp."""
+    module = _load_towedarray(monkeypatch)
+    platform = _make_platform(module, num_sensors=3)
+    timestamps = [_T0 + timedelta(seconds=i) for i in range(6)]
+    for timestamp in timestamps[1:]:
+        platform.move(timestamp)
+
+    for timestamp in timestamps:
+        captured = platform.get_platform_state_at(timestamp)
+        sensor_states = platform.get_sensor_states_at(timestamp)
+        assert captured is not None and sensor_states is not None
+        assert captured.host.state is platform.get_host_state_at(timestamp)
+        np.testing.assert_array_equal(
+            captured.array.state_vector, np.hstack([s.state_vector for s in sensor_states])
+        )
+
+
+def test_get_platform_state_at_returns_the_first_capture_for_a_repeated_timestamp(
+    monkeypatch,
+) -> None:
+    """Moving to the same time twice records two states; lookups return the first, as before."""
+    module = _load_towedarray(monkeypatch)
+    platform = _make_platform(module)
+    platform.move(_T1)
+    platform.move(_T1)
+
+    assert [state.timestamp for state in platform.platform_history] == [_T0, _T1, _T1]
+    assert platform.get_platform_state_at(_T1) is platform.platform_history[1]
+
+
+def test_get_platform_state_at_finds_states_added_to_the_history_directly(monkeypatch) -> None:
+    """Entries appended to platform_history outside move() are still found."""
+    module = _load_towedarray(monkeypatch)
+    platform = _make_platform(module)
+    platform.move(_T1)
+    extra = module.PlatformState(
+        timestamp=_T2,
+        host=platform.platform_history[1].host,
+        array=platform.platform_history[1].array,
+    )
+    platform.platform_history.append(extra)
+
+    assert platform.get_platform_state_at(_T2) is extra
+
+
 # ---------------------------------------------------------------------------
 # TowedArrayPlatform – get_host_state_at
 # ---------------------------------------------------------------------------
