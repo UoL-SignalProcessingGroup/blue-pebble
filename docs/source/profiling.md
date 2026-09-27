@@ -1,90 +1,73 @@
 # Profiling and Optimisation
 
-This page is a step-by-step guide to making new code faster without changing what it computes.
-The loop is always the same: measure a representative workload, save its outputs, find where the
-time goes, change one thing, check the outputs still match, and measure again.
-
-Optimise only once the code is correct and tested. A faster wrong answer is still wrong, and the
-existing tests are what the optimised version is checked against.
+This page is a step-by-step guide to making code faster without changing what it computes:
+measure a representative workload, save its outputs, find where the time goes, change one thing,
+check the outputs still match, and measure again. Optimise only once the code is correct and
+tested, since the existing tests are what the optimised version is checked against.
 
 ## 1. Decide whether it is worth it
 
-Speed matters most for code that runs once per scan, per trial or per frequency bin, since that is
-where small costs multiply. It also matters for anything a tutorial runs, because the tutorials
-execute in every documentation build and Read the Docs stops a build after fifteen minutes. Code
-that runs once per script rarely repays the effort.
+Speed matters for code that runs once per scan, per trial or per frequency bin, where small costs
+multiply, and for anything a tutorial runs, since the tutorials execute in every documentation
+build and Read the Docs stops a build after fifteen minutes. Code that runs once per script rarely
+repays the effort.
 
 ## 2. Time a representative workload
 
-Measure with the sizes the code will actually meet (sensor counts, beam counts, scan lengths,
-number of steps), since the costs scale differently and a toy-sized case can point at the wrong
-place. Time a plain run first, with no profiler attached, so you know the real total:
+Measure at the sizes the code will actually meet (sensor counts, beam counts, scan lengths,
+number of steps), since costs scale differently and a toy case can point at the wrong place. Take
+baselines from plain runs, never from a profiler, which adds its own overhead, and compare before
+and after on the same machine:
 
 ```bash
 /usr/bin/time -p python docs/tutorials/getting_started.py
 ```
 
-Take baselines from plain runs like this, never from a profiler, since profilers add their own
-overhead (`cProfile` added about a fifth to one tutorial's run). To time the committed version
-plainly, copy the working file aside, put `git show HEAD:<path>` in its place, time it, and
-restore the copy.
-
-For a single function, time repeated calls and report the best and the median, since one run is
-noisy. The first call is often slower than the rest (Numba compiles kernels on first use unless
-they are cached, and NumPy and BLAS warm up), so make an untimed call before timing.
+For a single function, make one untimed call first (Numba compiles on first use and NumPy warms
+up), then report the best and median of several:
 
 ```python
 import timeit
 from functools import partial
 
 call = partial(beamformer.beamform, signals, delays)
-call()  # warm-up, untimed
+call()
 times = timeit.repeat(call, number=1, repeat=7)
-print(f"best {min(times) * 1e3:.1f} ms")
 ```
 
-`benchmarks/das_beamformer.py` is a worked example of a standalone benchmark, and a template for
-new ones.
+`benchmarks/das_beamformer.py` is a worked example and a template for new benchmarks.
 
 ## 3. Save reference outputs before changing anything
 
-Save what the current code produces, for the same inputs you will use afterwards. Without this you
-can only compare the new code with itself. The benchmark script does it with `--save` and
-`--check`:
+Without saved outputs you can only compare the new code with itself. The benchmark script saves
+and checks them:
 
 ```bash
 python benchmarks/das_beamformer.py --save before.npz
-# ...change the code...
-python benchmarks/das_beamformer.py --check before.npz
+python benchmarks/das_beamformer.py --check before.npz   # after the change
 ```
 
-For a wider check, the committed version can be run side by side with the working tree by
-loading it from git as a separate module. Give it a dotted name inside the package so its relative
-imports resolve:
+To run the committed version side by side with the working tree, load it from git as a separate
+module, giving it a dotted name inside the package so its relative imports resolve:
+
+```bash
+git show HEAD:bluepebble/sigproc/conventional.py > /tmp/conventional_head.py
+```
 
 ```python
 import importlib.util
-import subprocess
 
-source = subprocess.run(
-    ["git", "show", "HEAD:bluepebble/sigproc/conventional.py"],
-    capture_output=True, text=True, check=True,
-).stdout
-path = "/tmp/conventional_head.py"
-with open(path, "w") as f:
-    f.write(source)
-spec = importlib.util.spec_from_file_location("bluepebble.sigproc._conventional_head", path)
+spec = importlib.util.spec_from_file_location(
+    "bluepebble.sigproc._conventional_head", "/tmp/conventional_head.py"
+)
 head = importlib.util.module_from_spec(spec)
 spec.loader.exec_module(head)
-OldBeamformer = head.DelayAndSumBeamformer
 ```
 
-If the copied module contains Numba functions with `cache=True`, delete the `__pycache__` Numba
-writes next to the copy before each run, or Numba fails to reload its own cache.
+If it contains cached Numba functions, delete the `__pycache__` beside the copy before each run.
 
-To test a function on the inputs it really meets, rather than synthetic ones, wrap it for one run
-of a script and pickle what it receives and returns. The prototype and the new version can then
-be run on exactly those inputs and compared with the saved result:
+To test on the inputs a function really meets, wrap it for one run of a script and pickle what it
+receives and returns:
 
 ```python
 import pickle
@@ -92,26 +75,23 @@ import runpy
 
 import bluepebble.simulator.continuous as continuous
 
-simulator_class = continuous.ContinuousSTFTPassiveSonarArraySimulator
-original = simulator_class._synthesise_stft_interp
+cls = continuous.ContinuousSTFTPassiveSonarArraySimulator
+original = cls._synthesise_stft_interp
 
 
 def capture(self, ctx, targets_data):
     result = original(self, ctx, targets_data)
-    if targets_data:  # keep a call that has targets; a noise survey has none
-        with open("synthesis_inputs.pkl", "wb") as f:
+    if targets_data:
+        with open("inputs.pkl", "wb") as f:
             pickle.dump({"ctx": ctx, "targets": targets_data, "result": result}, f)
     return result
 
 
-simulator_class._synthesise_stft_interp = capture
+cls._synthesise_stft_interp = capture
 runpy.run_path("docs/tutorials/getting_started.py", run_name="__main__")
 ```
 
 ## 4. Find the expensive stage with `cProfile`
-
-`cProfile` is built into Python and records every function call, so it gives exact call counts
-and the time spent in each function:
 
 ```bash
 python -m cProfile -o profile.prof docs/tutorials/getting_started.py
@@ -121,138 +101,82 @@ python -m cProfile -o profile.prof docs/tutorials/getting_started.py
 import pstats
 
 stats = pstats.Stats("profile.prof")
-stats.sort_stats("cumulative").print_stats("bluepebble", 25)  # stages, including callees
-stats.sort_stats("tottime").print_stats(25)  # where the work itself happens
+stats.sort_stats("cumulative").print_stats("bluepebble", 25)
+stats.sort_stats("tottime").print_stats(25)
 ```
 
-Read three things from it:
+Cumulative time finds the expensive stage, self time (`tottime`) the function doing the work, and
+call counts (`ncalls`) expose loops. Hundreds of thousands of calls to a small function usually
+mean a Python loop doing work that one call could. `cProfile` exaggerates code that makes many
+small calls, such as Stone Soup attribute access, so confirm those findings with plain timing.
 
-- **Cumulative time** finds the expensive stage, e.g. the simulator's synthesis or the detector.
-- **Self time** (`tottime`) finds the function doing the work within that stage.
-- **Call counts** (`ncalls`) expose loops. Hundreds of thousands of calls to a small function, such
-  as one `np.fft.ifft` per STFT frame or one `StateVector.__getitem__` per element, usually means
-  a Python loop doing work that could be done in one call.
-
-`cProfile` adds a fixed cost to every call it records, so code making many small calls looks
-slower than it is. On the towed-array platform, whose Stone Soup properties make every attribute
-access a Python call, it roughly quadrupled the apparent cost. Confirm such findings with plain
-timing before acting on them. It also stops at function boundaries, so the NumPy work inside a
-function appears as a single number.
-
-Profile the same workload at four times its length too. A function whose share grows with the
-run is scanning a history on every step, a cost that is invisible in short runs and dominates long
-ones.
+Profile the workload at four times its length too. A function whose share grows with the run is
+scanning a history on every step.
 
 ## 5. Find the expensive lines with Scalene
 
-[Scalene](https://github.com/plasma-umass/scalene) samples the running program instead of hooking
-every call. It reports time per line and splits it into Python time and native time (NumPy, BLAS,
-Numba and other compiled code), and it can also profile memory per line. That split shows
-whether a slow line is paying for the interpreter or for the numerical work itself, which decides
-the fix. High Python time calls for fewer Python-level operations, while all-native time means
-the work itself has to shrink. It is not a project dependency, so install it in your own
-environment. Scalene 2 records and displays in two steps:
+[Scalene](https://github.com/plasma-umass/scalene) samples the program and splits each line's
+time into Python and native (NumPy, BLAS, Numba). High Python time calls for fewer Python-level
+operations; all-native time means the work itself has to shrink. Install it in your own
+environment:
 
 ```bash
 pip install scalene
 scalene run --cpu-only --program-path . -o profile.json docs/tutorials/getting_started.py
-scalene view profile.json            # in the browser
-scalene view --cli -r profile.json   # in the terminal, active lines only
+scalene view profile.json            # browser; add --cli -r for the terminal
 ```
 
-- `--program-path .` matters here. By default Scalene profiles only the files in the script's own
-  folder, so package code is charged to whichever script line called it. Filtering with
-  `--profile-only bluepebble` instead drops the script as well, since the repository folder is
-  spelled `blue-pebble-dev`, and leaves nothing to report.
-- `--cpu-only` skips memory profiling, which is much slower. Add memory only when you need it.
-- Arguments for the script go after `---`, e.g. `... benchmarks/das_beamformer.py --- --sensors 64`.
-
-Scalene's overhead falls unevenly across the code (one run took 24 s against 9 s plain), so read
-its figures as relative shares and measure gains with plain timing.
+`--program-path .` is needed because Scalene otherwise profiles only the script's own folder, and
+`--profile-only bluepebble` drops the script too (the folder is `blue-pebble-dev`). Script
+arguments go after `---`. Scalene's overhead falls unevenly, so read its figures as relative
+shares.
 
 ## 6. Watch a long run with `py-spy` (optional)
 
-[`py-spy`](https://github.com/benfred/py-spy) is also a sampling profiler, and it can attach to a
-process that is already running. That suits the examples, which take minutes each. It also draws
-flame graphs of the whole run. On macOS it must run as root.
-
-```bash
-pip install py-spy
-sudo py-spy record -o profile.svg -- python docs/examples/comparing_bathymetry.py
-sudo py-spy top --pid 12345  # live view of a running process
-```
+[`py-spy`](https://github.com/benfred/py-spy) attaches to a running process, which suits the
+minutes-long examples. On macOS it needs root: `sudo py-spy top --pid <PID>`.
 
 ## 7. Recognise the pattern
 
-Most slow code in this package has turned out to be one of a few patterns.
-
-| Symptom in the profile | Likely cause | Fix |
+| Symptom | Likely cause | Fix |
 |---|---|---|
-| One line with large native time, building an array much bigger than its result | Broadcasting to a large intermediate, then summing it | A matrix product (`@`) or `np.einsum`. The broadband delay-and-sum beamformer went from `np.sum((A[:, :, None] * S[None]) * w, axis=1)` to `(A * w) @ S`, about 3x faster. |
-| Huge call counts to a small NumPy function inside a loop | Calling NumPy once per frame, bin or element | Pass the whole array in one call, e.g. `np.fft.ifft(stft, axis=1)` for every frame at once |
-| A Python loop over sensors (or targets) running several array operations each time | Every operation makes a full temporary array and passes over memory again | Fuse the per-sensor work into one `@njit(parallel=True)` kernel with `prange` over sensors. `rocket-fft`, already a dependency, makes `np.fft` available inside it. The `stft_interp` synthesis became 14-17x faster this way. |
-| A transcendental function (`np.exp`, `np.sin`) recomputed in a loop over evenly spaced values | Recomputing something that changes by a fixed factor each step | Hoist it out of the loop, or use a recurrence (for steering phases, `A_next = A * exp(j*2*pi*df*delays)`), recomputing exactly every few dozen steps so rounding cannot build up |
-| Time per step grows as the run gets longer | Scanning a history from the start on every step, so the total grows with the square of the run length | Keep the latest state, or index the history in a dictionary |
-| Millions of `StateVector.__getitem__` or `Base.__get__` calls | Reading Stone Soup states element by element in a hot loop | Convert to a NumPy array once, outside the loop |
-| The same expensive result computed again with identical inputs | Recomputing geometry or steering that has not changed | Cache it, with an explicit rule for when the cache is invalid, and check its memory cost first |
+| A line with large native time building an array much bigger than its result | Broadcasting to a large intermediate, then summing | A matrix product (`@`) or `np.einsum` |
+| Huge call counts to a small NumPy function in a loop | One NumPy call per frame, bin or element | One call on the whole array, e.g. `np.fft.ifft(stft, axis=1)` |
+| A Python loop over sensors running several array operations each time | A temporary array and a pass over memory per operation | A fused `@njit(parallel=True)` kernel with `prange` over sensors; `rocket-fft` provides `np.fft` inside it |
+| `np.exp` or `np.sin` recomputed over evenly spaced values | Recomputing what changes by a fixed factor each step | A recurrence, recomputed exactly every few dozen steps so rounding cannot build up |
+| Time per step grows with run length | Scanning a history from the start each step | Keep the latest state, or index the history in a dictionary |
+| Millions of `StateVector.__getitem__` or `Base.__get__` calls | Reading Stone Soup states element by element | Convert to a NumPy array once, outside the loop |
+| The same result recomputed from identical inputs | Unchanged geometry or steering recomputed | A cache with an explicit invalidation rule, after checking its memory cost |
 
 When writing a Numba kernel:
 
-- Compile on first use (`@njit(cache=True)` without a type signature). Explicit signatures compile
-  at import, which every user pays for whether or not they use the kernel.
-- Give each output element exactly one writer. Results then do not depend on the thread count,
-  which keeps seeded runs reproducible.
-- Coverage cannot see inside a compiled kernel, so its lines show as missed even when tests run
-  them. Measure coverage with `NUMBA_DISABLE_JIT=1` if you need the true figure.
-- Kernels use every core by default. For parallel simulations, run processes and set
-  `NUMBA_NUM_THREADS=1`; do not run kernels from several threads of one process, since Numba's
-  default `workqueue` threading layer aborts on concurrent use.
-- Profilers show a kernel as one native block, so time it directly.
+- Compile on first use (`@njit(cache=True)`, no type signature), so users who never call it do not
+  pay at import.
+- Give each output element one writer, so results do not depend on the thread count.
+- Coverage cannot trace kernels; use `NUMBA_DISABLE_JIT=1` for the true figure.
+- For parallel simulations, use processes with `NUMBA_NUM_THREADS=1`. Numba's default `workqueue`
+  layer aborts if several threads of one process run kernels at once.
+- Profilers show a kernel as one block, so time it directly.
 
 ## 8. Prototype the fix in isolation
 
-Before editing the package, time the current and proposed versions side by side on synthetic data
-at realistic sizes, and check they agree. A few lines of script is enough, and it is cheap to
-discard an idea that does not pay off. Ratios are more trustworthy than absolute times here,
-since single runs are noisy.
+Before editing the package, time the current and proposed versions side by side at realistic
+sizes and check they agree. It is cheap to discard an idea here, and ratios are more trustworthy
+than absolute times.
 
 ## 9. Apply the change and verify it
 
-Check that the change is numerically faithful, not just faster:
-
-- **Against the reference.** Compare cell by cell, not only against the peak, and look at the
-  weakest cells too. A figure relative to the peak can hide large relative errors in deep nulls.
-  Rounding-level differences (around `1e-15` relative in double precision) are expected when the
-  order of a sum changes. Anything larger needs explaining.
-- **Downstream.** Run what consumes the output. For signal processing that means calibrating a
-  detector on the old and new outputs and confirming identical thresholds and detections.
-- **Determinism.** Repeated calls, and a run with BLAS limited to one thread
-  (`VECLIB_MAXIMUM_THREADS=1` on macOS, `OPENBLAS_NUM_THREADS=1` with OpenBLAS), should give
-  identical output. Otherwise seeded runs stop being reproducible.
-- **The tests themselves.** Break the new code deliberately in the way each new test is meant to
-  catch, confirm that test fails, then restore the code. A test that has never failed has not
-  shown it can.
-- **The usual checks.** `ruff check .`, `pyright` and the full test suite.
+- **Against the reference**, cell by cell and including the weakest cells, since a figure relative
+  to the peak can hide large relative errors in deep nulls. Rounding-level differences (about
+  `1e-15` relative in double precision) are expected when a sum's order changes.
+- **Downstream**, by running what consumes the output, e.g. confirming identical detections.
+- **Determinism**, by repeating calls and running with BLAS limited to one thread
+  (`VECLIB_MAXIMUM_THREADS=1` on macOS, `OPENBLAS_NUM_THREADS=1` with OpenBLAS).
+- **The tests**, by breaking the new code in the way each new test targets and confirming it fails.
+- **The usual checks**, `ruff check .`, `pyright` and the full test suite.
 
 ## 10. Measure again and record the result
 
-Re-run the plain timing from step 2. Stop when the target is met, or when the largest remaining
-cost is external (such as the `rtrs` ray tracer) or can only be reduced by trading away accuracy.
-Put the before and after figures in the commit message, under a `perf` type, for example
-`perf(sigproc): steer broadband DAS bins with a matrix product`.
-
-## Pitfalls
-
-- **Profiler overhead.** `cProfile` exaggerates code that makes many small calls. Sampling
-  profilers and plain timing do not.
-- **Warm-up.** First calls include Numba compilation and cache loading, so leave them out of
-  timings.
-- **Threads.** `rtrs` and BLAS use several threads, so CPU time can exceed wall time, and
-  profilers report threaded code differently. Judge by wall time.
-- **Machine.** Timings, and rounding at the level of `1e-16`, differ between machines and BLAS
-  libraries. Compare before and after on the same machine.
-- **Unrepresentative sizes.** A cost that is negligible at 32 sensors can dominate at 200, and
-  anything that grows with the square of the run length only shows up in long runs.
-- **Stale caches.** A `__pycache__` copied with a checkout is reused while its source is unchanged,
-  so tracebacks can name a path from the other checkout. The code that runs is still correct;
-  delete the caches if the paths confuse.
+Re-run the plain timing. Stop when the target is met, or when the largest remaining cost is
+external (such as the `rtrs` ray tracer) or can only be cut by trading away accuracy. Put the
+before and after figures in the commit message under a `perf` type.
