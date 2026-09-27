@@ -25,16 +25,18 @@ htmlcov/
 # Ruff
 .ruff_cache/
 
+# Profiling output (see docs/source/profiling.md)
+*.prof
+scalene-profile.json
+scalene-profile.html
+/profile.json
+
 # Jupyter
 .ipynb_checkpoints/
 
 # Operating system / editor
 .DS_Store
 .vscode/
-
-# Claude Code — local only
-CLAUDE.md
-.claude/
 
 # Measured data
 docs/examples/measured_data
