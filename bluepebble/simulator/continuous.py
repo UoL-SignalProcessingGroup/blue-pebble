@@ -516,9 +516,10 @@ class ContinuousSTFTPassiveSonarArraySimulator(PassiveSonarArraySimulatorBase):
                 )
                 tau_hist = np.zeros((ctx.n_steps, ctx.num_sensors), dtype=np.float64)
 
+                states_by_time = self._states_by_timestamp(target_path)
                 for step_idx, timestamp in enumerate(ctx.all_timestamps):
                     platform_state = self.platform.get_platform_state_at(timestamp)
-                    target_state = self._target_state_at(target_path, timestamp)
+                    target_state = states_by_time.get(timestamp)
                     if target_state is None:
                         bar.update(1)
                         continue
@@ -1160,9 +1161,10 @@ class ContinuousFractionalDelayPassiveSonarArraySimulator(PassiveSonarArraySimul
                 broadband_rms = np.zeros((n_steps, num_sensors), dtype=np.float64)
                 sensor_delay_history_s = np.zeros((n_steps, num_sensors), dtype=np.float64)
 
+                states_by_time = self._states_by_timestamp(target_path)
                 for step_idx, timestamp in enumerate(all_timestamps):
                     platform_state = self.platform.get_platform_state_at(timestamp)
-                    target_state = self._target_state_at(target_path, timestamp)
+                    target_state = states_by_time.get(timestamp)
                     if target_state is None:
                         bar.update(1)
                         continue

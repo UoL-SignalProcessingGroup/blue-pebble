@@ -144,17 +144,11 @@ def test_base_resolve_models_and_target_lookup(monkeypatch) -> None:
     _base, discrete, _continuous = _load_simulator_modules(monkeypatch)
 
     timestamp = datetime(2026, 1, 1, 12, 0, 0)
-    target_path = _FakePath(states=[_FakeState(timestamp)])
-    found_state = discrete.DiscretePassiveSonarArraySimulator._target_state_at(
-        target_path, timestamp
-    )
-    assert found_state.timestamp == timestamp
-    assert (
-        discrete.DiscretePassiveSonarArraySimulator._target_state_at(
-            target_path, timestamp + timedelta(seconds=1)
-        )
-        is None
-    )
+    first, repeat = _FakeState(timestamp), _FakeState(timestamp)
+    target_path = _FakePath(states=[first, repeat])
+    states_by_time = discrete.DiscretePassiveSonarArraySimulator._states_by_timestamp(target_path)
+    assert states_by_time.get(timestamp) is first  # the first state at a time, as a scan finds
+    assert states_by_time.get(timestamp + timedelta(seconds=1)) is None
 
     with pytest.raises(ValueError, match="must contain at least one model"):
         discrete.DiscretePassiveSonarArraySimulator._resolve_models([], 1, "models")

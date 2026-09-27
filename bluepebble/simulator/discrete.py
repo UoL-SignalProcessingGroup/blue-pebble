@@ -221,6 +221,7 @@ class DiscretePassiveSonarArraySimulator(PassiveSonarArraySimulatorBase):
             source_signal_by_target.append(np.asarray(source_signal, dtype=np.complex64))
 
         n_steps = len(all_timestamps)
+        target_states_by_time = [self._states_by_timestamp(path) for path in ground_truth_paths]
         for step_idx, timestamp in enumerate(all_timestamps):
             platform_state = self.platform.get_platform_state_at(timestamp)
 
@@ -242,8 +243,8 @@ class DiscretePassiveSonarArraySimulator(PassiveSonarArraySimulatorBase):
             frequencies_hz = np.fft.fftfreq(num_samples_snapshot, d=1.0 / sampling_rate_hz)
             sensor_signals = np.zeros((num_sensors, num_samples_snapshot), dtype=np.complex64)
 
-            for target_idx, target_path in enumerate(ground_truth_paths):
-                target_state = self._target_state_at(target_path, timestamp)
+            for target_idx, states_by_time in enumerate(target_states_by_time):
+                target_state = states_by_time.get(timestamp)
                 if target_state is None:
                     continue
 
