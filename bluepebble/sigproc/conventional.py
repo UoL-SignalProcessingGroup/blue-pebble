@@ -266,8 +266,7 @@ class DelayAndSumBeamformer(_STFTBeamformer):
         Ndir = sd.shape[0]
         P = np.zeros((len(per_band_bins), Ndir, n_frames), dtype=np.float64)
 
-        # Normalize weights
-        w = shading_weights.reshape(1, M, 1)  # (1, M, 1) for broadcasting
+        w = shading_weights.reshape(1, M)  # (1, M), weights each sensor's steering phase
 
         # Each bin in the union of all bands is steered once; the resulting power is then
         # accumulated into every band containing it, so overlapping bands cost nothing extra.
@@ -280,9 +279,10 @@ class DelayAndSumBeamformer(_STFTBeamformer):
             # Steering phase for all dirs/sensors: (Ndir, M)
             A = np.exp(1j * 2 * np.pi * f * sd)
 
-            # Beamform: Y = sum_m w_m * A(dir,m) * S(m,frame)
+            # Beamform: Y = sum_m w_m * A(dir,m) * S(m,frame), as a matrix product rather than
+            # a broadcast (Ndir, M, n_frames) intermediate summed over M, which was far slower.
             # Result: (Ndir, n_frames)
-            Y = np.sum((A[:, :, None] * S[None, :, :]) * w, axis=1)
+            Y = (A * w) @ S
 
             # Accumulate power over frequency bins
             bin_power = np.abs(Y) ** 2
