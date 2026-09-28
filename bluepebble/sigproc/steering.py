@@ -136,8 +136,10 @@ class SteeringCalculator(Base):
         "When True, calculate returns delays for about half the grid, and mirror_plan returns "
         "the bookkeeping to expand a beamformer's output back to the full grid via "
         "'Beamformer.expand_mirrored'. Requires a full-circle sector with uniform spacing. "
-        "This is exact while the array is linear (straight) and only approximate while it "
-        "bends (e.g. during a turn).",
+        "The expanded output is exact only while the array is straight and its axis falls on "
+        "the grid (a multiple of 2*pi/num_beams). Otherwise every beam is steered at its "
+        "reported bearing plus the axis's offset from the nearest grid bearing, up to half a "
+        "beam spacing, and a bent array (e.g. during a turn) adds a further approximation.",
     )
 
     def __init__(self, *args: object, **kwargs: object) -> None:

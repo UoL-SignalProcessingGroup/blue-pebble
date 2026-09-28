@@ -779,3 +779,36 @@ def test_delay_and_sum_mirror_plan_matches_full_grid_for_straight_array(
 
     assert mirrored_power.shape == full_power.shape
     np.testing.assert_allclose(mirrored_power, full_power, rtol=1e-9, atol=1e-9)
+
+
+def test_mirror_plan_offsets_every_beam_when_the_axis_is_off_grid(monkeypatch) -> None:
+    """Off the grid, mirroring steers every beam at its bearing plus the axis's remainder.
+
+    roll_shift rounds the axis to whole beams, so the expanded output matches direct steering
+    at the grid shifted by the uncorrected remainder, not the grid itself (issue #99).
+    """
+    beamformer = _load_beamformer_module(monkeypatch)
+    num_beams = 16
+    beam_spacing_rad = 2 * np.pi / num_beams
+    axis_rad = 0.3 * beam_spacing_rad
+    platform = _rotated_array_platform(axis_rad)
+    rng = np.random.default_rng(0)
+    raw_signals = rng.standard_normal((8, 256)) + 1j * rng.standard_normal((8, 256))
+    das = beamformer.DelayAndSumBeamformer(
+        sampling_rate_hz=500.0,
+        domain="broadband_power",
+        nfft=64,
+        overlap=32,
+        fmin=50.0,
+        fmax=150.0,
+    )
+    mirror = _steering_calculator(beamformer, (-np.pi, np.pi), num_beams, mirror_half_plane=True)
+    plan = mirror.mirror_plan(platform)
+    mirrored = das.beamform(raw_signals, mirror.calculate(platform), mirror_plan=plan)
+
+    remainder_rad = axis_rad - plan.roll_shift * beam_spacing_rad
+    shifted = mirror.steering_bearings() + remainder_rad
+    direct = das.beamform(raw_signals, mirror._delays_for_azimuths(platform, shifted))
+
+    assert remainder_rad != 0.0
+    np.testing.assert_allclose(mirrored, direct, rtol=1e-9, atol=1e-9)
