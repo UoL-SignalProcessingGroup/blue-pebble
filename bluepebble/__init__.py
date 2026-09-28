@@ -13,8 +13,9 @@ true bearing (clockwise from north) and relative bearing (clockwise from the pla
 heading), are used only for display, through :func:`~bluepebble.plotter.plot_btr`'s
 ``bearing_convention``.
 
-A full circle of steering directions should not list both -pi and pi, which point the same
-way: use ``np.linspace(-np.pi, np.pi, N, endpoint=False)``.
+:class:`~bluepebble.sigproc.SteeringCalculator` builds its steering grid from a sector
+``(start, end)`` that runs anticlockwise from start to end; ``(-np.pi, np.pi)`` is a full
+circle, which does not repeat its start since -pi and pi point the same way.
 """
 
 from importlib import import_module

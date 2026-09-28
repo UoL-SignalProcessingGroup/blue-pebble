@@ -258,7 +258,7 @@ from bluepebble.sigproc import (
 )
 from bluepebble.simulator import ContinuousSTFTPassiveSonarArraySimulator
 
-steering_azimuths_rad = np.linspace(-np.pi, np.pi, 360, endpoint=False)
+num_beams = 360
 fmin = 100.0
 fmax = 245.0
 
@@ -271,8 +271,10 @@ beamformer = DelayAndSumBeamformer(
 )
 steering_calculator = SteeringCalculator(
     ssp=ssp,
-    steering_azimuths_rad=steering_azimuths_rad,
+    steering_sector_rad=(-np.pi, np.pi),
+    num_beams=num_beams,
 )
+steering_azimuths_rad = steering_calculator.steering_bearings()
 
 
 def make_simulator(ground_truth_paths):

@@ -139,7 +139,10 @@ platform_state = platform.get_platform_state_at(timesteps[0])
 assert platform_state is not None
 array_endpoints_xy = platform_state.array.state_vector[:2, [0, -1]]
 array_axis_rad = float(np.arctan2(*(array_endpoints_xy[:, 1] - array_endpoints_xy[:, 0])[::-1]))
-steering_azimuths_rad = np.linspace(array_axis_rad - np.pi, array_axis_rad, 360, endpoint=False)
+steering_calculator = SteeringCalculator(
+    ssp=ssp, steering_sector_rad=(array_axis_rad - np.pi, array_axis_rad), num_beams=361
+)
+steering_azimuths_rad = steering_calculator.steering_bearings()
 
 simulator = ContinuousSTFTPassiveSonarArraySimulator(
     platform=platform,
@@ -149,7 +152,7 @@ simulator = ContinuousSTFTPassiveSonarArraySimulator(
     beamformer=MinimumVarianceDistortionlessResponseBeamformer(
         sampling_rate_hz=sampling_rate_hz, fmin=fmin, fmax=fmax
     ),
-    steering_calculator=SteeringCalculator(ssp=ssp, steering_azimuths_rad=steering_azimuths_rad),
+    steering_calculator=steering_calculator,
     ground_truth_paths=[target_truth],
     fade_in_ms=1000.0,
 )

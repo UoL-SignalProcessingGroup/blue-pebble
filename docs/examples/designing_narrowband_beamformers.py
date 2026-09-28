@@ -86,7 +86,6 @@ array_depth_m = -50.0
 array_aperture_m = (num_sensors - 1) * sensor_spacing_m
 
 num_beams = 120
-steering_azimuths_rad = np.linspace(-np.pi, np.pi, num_beams, endpoint=False)
 beam_spacing_deg = 360.0 / num_beams
 
 band_fmin_hz = 50.0
@@ -393,9 +392,11 @@ beamformer = DelayAndSumBeamformer(
 )
 steering_calculator = SteeringCalculator(
     ssp=ssp,
-    steering_azimuths_rad=steering_azimuths_rad,
+    steering_sector_rad=(-np.pi, np.pi),
+    num_beams=num_beams,
     mirror_half_plane=True,
 )
+steering_azimuths_rad = steering_calculator.steering_bearings()
 
 simulator = ContinuousSTFTPassiveSonarArraySimulator(
     platform=platform,

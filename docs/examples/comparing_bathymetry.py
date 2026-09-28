@@ -417,7 +417,7 @@ def _make_signal_models():
 # in arrival structure caused by the seabed is visible in the resulting bearing-time
 # record.
 
-steering_azimuths_rad = np.linspace(-np.pi, np.pi, 180, endpoint=False)
+num_beams = 180
 
 beamformer = DelayAndSumBeamformer(
     sampling_rate_hz=sampling_rate_hz,
@@ -426,8 +426,10 @@ beamformer = DelayAndSumBeamformer(
 
 steering_calculator = SteeringCalculator(
     ssp=ssp,
-    steering_azimuths_rad=steering_azimuths_rad,
+    steering_sector_rad=(-np.pi, np.pi),
+    num_beams=num_beams,
 )
+steering_azimuths_rad = steering_calculator.steering_bearings()
 
 # %%
 # Detector Pipeline Setup

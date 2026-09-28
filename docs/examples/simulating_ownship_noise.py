@@ -349,7 +349,7 @@ def _make_self_noise_model() -> SyntheticAnthropogenicSignal:
 beamformer_type = "DAS"
 beamformer_shading = None
 beamformer_domain = "frequency"
-steering_azimuths_rad = np.linspace(-np.pi, np.pi, 180, endpoint=False)
+num_beams = 180
 
 shading = None
 if beamformer_shading is not None:
@@ -380,8 +380,10 @@ else:
 
 steering_calculator = SteeringCalculator(
     ssp=ssp,
-    steering_azimuths_rad=steering_azimuths_rad,
+    steering_sector_rad=(-np.pi, np.pi),
+    num_beams=num_beams,
 )
+steering_azimuths_rad = steering_calculator.steering_bearings()
 
 # %%
 # Detector Pipeline Setup
