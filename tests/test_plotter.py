@@ -759,6 +759,58 @@ def test_plot_btr_places_each_row_at_its_own_bearings(monkeypatch) -> None:
     assert peak_bearings == [-180.0, -120.0]
 
 
+@pytest.mark.parametrize("convention", ["mathematical", "true"])
+def test_plot_btr_turning_full_circle_keeps_the_full_circle_axis(monkeypatch, convention) -> None:
+    """A full-circle grid that turns still spans 360 degrees from the usual start.
+
+    Long straight legs pile the pooled bearings up in tight clusters, so an ordinary gap
+    between beams looks like the edge of a partial arc; each row on its own is a full circle.
+    """
+    plotter = _load_plotter(monkeypatch)
+    t0 = datetime(2026, 1, 1, 12, 0, 0)
+    base = np.arange(-180.0, 180.0, 10.0) + 0.37  # an axis off the round bearings
+    # Straight legs with slight drift either side of a 45 degree turn.
+    turns = np.concatenate(
+        [1e-4 * np.arange(40), np.linspace(0.1, 44.9, 8), 45.0 + 1e-4 * np.arange(40)]
+    )
+    steering = np.array([base - turn for turn in turns])
+    timesteps = np.array([t0 + timedelta(seconds=i) for i in range(turns.size)])
+
+    fig = plotter.plot_btr(
+        timesteps, steering, np.ones(steering.shape), bearing_convention=convention
+    )
+
+    expected = [-180.0, 180.0] if convention == "mathematical" else [0.0, 360.0]
+    assert list(fig.layout.xaxis.range) == expected
+
+
+def test_plot_btr_relative_full_circle_through_a_turn_spans_360(monkeypatch) -> None:
+    """A fixed full-circle grid viewed relative to a turning heading still spans 000-360.
+
+    The relative view pooled its rows the same way before per-timestep grids existed, so a
+    turn shifted its axis too.
+    """
+    plotter = _load_plotter(monkeypatch)
+    t0 = datetime(2026, 1, 1, 12, 0, 0)
+    turns = np.concatenate(
+        [1e-4 * np.arange(40), np.linspace(0.1, 44.9, 8), 45.0 + 1e-4 * np.arange(40)]
+    )
+    timesteps = np.array([t0 + timedelta(seconds=i) for i in range(turns.size)])
+    headings = {t: 20.37 - turn for t, turn in zip(timesteps, turns, strict=True)}
+    platform = _heading_platform(headings)
+    steering = np.arange(-180.0, 180.0, 1.0)
+
+    fig = plotter.plot_btr(
+        timesteps,
+        steering,
+        np.ones((timesteps.size, steering.size)),
+        bearing_convention="relative",
+        platform=platform,
+    )
+
+    assert list(fig.layout.xaxis.range) == [0.0, 360.0]
+
+
 def test_plot_btr_half_plane_uses_only_the_arc_it_spans(monkeypatch) -> None:
     """A starboard-only grid (azimuths -180 to 0) spans true bearings 090 to 270, not 000-360."""
     plotter = _load_plotter(monkeypatch)

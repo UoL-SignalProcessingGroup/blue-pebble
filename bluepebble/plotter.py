@@ -1267,9 +1267,13 @@ def plot_btr(
     window_start, window_end = 0.0, 360.0
     if bearing_convention != "mathematical" or per_row_grid:
         rows = range(timesteps_array.size) if resample_rows else range(1)
-        window_start, window_end = _bearing_window(
-            np.concatenate([_converted(_grid_at(i), timesteps_array[i]) for i in rows])
-        )
+        row_bearings = [_converted(_grid_at(i), timesteps_array[i]) for i in rows]
+        # Judge a full circle row by row: pooled, a turning grid's rows cluster so tightly
+        # that an ordinary gap between beams can pass for the edge of a partial arc.
+        if any(_bearing_window(bearings) == (0.0, 360.0) for bearings in row_bearings):
+            window_start, window_end = 0.0, 360.0
+        else:
+            window_start, window_end = _bearing_window(np.concatenate(row_bearings))
         if bearing_convention == "mathematical":
             # Keep anticlockwise azimuths near their -180 to 180 range.
             if window_end - window_start >= 360.0:
