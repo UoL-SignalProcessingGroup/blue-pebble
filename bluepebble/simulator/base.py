@@ -22,6 +22,7 @@ if TYPE_CHECKING:
     from stonesoup.types.state import State
 
 ComplexArray: TypeAlias = NDArray[np.complexfloating[Any, Any]]
+FloatArray: TypeAlias = NDArray[np.float64]
 SensorBatch: TypeAlias = tuple[datetime, set[PassiveSonarSensorData]]
 TModel = TypeVar("TModel")
 
@@ -201,7 +202,7 @@ class PassiveSonarArraySimulatorBase(SensorSimulator):
         self,
         timestamp: datetime,
         sensor_signals: ComplexArray,
-    ) -> object | None:
+    ) -> tuple[object | None, FloatArray | None]:
         """Run beamforming for one snapshot when configured.
 
         Parameters
@@ -213,27 +214,43 @@ class PassiveSonarArraySimulatorBase(SensorSimulator):
 
         Returns
         -------
-        object or None
-            Beamformer output when both beamformer and steering calculator are configured;
-            otherwise ``None``. When the steering calculator has ``mirror_half_plane`` set,
-            this is already expanded to the full steering grid -- the halved computation is
-            transparent to callers.
+        tuple of (object or None, FloatArray or None)
+            The beamformer output and each beam's bearing for this snapshot, both from the
+            same platform state, when a beamformer and steering calculator are configured;
+            otherwise ``(None, None)``. When the steering calculator has
+            ``mirror_half_plane`` set, the output is already expanded to the full steering
+            grid, so the halved computation is transparent to callers.
+
+        Raises
+        ------
+        ValueError
+            If the platform has no state at ``timestamp``.
 
         """
         if not (self.beamformer and self.steering_calculator):
-            return None
+            return None, None
 
         platform_state = self.platform.get_platform_state_at(timestamp)
+        if platform_state is None:
+            raise ValueError(
+                f"The platform has no state at {timestamp}, so there is no array geometry "
+                "to steer with; move the platform through every simulated timestamp first."
+            )
         steering_delays_s = self.steering_calculator.calculate(platform_state)
+        # Read the same way as mirror_half_plane below, so steering calculators that predate
+        # per-scan bearings (custom subclasses, test doubles) still work, without bearings.
+        steering_bearings = getattr(self.steering_calculator, "steering_bearings", None)
+        bearings = steering_bearings(platform_state) if steering_bearings else None
 
         # Only pass mirror_plan when mirroring is actually enabled, so beamformers that
         # predate this parameter (custom subclasses, test doubles) are unaffected -- the
         # non-mirrored call shape is exactly what it was before mirror_half_plane existed.
         if getattr(self.steering_calculator, "mirror_half_plane", False):
             mirror_plan = self.steering_calculator.mirror_plan(platform_state)
-            return self.beamformer.beamform(sensor_signals, steering_delays_s, mirror_plan)
-
-        return self.beamformer.beamform(sensor_signals, steering_delays_s)
+            output = self.beamformer.beamform(sensor_signals, steering_delays_s, mirror_plan)
+        else:
+            output = self.beamformer.beamform(sensor_signals, steering_delays_s)
+        return output, bearings
 
     def _band_labels(self) -> list[str] | None:
         """Return the configured beamformer's band labels.
@@ -256,6 +273,7 @@ class PassiveSonarArraySimulatorBase(SensorSimulator):
         timestamp: datetime,
         sensor_signals: ComplexArray,
         beamformed_data: object | None,
+        steering_bearings_rad: FloatArray | None = None,
     ) -> PassiveSonarSensorData:
         """Build a passive-sonar sensor-data payload.
 
@@ -270,6 +288,8 @@ class PassiveSonarArraySimulatorBase(SensorSimulator):
             Complex raw sensor signals with shape ``(num_sensors, num_samples)``.
         beamformed_data : object
             Optional beamformer output payload.
+        steering_bearings_rad : FloatArray, optional
+            Each beam's bearing for this snapshot, from :meth:`_beamform_if_configured`.
 
         Returns
         -------
@@ -282,6 +302,7 @@ class PassiveSonarArraySimulatorBase(SensorSimulator):
             beamformed_data=beamformed_data,
             timestamp=timestamp,
             band_labels=self._band_labels() if beamformed_data is not None else None,
+            steering_bearings_rad=steering_bearings_rad,
         )
 
     @abstractmethod

@@ -641,7 +641,7 @@ def test_steering_grid_needs_a_platform(monkeypatch, spacing, frame) -> None:
     beamformer = _load_beamformer_module(monkeypatch)
     calculator = _steering_calculator(beamformer, (0.0, np.pi), 5, spacing=spacing, frame=frame)
 
-    with pytest.raises(ValueError, match="needs a platform"):
+    with pytest.raises(ValueError, match="platform"):
         calculator.steering_bearings()
 
 

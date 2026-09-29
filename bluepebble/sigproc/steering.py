@@ -299,13 +299,18 @@ class SteeringCalculator(Base):
         """
         if self.frame == "world" and self._grid is not None and self.spacing == "uniform":
             return self._grid.copy()
-        if platform is None:
-            reason = (
-                "frame='array' needs a platform to read the array's forward direction from"
-                if self.frame == "array"
-                else "spacing='sine' needs a platform to read the array axis from"
+        if platform is None and self.frame == "array":
+            raise ValueError(
+                "frame='array' bearings follow the array, so they need the scan's platform "
+                "state. Read each scan's bearings from "
+                "PassiveSonarSensorData.steering_bearings_rad, or use frame='world' for a grid "
+                "fixed in the world frame."
             )
-            raise ValueError(f"{reason}; pass the platform state for the scan.")
+        if platform is None:
+            raise ValueError(
+                "spacing='sine' needs a platform to read the array axis from; pass the "
+                "platform state the grid should be built for."
+            )
         if self.frame == "array" and self._grid is not None:
             return _wrap_to_pi(self._array_forward_rad(platform) + self._grid)
 
