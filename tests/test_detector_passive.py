@@ -218,17 +218,17 @@ def test_a_higher_percentile_lowers_the_reported_snr(monkeypatch) -> None:
 
 
 def test_detections_gen_emits_bearing_detections_with_snr_metadata(monkeypatch) -> None:
-    """A detection at beam index 1 should map to steering_azimuths_rad[1] and carry its SNR."""
+    """A detection at beam index 1 should take that scan's bearing for beam 1 and its SNR."""
     passive = _load_passive_detector_module(monkeypatch)
     timestamp = datetime(2026, 1, 1, 12, 0, 0)
     sensor_data = SimpleNamespace(
         beamformed_data=np.array([[1.0 + 0.0j, 1.0 + 0.0j], [2.0 + 0.0j, 2.0 + 0.0j]]),
         timestamp=timestamp,
+        steering_bearings_rad=np.array([0.1, 0.5]),
     )
     detector = passive.PassiveSonarDetector(
         detector=_FakeDetector(detect_fn=lambda data: np.array([[1.0, 4.0]])),
         sensor_data_gen=iter([(timestamp, [sensor_data])]),
-        steering_azimuths_rad=np.array([0.1, 0.5]),
     )
 
     generated = list(detector.detections_gen())
@@ -255,7 +255,6 @@ def test_detections_gen_skips_none_beamformed_data(monkeypatch) -> None:
     detector = passive.PassiveSonarDetector(
         detector=_FakeDetector(detect_fn=lambda data: np.empty((0, 2))),
         sensor_data_gen=iter([(timestamp, [sensor_data])]),
-        steering_azimuths_rad=np.array([0.1]),
     )
 
     result = list(detector.detections_gen())
@@ -276,7 +275,6 @@ def test_detections_gen_skips_empty_beamformed_data(monkeypatch) -> None:
     detector = passive.PassiveSonarDetector(
         detector=_FakeDetector(detect_fn=lambda data: np.empty((0, 2))),
         sensor_data_gen=iter([(timestamp, [sensor_data])]),
-        steering_azimuths_rad=np.array([0.1]),
     )
 
     result = list(detector.detections_gen())
@@ -293,12 +291,12 @@ def test_detections_gen_no_detections_when_detector_finds_nothing(monkeypatch) -
     sensor_data = SimpleNamespace(
         beamformed_data=np.array([[1.0 + 0.0j, 2.0 + 0.0j]]),
         timestamp=timestamp,
+        steering_bearings_rad=np.array([0.1]),
     )
 
     detector = passive.PassiveSonarDetector(
         detector=_FakeDetector(detect_fn=lambda data: np.empty((0, 2), dtype=np.float64)),
         sensor_data_gen=iter([(timestamp, [sensor_data])]),
-        steering_azimuths_rad=np.array([0.1]),
     )
 
     result = list(detector.detections_gen())
@@ -315,7 +313,6 @@ def test_snr_history_empty_before_any_detections(monkeypatch) -> None:
     detector = passive.PassiveSonarDetector(
         detector=_FakeDetector(detect_fn=lambda data: np.empty((0, 2))),
         sensor_data_gen=iter(()),
-        steering_azimuths_rad=np.array([0.1]),
     )
 
     history = detector.reported_snr_history
@@ -328,13 +325,21 @@ def test_detections_gen_accumulates_across_multiple_sensor_data_per_step(monkeyp
     passive = _load_passive_detector_module(monkeypatch)
     timestamp = datetime(2026, 1, 1, 12, 0, 0)
 
-    sd1 = SimpleNamespace(beamformed_data=np.array([[3.0 + 0.0j]]), timestamp=timestamp)
-    sd2 = SimpleNamespace(beamformed_data=np.array([[5.0 + 0.0j]]), timestamp=timestamp)
+    bearings = np.array([0.7])
+    sd1 = SimpleNamespace(
+        beamformed_data=np.array([[3.0 + 0.0j]]),
+        timestamp=timestamp,
+        steering_bearings_rad=bearings,
+    )
+    sd2 = SimpleNamespace(
+        beamformed_data=np.array([[5.0 + 0.0j]]),
+        timestamp=timestamp,
+        steering_bearings_rad=bearings,
+    )
 
     detector = passive.PassiveSonarDetector(
         detector=_FakeDetector(detect_fn=lambda data: np.array([[0.0, data[0, 0].real]])),
         sensor_data_gen=iter([(timestamp, [sd1, sd2])]),
-        steering_azimuths_rad=np.array([0.7]),
     )
 
     result = list(detector.detections_gen())
@@ -354,7 +359,6 @@ def test_detections_gen_empty_sensor_data_set_yields_empty_detections(monkeypatc
     detector = passive.PassiveSonarDetector(
         detector=_FakeDetector(detect_fn=lambda data: np.empty((0, 2))),
         sensor_data_gen=iter([(timestamp, [])]),
-        steering_azimuths_rad=np.array([0.1]),
     )
 
     result = list(detector.detections_gen())
@@ -376,7 +380,11 @@ def test_snr_history_accumulates_one_row_per_timestep_from_snr_map(monkeypatch) 
     t2 = datetime(2026, 1, 1, 12, 0, 1)
 
     def make_sd(t):
-        return SimpleNamespace(beamformed_data=np.array([[1.0 + 0.0j, 1.0 + 0.0j]]), timestamp=t)
+        return SimpleNamespace(
+            beamformed_data=np.array([[1.0 + 0.0j, 1.0 + 0.0j]]),
+            timestamp=t,
+            steering_bearings_rad=np.array([0.1]),
+        )
 
     detector = passive.PassiveSonarDetector(
         detector=_FakeDetector(
@@ -384,7 +392,6 @@ def test_snr_history_accumulates_one_row_per_timestep_from_snr_map(monkeypatch) 
             snr_fn=lambda data: np.array([7.0]),
         ),
         sensor_data_gen=iter([(t1, [make_sd(t1)]), (t2, [make_sd(t2)])]),
-        steering_azimuths_rad=np.array([0.1]),
         reported_snr_reference="local",
     )
 
@@ -403,7 +410,11 @@ def test_detect_and_snr_map_are_independent_calls(monkeypatch) -> None:
     """
     passive = _load_passive_detector_module(monkeypatch)
     timestamp = datetime(2026, 1, 1, 12, 0, 0)
-    sensor_data = SimpleNamespace(beamformed_data=np.array([[1.0 + 0.0j]]), timestamp=timestamp)
+    sensor_data = SimpleNamespace(
+        beamformed_data=np.array([[1.0 + 0.0j]]),
+        timestamp=timestamp,
+        steering_bearings_rad=np.array([0.1]),
+    )
 
     detector = passive.PassiveSonarDetector(
         detector=_FakeDetector(
@@ -411,7 +422,6 @@ def test_detect_and_snr_map_are_independent_calls(monkeypatch) -> None:
             snr_fn=lambda data: np.array([99.0]),
         ),
         sensor_data_gen=iter([(timestamp, [sensor_data])]),
-        steering_azimuths_rad=np.array([0.1]),
         reported_snr_reference="local",
     )
 
@@ -445,7 +455,6 @@ def test_detections_gen_progress_bar_wraps_iterator(monkeypatch) -> None:
     detector = passive.PassiveSonarDetector(
         detector=_FakeDetector(detect_fn=lambda data: np.empty((0, 2))),
         sensor_data_gen=iter([(timestamp, [sensor_data])]),
-        steering_azimuths_rad=np.array([0.1]),
     )
 
     list(detector.detections_gen(progress_bar=True, total_timesteps=5))
@@ -488,7 +497,6 @@ def test_detections_gen_progress_bar_is_created_lazily(monkeypatch) -> None:
     detector = passive.PassiveSonarDetector(
         detector=_FakeDetector(detect_fn=lambda data: np.empty((0, 2))),
         sensor_data_gen=slow_sensor_data_gen(),
-        steering_azimuths_rad=np.array([0.1]),
     )
 
     list(detector.detections_gen(progress_bar=True, total_timesteps=1))
@@ -617,3 +625,97 @@ def test_unknown_snr_reference_is_rejected(monkeypatch) -> None:
 
     with pytest.raises(ValueError, match="reported_snr_reference must be one of"):
         band.detect(np.ones((4, 2)))
+
+
+# --------------------------------------------------------------------------
+# Per-scan steering bearings
+# --------------------------------------------------------------------------
+
+
+def _one_beam_zero_detector():
+    """Return a fake detector that always detects beam 0, with an SNR of 1."""
+    return _FakeDetector(detect_fn=lambda data: np.array([[0.0, 1.0]]))
+
+
+def test_detections_follow_each_scans_own_bearings(monkeypatch) -> None:
+    """An array-frame grid turns with the array, so beam 0's bearing can differ per scan."""
+    passive = _load_passive_detector_module(monkeypatch)
+    t1 = datetime(2026, 1, 1, 12, 0, 0)
+    t2 = datetime(2026, 1, 1, 12, 0, 1)
+    bearings = {t1: np.array([0.1, 0.2]), t2: np.array([0.9, 1.0])}
+    data = np.array([[1.0 + 0.0j], [1.0 + 0.0j]])
+    source = [
+        (t, [SimpleNamespace(beamformed_data=data, timestamp=t, steering_bearings_rad=b)])
+        for t, b in bearings.items()
+    ]
+    detector = passive.PassiveSonarDetector(
+        detector=_one_beam_zero_detector(), sensor_data_gen=iter(source)
+    )
+
+    generated = list(detector.detections_gen())
+
+    detected = [float(next(iter(detections)).state_vector[0, 0]) for _, detections in generated]
+    assert detected == pytest.approx([0.1, 0.9])
+    np.testing.assert_array_equal(detector.steering_bearings_history, [bearings[t1], bearings[t2]])
+
+
+def test_steering_bearings_history_empty_before_any_detections(monkeypatch) -> None:
+    """steering_bearings_history should be an empty array on a fresh detector."""
+    passive = _load_passive_detector_module(monkeypatch)
+
+    detector = passive.PassiveSonarDetector(
+        detector=_one_beam_zero_detector(), sensor_data_gen=iter(())
+    )
+
+    assert detector.steering_bearings_history.shape == (0,)
+
+
+def test_deprecated_fixed_grid_warns_and_covers_data_without_bearings(monkeypatch) -> None:
+    """The old steering_azimuths_rad still works for one release, with a warning."""
+    passive = _load_passive_detector_module(monkeypatch)
+    timestamp = datetime(2026, 1, 1, 12, 0, 0)
+    sensor_data = SimpleNamespace(beamformed_data=np.array([[1.0 + 0.0j]]), timestamp=timestamp)
+
+    with pytest.warns(DeprecationWarning, match="steering_azimuths_rad"):
+        detector = passive.PassiveSonarDetector(
+            detector=_one_beam_zero_detector(),
+            sensor_data_gen=iter([(timestamp, [sensor_data])]),
+            steering_azimuths_rad=np.array([0.4]),
+        )
+    generated = list(detector.detections_gen())
+
+    assert float(next(iter(generated[0][1])).state_vector[0, 0]) == pytest.approx(0.4)
+
+
+def test_sensor_data_bearings_take_precedence_over_the_deprecated_grid(monkeypatch) -> None:
+    """A scan's own bearings describe where its beams pointed; the fixed grid is a fallback."""
+    passive = _load_passive_detector_module(monkeypatch)
+    timestamp = datetime(2026, 1, 1, 12, 0, 0)
+    sensor_data = SimpleNamespace(
+        beamformed_data=np.array([[1.0 + 0.0j]]),
+        timestamp=timestamp,
+        steering_bearings_rad=np.array([0.8]),
+    )
+
+    with pytest.warns(DeprecationWarning):
+        detector = passive.PassiveSonarDetector(
+            detector=_one_beam_zero_detector(),
+            sensor_data_gen=iter([(timestamp, [sensor_data])]),
+            steering_azimuths_rad=np.array([0.4]),
+        )
+    generated = list(detector.detections_gen())
+
+    assert float(next(iter(generated[0][1])).state_vector[0, 0]) == pytest.approx(0.8)
+
+
+def test_detections_gen_raises_when_beams_have_no_bearings(monkeypatch) -> None:
+    """Without bearings on the data or a fixed grid, detections cannot be placed."""
+    passive = _load_passive_detector_module(monkeypatch)
+    timestamp = datetime(2026, 1, 1, 12, 0, 0)
+    sensor_data = SimpleNamespace(beamformed_data=np.array([[1.0 + 0.0j]]), timestamp=timestamp)
+    detector = passive.PassiveSonarDetector(
+        detector=_one_beam_zero_detector(), sensor_data_gen=iter([(timestamp, [sensor_data])])
+    )
+
+    with pytest.raises(ValueError, match="no steering_bearings_rad"):
+        list(detector.detections_gen())
