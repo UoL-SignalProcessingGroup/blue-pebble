@@ -9,7 +9,7 @@ from ..models.environment import SoundSpeedProfile
 from .base import BoolArray, FloatArray, IntArray, MirrorPlan
 
 if TYPE_CHECKING:
-    from stonesoup.platform.base import Platform
+    from ..platform.towedarray import PlatformState
 
 # Angles closer than this (radians) count as equal: sector ends meeting in a full circle, and a
 # sine sector's end touching endfire.
@@ -241,12 +241,12 @@ class SteeringCalculator(Base):
         # The tolerance lets u stray just past +-1 at endfire; arcsin would return NaN there.
         return _wrap_to_pi(broadside + np.arcsin(np.clip(u, -1.0, 1.0)))
 
-    def steering_bearings(self, platform: "Platform | None" = None) -> FloatArray:
+    def steering_bearings(self, platform: "PlatformState | None" = None) -> FloatArray:
         """Return the steering grid, in radians anticlockwise from +x, in ``[-pi, pi)``.
 
         Parameters
         ----------
-        platform : Platform, optional
+        platform : PlatformState, optional
             Needed only for ``spacing="sine"``, whose grid is set by the array axis. The
             first call builds and keeps that grid; later calls check the axis has not moved.
 
@@ -288,7 +288,7 @@ class SteeringCalculator(Base):
         return self._grid.copy()
 
     @staticmethod
-    def _array_axis_rad(platform: "Platform") -> float:
+    def _array_axis_rad(platform: "PlatformState") -> float:
         """Return the array's instantaneous line orientation, from its two end sensors.
 
         Wrapped to ``[-pi, pi)``; since the mirror reflection ``2 * axis - theta`` is
@@ -301,7 +301,9 @@ class SteeringCalculator(Base):
         # arctan2 alone gives (-pi, pi]; the modulo moves +pi to -pi.
         return float((np.arctan2(dy, dx) + np.pi) % (2 * np.pi) - np.pi)
 
-    def _delays_for_azimuths(self, platform: "Platform", azimuths_rad: FloatArray) -> FloatArray:
+    def _delays_for_azimuths(
+        self, platform: "PlatformState", azimuths_rad: FloatArray
+    ) -> FloatArray:
         """Compute steering delays for an explicit, arbitrary set of azimuths.
 
         This method assumes the platform has an `array` attribute which is an object with
@@ -310,7 +312,7 @@ class SteeringCalculator(Base):
 
         Parameters
         ----------
-        platform : Platform
+        platform : PlatformState
             The platform containing the sensor array.
         azimuths_rad : FloatArray
             Azimuth angles to steer, in radians.
@@ -353,7 +355,7 @@ class SteeringCalculator(Base):
         # Negative sign because we want delays to ADD to make signals arrive in-phase
         return -distances / sound_speed
 
-    def calculate(self, platform: "Platform") -> FloatArray:
+    def calculate(self, platform: "PlatformState") -> FloatArray:
         """Calculate per-direction per-sensor steering delays.
 
         This method assumes the platform has an `array` attribute which is an object with
@@ -362,7 +364,7 @@ class SteeringCalculator(Base):
 
         Parameters
         ----------
-        platform : Platform
+        platform : PlatformState
             The platform containing the sensor array.
 
         Returns
@@ -387,7 +389,7 @@ class SteeringCalculator(Base):
         axis_centred_grid = (axis_rad + bearings + np.pi) % (2 * np.pi) - np.pi
         return self._delays_for_azimuths(platform, axis_centred_grid[self._primary_mask])
 
-    def mirror_plan(self, platform: "Platform") -> MirrorPlan:
+    def mirror_plan(self, platform: "PlatformState") -> MirrorPlan:
         """Return the mirror bookkeeping to expand a half-plane beamformer output.
 
         Call this once per timestep alongside :meth:`calculate`, using the same
@@ -396,7 +398,7 @@ class SteeringCalculator(Base):
 
         Parameters
         ----------
-        platform : Platform
+        platform : PlatformState
             The platform containing the sensor array.
 
         Returns
