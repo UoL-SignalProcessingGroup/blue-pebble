@@ -1,6 +1,6 @@
 """Steering-delay geometry for horizontal sensor arrays."""
 
-from typing import TYPE_CHECKING, Literal
+from typing import TYPE_CHECKING, Final, Literal
 
 import numpy as np
 from stonesoup.base import Base, Property
@@ -19,6 +19,15 @@ _ANGLE_TOLERANCE_RAD = 1e-9
 # may move by at most this fraction of the grid's narrowest beam spacing afterwards; beyond that
 # the grid is no longer evenly spaced in the sine of the angle from broadside.
 _SINE_AXIS_TOLERANCE_FRACTION = 0.1
+
+#: The array's port side, a ``steering_sector_rad`` for the ``"array"`` frame: anticlockwise
+#: from dead ahead round to dead astern.
+PORT: Final[tuple[float, float]] = (0.0, np.pi)
+#: The array's starboard side, a ``steering_sector_rad`` for the ``"array"`` frame:
+#: anticlockwise from dead astern round to dead ahead.
+STARBOARD: Final[tuple[float, float]] = (-np.pi, 0.0)
+#: Every direction, a ``steering_sector_rad`` for either frame.
+FULL_CIRCLE: Final[tuple[float, float]] = (-np.pi, np.pi)
 
 # Parameters removed when the grid moved into the calculator, mapped to what replaces them.
 _REMOVED_STEERING_KWARGS = {
@@ -133,10 +142,11 @@ class SteeringCalculator(Base):
     )
     steering_sector_rad: tuple[float, float] = Property(
         doc="Sector to steer, (start, end) in radians, running anticlockwise from start to "
-        "end. In the 'array' frame the angles are anticlockwise from the array's forward "
-        "direction, so port is (0, np.pi) and starboard is (-np.pi, 0); in the 'world' frame "
-        "they are anticlockwise from +x. Endpoints that point the same way but differ "
-        "numerically, such as (-np.pi, np.pi), give a full circle.",
+        "end, so the order matters: (-np.pi, 0) and (0, -np.pi) are opposite halves. In the "
+        "'array' frame the angles are anticlockwise from the array's forward direction, so "
+        "port is (0, np.pi) and starboard is (-np.pi, 0), available as PORT and STARBOARD; in "
+        "the 'world' frame they are anticlockwise from +x. Endpoints that point the same way "
+        "but differ numerically, such as FULL_CIRCLE = (-np.pi, np.pi), give a full circle.",
     )
     num_beams: int = Property(
         doc="Number of beams across the sector, at least 2.",

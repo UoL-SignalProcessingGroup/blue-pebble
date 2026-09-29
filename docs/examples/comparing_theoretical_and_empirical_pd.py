@@ -44,7 +44,11 @@ from bluepebble.models.propagation import rtrsAcousticPropagationModel
 from bluepebble.platform import TowedArrayPlatform
 from bluepebble.signal.anthropogenic import SyntheticAnthropogenicSignal
 from bluepebble.signal.random import ColouredNoiseSignal
-from bluepebble.sigproc import MinimumVarianceDistortionlessResponseBeamformer, SteeringCalculator
+from bluepebble.sigproc import (
+    PORT,
+    MinimumVarianceDistortionlessResponseBeamformer,
+    SteeringCalculator,
+)
 from bluepebble.simulator import ContinuousSTFTPassiveSonarArraySimulator
 
 # %%
@@ -135,7 +139,7 @@ ambient_noise_model = ColouredNoiseSignal(
 )
 
 # The target is to port, so only that side of the array is steered.
-steering_calculator = SteeringCalculator(ssp=ssp, steering_sector_rad=(0.0, np.pi), num_beams=361)
+steering_calculator = SteeringCalculator(ssp=ssp, steering_sector_rad=PORT, num_beams=361)
 
 simulator = ContinuousSTFTPassiveSonarArraySimulator(
     platform=platform,

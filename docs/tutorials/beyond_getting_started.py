@@ -253,6 +253,7 @@ signal_models = [make_signal_model() for _ in target_truths]
 
 # %%
 from bluepebble.sigproc import (
+    FULL_CIRCLE,
     DelayAndSumBeamformer,
     SteeringCalculator,
     beams_per_mainlobe,
@@ -273,7 +274,7 @@ beamformer = DelayAndSumBeamformer(
 )
 steering_calculator = SteeringCalculator(
     ssp=ssp,
-    steering_sector_rad=(-np.pi, np.pi),
+    steering_sector_rad=FULL_CIRCLE,
     num_beams=num_beams,
 )
 

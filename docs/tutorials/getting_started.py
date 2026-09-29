@@ -258,6 +258,7 @@ signal_model = SyntheticAnthropogenicSignal(
 from bluepebble.detector import PassiveSonarDetector
 from bluepebble.plotter import plot_btr
 from bluepebble.sigproc import (
+    STARBOARD,
     DelayAndSumBeamformer,
     SteeringCalculator,
     beams_per_mainlobe,
@@ -289,7 +290,7 @@ beamformer = DelayAndSumBeamformer(
 
 steering_calculator = SteeringCalculator(
     ssp=ssp,
-    steering_sector_rad=(-np.pi, 0.0),
+    steering_sector_rad=STARBOARD,
     num_beams=num_beams,
     spacing="sine",
 )

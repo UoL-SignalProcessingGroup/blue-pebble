@@ -46,6 +46,7 @@ from bluepebble.plotter import apply_shared_colourscale, deduplicate_legend, plo
 from bluepebble.signal.anthropogenic import SyntheticAnthropogenicSignal
 from bluepebble.signal.random import ColouredNoiseSignal
 from bluepebble.sigproc import (
+    FULL_CIRCLE,
     DelayAndSumBeamformer,
     FrequencyBand,
     SteeringCalculator,
@@ -392,7 +393,7 @@ beamformer = DelayAndSumBeamformer(
 )
 steering_calculator = SteeringCalculator(
     ssp=ssp,
-    steering_sector_rad=(-np.pi, np.pi),
+    steering_sector_rad=FULL_CIRCLE,
     num_beams=num_beams,
     mirror_half_plane=True,
 )

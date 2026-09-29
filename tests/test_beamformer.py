@@ -669,15 +669,40 @@ def test_array_forward_points_from_the_last_sensor_to_sensor_0(monkeypatch) -> N
     assert forward == pytest.approx(0.3 - np.pi)
 
 
+def test_named_sectors_are_the_tuples_they_stand_for(monkeypatch) -> None:
+    """PORT, STARBOARD and FULL_CIRCLE spell out sectors whose order is easy to get wrong."""
+    beamformer = _load_beamformer_module(monkeypatch)
+
+    assert beamformer.PORT == (0.0, np.pi)
+    assert beamformer.STARBOARD == (-np.pi, 0.0)
+    assert beamformer.FULL_CIRCLE == (-np.pi, np.pi)
+
+
+def test_reversed_starboard_endpoints_steer_port(monkeypatch) -> None:
+    """Sectors run anticlockwise from start to end, so (0, -pi) is port, not starboard."""
+    beamformer = _load_beamformer_module(monkeypatch)
+    platform = _straight_array_platform(spacing_m=-1.0)
+
+    reversed_bearings = _steering_calculator(beamformer, (0.0, -np.pi), 5).steering_bearings(
+        platform
+    )
+    port_bearings = _steering_calculator(beamformer, beamformer.PORT, 5).steering_bearings(
+        platform
+    )
+
+    np.testing.assert_allclose(np.sort(reversed_bearings), np.sort(port_bearings), atol=1e-12)
+
+
 @pytest.mark.parametrize(
-    ("sector", "side_y_sign"),
-    [((-np.pi, 0.0), -1.0), ((0.0, np.pi), 1.0)],
+    ("side", "side_y_sign"),
+    [("STARBOARD", -1.0), ("PORT", 1.0)],
     ids=["starboard", "port"],
 )
-def test_array_frame_sides_follow_the_sign_convention(monkeypatch, sector, side_y_sign) -> None:
-    """Heading +x, starboard (-pi, 0) points towards -y and port (0, pi) towards +y."""
+def test_array_frame_sides_follow_the_sign_convention(monkeypatch, side, side_y_sign) -> None:
+    """Heading +x, STARBOARD (-pi, 0) points towards -y and PORT (0, pi) towards +y."""
     beamformer = _load_beamformer_module(monkeypatch)
     platform = _straight_array_platform(spacing_m=-1.0)  # sensor 0 in front, heading +x
+    sector = getattr(beamformer, side)
 
     bearings = _steering_calculator(beamformer, sector, 5).steering_bearings(platform)
 
