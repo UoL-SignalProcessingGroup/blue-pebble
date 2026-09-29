@@ -275,10 +275,18 @@ class SteeringCalculator(Base):
         end_from_broadside = start_from_broadside + width
         limit = np.pi / 2 + _ANGLE_TOLERANCE_RAD
         if start_from_broadside < -limit or end_from_broadside > limit:
-            raise ValueError(
+            message = (
                 f"steering_sector_rad {self.steering_sector_rad} crosses the array axis "
                 f"({axis_rad:.4g} rad); a sine-spaced sector must lie within one side of it."
             )
+            if self.frame == "array":
+                # Most likely a world-frame sector carried over from before frames existed.
+                message += (
+                    " In the 'array' frame angles are measured anticlockwise from the array's "
+                    "forward direction, so use STARBOARD (-np.pi, 0) or PORT (0, np.pi) for one "
+                    "side, or frame='world' for a sector in world bearings."
+                )
+            raise ValueError(message)
         u = np.linspace(np.sin(start_from_broadside), np.sin(end_from_broadside), self.num_beams)
         # The tolerance lets u stray just past +-1 at endfire; arcsin would return NaN there.
         return _wrap_to_pi(broadside + np.arcsin(np.clip(u, -1.0, 1.0)))

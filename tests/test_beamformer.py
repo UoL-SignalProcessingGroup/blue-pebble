@@ -659,6 +659,26 @@ def test_sine_steering_grid_is_fixed_while_the_heading_holds(monkeypatch) -> Non
         calculator.calculate(_rotated_array_platform(0.05))
 
 
+def test_array_frame_sine_sector_across_the_axis_suggests_a_side(monkeypatch) -> None:
+    """A world-frame sector carried into the array frame gets a hint naming the fixes."""
+    beamformer = _load_beamformer_module(monkeypatch)
+
+    with pytest.raises(ValueError, match=r"STARBOARD.*PORT.*frame='world'"):
+        _steering_calculator(beamformer, (-np.pi / 2, np.pi / 2), 9, spacing="sine")
+
+
+def test_world_frame_sine_sector_across_the_axis_has_no_frame_hint(monkeypatch) -> None:
+    """The hint is about the array frame, so the world frame's error leaves it out."""
+    beamformer = _load_beamformer_module(monkeypatch)
+    calculator = _steering_calculator(
+        beamformer, (-np.pi / 2, np.pi / 2), 9, spacing="sine", frame="world"
+    )
+
+    with pytest.raises(ValueError, match="crosses the array axis") as excinfo:
+        calculator.steering_bearings(_rotated_array_platform(0.0))  # the axis along +x
+    assert "STARBOARD" not in str(excinfo.value)
+
+
 def test_array_forward_points_from_the_last_sensor_to_sensor_0(monkeypatch) -> None:
     """Sensor 0 is the front of the array, so forward is the reverse of the sensor order."""
     beamformer = _load_beamformer_module(monkeypatch)
