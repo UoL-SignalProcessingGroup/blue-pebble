@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from datetime import datetime
+from datetime import datetime, timedelta
 from types import SimpleNamespace
 
 import numpy as np
@@ -704,6 +704,59 @@ def test_plot_btr_relative_bearings_follow_the_platform_heading(monkeypatch) -> 
     peak_bearings = [heatmap.x[int(np.argmax(row))] for row in heatmap.z]
     assert peak_bearings == [90.0, 0.0]
     assert fig.layout.xaxis.title.text == "Relative bearing (°, clockwise from heading)"
+
+
+def test_validate_btr_shapes_accepts_one_grid_per_timestep(monkeypatch) -> None:
+    """A (time, beam) grid needs one row per timestep, matching the data's beams."""
+    plotter = _load_plotter(monkeypatch)
+    timesteps = np.array([1, 2])
+
+    _, steering, _ = plotter._validate_btr_shapes(timesteps, np.zeros((2, 3)), np.zeros((2, 3)))
+
+    assert steering.shape == (2, 3)
+    with pytest.raises(ValueError, match="one non-empty row per timestep"):
+        plotter._validate_btr_shapes(timesteps, np.zeros((3, 3)), None)
+
+
+@pytest.mark.parametrize("convention", ["mathematical", "true"])
+def test_plot_btr_constant_per_timestep_grid_matches_the_fixed_grid(
+    monkeypatch, convention
+) -> None:
+    """Resampling a grid that never turns gives back the fixed grid's heatmap."""
+    plotter = _load_plotter(monkeypatch)
+    t0 = datetime(2026, 1, 1, 12, 0, 0)
+    timesteps = np.array([t0, t0 + timedelta(minutes=1)])
+    steering = np.arange(-180.0, 180.0, 30.0)
+    data = np.arange(24.0).reshape(2, 12)
+
+    fixed = plotter.plot_btr(timesteps, steering, data, bearing_convention=convention).data[0]
+    per_row = plotter.plot_btr(
+        timesteps, np.tile(steering, (2, 1)), data, bearing_convention=convention
+    ).data[0]
+
+    # A resampled full circle repeats its first column at the far edge (180, or 360 = 000).
+    def wrap(x):
+        return x % 360.0 if convention == "true" else (x + 180.0) % 360.0 - 180.0
+
+    fixed_z = dict(zip(np.round(fixed.x, 6), np.asarray(fixed.z).T, strict=True))
+    for x, column in zip(np.round(per_row.x, 6), np.asarray(per_row.z).T, strict=True):
+        np.testing.assert_allclose(column, fixed_z[wrap(x)])
+
+
+def test_plot_btr_places_each_row_at_its_own_bearings(monkeypatch) -> None:
+    """With a grid that turns, beam 0's power is plotted where beam 0 pointed that scan."""
+    plotter = _load_plotter(monkeypatch)
+    t0 = datetime(2026, 1, 1, 12, 0, 0)
+    timesteps = np.array([t0, t0 + timedelta(minutes=1)])
+    base = np.arange(-180.0, 180.0, 30.0)
+    steering = np.vstack([base, base + 60.0])  # the array turned by two beams
+    data = np.zeros((2, 12))
+    data[:, 0] = 1.0  # beam 0 is loud in both scans
+
+    heatmap = plotter.plot_btr(timesteps, steering, data).data[0]
+
+    peak_bearings = [heatmap.x[int(np.argmax(row))] for row in np.asarray(heatmap.z)]
+    assert peak_bearings == [-180.0, -120.0]
 
 
 def test_plot_btr_half_plane_uses_only_the_arc_it_spans(monkeypatch) -> None:

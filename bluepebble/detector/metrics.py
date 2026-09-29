@@ -473,12 +473,37 @@ def _clone_detector_with_param(spec: SweepSpec, value: float) -> DetectionAlgori
     return detector_copy
 
 
+def _steering_bearings_per_timestep(
+    steering_azimuths_rad: ArrayLike, num_timesteps: int
+) -> FloatArray:
+    """Return beam bearings as one row per timestep, shape ``(num_timesteps, num_beams)``.
+
+    A 1-D grid is fixed, so every timestep shares it; a 2-D grid, such as a detector's
+    ``steering_bearings_history``, already has one row per timestep.
+
+    Raises
+    ------
+    ValueError
+        If the grid is neither 1-D nor 2-D with one row per timestep.
+
+    """
+    bearings = np.asarray(steering_azimuths_rad, dtype=np.float64)
+    if bearings.ndim == 1:
+        return np.broadcast_to(bearings, (num_timesteps, bearings.shape[0]))
+    if bearings.ndim == 2 and bearings.shape[0] == num_timesteps:
+        return bearings
+    raise ValueError(
+        "steering_azimuths_rad must have shape (num_beams,) or (num_timesteps, num_beams) "
+        f"with {num_timesteps} rows, got {bearings.shape}"
+    )
+
+
 def _sweep_confusion_counts(
     param_values: FloatArray,
     detector_factory: Callable[[float], _DetectorState],
     detected_beams_at_t: Callable[[_DetectorState, int], IntArray],
     gt_bearings_per_t: list[FloatArray],
-    steering_azimuths_rad: FloatArray,
+    bearings_per_t_rad: FloatArray,
     association_threshold_rad: float,
     num_timesteps: int,
     num_beams: int,
@@ -503,8 +528,8 @@ def _sweep_confusion_counts(
     gt_bearings_per_t : list[FloatArray]
         Ground-truth bearings per timestep, as returned by
         :func:`_bearings_from_ground_truth_paths`.
-    steering_azimuths_rad : FloatArray
-        Beam steering angles in radians, shape ``(num_beams,)``.
+    bearings_per_t_rad : FloatArray
+        Each timestep's beam bearings in radians, shape ``(num_timesteps, num_beams)``.
     association_threshold_rad : float
         Maximum angular distance (rad) for a detection to count as a true positive.
     num_timesteps : int
@@ -529,7 +554,7 @@ def _sweep_confusion_counts(
         for t_idx in range(num_timesteps):
             beam_idx = detected_beams_at_t(detector_state, t_idx)
             det_bearings = (
-                steering_azimuths_rad[beam_idx]
+                bearings_per_t_rad[t_idx][beam_idx]
                 if beam_idx.size > 0
                 else np.empty(0, dtype=np.float64)
             )
@@ -588,8 +613,10 @@ def sweep_detection_parameter(
         typically the ``bearing_truths`` built in the examples and tutorials.
         The number of timesteps is inferred from ``beamformed_data``.
     steering_azimuths_rad : ArrayLike
-        Beam steering angles in radians (see Coordinate frames in :mod:`bluepebble`),
-        shape ``(N_beams,)``. Maps a detection index back to a physical bearing.
+        Beam bearings in radians (see Coordinate frames in :mod:`bluepebble`), mapping a
+        detection index back to a physical bearing. Shape ``(num_beams,)`` for a fixed grid,
+        or ``(num_timesteps, num_beams)`` for one that turns with the array, such as a
+        detector's ``steering_bearings_history``.
     association_threshold_rad : float
         Maximum angular distance (rad) between a detection and a ground-truth
         bearing for the detection to count as a true positive.
@@ -648,9 +675,9 @@ def sweep_detection_parameter(
     >>> plot_roc_pr(results).show()
 
     """
-    steering_azimuths_rad = np.asarray(steering_azimuths_rad, dtype=np.float64)
-    num_beams = steering_azimuths_rad.shape[0]
     num_timesteps = len(beamformed_data)
+    bearings_per_t_rad = _steering_bearings_per_timestep(steering_azimuths_rad, num_timesteps)
+    num_beams = bearings_per_t_rad.shape[1]
     frames = [np.asarray(d) for d in beamformed_data]
     gt_bearings_per_t = _bearings_from_ground_truth_paths(
         ground_truth_paths, num_timesteps, bearing_state_index
@@ -676,7 +703,7 @@ def sweep_detection_parameter(
             detector_factory=lambda p_val, _spec=spec: _clone_detector_with_param(_spec, p_val),
             detected_beams_at_t=_detected_beams_at_t,
             gt_bearings_per_t=gt_bearings_per_t,
-            steering_azimuths_rad=steering_azimuths_rad,
+            bearings_per_t_rad=bearings_per_t_rad,
             association_threshold_rad=association_threshold_rad,
             num_timesteps=num_timesteps,
             num_beams=num_beams,
@@ -794,8 +821,9 @@ def sweep_detection_parameter_multiband(
     ground_truth_paths : Sequence
         Bearing ground-truth paths used to score detections.
     steering_azimuths_rad : ArrayLike
-        Beam azimuths in radians (see Coordinate frames in :mod:`bluepebble`), of length
-        ``num_beams``.
+        Beam bearings in radians (see Coordinate frames in :mod:`bluepebble`). Shape
+        ``(num_beams,)`` for a fixed grid, or ``(num_timesteps, num_beams)`` for one that
+        turns with the array, such as a detector's ``steering_bearings_history``.
     association_threshold_rad : float
         Maximum bearing error for a detection to count as a true positive.
     bearing_state_index : int, optional
@@ -810,8 +838,8 @@ def sweep_detection_parameter_multiband(
 
     """
     param_values, num_timesteps = _validate_multiband_sweep_inputs(beamformed_data, sweep_specs)
-    steering_azimuths_rad = np.asarray(steering_azimuths_rad, dtype=np.float64)
-    num_beams = steering_azimuths_rad.shape[0]
+    bearings_per_t_rad = _steering_bearings_per_timestep(steering_azimuths_rad, num_timesteps)
+    num_beams = bearings_per_t_rad.shape[1]
     gt_bearings_per_t = _bearings_from_ground_truth_paths(
         ground_truth_paths, num_timesteps, bearing_state_index
     )
@@ -844,7 +872,7 @@ def sweep_detection_parameter_multiband(
         detector_factory=_detector_factory,
         detected_beams_at_t=_detected_beams_at_t,
         gt_bearings_per_t=gt_bearings_per_t,
-        steering_azimuths_rad=steering_azimuths_rad,
+        bearings_per_t_rad=bearings_per_t_rad,
         association_threshold_rad=association_threshold_rad,
         num_timesteps=num_timesteps,
         num_beams=num_beams,
@@ -923,8 +951,10 @@ def snr_linear_from_ground_truth_bearing(
         Ground-truth target bearing in radians (see Coordinate frames in
         :mod:`bluepebble`), from the simulator (not detector output).
     steering_azimuths_rad : np.ndarray
-        Steering azimuths for each beam, in radians (see Coordinate frames in
-        :mod:`bluepebble`). Assumed circular (spans a full -pi..pi sweep).
+        Each beam's bearing at this timestep, in radians (see Coordinate frames in
+        :mod:`bluepebble`); for a grid that turns with the array, that timestep's row of a
+        detector's ``steering_bearings_history``. Assumed circular (spans a full -pi..pi
+        sweep).
     validation_guard_bins : int
         Bins excluded on each side of the nearest-beam index when estimating the noise floor.
         Should be set wider than the operational detector's num_guard_cells. See Failure modes,

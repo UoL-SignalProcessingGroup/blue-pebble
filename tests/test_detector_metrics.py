@@ -238,6 +238,81 @@ def test_multiband_sweep_with_one_band_matches_the_single_band_sweep(monkeypatch
     np.testing.assert_array_equal(multi.param_values, single.param_values)
 
 
+def _beam_1_lit_twice():
+    """Return two timesteps of beamformed data with only beam 1 above threshold."""
+    return [np.array([[0.0], [5.0], [0.0]]), np.array([[0.0], [5.0], [0.0]])]
+
+
+def test_sweep_reads_each_timesteps_row_of_a_turning_grid(monkeypatch) -> None:
+    """With a (time, beam) grid, beam 1's bearing is looked up in that timestep's row."""
+    _algorithms, metrics = _load_detector_modules(monkeypatch)
+    # The grid turns between scans, so beam 1 points at 1.0 rad, then 3.0 rad; so does
+    # the target.
+    turning = np.array([[0.0, 1.0, 2.0], [2.0, 3.0, 4.0]])
+    paths = [_FakePath(states=[_FakeState(np.array([1.0])), _FakeState(np.array([3.0]))])]
+    common = dict(
+        beamformed_data=_beam_1_lit_twice(),
+        sweep_specs=[_spec(metrics)],
+        ground_truth_paths=paths,
+        association_threshold_rad=0.01,
+    )
+
+    turning_result = metrics.sweep_detection_parameter(steering_azimuths_rad=turning, **common)[0]
+    fixed_result = metrics.sweep_detection_parameter(steering_azimuths_rad=turning[0], **common)[0]
+
+    np.testing.assert_array_equal(turning_result.tp, np.array([2, 0]))
+    # Read against the first scan's grid alone, the second detection lands at 1.0 rad.
+    np.testing.assert_array_equal(fixed_result.tp, np.array([1, 0]))
+    np.testing.assert_array_equal(fixed_result.fp, np.array([1, 0]))
+
+
+def test_sweep_with_a_constant_2d_grid_matches_the_1d_grid(monkeypatch) -> None:
+    """A grid that never turns gives the same counts whether passed as 1-D or 2-D."""
+    _algorithms, metrics = _load_detector_modules(monkeypatch)
+    steering = np.array([0.0, 1.0, 2.0])
+    constant = np.tile(steering, (2, 1))
+    data = _beam_1_lit_twice()
+    paths = [_FakePath(states=[_FakeState(np.array([1.0])), _FakeState(np.array([1.0]))])]
+
+    def single(grid):
+        return metrics.sweep_detection_parameter(
+            beamformed_data=data,
+            sweep_specs=[_spec(metrics)],
+            ground_truth_paths=paths,
+            steering_azimuths_rad=grid,
+            association_threshold_rad=0.01,
+        )[0]
+
+    def multiband(grid):
+        return metrics.sweep_detection_parameter_multiband(
+            beamformed_data={"only": data},
+            sweep_specs={"only": _spec(metrics)},
+            ground_truth_paths=paths,
+            steering_azimuths_rad=grid,
+            association_threshold_rad=0.01,
+        )
+
+    for sweep in (single, multiband):
+        for field in ("tp", "fp", "fn", "tn"):
+            np.testing.assert_array_equal(
+                getattr(sweep(constant), field), getattr(sweep(steering), field)
+            )
+
+
+def test_sweep_rejects_a_grid_with_the_wrong_number_of_rows(monkeypatch) -> None:
+    """A 2-D grid needs one row per timestep, or detections would be mislabelled."""
+    _algorithms, metrics = _load_detector_modules(monkeypatch)
+
+    with pytest.raises(ValueError, match="with 2 rows"):
+        metrics.sweep_detection_parameter(
+            beamformed_data=_beam_1_lit_twice(),
+            sweep_specs=[_spec(metrics)],
+            ground_truth_paths=[],
+            steering_azimuths_rad=np.zeros((3, 3)),
+            association_threshold_rad=0.01,
+        )
+
+
 def test_multiband_sweep_unions_bands_and_deduplicates_shared_beams(monkeypatch) -> None:
     """A beam found in two bands must count once, not as a detection plus a false alarm."""
     _algorithms, metrics = _load_detector_modules(monkeypatch)
