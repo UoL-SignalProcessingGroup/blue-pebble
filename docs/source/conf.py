@@ -77,6 +77,7 @@ napoleon_custom_sections = [
     "Sidelobe false alarms",
     "Peak consolidation",
     "Assumptions",
+    "Choosing an equation",
     "Relation to sonar noise normalisation",
 ]
 
@@ -143,7 +144,7 @@ warnings.filterwarnings("ignore", category=RemovedInSphinx10Warning)
 # ---------------------------------------------------------------------------
 
 _MEASURED_DATA_SECTION = """\
-Measured Data Examples
+External Data Examples
 ----------------------
 
 Examples that require external data files not bundled with the repository.
@@ -176,7 +177,7 @@ the scripts.
 
 .. raw:: html
 
-    <div class="sphx-glr-thumbcontainer" tooltip="Runs one scenario using measured environmental inputs: GEBCO bathymetry and Copernicus temperature/salinity converted to sound speed via Leroy&#x27;s equation.  Demonstrates how to wire real geophysical datasets into the Blue Pebble pipeline.">
+    <div class="sphx-glr-thumbcontainer" tooltip="Runs one scenario in the environment of a real area: GEBCO bathymetry and Copernicus temperature/salinity converted to sound speed via the NPL equation.  Demonstrates how to wire real geophysical datasets into the Blue Pebble pipeline.">
 
 .. only:: html
 
@@ -187,7 +188,7 @@ the scripts.
 
 .. raw:: html
 
-      <div class="sphx-glr-thumbnail-title">Using Measured Environmental Data</div>
+      <div class="sphx-glr-thumbnail-title">Using GEBCO and Copernicus Environmental Data</div>
     </div>
 
 

@@ -398,15 +398,15 @@ def launch_bathymetry_and_sound_speed_viewer(
     debug: bool = False,
     jupyter_mode: str | None = None,
 ) -> None:
-    """Launch an interactive bathymetry/profile dashboard for measured environments.
+    """Launch an interactive bathymetry/profile dashboard for gridded environments.
 
     The dashboard provides:
     - A bathymetry map (Blue Pebble ``-z`` convention) used as a profile selector.
     - A selected-point sound-speed profile plot (depth shown as ``+z`` downward).
 
-    This viewer is designed for measured-data models where bathymetry and SSP vary in
+    This viewer is designed for gridded models where bathymetry and SSP vary in
     both horizontal and vertical dimensions. It expects model objects compatible with
-    ``GEBCOBathymetry`` and ``LeroyCopernicusSoundSpeedProfile``.
+    ``GEBCOBathymetry`` and ``CopernicusSoundSpeedProfile``.
 
     Parameters
     ----------
@@ -492,7 +492,7 @@ def launch_bathymetry_and_sound_speed_viewer(
     missing_ssp_attrs = [name for name in required_ssp_attrs if not hasattr(ssp, name)]
     if missing_ssp_attrs:
         raise TypeError(
-            "ssp is missing required attributes/methods for measured-data viewing: "
+            "ssp is missing required attributes/methods for gridded-environment viewing: "
             f"{missing_ssp_attrs}"
         )
 
