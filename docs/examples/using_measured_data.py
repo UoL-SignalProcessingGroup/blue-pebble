@@ -429,7 +429,6 @@ steering_calculator = SteeringCalculator(
     steering_sector_rad=(-np.pi, np.pi),
     num_beams=num_beams,
 )
-steering_azimuths_rad = steering_calculator.steering_bearings()
 
 # %%
 # Detector Pipeline Setup
@@ -498,7 +497,6 @@ NoiseCalibrator(cfar_detector).calibrate_from_noise(noise_scans)
 detector = PassiveSonarDetector(
     detector=cfar_detector,
     sensor_data_gen=simulator.sensor_data_gen(progress_bar=True),
-    steering_azimuths_rad=steering_azimuths_rad,
 )
 
 # %%
@@ -512,7 +510,7 @@ all_detections = list(detector.detections_gen(progress_bar=True, total_timesteps
 reported_snr = detector.reported_snr_history
 
 timesteps = [start_time + i * time_interval for i in range(num_steps)]
-steering_azimuths_deg = np.rad2deg(steering_azimuths_rad)
+steering_azimuths_deg = np.rad2deg(detector.steering_bearings_history)
 
 detections = [d for _, detection_set in all_detections for d in detection_set]
 print(f"Total no. of detections: {len(detections)}")

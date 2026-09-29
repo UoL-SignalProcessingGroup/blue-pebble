@@ -269,10 +269,11 @@ from bluepebble.simulator import ContinuousSTFTPassiveSonarArraySimulator
 shading = np.hanning(num_sensors)
 beamforming_domain = "broadband_power"
 # A line array cannot tell which side of it a sound came from, so steer only the side the
-# target is on: starboard. Steering angles are azimuths, anticlockwise from east, so for this
-# east-heading platform starboard is -180 to 0 degrees. The beams are spaced evenly in the sine
-# of the angle from broadside rather than in angle, which keeps every beam's mainlobe the same
-# number of beams wide: they sit closest together at broadside, where the array resolves best.
+# target is on: starboard. The steering sector is measured anticlockwise from the array's
+# forward direction, so starboard is -180 to 0 degrees whichever way the platform heads, and
+# the beams turn with the array. They are spaced evenly in the sine of the angle from broadside
+# rather than in angle, which keeps every beam's mainlobe the same number of beams wide: they
+# sit closest together at broadside, where the array resolves best.
 num_beams = 181
 # Up to just below the highest simulated frequency (250 Hz), covering the target's tonals.
 fmin = 100.0
@@ -291,10 +292,6 @@ steering_calculator = SteeringCalculator(
     steering_sector_rad=(-np.pi, 0.0),
     num_beams=num_beams,
     spacing="sine",
-)
-# A sine-spaced grid is set by the array's axis, so it is read off the platform's first state.
-steering_azimuths_rad = steering_calculator.steering_bearings(
-    platform.get_platform_state_at(timesteps[0])
 )
 
 simulator = ContinuousSTFTPassiveSonarArraySimulator(
@@ -333,7 +330,6 @@ cfar_detector = CACFARDetector(
 detector = PassiveSonarDetector(
     detector=cfar_detector,
     sensor_data_gen=simulator.sensor_data_gen(progress_bar=True),
-    steering_azimuths_rad=steering_azimuths_rad,
 )
 
 all_detections = list(detector.detections_gen(progress_bar=True, total_timesteps=num_steps))
@@ -348,7 +344,7 @@ plot_btr(
     data=reported_snr,
     detections=detections_for_plotter,
     timesteps=timesteps,
-    steering_azimuths=np.rad2deg(steering_azimuths_rad),
+    steering_azimuths=np.rad2deg(detector.steering_bearings_history),
     bearing_convention="true",
 ).update_layout(
     template="plotly_white",
@@ -475,7 +471,7 @@ for _, current_tracks in kf:
 
 plot_btr(
     timesteps=timesteps,
-    steering_azimuths=np.rad2deg(steering_azimuths_rad),
+    steering_azimuths=np.rad2deg(detector.steering_bearings_history),
     bearing_convention="true",
     truths=bearing_truths,
     detections=detections_for_plotter,

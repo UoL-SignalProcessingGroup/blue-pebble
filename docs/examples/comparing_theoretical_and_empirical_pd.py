@@ -134,15 +134,8 @@ ambient_noise_model = ColouredNoiseSignal(
     sampling_rate_hz=sampling_rate_hz,
 )
 
-# The target sits on one side of the array axis, so only that half-plane is steered.
-platform_state = platform.get_platform_state_at(timesteps[0])
-assert platform_state is not None
-array_endpoints_xy = platform_state.array.state_vector[:2, [0, -1]]
-array_axis_rad = float(np.arctan2(*(array_endpoints_xy[:, 1] - array_endpoints_xy[:, 0])[::-1]))
-steering_calculator = SteeringCalculator(
-    ssp=ssp, steering_sector_rad=(array_axis_rad - np.pi, array_axis_rad), num_beams=361
-)
-steering_azimuths_rad = steering_calculator.steering_bearings()
+# The target is to port, so only that side of the array is steered.
+steering_calculator = SteeringCalculator(ssp=ssp, steering_sector_rad=(0.0, np.pi), num_beams=361)
 
 simulator = ContinuousSTFTPassiveSonarArraySimulator(
     platform=platform,
@@ -165,13 +158,17 @@ simulator = ContinuousSTFTPassiveSonarArraySimulator(
 # simulator's fade-in depresses it.
 
 all_scans = []
+all_bearings = []
 for _, sensor_data_set in simulator.sensor_data_gen(progress_bar=True):
     (sensor_data,) = sensor_data_set
     assert sensor_data.beamformed_data is not None
     all_scans.append(sensor_data.beamformed_data)
+    all_bearings.append(sensor_data.steering_bearings_rad)
 frame_counts = np.array([scan.shape[1] for scan in all_scans])
 num_frames = int(np.bincount(frame_counts).argmax())
-scans = [scan for i, scan in enumerate(all_scans) if i > 0 and scan.shape[1] == num_frames]
+kept = [i for i, scan in enumerate(all_scans) if i > 0 and scan.shape[1] == num_frames]
+scans = [all_scans[i] for i in kept]
+scan_bearings = [all_bearings[i] for i in kept]
 print(f"{len(scans)} of {num_scans} scans kept, each with {num_frames} frames")
 
 # %%
@@ -181,6 +178,8 @@ print(f"{len(scans)} of {num_scans} scans kept, each with {num_frames} frames")
 # ``snr_linear`` is the input the analytic model needs. Because the scenario is stationary,
 # averaging the per-scan readings gives one stable value.
 
+platform_state = platform.get_platform_state_at(timesteps[0])
+assert platform_state is not None
 array_centre_xy = np.mean(platform_state.array.state_vector, axis=1)[:2]
 target_bearing_rad = float(
     np.arctan2(
@@ -189,10 +188,8 @@ target_bearing_rad = float(
 )
 guard_bins = 6
 readings = [
-    snr_linear_from_ground_truth_bearing(
-        scan, target_bearing_rad, steering_azimuths_rad, guard_bins
-    )
-    for scan in scans
+    snr_linear_from_ground_truth_bearing(scan, target_bearing_rad, bearings, guard_bins)
+    for scan, bearings in zip(scans, scan_bearings, strict=True)
 ]
 snr_per_scan = np.array([snr for snr, _ in readings])
 target_bin = readings[0][1]
@@ -212,7 +209,7 @@ print(
 # frequency bins, so K is measured from the noise-only cells. K_s is the participation ratio of
 # the source spectrum within the band, which for a tonal is far smaller than K.
 
-noise_only_mask = np.ones((len(scans), len(steering_azimuths_rad)), dtype=bool)
+noise_only_mask = np.ones((len(scans), scans[0].shape[0]), dtype=bool)
 noise_only_mask[:, max(0, target_bin - guard_bins) : target_bin + guard_bins + 1] = False
 effective_looks = estimate_effective_looks_per_frame(scans, noise_only_mask)
 

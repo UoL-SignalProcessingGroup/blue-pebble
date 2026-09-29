@@ -247,7 +247,9 @@ signal_models = [make_signal_model() for _ in target_truths]
 # ---------------------------
 #
 # The beamformer matches Getting Started, with one difference: it steers the full circle,
-# because there are now targets on both sides of the array.
+# because there are now targets on both sides of the array. The steering sector is measured
+# from the array's forward direction, so the grid of beams turns with the array; each scan's
+# bearings travel with its data, and the detector keeps them for the plots below.
 
 # %%
 from bluepebble.sigproc import (
@@ -274,7 +276,6 @@ steering_calculator = SteeringCalculator(
     steering_sector_rad=(-np.pi, np.pi),
     num_beams=num_beams,
 )
-steering_azimuths_rad = steering_calculator.steering_bearings()
 
 
 def make_simulator(ground_truth_paths):
@@ -323,7 +324,7 @@ from bluepebble.plotter import plot_btr
 mainlobe_beams = beams_per_mainlobe(
     aperture_m=(num_sensors - 1) * sensor_spacing_m,
     frequency_hz=fmin,
-    beam_spacing_rad=float(np.diff(steering_azimuths_rad)[0]),
+    beam_spacing_rad=2 * np.pi / num_beams,
     sound_speed_ms=1500.0,
     shading_factor=1.44,  # Hann
 )
@@ -350,7 +351,6 @@ NoiseCalibrator(cfar_detector).calibrate_from_noise(noise_scans)
 detector = PassiveSonarDetector(
     detector=cfar_detector,
     sensor_data_gen=make_simulator(target_truths).sensor_data_gen(progress_bar=True),
-    steering_azimuths_rad=steering_azimuths_rad,
 )
 all_detections = list(detector.detections_gen(progress_bar=True, total_timesteps=num_steps))
 detections_for_plotter = [d for _, detections in all_detections for d in detections]
@@ -359,7 +359,7 @@ plot_btr(
     data=detector.reported_snr_history,
     detections=detections_for_plotter,
     timesteps=timesteps,
-    steering_azimuths=np.rad2deg(steering_azimuths_rad),
+    steering_azimuths=np.rad2deg(detector.steering_bearings_history),
     bearing_convention="true",
 ).update_layout(
     template="plotly_white",
@@ -491,7 +491,7 @@ for _, current_tracks in tracker:
 
 plot_btr(
     timesteps=timesteps,
-    steering_azimuths=np.rad2deg(steering_azimuths_rad),
+    steering_azimuths=np.rad2deg(detector.steering_bearings_history),
     bearing_convention="true",
     truths=bearing_truths,
     detections=detections_for_plotter,

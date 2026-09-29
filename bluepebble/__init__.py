@@ -15,7 +15,13 @@ heading), are used only for display, through :func:`~bluepebble.plotter.plot_btr
 
 :class:`~bluepebble.sigproc.SteeringCalculator` builds its steering grid from a sector
 ``(start, end)`` that runs anticlockwise from start to end; ``(-np.pi, np.pi)`` is a full
-circle, which does not repeat its start since -pi and pi point the same way.
+circle, which does not repeat its start since -pi and pi point the same way. By default the
+sector is in the array frame: angles are measured anticlockwise from the array's forward
+direction (from its last sensor towards sensor 0), so port is ``(0, np.pi)``, starboard is
+``(-np.pi, 0)``, and the grid turns with the array. Each scan's steering bearings are still
+world azimuths, as above, and travel with its data in
+:attr:`~bluepebble.types.PassiveSonarSensorData.steering_bearings_rad`. With
+``frame="world"`` the sector is measured from +x instead and the grid stays fixed.
 """
 
 from importlib import import_module
