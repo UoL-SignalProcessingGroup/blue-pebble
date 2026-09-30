@@ -1,5 +1,6 @@
 """Defines a passive sonar detector that processes beamformed sensor data."""
 
+import warnings
 from collections import defaultdict, deque
 from collections.abc import Generator, Iterable
 from datetime import datetime
@@ -43,6 +44,42 @@ def _lazy_progress_bar(iterable: Iterable, desc: str, total: int | None) -> Iter
     finally:
         if bar is not None:
             bar.close()
+
+
+def _warn_fixed_grid_deprecated(detector_name: str) -> None:
+    """Warn that a detector was given the deprecated fixed ``steering_azimuths_rad`` grid."""
+    warnings.warn(
+        f"Passing steering_azimuths_rad to {detector_name} is deprecated and will be removed "
+        "in the next release: each scan's bearings now travel on the sensor data "
+        "(PassiveSonarSensorData.steering_bearings_rad), which the simulator fills in. Until "
+        "then the grid is used only for sensor data without bearings.",
+        DeprecationWarning,
+        stacklevel=3,
+    )
+
+
+def _scan_bearings(
+    sensor_data: PassiveSonarSensorData, fallback_rad: FloatArray | None
+) -> FloatArray:
+    """Return a scan's beam bearings: its own, else the deprecated fixed grid.
+
+    Raises
+    ------
+    ValueError
+        If the sensor data carries no bearings and there is no fixed grid to fall back on.
+
+    """
+    # getattr, so sensor data from readers that predate per-scan bearings still falls back.
+    bearings_rad = getattr(sensor_data, "steering_bearings_rad", None)
+    if bearings_rad is not None:
+        return np.asarray(bearings_rad, dtype=np.float64)
+    if fallback_rad is not None:
+        return np.asarray(fallback_rad, dtype=np.float64)
+    raise ValueError(
+        f"The sensor data at {sensor_data.timestamp} has no steering_bearings_rad, so its "
+        "beams have no bearings. Simulators with a steering calculator fill them in; for "
+        "other sources, set steering_bearings_rad on each PassiveSonarSensorData."
+    )
 
 
 def beam_power(beamformed_data: ArrayLike, decibels: bool = False) -> FloatArray:
@@ -187,7 +224,8 @@ class PassiveSonarDetector(DetectionReader):
     ``detector`` directly against each frame's raw beamformed power map. Frame integration,
     local noise-floor estimation, and wrap-aware peak consolidation are all handled internally
     by the detector (see :mod:`.algorithms`). Each detection's state vector holds one element,
-    the detecting beam's steering azimuth as a Stone Soup
+    the detecting beam's bearing for that scan (read from the sensor data's
+    ``steering_bearings_rad``) as a Stone Soup
     :class:`~stonesoup.types.angle.Bearing`, so a tracker's innovations wrap correctly at
     +/-180 degrees instead of reading a small step across the wrap as a jump of nearly 360.
 
@@ -203,8 +241,9 @@ class PassiveSonarDetector(DetectionReader):
         raw beamformed data.
     sensor_data_gen : Generator[SensorDataStep, None, None]
         Generator yielding sensor-data batches.
-    steering_azimuths_rad : FloatArray
-        Steering azimuth of each beam, in radians (see Coordinate frames in :mod:`bluepebble`).
+    steering_azimuths_rad : FloatArray, optional
+        Deprecated fixed steering grid, used only for sensor data without
+        ``steering_bearings_rad``.
 
     """
 
@@ -214,9 +253,11 @@ class PassiveSonarDetector(DetectionReader):
     sensor_data_gen: Generator[SensorDataStep, None, None] = Property(
         doc="Generator that yields PassiveSonarSensorData objects",
     )
-    steering_azimuths_rad: FloatArray = Property(
-        doc="Steering azimuth of each beam, in radians anticlockwise from +x (see "
-        "Coordinate frames in bluepebble).",
+    steering_azimuths_rad: FloatArray | None = Property(
+        default=None,
+        doc="Deprecated: each scan's bearings now come from the sensor data's "
+        "steering_bearings_rad. A fixed grid, in radians anticlockwise from +x, used only for "
+        "sensor data without them.",
     )
     reported_snr_reference: str = Property(
         default="global",
@@ -236,7 +277,10 @@ class PassiveSonarDetector(DetectionReader):
     def __init__(self, *args: object, **kwargs: object) -> None:
         """Initialise the passive sonar detector."""
         super().__init__(*args, **kwargs)
+        if self.steering_azimuths_rad is not None:
+            _warn_fixed_grid_deprecated(type(self).__name__)
         self._reported_snr_history: list[FloatArray] = []
+        self._steering_bearings_history: list[FloatArray] = []
 
     @property
     def reported_snr_history(self) -> FloatArray:
@@ -252,6 +296,23 @@ class PassiveSonarDetector(DetectionReader):
         if not self._reported_snr_history:
             return np.array([], dtype=np.float64)
         return np.asarray(self._reported_snr_history, dtype=np.float64)
+
+    @property
+    def steering_bearings_history(self) -> FloatArray:
+        """Each processed scan's beam bearings, row for row with :attr:`reported_snr_history`.
+
+        Returns
+        -------
+        FloatArray
+            Array of shape (num_timesteps, num_beams), in radians anticlockwise from +x. An
+            array-frame grid turns with the array, so rows differ through a turn; pass this
+            (in degrees) to :func:`~bluepebble.plotter.plot_btr` as ``steering_azimuths``. If
+            no history is available an empty array is returned.
+
+        """
+        if not self._steering_bearings_history:
+            return np.array([], dtype=np.float64)
+        return np.asarray(self._steering_bearings_history, dtype=np.float64)
 
     @BufferedGenerator.generator_method
     def detections_gen(
@@ -287,6 +348,7 @@ class PassiveSonarDetector(DetectionReader):
         for timestamp, sensor_data_set in sensor_data_iterator:
             detections: set[Detection] = set()
             snr: FloatArray = np.array([], dtype=np.float64)
+            bearings_rad: FloatArray = np.array([], dtype=np.float64)
 
             for sensor_data in sensor_data_set:
                 beamformed_data = sensor_data.beamformed_data
@@ -294,6 +356,7 @@ class PassiveSonarDetector(DetectionReader):
                 if beamformed_data is None or beamformed_data.size == 0:
                     continue
 
+                bearings_rad = _scan_bearings(sensor_data, self.steering_azimuths_rad)
                 # detection_snr_map() and detect() each estimate the noise floor independently, a
                 # modest redundant computation in exchange for keeping "report the full
                 # picture" and "decide detections" as separate concerns. Worth revisiting if
@@ -309,7 +372,7 @@ class PassiveSonarDetector(DetectionReader):
                 if raw_detections.size > 0:
                     for raw_det in raw_detections:
                         detection_index = int(raw_det[0])
-                        bearing_rad = self.steering_azimuths_rad[detection_index]
+                        bearing_rad = bearings_rad[detection_index]
 
                         detections.add(
                             Detection(
@@ -320,6 +383,7 @@ class PassiveSonarDetector(DetectionReader):
                         )
 
             self._reported_snr_history.append(snr)
+            self._steering_bearings_history.append(bearings_rad)
 
             yield timestamp, detections
 
@@ -466,8 +530,8 @@ class MultibandPassiveSonarDetector(DetectionReader):
     iterating any of them.
 
     Each reader may be iterated once, as the underlying sensor-data generator is consumed.
-    Detections hold their bearing as a :class:`~stonesoup.types.angle.Bearing`, as in
-    :class:`PassiveSonarDetector`.
+    Detections hold their bearing for that scan as a :class:`~stonesoup.types.angle.Bearing`,
+    as in :class:`PassiveSonarDetector`.
     """
 
     band_detectors: dict[str, BandDetector] = Property(
@@ -476,9 +540,11 @@ class MultibandPassiveSonarDetector(DetectionReader):
     sensor_data_gen: Generator[SensorDataStep, None, None] = Property(
         doc="Generator that yields PassiveSonarSensorData objects",
     )
-    steering_azimuths_rad: FloatArray = Property(
-        doc="Steering azimuth of each beam, in radians anticlockwise from +x (see "
-        "Coordinate frames in bluepebble).",
+    steering_azimuths_rad: FloatArray | None = Property(
+        default=None,
+        doc="Deprecated: each scan's bearings now come from the sensor data's "
+        "steering_bearings_rad. A fixed grid, in radians anticlockwise from +x, used only for "
+        "sensor data without them.",
     )
     default_detector: BandDetector | None = Property(
         default=None,
@@ -489,7 +555,10 @@ class MultibandPassiveSonarDetector(DetectionReader):
     def __init__(self, *args: object, **kwargs: object) -> None:
         """Initialise the multiband detector."""
         super().__init__(*args, **kwargs)
+        if self.steering_azimuths_rad is not None:
+            _warn_fixed_grid_deprecated(type(self).__name__)
         self._reported_snr_history: dict[str, list[FloatArray]] = defaultdict(list)
+        self._steering_bearings_history: list[FloatArray] = []
         self._pump = _SensorDataPump(self._banded_steps())
         self._subscriber_id: int | None = None
 
@@ -509,6 +578,22 @@ class MultibandPassiveSonarDetector(DetectionReader):
             label: np.asarray(rows, dtype=np.float64)
             for label, rows in self._reported_snr_history.items()
         }
+
+    @property
+    def steering_bearings_history(self) -> FloatArray:
+        """Each processed scan's beam bearings, shared by every band.
+
+        Returns
+        -------
+        FloatArray
+            Array of shape (num_timesteps, num_beams), in radians anticlockwise from +x, row
+            for row with each band's :attr:`reported_snr_history`. Empty before iteration
+            begins.
+
+        """
+        if not self._steering_bearings_history:
+            return np.array([], dtype=np.float64)
+        return np.asarray(self._steering_bearings_history, dtype=np.float64)
 
     def band_reader(self, band_label: str) -> "_BandDetectionReader":
         """Return a detection reader restricted to a single band.
@@ -599,6 +684,8 @@ class MultibandPassiveSonarDetector(DetectionReader):
                         "PassiveSonarDetector for single-band output."
                     )
 
+                bearings_rad = _scan_bearings(sensor_data, self.steering_azimuths_rad)
+                self._steering_bearings_history.append(bearings_rad)
                 for band_idx, band_label in enumerate(band_labels):
                     band_detector = self._detector_for(band_label)
                     snr, raw_detections = band_detector.detect(data[band_idx])
@@ -607,9 +694,7 @@ class MultibandPassiveSonarDetector(DetectionReader):
                     for raw_det in raw_detections:
                         detections_by_band[band_label].add(
                             Detection(
-                                state_vector=[
-                                    [Bearing(self.steering_azimuths_rad[int(raw_det[0])])]
-                                ],
+                                state_vector=[[Bearing(bearings_rad[int(raw_det[0])])]],
                                 timestamp=sensor_data.timestamp,
                                 metadata={"band": band_label, "snr_db": float(raw_det[1])},
                             )

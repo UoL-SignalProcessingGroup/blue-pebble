@@ -977,7 +977,7 @@ class ContinuousSTFTPassiveSonarArraySimulator(PassiveSonarArraySimulatorBase):
             if noise is not None:
                 sensor_signals += noise
 
-            beamformed_data = self._beamform_if_configured(
+            beamformed_data, steering_bearings_rad = self._beamform_if_configured(
                 timestamp=timestamp,
                 sensor_signals=sensor_signals,
             )
@@ -986,6 +986,7 @@ class ContinuousSTFTPassiveSonarArraySimulator(PassiveSonarArraySimulatorBase):
                 timestamp=timestamp,
                 sensor_signals=sensor_signals,
                 beamformed_data=beamformed_data,
+                steering_bearings_rad=steering_bearings_rad,
             )
             yield timestamp, {sensor_data}
 
@@ -1239,7 +1240,7 @@ class ContinuousFractionalDelayPassiveSonarArraySimulator(PassiveSonarArraySimul
             if noise is not None:
                 sensor_signals += noise
 
-            beamformed_data = self._beamform_if_configured(
+            beamformed_data, steering_bearings_rad = self._beamform_if_configured(
                 timestamp=timestamp,
                 sensor_signals=sensor_signals,
             )
@@ -1248,5 +1249,6 @@ class ContinuousFractionalDelayPassiveSonarArraySimulator(PassiveSonarArraySimul
                 timestamp=timestamp,
                 sensor_signals=sensor_signals,
                 beamformed_data=beamformed_data,
+                steering_bearings_rad=steering_bearings_rad,
             )
             yield timestamp, {sensor_data}

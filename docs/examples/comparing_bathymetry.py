@@ -48,6 +48,7 @@ from bluepebble.plotter import apply_shared_colourscale, plot_btr, plot_world
 from bluepebble.signal.anthropogenic import SyntheticAnthropogenicSignal
 from bluepebble.signal.random import ColouredNoiseSignal
 from bluepebble.sigproc import (
+    FULL_CIRCLE,
     DelayAndSumBeamformer,
     SteeringCalculator,
     beams_per_mainlobe,
@@ -417,7 +418,7 @@ def _make_signal_models():
 # in arrival structure caused by the seabed is visible in the resulting bearing-time
 # record.
 
-steering_azimuths_rad = np.linspace(-np.pi, np.pi, 180, endpoint=False)
+num_beams = 180
 
 beamformer = DelayAndSumBeamformer(
     sampling_rate_hz=sampling_rate_hz,
@@ -426,7 +427,8 @@ beamformer = DelayAndSumBeamformer(
 
 steering_calculator = SteeringCalculator(
     ssp=ssp,
-    steering_azimuths_rad=steering_azimuths_rad,
+    steering_sector_rad=FULL_CIRCLE,
+    num_beams=num_beams,
 )
 
 # %%
@@ -451,7 +453,7 @@ steering_calculator = SteeringCalculator(
 mainlobe_beams = beams_per_mainlobe(
     aperture_m=(num_sensors - 1) * sensor_spacing_m,
     frequency_hz=120.0,
-    beam_spacing_rad=float(np.diff(steering_azimuths_rad)[0]),
+    beam_spacing_rad=2 * np.pi / num_beams,
     sound_speed_ms=1500.0,
 )
 cfar_num_guard_cells, cfar_num_training_cells, peak_distance = cfar_window_for_mainlobe(
@@ -510,7 +512,6 @@ def _make_detector(simulator: ContinuousSTFTPassiveSonarArraySimulator) -> Passi
     return PassiveSonarDetector(
         detector=cfar_detector,
         sensor_data_gen=simulator.sensor_data_gen(),
-        steering_azimuths_rad=steering_azimuths_rad,
     )
 
 
@@ -558,7 +559,8 @@ all_detections_seamount_bathymetry = list(
 reported_snr_seamount_bathymetry = detector_seamount_bathymetry.reported_snr_history
 
 timesteps = np.array([start_time + i * time_interval for i in range(num_steps)], dtype=object)
-steering_azimuths_deg = np.rad2deg(steering_azimuths_rad)
+# Both runs share the platform, so either detector's per-scan bearings serve for plotting.
+steering_azimuths_deg = np.rad2deg(detector_flat_bathymetry.steering_bearings_history)
 
 detections_flat_bathymetry = [
     d for _, detection_set in all_detections_flat_bathymetry for d in detection_set

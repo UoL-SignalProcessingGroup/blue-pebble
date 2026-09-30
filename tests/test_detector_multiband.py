@@ -13,12 +13,16 @@ from .test_detector_passive import _load_passive_detector_module
 TIMESTAMP = datetime(2026, 1, 1, 12, 0, 0)
 
 
+BEARINGS_RAD = np.array([-1.5, -0.5, 0.5, 1.5])
+
+
 def _sensor_data(band_maps, timestamp=TIMESTAMP, band_labels=("low", "high")):
     """Build a fake sensor-data payload with a leading band axis."""
     return SimpleNamespace(
         beamformed_data=np.asarray(band_maps, dtype=np.float64),
         band_labels=list(band_labels),
         timestamp=timestamp,
+        steering_bearings_rad=BEARINGS_RAD,
     )
 
 
@@ -37,7 +41,6 @@ def _detector(passive, band_detectors, source=None, default_detector=None, num_s
         band_detectors=band_detectors,
         default_detector=default_detector,
         sensor_data_gen=source if source is not None else _two_band_source(num_steps),
-        steering_azimuths_rad=np.array([-1.5, -0.5, 0.5, 1.5]),
     )
 
 
@@ -330,3 +333,30 @@ def test_skips_empty_and_missing_beamformed_data(monkeypatch) -> None:
     batches = list(detector.detections_gen())
     assert [batch for _, batch in batches] == [set(), set()]
     assert detector.reported_snr_history == {}
+
+
+def test_steering_bearings_history_has_one_row_per_scan(monkeypatch) -> None:
+    """Every band shares its scan's bearings, so the history has one row per scan."""
+    passive = _load_passive_detector_module(monkeypatch)
+    detector = _detector(
+        passive,
+        {"low": _band_detector(passive, 4.0)},
+        default_detector=_band_detector(passive, 4.0),
+        num_steps=2,
+    )
+
+    list(detector.detections_gen())
+
+    np.testing.assert_array_equal(detector.steering_bearings_history, [BEARINGS_RAD] * 2)
+
+
+def test_multiband_deprecated_fixed_grid_warns(monkeypatch) -> None:
+    """The old steering_azimuths_rad warns, as on the single-band detector."""
+    passive = _load_passive_detector_module(monkeypatch)
+
+    with pytest.warns(DeprecationWarning, match="MultibandPassiveSonarDetector"):
+        passive.MultibandPassiveSonarDetector(
+            band_detectors={"low": _band_detector(passive, 4.0)},
+            sensor_data_gen=_two_band_source(),
+            steering_azimuths_rad=BEARINGS_RAD,
+        )

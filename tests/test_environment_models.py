@@ -49,6 +49,31 @@ def test_sound_speed_profile_grid_tiles_depth_profile(monkeypatch) -> None:
     np.testing.assert_allclose(c_grid, np.full(12, 1490.0))
 
 
+@pytest.mark.parametrize(
+    ("mid_depth", "steepness"), [(1000.0, 0.005), (300.0, 0.05), (2000.0, -0.002)]
+)
+def test_arctan_profile_starts_at_its_surface_speed(
+    monkeypatch, mid_depth: float, steepness: float
+) -> None:
+    """The step is offset so c(0) is surface_speed, leaving its shape unchanged."""
+    install_fake_stonesoup(monkeypatch)
+    sound_speed_profile = load_module_from_repo(
+        "bluepebble/models/environment/sound_speed_profile.py",
+        f"bluepebble_arctan_surface_{mid_depth:g}_{steepness:g}",
+    )
+    profile = sound_speed_profile.Arctan(
+        surface_speed=1490.0, mid_depth=mid_depth, steepness=steepness
+    )
+    depths = np.linspace(0.0, 5000.0, 51)
+
+    assert profile.calculate(0.0) == pytest.approx(1490.0)
+    # Same curve as the uncorrected step, shifted by a constant.
+    uncorrected = 1490.0 + 50.0 * np.arctan(steepness * (depths - mid_depth))
+    np.testing.assert_allclose(
+        profile.calculate(depths) - uncorrected, 50.0 * np.arctan(steepness * mid_depth)
+    )
+
+
 def test_flat_bathymetry_rejects_non_negative_depth(monkeypatch) -> None:
     """Flat bathymetry should enforce the package's negative-depth convention."""
     install_fake_stonesoup(monkeypatch)

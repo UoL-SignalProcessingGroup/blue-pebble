@@ -13,8 +13,17 @@ true bearing (clockwise from north) and relative bearing (clockwise from the pla
 heading), are used only for display, through :func:`~bluepebble.plotter.plot_btr`'s
 ``bearing_convention``.
 
-A full circle of steering directions should not list both -pi and pi, which point the same
-way: use ``np.linspace(-np.pi, np.pi, N, endpoint=False)``.
+:class:`~bluepebble.sigproc.SteeringCalculator` builds its steering grid from a sector
+``(start, end)`` that runs anticlockwise from start to end; ``(-np.pi, np.pi)`` is a full
+circle, which does not repeat its start since -pi and pi point the same way. By default the
+sector is in the array frame: angles are measured anticlockwise from the array's forward
+direction (from its last sensor towards sensor 0), so port is ``(0, np.pi)``, starboard is
+``(-np.pi, 0)``, and the grid turns with the array. The order matters, since ``(0, -np.pi)``
+is port too; :data:`~bluepebble.sigproc.PORT`, :data:`~bluepebble.sigproc.STARBOARD` and
+:data:`~bluepebble.sigproc.FULL_CIRCLE` spell the common sectors out. Each scan's steering
+bearings are still world azimuths, as above, and travel with its data in
+:attr:`~bluepebble.types.PassiveSonarSensorData.steering_bearings_rad`. With
+``frame="world"`` the sector is measured from +x instead and the grid stays fixed.
 """
 
 from importlib import import_module

@@ -234,15 +234,20 @@ def test_base_beamform_if_configured_and_make_sensor_data(monkeypatch) -> None:
     )
 
     sensor_signals = np.array([[1.0 + 0.0j]], dtype=np.complex64)
-    assert simulator._beamform_if_configured(timestamp, sensor_signals) is None
+    assert simulator._beamform_if_configured(timestamp, sensor_signals) == (None, None)
 
     class Steering:
         def __init__(self):
             self.seen = None
+            self.bearings_seen = None
 
         def calculate(self, platform_state):
             self.seen = platform_state
             return np.array([0.1])
+
+        def steering_bearings(self, platform_state):
+            self.bearings_seen = platform_state
+            return np.array([0.25])
 
     class Beamformer:
         def __init__(self):
@@ -257,18 +262,56 @@ def test_base_beamform_if_configured_and_make_sensor_data(monkeypatch) -> None:
     simulator.steering_calculator = steering
     simulator.beamformer = beamformer
 
-    beamformed = simulator._beamform_if_configured(timestamp, sensor_signals)
+    beamformed, bearings = simulator._beamform_if_configured(timestamp, sensor_signals)
     np.testing.assert_array_equal(beamformed, np.array([42.0 + 0.0j], dtype=np.complex64))
     assert steering.seen.timestamp == timestamp
+    # The bearings must describe the same scan the delays were computed for.
+    assert steering.bearings_seen is steering.seen
+    np.testing.assert_array_equal(bearings, np.array([0.25]))
     np.testing.assert_array_equal(beamformer.calls[0][0], sensor_signals)
     np.testing.assert_array_equal(beamformer.calls[0][1], np.array([0.1]))
 
-    payload = simulator._make_sensor_data(timestamp, sensor_signals, beamformed)
+    payload = simulator._make_sensor_data(timestamp, sensor_signals, beamformed, bearings)
     np.testing.assert_array_equal(payload.raw_signals, sensor_signals)
     np.testing.assert_array_equal(payload.beamformed_data, beamformed)
+    np.testing.assert_array_equal(payload.steering_bearings_rad, bearings)
     assert payload.timestamp == timestamp
     assert type(payload).__module__ == "bluepebble.types.sensordata"
     assert payload.band_labels is None
+
+
+def test_base_beamform_if_configured_without_steering_bearings(monkeypatch) -> None:
+    """A steering calculator without steering_bearings still beamforms, with no bearings."""
+    _base, discrete, _continuous = _load_simulator_modules(monkeypatch)
+
+    timestamp = datetime(2026, 1, 1, 12, 0, 0)
+    simulator = discrete.DiscretePassiveSonarArraySimulator(
+        platform=_FakePlatform([timestamp], num_sensors=1)
+    )
+    simulator.steering_calculator = SimpleNamespace(calculate=lambda state: np.array([0.1]))
+    simulator.beamformer = SimpleNamespace(beamform=lambda signals, delays: np.array([1.0]))
+
+    beamformed, bearings = simulator._beamform_if_configured(
+        timestamp, np.array([[1.0 + 0.0j]], dtype=np.complex64)
+    )
+
+    np.testing.assert_array_equal(beamformed, np.array([1.0]))
+    assert bearings is None
+
+
+def test_base_beamform_if_configured_raises_without_a_platform_state(monkeypatch) -> None:
+    """Steering needs the array geometry, so a timestamp the platform lacks is an error."""
+    _base, discrete, _continuous = _load_simulator_modules(monkeypatch)
+
+    timestamp = datetime(2026, 1, 1, 12, 0, 0)
+    platform = _FakePlatform([timestamp], num_sensors=1)
+    platform._states[timestamp] = None
+    simulator = discrete.DiscretePassiveSonarArraySimulator(platform=platform)
+    simulator.steering_calculator = SimpleNamespace(calculate=lambda state: np.array([0.1]))
+    simulator.beamformer = SimpleNamespace(beamform=lambda signals, delays: np.array([1.0]))
+
+    with pytest.raises(ValueError, match="no state at"):
+        simulator._beamform_if_configured(timestamp, np.array([[1.0 + 0.0j]]))
 
 
 def test_base_beamform_if_configured_wires_mirror_plan_through(monkeypatch) -> None:

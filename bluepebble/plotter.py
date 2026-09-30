@@ -72,13 +72,15 @@ _BEARING_AXIS_TITLES = {
 def _convert_azimuth_deg(
     azimuth_deg: ArrayLike, convention: str, heading_deg: float | None = None
 ) -> np.ndarray:
-    """Convert world azimuths (anticlockwise from +x) to a clockwise bearing in [0, 360).
+    """Convert world azimuths (anticlockwise from +x) to ``convention``, in [0, 360).
 
-    ``"true"`` is clockwise from +y (north, with +x east): ``(90 - azimuth) mod 360``.
-    ``"relative"`` is clockwise from the heading, itself an azimuth:
-    ``(heading - azimuth) mod 360``.
+    ``"mathematical"`` keeps the azimuth: ``azimuth mod 360``. ``"true"`` is clockwise from
+    +y (north, with +x east): ``(90 - azimuth) mod 360``. ``"relative"`` is clockwise from the
+    heading, itself an azimuth: ``(heading - azimuth) mod 360``.
     """
     azimuth = np.asarray(azimuth_deg, dtype=float)
+    if convention == "mathematical":
+        return azimuth % 360.0
     if convention == "true":
         return (90.0 - azimuth) % 360.0
     if heading_deg is None:
@@ -233,9 +235,21 @@ def _validate_btr_shapes(
     steering_azimuths: ArrayLike,
     data: ArrayLike | None,
 ) -> tuple[np.ndarray, np.ndarray, np.ndarray | None]:
-    """Validate BTR array dimensions and compatibility."""
+    """Validate BTR array dimensions and compatibility.
+
+    ``steering_azimuths`` is either one fixed grid, ``(num_beams,)``, or one grid per
+    timestep, ``(num_timesteps, num_beams)``.
+    """
     timesteps_array = _validate_non_empty_1d(timesteps, "timesteps")
-    steering_array = _validate_non_empty_1d(steering_azimuths, "steering_azimuths")
+    steering_array = np.asarray(steering_azimuths)
+    if steering_array.ndim == 2:
+        if steering_array.shape[0] != timesteps_array.size or steering_array.shape[1] == 0:
+            raise ValueError(
+                "2D steering_azimuths must have one non-empty row per timestep: expected "
+                f"{timesteps_array.size} rows, got shape {steering_array.shape}"
+            )
+    else:
+        steering_array = _validate_non_empty_1d(steering_azimuths, "steering_azimuths")
 
     try:
         steering_array = steering_array.astype(float)
@@ -249,7 +263,7 @@ def _validate_btr_shapes(
     if data_array.ndim != 2:
         raise ValueError("data must be a 2D array")
 
-    expected_shape = (timesteps_array.size, steering_array.size)
+    expected_shape = (timesteps_array.size, steering_array.shape[-1])
     if data_array.shape != expected_shape:
         raise ValueError(f"data shape mismatch: expected {expected_shape}, got {data_array.shape}")
     return timesteps_array, steering_array, data_array
@@ -398,15 +412,15 @@ def launch_bathymetry_and_sound_speed_viewer(
     debug: bool = False,
     jupyter_mode: str | None = None,
 ) -> None:
-    """Launch an interactive bathymetry/profile dashboard for measured environments.
+    """Launch an interactive bathymetry/profile dashboard for gridded environments.
 
     The dashboard provides:
     - A bathymetry map (Blue Pebble ``-z`` convention) used as a profile selector.
     - A selected-point sound-speed profile plot (depth shown as ``+z`` downward).
 
-    This viewer is designed for measured-data models where bathymetry and SSP vary in
+    This viewer is designed for gridded models where bathymetry and SSP vary in
     both horizontal and vertical dimensions. It expects model objects compatible with
-    ``GEBCOBathymetry`` and ``LeroyCopernicusSoundSpeedProfile``.
+    ``GEBCOBathymetry`` and ``CopernicusSoundSpeedProfile``.
 
     Parameters
     ----------
@@ -492,7 +506,7 @@ def launch_bathymetry_and_sound_speed_viewer(
     missing_ssp_attrs = [name for name in required_ssp_attrs if not hasattr(ssp, name)]
     if missing_ssp_attrs:
         raise TypeError(
-            "ssp is missing required attributes/methods for measured-data viewing: "
+            "ssp is missing required attributes/methods for gridded-environment viewing: "
             f"{missing_ssp_attrs}"
         )
 
@@ -1091,7 +1105,11 @@ def plot_btr(
     timesteps : ArrayLike
         Timesteps corresponding to the first dimension of ``data``.
     steering_azimuths : ArrayLike
-        Steering azimuth angles corresponding to the second dimension of ``data``.
+        Steering azimuth angles corresponding to the second dimension of ``data``: one
+        grid, ``(num_beams,)``, or one per timestep, ``(num_timesteps, num_beams)``, for a
+        grid that turns with the array (e.g. a detector's ``steering_bearings_history``, in
+        degrees). A per-timestep grid is resampled row by row onto a fixed grid for display,
+        which smooths the heatmap slightly where the grid moves.
     data : ArrayLike | None
         Beamformed data to plot as a heatmap. If ``None``, no heatmap is drawn and
         only overlays are rendered.
@@ -1238,12 +1256,30 @@ def plot_btr(
         heading = _heading_deg(timestamp) if bearing_convention == "relative" else None
         return _convert_azimuth_deg(azimuth_deg, bearing_convention, heading)
 
+    per_row_grid = steering_array.ndim == 2
+
+    def _grid_at(row_index: int) -> np.ndarray:
+        """Return the steering grid for one row of the heatmap."""
+        return steering_array[row_index] if per_row_grid else steering_array
+
+    # Rows need resampling onto a fixed display grid when their bearings differ.
+    resample_rows = per_row_grid or bearing_convention == "relative"
     window_start, window_end = 0.0, 360.0
-    if bearing_convention != "mathematical":
-        rows = timesteps_array if bearing_convention == "relative" else timesteps_array[:1]
-        window_start, window_end = _bearing_window(
-            np.concatenate([_converted(steering_array, t) for t in rows])
-        )
+    if bearing_convention != "mathematical" or per_row_grid:
+        rows = range(timesteps_array.size) if resample_rows else range(1)
+        row_bearings = [_converted(_grid_at(i), timesteps_array[i]) for i in rows]
+        # Judge a full circle row by row: pooled, a turning grid's rows cluster so tightly
+        # that an ordinary gap between beams can pass for the edge of a partial arc.
+        if any(_bearing_window(bearings) == (0.0, 360.0) for bearings in row_bearings):
+            window_start, window_end = 0.0, 360.0
+        else:
+            window_start, window_end = _bearing_window(np.concatenate(row_bearings))
+        if bearing_convention == "mathematical":
+            # Keep anticlockwise azimuths near their -180 to 180 range.
+            if window_end - window_start >= 360.0:
+                window_start, window_end = -180.0, 180.0
+            elif window_start >= 180.0:
+                window_start, window_end = window_start - 360.0, window_end - 360.0
 
     def _in_window(bearing_deg: ArrayLike) -> np.ndarray:
         """Place bearings on the plotted arc, which may run past 360 (e.g. 270 to 450)."""
@@ -1252,26 +1288,26 @@ def plot_btr(
     def _display_bearing(azimuth_rad: Any, timestamp: Any) -> float:
         """Return the plotted x-position of an overlay point given as an azimuth in radians."""
         azimuth_deg = float(np.rad2deg(azimuth_rad))
-        if bearing_convention == "mathematical":
+        if bearing_convention == "mathematical" and not per_row_grid:
             return _wrap_bearing_deg(azimuth_deg)
         return float(_in_window(_converted(azimuth_deg, timestamp)))
 
     heatmap_x: np.ndarray = steering_array
     heatmap_z = data_array
-    if data_array is not None and bearing_convention == "true":
+    if data_array is not None and bearing_convention == "true" and not per_row_grid:
         # Every row converts identically, so reordering the columns is exact. A full-circle
         # grid's -180 and 180 both become 270; np.unique keeps one of them.
         converted = np.round(_in_window(_converted(steering_array, None)), 9)
         _, keep = np.unique(converted, return_index=True)
         heatmap_x, heatmap_z = converted[keep], data_array[:, keep]
-    elif data_array is not None and bearing_convention == "relative":
-        unique_steering = np.unique(np.round(steering_array % 360.0, 9))
+    elif data_array is not None and resample_rows:
+        unique_steering = np.unique(np.round(_grid_at(0) % 360.0, 9))
         spacing = float(np.median(np.diff(unique_steering))) if unique_steering.size > 1 else 1.0
         heatmap_x = np.arange(window_start, window_end + spacing / 2.0, spacing)
         full_circle = window_end - window_start >= 360.0
         heatmap_z = np.empty((timesteps_array.size, heatmap_x.size))
         for i, timestamp in enumerate(timesteps_array):
-            row_x = _in_window(_converted(steering_array, timestamp))
+            row_x = _in_window(_converted(_grid_at(i), timestamp))
             row_x, keep = np.unique(np.round(row_x, 9), return_index=True)
             row_z = np.asarray(data_array[i], dtype=float)[keep]
             if full_circle:
@@ -1430,10 +1466,17 @@ def plot_btr(
                 target_fig.add_trace(truth_trace)
 
     if bearing_convention == "mathematical":
-        bearing_span = float(np.max(steering_array)) - float(np.min(steering_array))
-        bearing_start = float(steering_array[0])
+        if per_row_grid:
+            bearing_start, bearing_end = window_start, window_end
+        else:
+            bearing_start, bearing_end = float(steering_array[0]), float(steering_array[-1])
+        bearing_span = (
+            bearing_end - bearing_start
+            if per_row_grid
+            else float(np.max(steering_array)) - float(np.min(steering_array))
+        )
         xaxis_ticks: dict[str, Any] = dict(
-            range=[bearing_start, float(steering_array[-1])],
+            range=[bearing_start, bearing_end],
             tickmode="linear",
             tick0=bearing_start,
             dtick=bearing_span / 6.0 if bearing_span > 0 else 1.0,

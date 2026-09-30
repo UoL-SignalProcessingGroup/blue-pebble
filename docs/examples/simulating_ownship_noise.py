@@ -48,6 +48,7 @@ from bluepebble.plotter import apply_shared_colourscale, plot_btr, plot_world
 from bluepebble.signal.anthropogenic import SyntheticAnthropogenicSignal
 from bluepebble.signal.random import ColouredNoiseSignal
 from bluepebble.sigproc import (
+    FULL_CIRCLE,
     DelayAndSumBeamformer,
     MinimumVarianceDistortionlessResponseBeamformer,
     SteeringCalculator,
@@ -349,7 +350,7 @@ def _make_self_noise_model() -> SyntheticAnthropogenicSignal:
 beamformer_type = "DAS"
 beamformer_shading = None
 beamformer_domain = "frequency"
-steering_azimuths_rad = np.linspace(-np.pi, np.pi, 180, endpoint=False)
+num_beams = 180
 
 shading = None
 if beamformer_shading is not None:
@@ -380,7 +381,8 @@ else:
 
 steering_calculator = SteeringCalculator(
     ssp=ssp,
-    steering_azimuths_rad=steering_azimuths_rad,
+    steering_sector_rad=FULL_CIRCLE,
+    num_beams=num_beams,
 )
 
 # %%
@@ -402,7 +404,7 @@ steering_calculator = SteeringCalculator(
 mainlobe_beams = beams_per_mainlobe(
     aperture_m=(num_sensors - 1) * sensor_spacing_m,
     frequency_hz=50.0,
-    beam_spacing_rad=float(np.diff(steering_azimuths_rad)[0]),
+    beam_spacing_rad=2 * np.pi / num_beams,
     sound_speed_ms=1500.0,
 )
 cfar_num_guard_cells, cfar_num_training_cells, peak_distance = cfar_window_for_mainlobe(
@@ -460,7 +462,6 @@ def _make_detector(
     return PassiveSonarDetector(
         detector=cfar_detector,
         sensor_data_gen=simulator.sensor_data_gen(),
-        steering_azimuths_rad=steering_azimuths_rad,
     )
 
 
@@ -510,7 +511,8 @@ all_detections_with_ownship_noise = list(
 )
 reported_snr_with_ownship_noise = detector_with_ownship_noise.reported_snr_history
 
-steering_azimuths_deg = np.rad2deg(steering_azimuths_rad)
+# Both runs share the platform, so either detector's per-scan bearings serve for plotting.
+steering_azimuths_deg = np.rad2deg(detector_without_ownship_noise.steering_bearings_history)
 
 detections_without_ownship_noise = [
     d for _, detection_set in all_detections_without_ownship_noise for d in detection_set

@@ -34,6 +34,13 @@ def beams_per_mainlobe(
     Use the *lowest* frequency of interest. Mainlobe width scales with wavelength, so the
     low end of the band gives the widest lobe and therefore the conservative window.
 
+    On a sine-spaced grid (:class:`~bluepebble.sigproc.SteeringCalculator` with
+    ``spacing="sine"``) pass the step in sine of the angle from broadside,
+    ``(u_end - u_start) / (num_beams - 1)``, and leave ``steering_rad`` at 0. A step in sine
+    equals a step in angle at broadside, and on that grid the mainlobe spans the same number
+    of beams at every bearing short of endfire, where it is cut off at ``u = +-1``, so the
+    broadside answer holds across the rest of the sector.
+
     Parameters
     ----------
     aperture_m : float
@@ -41,7 +48,8 @@ def beams_per_mainlobe(
     frequency_hz : float
         Frequency at which to evaluate the mainlobe. Must be positive.
     beam_spacing_rad : float
-        Angular spacing between adjacent steering azimuths.
+        Angular spacing between adjacent steering azimuths, or the step in sine for a
+        sine-spaced grid (see above).
     sound_speed_ms : float, optional
         Sound speed, by default 1500.0.
     steering_rad : float, optional
