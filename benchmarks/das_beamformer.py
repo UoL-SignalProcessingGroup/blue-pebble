@@ -57,7 +57,9 @@ def _steering_delays(num_sensors, num_beams):
     )
     calculator = SteeringCalculator(
         ssp=Constant(speed=1500.0),
-        steering_azimuths_rad=np.linspace(-np.pi / 2, np.pi / 2, num_beams),
+        steering_sector_rad=(-np.pi / 2, np.pi / 2),
+        num_beams=num_beams,
+        frame="world",
     )
     return calculator.calculate(platform.get_platform_state_at(start))
 
