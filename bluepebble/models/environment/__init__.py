@@ -8,19 +8,32 @@ from .bathymetry import (
     WedgeBathymetry,
 )
 from .sound_speed_profile import (
+    NPL,
+    UNESCO,
     Arctan,
     Constant,
+    CopernicusSoundSpeedProfile,
+    Coppens,
+    DelGrosso,
+    EmpiricalSoundSpeedProfile,
     LeroyCopernicusSoundSpeedProfile,
     Linear,
     Mackenzie,
     Munk,
     SoundSpeedProfile,
+    SoundSpeedRangeWarning,
 )
 
 __all__ = [
+    "NPL",
+    "UNESCO",
     "Arctan",
     "Bathymetry",
     "Constant",
+    "CopernicusSoundSpeedProfile",
+    "Coppens",
+    "DelGrosso",
+    "EmpiricalSoundSpeedProfile",
     "FlatBathymetry",
     "GEBCOBathymetry",
     "LeroyCopernicusSoundSpeedProfile",
@@ -29,5 +42,6 @@ __all__ = [
     "Munk",
     "SeamountBathymetry",
     "SoundSpeedProfile",
+    "SoundSpeedRangeWarning",
     "WedgeBathymetry",
 ]
