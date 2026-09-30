@@ -272,6 +272,8 @@ class TowedArrayPlatform(MultiTransitionMovingPlatform):
             self._property_velocity_mapping = [p + 1 for p in self.position_mapping]
 
         super().__setattr__("platform_history", [])
+        # Timestamp -> index of its first entry in platform_history, so lookups need not scan it.
+        super().__setattr__("_platform_history_index", {})
 
         self._initialise_sensor_array()
 
@@ -397,11 +399,15 @@ class TowedArrayPlatform(MultiTransitionMovingPlatform):
             The time at which to capture the state.
 
         """
-        host_state = self.get_host_state_at(timestamp)
-        sensor_states = self.get_sensor_states_at(timestamp)
-
-        if not host_state or not sensor_states:
+        host_state = self._state_at(self.movement_controller, timestamp)
+        if host_state is None or not self.towed_sensors:
             return
+        sensor_states = []
+        for sensor in self.towed_sensors:
+            sensor_state = self._state_at(sensor, timestamp)
+            if sensor_state is None:
+                return
+            sensor_states.append(sensor_state)
 
         # Calculate heading from velocity
         velocity_mapping = self._resolved_velocity_mapping()
@@ -418,6 +424,7 @@ class TowedArrayPlatform(MultiTransitionMovingPlatform):
             ref_state_vector=sensor_states[self.reference_sensor_idx].state_vector,
         )
 
+        self._platform_history_index.setdefault(timestamp, len(self.platform_history))
         self.platform_history.append(
             PlatformState(
                 timestamp=timestamp,
@@ -425,6 +432,21 @@ class TowedArrayPlatform(MultiTransitionMovingPlatform):
                 array=array_state_container,
             )
         )
+
+    @staticmethod
+    def _state_at(movable: MovingMovable, timestamp: datetime) -> State | None:
+        """Return a movable's state at ``timestamp``, or None if it has none.
+
+        ``move`` has just appended the state being captured, so the latest state is checked
+        first; the full scan only runs when it does not match.
+        """
+        states = movable.states
+        if states and states[-1].timestamp == timestamp:
+            return states[-1]
+        for state in states:
+            if state.timestamp == timestamp:
+                return state
+        return None
 
     def move(self, timestamp: datetime, **kwargs) -> None:
         """Move the platform and all sensor followers.
@@ -458,6 +480,12 @@ class TowedArrayPlatform(MultiTransitionMovingPlatform):
             The platform state if found, otherwise None.
 
         """
+        index = self._platform_history_index.get(timestamp)
+        if index is not None and index < len(self.platform_history):
+            state = self.platform_history[index]
+            if state.timestamp == timestamp:
+                return state
+        # Not indexed, or platform_history was changed directly: fall back to a scan.
         for state in self.platform_history:
             if state.timestamp == timestamp:
                 return state

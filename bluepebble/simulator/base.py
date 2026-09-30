@@ -90,26 +90,28 @@ class PassiveSonarArraySimulatorBase(SensorSimulator):
         )
 
     @staticmethod
-    def _target_state_at(target_path: Iterable["State"], timestamp: datetime) -> "State | None":
-        """Return the target state at a requested timestamp.
+    def _states_by_timestamp(target_path: Iterable["State"]) -> dict[datetime, "State"]:
+        """Index a target's states by timestamp, keeping the first state at each time.
+
+        Built once per run, so each step's lookup does not rescan the path; scanning made the
+        total cost grow with the square of the run length.
 
         Parameters
         ----------
         target_path : Iterable[State]
             Iterable of target states, each expected to provide ``timestamp``.
-        timestamp : datetime
-            Timestamp to match.
 
         Returns
         -------
-        State or None
-            Matching state object when present; otherwise ``None``.
+        dict
+            Maps each timestamp to the first state carrying it. Look a step up with ``.get``,
+            which gives ``None`` when the target has no state then.
 
         """
+        states: dict[datetime, State] = {}
         for state in target_path:
-            if state.timestamp == timestamp:
-                return state
-        return None
+            states.setdefault(state.timestamp, state)
+        return states
 
     @staticmethod
     def _resolve_models(

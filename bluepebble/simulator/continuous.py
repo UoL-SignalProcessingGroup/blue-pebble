@@ -6,13 +6,14 @@ from datetime import datetime
 from typing import TYPE_CHECKING, Any, TypeAlias, cast
 
 import numpy as np
+from numba import njit, prange
 from numpy.typing import ArrayLike, NDArray
 from stonesoup.base import Property
 from tqdm import tqdm
 
 from ..models.propagation import SpectrumPropagationModel
 from ..signal.anthropogenic import AnthropogenicSignal
-from ..signal.utils import apply_fade_in, apply_fade_out, inverse_stft
+from ..signal.utils import apply_fade_in, apply_fade_out
 from .base import PassiveSonarArraySimulatorBase, SensorBatch
 
 if TYPE_CHECKING:
@@ -80,6 +81,153 @@ def _hold_last_finite_delays(delay_history_s: FloatArray) -> FloatArray:
     return np.where(finite, delays, np.where(has_source, held, 0.0))
 
 
+@njit(cache=True, parallel=True)
+def _stft_interp_synthesis(
+    source_stft, H_hist, tau_hist, step_idx, alpha, frequencies, window, hop, trim, out
+):
+    """Synthesise every sensor's signal from frame-interpolated channels, in parallel.
+
+    Fuses ``_build_residual_channel_histories``, ``_interpolate_channel_from_residual_histories``
+    and ``inverse_stft`` into one loop per sensor, adding the channel and delay phases before a
+    single exponential. Each thread writes only its own sensor's row of ``out``.
+
+    Shapes: ``source_stft`` (targets, frames, bins), ``H_hist`` (targets, steps, sensors, bins),
+    ``tau_hist`` (targets, steps, sensors), ``out`` (sensors, samples). ``trim`` samples are
+    dropped from each end of the overlap-added signal, as ``inverse_stft`` does.
+    """
+    n_targets, n_steps, n_sensors, n_bins = H_hist.shape
+    n_frames = source_stft.shape[1]
+    frame_len = window.shape[0]
+    two_sided = n_bins == frame_len
+    two_pi = 2 * np.pi
+
+    for s in prange(n_sensors):
+        total = np.zeros((n_frames, n_bins), np.complex64)
+        mag = np.empty((n_steps, n_bins))
+        phase = np.empty((n_steps, n_bins))
+        for g in range(n_targets):
+            for k in range(n_steps):
+                for j in range(n_bins):
+                    residual = H_hist[g, k, s, j] * np.exp(
+                        2j * np.pi * tau_hist[g, k, s] * frequencies[j]
+                    )
+                    mag[k, j] = np.abs(residual)
+                    phase[k, j] = np.arctan2(residual.imag, residual.real)
+            # numpy.unwrap along the step axis, following its algorithm exactly so the
+            # unwrapped phases are identical to the vectorised implementation's.
+            for j in range(n_bins):
+                correction = 0.0
+                previous = phase[0, j]
+                for k in range(1, n_steps):
+                    current = phase[k, j]
+                    dd = current - previous
+                    ddmod = np.mod(dd + np.pi, two_pi) - np.pi
+                    if ddmod == -np.pi and dd > 0:
+                        ddmod = np.pi
+                    if abs(dd) >= np.pi:
+                        correction += ddmod - dd
+                    previous = current
+                    phase[k, j] = current + correction
+            for i in range(n_frames):
+                k = step_idx[i]
+                a = alpha[i]
+                w0 = 1.0 - a
+                tau = tau_hist[g, k, s] * w0 + tau_hist[g, k + 1, s] * a
+                for j in range(n_bins):
+                    m = mag[k, j] * w0 + mag[k + 1, j] * a
+                    p = phase[k, j] * w0 + phase[k + 1, j] * a - two_pi * tau * frequencies[j]
+                    total[i, j] += source_stft[g, i, j] * complex(m * np.cos(p), m * np.sin(p))
+
+        signal = np.zeros((n_frames - 1) * hop + frame_len, np.complex64)
+        window_sum = np.zeros(signal.shape[0], np.float32)
+        for i in range(n_frames):
+            start = i * hop
+            if two_sided:
+                frame = np.fft.ifft(total[i])
+                for n in range(frame_len):
+                    signal[start + n] += frame[n] * window[n]
+                    window_sum[start + n] += window[n] ** 2
+            else:
+                real_frame = np.fft.irfft(total[i], frame_len)
+                for n in range(frame_len):
+                    signal[start + n] += real_frame[n] * window[n]
+                    window_sum[start + n] += window[n] ** 2
+        for n in range(signal.shape[0]):
+            if window_sum[n] > 1e-10:
+                signal[n] /= window_sum[n]
+        out[s, :] = signal[trim : signal.shape[0] - trim]
+
+
+def _stft_interp_receiver(
+    ctx: _STFTCommonContext,
+    targets_data: list[_STFTTargetHistory],
+    step_idx: IntArray,
+    alpha: FloatArray,
+) -> Complex64Array:
+    """Return every sensor's reconstructed signal for ``stft_interp`` synthesis, before fades.
+
+    Parameters
+    ----------
+    ctx : _STFTCommonContext
+        Shared STFT context.
+    targets_data : list of _STFTTargetHistory
+        Per-target source and propagation histories.
+    step_idx : IntArray
+        Lower interpolation knot for each frame.
+    alpha : FloatArray
+        Interpolation fraction for each frame.
+
+    Returns
+    -------
+    Complex64Array
+        Receiver signals with shape ``(num_sensors, num_samples)``; zero when there are no
+        targets.
+
+    Raises
+    ------
+    ValueError
+        If ``ctx.num_freq_bins`` is neither a one-sided nor a two-sided spectrum of
+        ``ctx.frame_len``.
+
+    Notes
+    -----
+    Speed is bought with memory. The targets' channel histories are copied into one array for
+    the kernel (8 bytes per step, sensor and bin, per target: about 46 MB each at 180 steps,
+    64 sensors and 500 bins), and every Numba thread holds its own sensor's spectrum and
+    signal buffers. Both scale with the run, so long runs with many targets need the headroom;
+    ``NUMBA_NUM_THREADS`` caps the per-thread share.
+
+    """
+    # Overlap-adding ends a hop short of full coverage at each end, so those samples are
+    # trimmed, unless the signal is too short to spare them.
+    full_len = (ctx.num_frames - 1) * ctx.hop + ctx.frame_len
+    trim = ctx.hop if full_len > 2 * ctx.hop else 0
+    receiver = np.zeros((ctx.num_sensors, full_len - 2 * trim), dtype=np.complex64)
+    if not targets_data:
+        return receiver
+
+    onesided_bins = ctx.frame_len // 2 + 1
+    if ctx.num_freq_bins not in (ctx.frame_len, onesided_bins):
+        raise ValueError(
+            f"Invalid STFT shape ({ctx.num_frames}, {ctx.num_freq_bins}). Expected "
+            f"num_freq_bins to be {onesided_bins} (rFFT) or {ctx.frame_len} (FFT)."
+        )
+
+    _stft_interp_synthesis(
+        np.ascontiguousarray([t.source_stft for t in targets_data], dtype=np.complex64),
+        np.ascontiguousarray([t.H_hist for t in targets_data], dtype=np.complex64),
+        np.ascontiguousarray([t.tau_hist for t in targets_data], dtype=np.float64),
+        np.ascontiguousarray(step_idx),
+        np.ascontiguousarray(alpha, dtype=np.float64),
+        np.ascontiguousarray(ctx.frequencies, dtype=np.float64),
+        np.ascontiguousarray(ctx.window),
+        ctx.hop,
+        trim,
+        receiver,
+    )
+    return receiver
+
+
 class ContinuousSTFTPassiveSonarArraySimulator(PassiveSonarArraySimulatorBase):
     """Continuous broadband passive-sonar simulator with selectable STFT synthesis mode.
 
@@ -94,7 +242,8 @@ class ContinuousSTFTPassiveSonarArraySimulator(PassiveSonarArraySimulatorBase):
 
     - ``stft_interp``
         4. Sum target spectra in the frequency domain.
-        5. Reconstruct sensor time series with ``inverse_stft``.
+        5. Reconstruct sensor time series by inverse FFT and overlap-add, in one compiled pass
+           per sensor, with sensors processed in parallel.
 
     - ``wola_interp``
         4. IFFT each frame and accumulate with weighted overlap-add (WOLA).
@@ -367,9 +516,10 @@ class ContinuousSTFTPassiveSonarArraySimulator(PassiveSonarArraySimulatorBase):
                 )
                 tau_hist = np.zeros((ctx.n_steps, ctx.num_sensors), dtype=np.float64)
 
+                states_by_time = self._states_by_timestamp(target_path)
                 for step_idx, timestamp in enumerate(ctx.all_timestamps):
                     platform_state = self.platform.get_platform_state_at(timestamp)
-                    target_state = self._target_state_at(target_path, timestamp)
+                    target_state = states_by_time.get(timestamp)
                     if target_state is None:
                         bar.update(1)
                         continue
@@ -615,39 +765,7 @@ class ContinuousSTFTPassiveSonarArraySimulator(PassiveSonarArraySimulatorBase):
 
         """
         step_idx, alpha = self._frame_interp_indices(ctx)
-        receiver_signals = []
-
-        for sensor_idx in range(ctx.num_sensors):
-            stft_total = np.zeros((ctx.num_frames, ctx.num_freq_bins), dtype=np.complex64)
-
-            for target_data in targets_data:
-                H_mag_hist, H_phase_hist = self._build_residual_channel_histories(
-                    H_hist=np.asarray(target_data.H_hist[:, sensor_idx : sensor_idx + 1, :]),
-                    tau_hist=np.asarray(target_data.tau_hist[:, sensor_idx : sensor_idx + 1]),
-                    frequencies_hz=ctx.frequencies,
-                )
-                H_interp = self._interpolate_channel_from_residual_histories(
-                    H_mag_hist=H_mag_hist[:, 0, :],
-                    H_phase_hist=H_phase_hist[:, 0, :],
-                    tau_hist=np.asarray(target_data.tau_hist[:, sensor_idx], dtype=np.float64),
-                    step_idx=step_idx,
-                    alpha=alpha,
-                    frequencies_hz=ctx.frequencies,
-                )
-                stft_total += target_data.source_stft * H_interp
-
-            signal_reconstructed = inverse_stft(stft_total, ctx.frame_len, ctx.hop, ctx.window)
-            receiver_signals.append(np.asarray(signal_reconstructed, dtype=np.complex64))
-
-        max_len = max(len(sig) for sig in receiver_signals)
-        padded_signals = []
-        for signal in receiver_signals:
-            if len(signal) < max_len:
-                pad_len = max_len - len(signal)
-                signal = np.concatenate([signal, np.zeros(pad_len, dtype=np.complex64)])
-            padded_signals.append(signal)
-
-        receiver = np.asarray(padded_signals, dtype=np.complex64)
+        receiver = _stft_interp_receiver(ctx, targets_data, step_idx, alpha)
         receiver = self._apply_fades(receiver, ctx.fs, do_fade_out=False)
         return receiver, self._slice_uniform_step_samples(receiver, ctx.n_steps)
 
@@ -1044,9 +1162,10 @@ class ContinuousFractionalDelayPassiveSonarArraySimulator(PassiveSonarArraySimul
                 broadband_rms = np.zeros((n_steps, num_sensors), dtype=np.float64)
                 sensor_delay_history_s = np.zeros((n_steps, num_sensors), dtype=np.float64)
 
+                states_by_time = self._states_by_timestamp(target_path)
                 for step_idx, timestamp in enumerate(all_timestamps):
                     platform_state = self.platform.get_platform_state_at(timestamp)
-                    target_state = self._target_state_at(target_path, timestamp)
+                    target_state = states_by_time.get(timestamp)
                     if target_state is None:
                         bar.update(1)
                         continue
