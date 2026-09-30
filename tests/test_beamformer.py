@@ -460,7 +460,9 @@ def test_steering_calculator_returns_expected_horizontal_delays(monkeypatch) -> 
     beamformer = _load_beamformer_module(monkeypatch)
     calculator = beamformer.SteeringCalculator(
         ssp=ConstantSSP(1500.0),
-        steering_azimuths_rad=np.array([0.0, np.pi / 2]),
+        steering_sector_rad=(0.0, np.pi / 2),
+        num_beams=2,
+        frame="world",
     )
     platform = SimpleNamespace(
         array=SimpleNamespace(
@@ -500,14 +502,263 @@ def test_array_axis_is_wrapped_to_minus_pi_not_plus_pi(monkeypatch) -> None:
     assert beamformer.SteeringCalculator._array_axis_rad(platform) == -np.pi
 
 
-def test_steering_calculator_mirror_half_plane_rejects_non_uniform_grid(monkeypatch) -> None:
-    """A non-uniform or partial-circle grid cannot be mirror-paired."""
+def _rotated_array_platform(axis_rad: float, num_sensors: int = 8) -> SimpleNamespace:
+    """Build a fake straight array whose axis points along ``axis_rad``."""
+    offsets = np.arange(num_sensors, dtype=np.float64)
+    state_vector = np.array(
+        [offsets * np.cos(axis_rad), offsets * np.sin(axis_rad), np.full(num_sensors, -10.0)],
+    )
+    return SimpleNamespace(
+        array=SimpleNamespace(state_vector=state_vector, ref_state_vector=state_vector[:, [0]])
+    )
+
+
+def _steering_calculator(beamformer, sector, num_beams, **kwargs):
+    return beamformer.SteeringCalculator(
+        ssp=ConstantSSP(1500.0), steering_sector_rad=sector, num_beams=num_beams, **kwargs
+    )
+
+
+FULL_CIRCLE_8 = np.linspace(-np.pi, np.pi, 8, endpoint=False)
+
+
+@pytest.mark.parametrize(
+    ("sector", "num_beams", "expected"),
+    [
+        # A partial sector includes both endpoints.
+        ((-np.pi / 2, np.pi / 2), 5, np.linspace(-np.pi / 2, np.pi / 2, 5)),
+        # Anticlockwise from start to end, so this is the 90 deg wedge through pi, wrapped.
+        ((3 * np.pi / 4, -3 * np.pi / 4), 3, np.array([3 * np.pi / 4, -np.pi, -3 * np.pi / 4])),
+        # Every way of writing a full circle gives the same canonical grid from -pi.
+        ((-np.pi, np.pi), 8, FULL_CIRCLE_8),
+        ((0.0, 2 * np.pi), 8, FULL_CIRCLE_8),
+        ((np.pi, -np.pi), 8, FULL_CIRCLE_8),
+        ((np.pi / 2, -3 * np.pi / 2), 8, FULL_CIRCLE_8),
+    ],
+    ids=[
+        "half-plane",
+        "wedge-through-pi",
+        "full-minus-pi-to-pi",
+        "full-zero-to-two-pi",
+        "full-pi-to-minus-pi",
+        "full-quarter-offset",
+    ],
+)
+def test_uniform_steering_grid_follows_sector_rules(
+    monkeypatch, sector, num_beams, expected
+) -> None:
+    """Uniform grids apply the endpoint, direction and full-circle rules."""
     beamformer = _load_beamformer_module(monkeypatch)
 
-    with pytest.raises(ValueError, match="uniform, full-circle steering grid"):
+    calculator = _steering_calculator(beamformer, sector, num_beams, frame="world")
+
+    bearings = calculator.steering_bearings()
+
+    np.testing.assert_allclose(bearings, expected, atol=1e-12)
+    assert np.all((bearings >= -np.pi) & (bearings < np.pi))
+
+
+@pytest.mark.parametrize(
+    ("kwargs", "match"),
+    [
+        ({"steering_sector_rad": (0.0, 0.0)}, "is empty"),
+        ({"steering_sector_rad": (0.0, 3 * np.pi)}, "more than a full circle"),
+        ({"steering_sector_rad": (0.0, 1.0, 2.0)}, "must be \\(start, end\\)"),
+        ({"num_beams": 1}, "num_beams"),
+        ({"spacing": "log"}, "spacing"),
+        ({"spacing": "sine", "steering_sector_rad": (0.0, 3.5)}, "within one side"),
+        ({"spacing": "sine", "steering_sector_rad": (-0.2, 0.2)}, "crosses the array axis"),
+        ({"frame": "compass"}, "frame"),
+    ],
+    ids=[
+        "empty",
+        "over-full",
+        "three-values",
+        "one-beam",
+        "unknown-spacing",
+        "sine-too-wide",
+        "sine-crosses-axis",
+        "unknown-frame",
+    ],
+)
+def test_steering_calculator_rejects_invalid_grid(monkeypatch, kwargs, match) -> None:
+    """Invalid sectors, beam counts and spacings are rejected at construction."""
+    beamformer = _load_beamformer_module(monkeypatch)
+    settings = {"steering_sector_rad": (-np.pi, np.pi), "num_beams": 8, **kwargs}
+
+    with pytest.raises(ValueError, match=match):
+        beamformer.SteeringCalculator(ssp=ConstantSSP(1500.0), **settings)
+
+
+def test_steering_calculator_names_replacement_for_removed_azimuths(monkeypatch) -> None:
+    """The removed steering_azimuths_rad raises a TypeError that names its replacement."""
+    beamformer = _load_beamformer_module(monkeypatch)
+
+    with pytest.raises(TypeError, match="steering_sector_rad"):
+        beamformer.SteeringCalculator(
+            ssp=ConstantSSP(1500.0), steering_azimuths_rad=np.linspace(-1.0, 1.0, 5)
+        )
+
+
+@pytest.mark.parametrize(
+    ("sector", "broadside_rad"),
+    [
+        ((0.0, np.pi), np.pi / 2),  # endfire to endfire on the +y side
+        ((-np.pi / 2 - 0.3, -np.pi / 2 + 0.5), -np.pi / 2),  # part of the -y side
+    ],
+    ids=["endfire-to-endfire", "partial-other-side"],
+)
+def test_sine_steering_grid_is_evenly_spaced_in_sine_from_broadside(
+    monkeypatch, sector, broadside_rad
+) -> None:
+    """Sine spacing places beams evenly in sin(angle from broadside), sector ends included."""
+    beamformer = _load_beamformer_module(monkeypatch)
+    num_beams = 9
+    calculator = _steering_calculator(beamformer, sector, num_beams, spacing="sine", frame="world")
+
+    bearings = calculator.steering_bearings(_straight_array_platform())
+
+    u = np.sin(bearings - broadside_rad)
+    u_ends = np.sin(np.array(sector) - broadside_rad)
+    np.testing.assert_allclose(u, np.linspace(u_ends[0], u_ends[1], num_beams), atol=1e-12)
+    np.testing.assert_allclose(np.cos(bearings[[0, -1]] - np.array(sector)), 1.0, atol=1e-12)
+
+
+def test_sine_steering_grid_rejects_sector_crossing_the_axis(monkeypatch) -> None:
+    """A sine-spaced sector straddling the array axis cannot be spaced monotonically in u."""
+    beamformer = _load_beamformer_module(monkeypatch)
+    calculator = _steering_calculator(beamformer, (-0.2, 0.2), 5, spacing="sine", frame="world")
+
+    with pytest.raises(ValueError, match="crosses the array axis"):
+        calculator.steering_bearings(_straight_array_platform())
+
+
+@pytest.mark.parametrize(
+    ("spacing", "frame"), [("sine", "world"), ("uniform", "array")], ids=["world-sine", "array"]
+)
+def test_steering_grid_needs_a_platform(monkeypatch, spacing, frame) -> None:
+    """Grids that depend on the array's geometry raise when asked for without a platform."""
+    beamformer = _load_beamformer_module(monkeypatch)
+    calculator = _steering_calculator(beamformer, (0.0, np.pi), 5, spacing=spacing, frame=frame)
+
+    with pytest.raises(ValueError, match="platform"):
+        calculator.steering_bearings()
+
+
+def test_sine_steering_grid_is_fixed_while_the_heading_holds(monkeypatch) -> None:
+    """The first axis fixes the grid; reversed sensor order is fine, a turn raises."""
+    beamformer = _load_beamformer_module(monkeypatch)
+    calculator = _steering_calculator(beamformer, (0.0, np.pi), 9, spacing="sine", frame="world")
+    first = calculator.steering_bearings(_rotated_array_platform(0.0))
+
+    # Reversing the sensor order flips the axis by pi, which is the same line.
+    np.testing.assert_array_equal(
+        calculator.steering_bearings(_straight_array_platform(spacing_m=-1.0)), first
+    )
+    with pytest.raises(ValueError, match="has turned"):
+        calculator.calculate(_rotated_array_platform(0.05))
+
+
+def test_array_frame_sine_sector_across_the_axis_suggests_a_side(monkeypatch) -> None:
+    """A world-frame sector carried into the array frame gets a hint naming the fixes."""
+    beamformer = _load_beamformer_module(monkeypatch)
+
+    with pytest.raises(ValueError, match=r"STARBOARD.*PORT.*frame='world'"):
+        _steering_calculator(beamformer, (-np.pi / 2, np.pi / 2), 9, spacing="sine")
+
+
+def test_world_frame_sine_sector_across_the_axis_has_no_frame_hint(monkeypatch) -> None:
+    """The hint is about the array frame, so the world frame's error leaves it out."""
+    beamformer = _load_beamformer_module(monkeypatch)
+    calculator = _steering_calculator(
+        beamformer, (-np.pi / 2, np.pi / 2), 9, spacing="sine", frame="world"
+    )
+
+    with pytest.raises(ValueError, match="crosses the array axis") as excinfo:
+        calculator.steering_bearings(_rotated_array_platform(0.0))  # the axis along +x
+    assert "STARBOARD" not in str(excinfo.value)
+
+
+def test_array_forward_points_from_the_last_sensor_to_sensor_0(monkeypatch) -> None:
+    """Sensor 0 is the front of the array, so forward is the reverse of the sensor order."""
+    beamformer = _load_beamformer_module(monkeypatch)
+    platform = _rotated_array_platform(0.3)  # sensor 0 at the origin, the rest along 0.3 rad
+
+    forward = beamformer.SteeringCalculator._array_forward_rad(platform)
+
+    assert forward == pytest.approx(0.3 - np.pi)
+
+
+def test_named_sectors_are_the_tuples_they_stand_for(monkeypatch) -> None:
+    """PORT, STARBOARD and FULL_CIRCLE spell out sectors whose order is easy to get wrong."""
+    beamformer = _load_beamformer_module(monkeypatch)
+
+    assert beamformer.PORT == (0.0, np.pi)
+    assert beamformer.STARBOARD == (-np.pi, 0.0)
+    assert beamformer.FULL_CIRCLE == (-np.pi, np.pi)
+
+
+def test_reversed_starboard_endpoints_steer_port(monkeypatch) -> None:
+    """Sectors run anticlockwise from start to end, so (0, -pi) is port, not starboard."""
+    beamformer = _load_beamformer_module(monkeypatch)
+    platform = _straight_array_platform(spacing_m=-1.0)
+
+    reversed_bearings = _steering_calculator(beamformer, (0.0, -np.pi), 5).steering_bearings(
+        platform
+    )
+    port_bearings = _steering_calculator(beamformer, beamformer.PORT, 5).steering_bearings(
+        platform
+    )
+
+    np.testing.assert_allclose(np.sort(reversed_bearings), np.sort(port_bearings), atol=1e-12)
+
+
+@pytest.mark.parametrize(
+    ("side", "side_y_sign"),
+    [("STARBOARD", -1.0), ("PORT", 1.0)],
+    ids=["starboard", "port"],
+)
+def test_array_frame_sides_follow_the_sign_convention(monkeypatch, side, side_y_sign) -> None:
+    """Heading +x, STARBOARD (-pi, 0) points towards -y and PORT (0, pi) towards +y."""
+    beamformer = _load_beamformer_module(monkeypatch)
+    platform = _straight_array_platform(spacing_m=-1.0)  # sensor 0 in front, heading +x
+    sector = getattr(beamformer, side)
+
+    bearings = _steering_calculator(beamformer, sector, 5).steering_bearings(platform)
+
+    np.testing.assert_allclose(bearings[2], side_y_sign * np.pi / 2, atol=1e-12)
+    assert np.all(side_y_sign * np.sin(bearings) >= -1e-12)
+
+
+@pytest.mark.parametrize("spacing", ["uniform", "sine"])
+def test_array_frame_grid_turns_with_the_array(monkeypatch, spacing) -> None:
+    """Turning a straight array turns every bearing with it and leaves the delays unchanged.
+
+    For a sine grid this is what lets it steer through a turn, which the world frame refuses.
+    """
+    beamformer = _load_beamformer_module(monkeypatch)
+    calculator = _steering_calculator(beamformer, (0.0, np.pi), 9, spacing=spacing)
+    turn_rad = 1.1
+    before = _rotated_array_platform(0.0)
+    after = _rotated_array_platform(turn_rad)
+
+    rotation = calculator.steering_bearings(after) - calculator.steering_bearings(before)
+
+    np.testing.assert_allclose(np.angle(np.exp(1j * (rotation - turn_rad))), 0.0, atol=1e-12)
+    np.testing.assert_allclose(
+        calculator.calculate(after), calculator.calculate(before), rtol=1e-12, atol=1e-18
+    )
+
+
+def test_steering_calculator_mirror_half_plane_rejects_partial_sector(monkeypatch) -> None:
+    """A partial sector cannot be mirror-paired."""
+    beamformer = _load_beamformer_module(monkeypatch)
+
+    with pytest.raises(ValueError, match="full-circle steering_sector_rad"):
         beamformer.SteeringCalculator(
             ssp=ConstantSSP(1500.0),
-            steering_azimuths_rad=np.array([0.0, 0.5, 3.0]),
+            steering_sector_rad=(-np.pi / 2, np.pi / 2),
+            num_beams=9,
             mirror_half_plane=True,
         )
 
@@ -516,8 +767,7 @@ def test_mirror_plan_requires_mirror_half_plane(monkeypatch) -> None:
     """Calling mirror_plan() without the flag is a usage error, not a silent no-op."""
     beamformer = _load_beamformer_module(monkeypatch)
     calculator = beamformer.SteeringCalculator(
-        ssp=ConstantSSP(1500.0),
-        steering_azimuths_rad=np.linspace(-np.pi, np.pi, 8, endpoint=False),
+        ssp=ConstantSSP(1500.0), steering_sector_rad=(-np.pi, np.pi), num_beams=8
     )
 
     with pytest.raises(RuntimeError, match="mirror_half_plane=True"):
@@ -530,7 +780,8 @@ def test_steering_calculator_mirror_half_plane_computes_half_the_grid(monkeypatc
     num_beams = 16
     calculator = beamformer.SteeringCalculator(
         ssp=ConstantSSP(1500.0),
-        steering_azimuths_rad=np.linspace(-np.pi, np.pi, num_beams, endpoint=False),
+        steering_sector_rad=(-np.pi, np.pi),
+        num_beams=num_beams,
         mirror_half_plane=True,
     )
     platform = _straight_array_platform()
@@ -581,26 +832,34 @@ def test_expand_mirrored_applies_roll_shift(monkeypatch) -> None:
     np.testing.assert_array_equal(expanded, np.roll(axis_centred, 2, axis=0))
 
 
-def test_delay_and_sum_mirror_plan_matches_full_grid_for_straight_array(monkeypatch) -> None:
+@pytest.mark.parametrize(
+    "sector",
+    [(-np.pi, np.pi), (0.0, 2 * np.pi), (np.pi / 2, -3 * np.pi / 2)],
+    ids=["minus-pi-to-pi", "zero-to-two-pi", "quarter-offset"],
+)
+def test_delay_and_sum_mirror_plan_matches_full_grid_for_straight_array(
+    monkeypatch, sector
+) -> None:
     """For a straight array, mirrored beamforming should match a full-grid computation.
 
     The array here lies exactly on its axis (0 rad), so the reconstruction has no
     rotation/roll approximation to absorb -- this isolates the mirror-pairing logic
     itself and should match a full 360 deg computation to floating-point precision.
+    Every way of writing a full circle must match: mirror pairing is only exact when beam
+    0 lies on the array axis, which the canonical full circle guarantees (issue #98).
     """
     beamformer = _load_beamformer_module(monkeypatch)
     platform = _straight_array_platform(num_sensors=8, spacing_m=1.0)
     num_beams = 16
-    grid = np.linspace(-np.pi, np.pi, num_beams, endpoint=False)
     sound_speed = 1500.0
+    full_calculator = beamformer.SteeringCalculator(
+        ssp=ConstantSSP(sound_speed), steering_sector_rad=sector, num_beams=num_beams
+    )
+    full_delays = full_calculator.calculate(platform)
 
     # A coherent tone arriving from one of the primary grid's own bearings, built from the
     # exact geometric delay for that direction -- a physically consistent plane wave.
-    theta0 = grid[2]
-    source_calculator = beamformer.SteeringCalculator(
-        ssp=ConstantSSP(sound_speed), steering_azimuths_rad=np.array([theta0])
-    )
-    source_delay_s = source_calculator.calculate(platform)[0]
+    source_delay_s = full_delays[2]
 
     fs = 500.0
     num_samples = 256
@@ -614,13 +873,13 @@ def test_delay_and_sum_mirror_plan_matches_full_grid_for_straight_array(monkeypa
     )
     das = beamformer.DelayAndSumBeamformer(**das_kwargs)
 
-    full_calculator = beamformer.SteeringCalculator(
-        ssp=ConstantSSP(sound_speed), steering_azimuths_rad=grid
-    )
-    full_power = das.beamform(raw_signals, full_calculator.calculate(platform))
+    full_power = das.beamform(raw_signals, full_delays)
 
     mirror_calculator = beamformer.SteeringCalculator(
-        ssp=ConstantSSP(sound_speed), steering_azimuths_rad=grid, mirror_half_plane=True
+        ssp=ConstantSSP(sound_speed),
+        steering_sector_rad=sector,
+        num_beams=num_beams,
+        mirror_half_plane=True,
     )
     half_delays = mirror_calculator.calculate(platform)
     plan = mirror_calculator.mirror_plan(platform)
@@ -628,3 +887,68 @@ def test_delay_and_sum_mirror_plan_matches_full_grid_for_straight_array(monkeypa
 
     assert mirrored_power.shape == full_power.shape
     np.testing.assert_allclose(mirrored_power, full_power, rtol=1e-9, atol=1e-9)
+
+
+def test_world_frame_mirror_plan_offsets_every_beam_when_the_axis_is_off_grid(monkeypatch) -> None:
+    """Off the grid, world-frame mirroring steers every beam at its bearing plus a remainder.
+
+    roll_shift rounds the axis to whole beams, so the expanded output matches direct steering
+    at the grid shifted by the uncorrected remainder, not the grid itself (issue #99).
+    """
+    beamformer = _load_beamformer_module(monkeypatch)
+    num_beams = 16
+    beam_spacing_rad = 2 * np.pi / num_beams
+    axis_rad = 0.3 * beam_spacing_rad
+    platform = _rotated_array_platform(axis_rad)
+    rng = np.random.default_rng(0)
+    raw_signals = rng.standard_normal((8, 256)) + 1j * rng.standard_normal((8, 256))
+    das = beamformer.DelayAndSumBeamformer(
+        sampling_rate_hz=500.0,
+        domain="broadband_power",
+        nfft=64,
+        overlap=32,
+        fmin=50.0,
+        fmax=150.0,
+    )
+    mirror = _steering_calculator(
+        beamformer, (-np.pi, np.pi), num_beams, mirror_half_plane=True, frame="world"
+    )
+    plan = mirror.mirror_plan(platform)
+    mirrored = das.beamform(raw_signals, mirror.calculate(platform), mirror_plan=plan)
+
+    remainder_rad = axis_rad - plan.roll_shift * beam_spacing_rad
+    shifted = mirror.steering_bearings() + remainder_rad
+    direct = das.beamform(raw_signals, mirror._delays_for_azimuths(platform, shifted))
+
+    assert remainder_rad != 0.0
+    np.testing.assert_allclose(mirrored, direct, rtol=1e-9, atol=1e-9)
+
+
+def test_array_frame_mirror_plan_is_exact_when_the_axis_is_off_grid(monkeypatch) -> None:
+    """In the array frame the mirrored output matches direct steering at the grid itself.
+
+    Beam 0 always lies on the array axis, so no roll back onto the grid is needed and the
+    world frame's off-grid offset (issue #99) does not arise.
+    """
+    beamformer = _load_beamformer_module(monkeypatch)
+    num_beams = 16
+    platform = _rotated_array_platform(0.3 * 2 * np.pi / num_beams)
+    rng = np.random.default_rng(0)
+    raw_signals = rng.standard_normal((8, 256)) + 1j * rng.standard_normal((8, 256))
+    das = beamformer.DelayAndSumBeamformer(
+        sampling_rate_hz=500.0,
+        domain="broadband_power",
+        nfft=64,
+        overlap=32,
+        fmin=50.0,
+        fmax=150.0,
+    )
+    mirror = _steering_calculator(beamformer, (-np.pi, np.pi), num_beams, mirror_half_plane=True)
+    plan = mirror.mirror_plan(platform)
+    mirrored = das.beamform(raw_signals, mirror.calculate(platform), mirror_plan=plan)
+
+    bearings = mirror.steering_bearings(platform)
+    direct = das.beamform(raw_signals, mirror._delays_for_azimuths(platform, bearings))
+
+    assert plan.roll_shift == 0
+    np.testing.assert_allclose(mirrored, direct, rtol=1e-9, atol=1e-9)

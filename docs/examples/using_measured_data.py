@@ -56,6 +56,7 @@ from bluepebble.plotter import (
 from bluepebble.signal.anthropogenic import SyntheticAnthropogenicSignal
 from bluepebble.signal.random import ColouredNoiseSignal
 from bluepebble.sigproc import (
+    FULL_CIRCLE,
     MinimumVarianceDistortionlessResponseBeamformer,
     SteeringCalculator,
 )
@@ -419,7 +420,7 @@ for _ in target_ground_truths:
 # This section sets the beamforming parameters and builds the steering calculator.
 # An MVDR beamformer is used.
 
-steering_azimuths_rad = np.linspace(-np.pi, np.pi, 180, endpoint=False)
+num_beams = 180
 fmin = 120.0
 fmax = 250.0
 
@@ -431,7 +432,8 @@ beamformer = MinimumVarianceDistortionlessResponseBeamformer(
 
 steering_calculator = SteeringCalculator(
     ssp=ssp,
-    steering_azimuths_rad=steering_azimuths_rad,
+    steering_sector_rad=FULL_CIRCLE,
+    num_beams=num_beams,
 )
 
 # %%
@@ -501,7 +503,6 @@ NoiseCalibrator(cfar_detector).calibrate_from_noise(noise_scans)
 detector = PassiveSonarDetector(
     detector=cfar_detector,
     sensor_data_gen=simulator.sensor_data_gen(progress_bar=True),
-    steering_azimuths_rad=steering_azimuths_rad,
 )
 
 # %%
@@ -515,7 +516,7 @@ all_detections = list(detector.detections_gen(progress_bar=True, total_timesteps
 reported_snr = detector.reported_snr_history
 
 timesteps = [start_time + i * time_interval for i in range(num_steps)]
-steering_azimuths_deg = np.rad2deg(steering_azimuths_rad)
+steering_azimuths_deg = np.rad2deg(detector.steering_bearings_history)
 
 detections = [d for _, detection_set in all_detections for d in detection_set]
 print(f"Total no. of detections: {len(detections)}")

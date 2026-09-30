@@ -46,6 +46,7 @@ from bluepebble.plotter import apply_shared_colourscale, deduplicate_legend, plo
 from bluepebble.signal.anthropogenic import SyntheticAnthropogenicSignal
 from bluepebble.signal.random import ColouredNoiseSignal
 from bluepebble.sigproc import (
+    FULL_CIRCLE,
     DelayAndSumBeamformer,
     FrequencyBand,
     SteeringCalculator,
@@ -86,7 +87,6 @@ array_depth_m = -50.0
 array_aperture_m = (num_sensors - 1) * sensor_spacing_m
 
 num_beams = 120
-steering_azimuths_rad = np.linspace(-np.pi, np.pi, num_beams, endpoint=False)
 beam_spacing_deg = 360.0 / num_beams
 
 band_fmin_hz = 50.0
@@ -393,7 +393,8 @@ beamformer = DelayAndSumBeamformer(
 )
 steering_calculator = SteeringCalculator(
     ssp=ssp,
-    steering_azimuths_rad=steering_azimuths_rad,
+    steering_sector_rad=FULL_CIRCLE,
+    num_beams=num_beams,
     mirror_half_plane=True,
 )
 
@@ -460,7 +461,6 @@ band_detectors = {
 detector = MultibandPassiveSonarDetector(
     band_detectors=band_detectors,
     sensor_data_gen=simulator.sensor_data_gen(),
-    steering_azimuths_rad=steering_azimuths_rad,
 )
 
 detections_by_band: dict[str, list] = {label: [] for label in labels}
@@ -472,6 +472,7 @@ for _timestamp, batch in detector.detections_gen(progress_bar=True, total_timest
 
 snr_maps = detector.reported_snr_history
 map_rows = min(len(timesteps), next(iter(snr_maps.values())).shape[0])
+steering_azimuths_deg = np.rad2deg(detector.steering_bearings_history[:map_rows])
 
 total_per_band = sum(len(dets) for dets in detections_by_band.values())
 print(f"{total_per_band} per-band detections, {len(collapsed_detections)} collapsed detections")
@@ -501,7 +502,7 @@ for col, band in enumerate(view_bands, start=1):
     plot_btr(
         data=snr_maps[band.label][:map_rows],
         timesteps=np.array(timesteps[:map_rows]),
-        steering_azimuths=np.rad2deg(steering_azimuths_rad),
+        steering_azimuths=steering_azimuths_deg,
         fig=fig_bands,
         row=1,
         col=col,
@@ -511,7 +512,7 @@ for col, band in enumerate(view_bands, start=1):
         truths=bearing_truths,
         detections=detections_by_band[band.label],
         timesteps=np.array(timesteps[:map_rows]),
-        steering_azimuths=np.rad2deg(steering_azimuths_rad),
+        steering_azimuths=steering_azimuths_deg,
         fig=fig_bands,
         row=2,
         col=col,
@@ -525,7 +526,7 @@ for col, band in enumerate(view_bands, start=1):
 plot_btr(
     data=None,
     timesteps=np.array(timesteps[:map_rows]),
-    steering_azimuths=np.rad2deg(steering_azimuths_rad),
+    steering_azimuths=steering_azimuths_deg,
     fig=fig_bands,
     row=1,
     col=len(view_bands) + 1,
@@ -535,7 +536,7 @@ plot_btr(
     truths=bearing_truths,
     detections=collapsed_detections,
     timesteps=np.array(timesteps[:map_rows]),
-    steering_azimuths=np.rad2deg(steering_azimuths_rad),
+    steering_azimuths=steering_azimuths_deg,
     fig=fig_bands,
     row=2,
     col=len(view_bands) + 1,

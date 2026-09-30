@@ -145,3 +145,52 @@ def test_types_package_exports_passive_sonar_sensor_data(monkeypatch):
 
     assert "PassiveSonarSensorData" in types_module.__all__
     assert types_module.PassiveSonarSensorData is sensordata_module.PassiveSonarSensorData
+
+
+@pytest.mark.parametrize(
+    ("beamformed_shape", "band_labels"),
+    [((3, 4), None), ((2, 3, 4), ["70-80 Hz", "95-105 Hz"])],
+    ids=["single-band", "multiband"],
+)
+def test_passive_sonar_sensor_data_stores_one_bearing_per_beam(
+    monkeypatch, beamformed_shape, band_labels
+):
+    """Bearings match the beam axis: the first, or the second behind a band axis."""
+    sensordata_module, _ = _load_types_modules(monkeypatch)
+    payload_cls = sensordata_module.PassiveSonarSensorData
+    bearings = np.array([-0.5, 0.0, 0.5])
+
+    payload = payload_cls(
+        raw_signals=np.zeros((1, 4), dtype=np.complex64),
+        beamformed_data=np.zeros(beamformed_shape, dtype=np.float64),
+        timestamp=datetime(2026, 1, 1, 12, 0, 0),
+        band_labels=band_labels,
+        steering_bearings_rad=bearings,
+    )
+
+    np.testing.assert_array_equal(payload.steering_bearings_rad, bearings)
+
+
+@pytest.mark.parametrize(
+    ("beamformed_data", "bearings", "match"),
+    [
+        (None, np.zeros(3), "without any beamformed_data"),
+        (np.zeros((3, 4)), np.zeros(4), "one bearing per beam"),
+        (np.zeros((3, 4)), np.zeros((3, 1)), "one bearing per beam"),
+    ],
+    ids=["no-data", "wrong-count", "not-1d"],
+)
+def test_passive_sonar_sensor_data_rejects_mismatched_bearings(
+    monkeypatch, beamformed_data, bearings, match
+):
+    """Bearings that don't line up with the beams would mislabel every detection."""
+    sensordata_module, _ = _load_types_modules(monkeypatch)
+    payload_cls = sensordata_module.PassiveSonarSensorData
+
+    with pytest.raises(ValueError, match=match):
+        payload_cls(
+            raw_signals=np.zeros((1, 4), dtype=np.complex64),
+            beamformed_data=beamformed_data,
+            timestamp=datetime(2026, 1, 1, 12, 0, 0),
+            steering_bearings_rad=bearings,
+        )

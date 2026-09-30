@@ -34,7 +34,9 @@ class MirrorPlan:
     involution, so ``mirror_idx[mirror_idx[k]] == k`` for every ``k``."""
 
     roll_shift: int
-    """Bins to roll the axis-centred reconstruction back onto the original steering grid."""
+    """Bins to roll the axis-centred reconstruction back onto the original steering grid: the
+    array axis rounded to whole beams. The remainder is not corrected, so it offsets every
+    beam's bearing; see ``SteeringCalculator.mirror_half_plane``."""
 
 
 def _stft(x: ArrayLike, nfft: int, overlap: int) -> ComplexArray:
@@ -182,12 +184,15 @@ class Beamformer(Base, ABC):
     ) -> BeamformerOutput:
         """Expand a half-plane beamformer output to the full steering grid.
 
-        The reconstruction is an exact index lookup, not an interpolation: each beam in
-        the mirrored half is a copy of its exact mirror partner from the primary half (see
-        ``SteeringCalculator.mirror_half_plane``), rolled back onto the original steering
-        grid. It applies uniformly to any beamformer output shape, complex time/frequency
-        signals or real-valued power maps, single-band or multiband. Mirroring is a
-        property of the steering delays themselves, not of what's done with them.
+        The reconstruction is an index lookup, not an interpolation: each beam in the
+        mirrored half is a copy of its exact mirror partner from the primary half, rolled back
+        onto the original steering grid by whole beams. The roll cannot represent the part of
+        the array axis between grid bearings, so unless the axis falls on the grid every beam
+        is offset from its grid bearing by up to half a beam spacing (see
+        ``SteeringCalculator.mirror_half_plane``). It applies uniformly to any beamformer
+        output shape, complex time/frequency signals or real-valued power maps, single-band or
+        multiband. Mirroring is a property of the steering delays themselves, not of what's
+        done with them.
 
         Parameters
         ----------
