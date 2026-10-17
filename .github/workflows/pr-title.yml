@@ -1,0 +1,30 @@
+name: PR title
+
+# Separate from CI so renaming a PR ("edited") re-checks the title without rerunning the tests.
+# "synchronize" is still needed, since a required check must report on every new head commit.
+on:
+  pull_request:
+    branches: [ main ]
+    types: [ opened, edited, synchronize, reopened ]
+
+jobs:
+  pr-title:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Validate PR title
+        env:
+          PR_TITLE: ${{ github.event.pull_request.title }}
+        run: |
+          printf 'PR_TITLE=<%s>\n' "$PR_TITLE"
+          pattern='^(feat|fix|docs|style|refactor|perf|test|build|ci|chore)(\([^)]+\))?(!)?: .+$'
+          if printf '%s' "$PR_TITLE" | grep -Eq "$pattern"; then
+            echo "PR title is a valid Conventional Commit: $PR_TITLE"
+          else
+            echo "PR title must follow Conventional Commits."
+            echo "Use: type(scope): summary"
+            echo "Scope is encouraged but not required."
+            echo "Examples:"
+            echo "  ci: add pytest step to workflow"
+            echo "  fix(plotter): handle empty detections"
+            exit 1
+          fi
