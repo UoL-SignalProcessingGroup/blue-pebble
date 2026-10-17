@@ -29,12 +29,15 @@
     "customizations": {
         "vscode": {
             "settings": {
-                "python.defaultInterpreterPath": "/usr/local/bin/python"
+                "python.defaultInterpreterPath": "/usr/local/bin/python",
+                // Pyrefly is the project's type checker (see pyproject.toml), so Pylance is off.
+                "python.languageServer": "None"
             },
             "extensions": [
                 "ms-python.python",
                 "ms-toolsai.jupyter",
                 "charliermarsh.ruff",
+                "meta.pyrefly",
                 "ritwickdey.live"
             ]
         }
