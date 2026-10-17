@@ -1138,9 +1138,7 @@ class ContinuousFractionalDelayPassiveSonarArraySimulator(PassiveSonarArraySimul
         sample_times_s = np.arange(out_len, dtype=np.float64) / fs
         receiver_accum = np.zeros((num_sensors, out_len), dtype=np.complex64)
 
-        if ground_truth_paths and not isinstance(
-            self.propagation_model, SpectrumPropagationModel
-        ):
+        if ground_truth_paths and not isinstance(self.propagation_model, SpectrumPropagationModel):
             msg = (
                 f"{type(self.propagation_model).__name__} does not implement "
                 "'propagate_spectrum', which is required for STFT-based simulation"
