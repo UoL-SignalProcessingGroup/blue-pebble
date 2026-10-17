@@ -172,9 +172,7 @@ def test_beam_power_does_not_square_real_power_input(monkeypatch) -> None:
     amplitude = np.array([[1.0 + 0.0j], [3.0 + 0.0j]])
     real_power = np.abs(amplitude) ** 2
 
-    np.testing.assert_allclose(
-        passive.beam_power(amplitude), passive.beam_power(real_power)
-    )
+    np.testing.assert_allclose(passive.beam_power(amplitude), passive.beam_power(real_power))
 
 
 def test_snr_is_zero_db_when_every_beam_carries_equal_power(monkeypatch) -> None:
@@ -182,9 +180,7 @@ def test_snr_is_zero_db_when_every_beam_carries_equal_power(monkeypatch) -> None
     passive = _load_passive_detector_module(monkeypatch)
     data = np.array([[2.0 + 0.0j], [2.0 + 0.0j], [2.0 + 0.0j]])
 
-    np.testing.assert_allclose(
-        passive.beam_snr(data, percentile=50), np.zeros(3), atol=1e-6
-    )
+    np.testing.assert_allclose(passive.beam_snr(data, percentile=50), np.zeros(3), atol=1e-6)
 
 
 def test_percentile_50_is_the_median_reference(monkeypatch) -> None:

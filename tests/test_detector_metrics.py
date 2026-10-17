@@ -457,9 +457,7 @@ def test_clone_detector_with_param_recalibrates_instead_of_reusing_stale_alpha(
     base.detect(np.zeros((50, 1)))  # warms _alpha_cache[1] at target_pfa=1e-2
     stale_alpha = base._alpha_cache[1]
 
-    spec = metrics.SweepSpec(
-        detector=base, param_name="target_pfa", param_values=np.array([1e-4])
-    )
+    spec = metrics.SweepSpec(detector=base, param_name="target_pfa", param_values=np.array([1e-4]))
     clone = metrics._clone_detector_with_param(spec, 1e-4)
 
     assert clone._alpha_cache == {}
@@ -644,11 +642,21 @@ def test_os_cfar_roc_multilook_is_deterministic_given_fixed_seed(monkeypatch) ->
     pfa_values = [1e-1, 1e-2]
 
     r1 = fluctuation_models.os_cfar_roc(
-        pfa_values, 20, 15, num_frames=5, snr_linear=1.0, num_trials=10_000,
+        pfa_values,
+        20,
+        15,
+        num_frames=5,
+        snr_linear=1.0,
+        num_trials=10_000,
         rng=np.random.default_rng(0),
     )
     r2 = fluctuation_models.os_cfar_roc(
-        pfa_values, 20, 15, num_frames=5, snr_linear=1.0, num_trials=10_000,
+        pfa_values,
+        20,
+        15,
+        num_frames=5,
+        snr_linear=1.0,
+        num_trials=10_000,
         rng=np.random.default_rng(0),
     )
 
@@ -815,7 +823,9 @@ def test_snr_linear_from_ground_truth_bearing_finds_nearest_beam(monkeypatch) ->
     data = _complex_gaussian_amplitude(rng, (180, 200), power=1.0)
 
     _snr_linear_hat, cut_index = metrics.snr_linear_from_ground_truth_bearing(
-        data, true_bearing_rad=steering[47] + 1e-3, steering_azimuths_rad=steering,
+        data,
+        true_bearing_rad=steering[47] + 1e-3,
+        steering_azimuths_rad=steering,
         validation_guard_bins=5,
     )
 
@@ -835,7 +845,9 @@ def test_snr_linear_from_ground_truth_bearing_is_wrap_aware(monkeypatch) -> None
     true_bearing = np.pi - 1e-3  # infinitesimally less than +pi -- effectively at the seam
 
     _snr_linear_hat, cut_index = metrics.snr_linear_from_ground_truth_bearing(
-        data, true_bearing_rad=true_bearing, steering_azimuths_rad=steering,
+        data,
+        true_bearing_rad=true_bearing,
+        steering_azimuths_rad=steering,
         validation_guard_bins=5,
     )
 
@@ -856,7 +868,9 @@ def test_snr_linear_from_ground_truth_bearing_recovers_known_snr_linear(monkeypa
     data[target_idx] = _complex_gaussian_amplitude(rng, (20_000,), power=1.0 + true_snr_linear)
 
     snr_linear_hat, cut_index = metrics.snr_linear_from_ground_truth_bearing(
-        data, true_bearing_rad=steering[target_idx], steering_azimuths_rad=steering,
+        data,
+        true_bearing_rad=steering[target_idx],
+        steering_azimuths_rad=steering,
         validation_guard_bins=5,
     )
 
@@ -875,7 +889,9 @@ def test_snr_linear_from_ground_truth_bearing_rejects_guard_bins_covering_whole_
 
     with pytest.raises(ValueError, match="excludes the entire array"):
         metrics.snr_linear_from_ground_truth_bearing(
-            data, true_bearing_rad=steering[0], steering_azimuths_rad=steering,
+            data,
+            true_bearing_rad=steering[0],
+            steering_azimuths_rad=steering,
             validation_guard_bins=200,
         )
 

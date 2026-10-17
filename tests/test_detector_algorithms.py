@@ -264,9 +264,7 @@ def test_oscfar_detector_validates_rank(monkeypatch) -> None:
     algorithms = _load_detector_algorithms(monkeypatch)
 
     with pytest.raises(ValueError, match="Rank"):
-        algorithms.OSCFARDetector(
-            num_guard_cells=0, num_training_cells=2, rank=5, target_pfa=0.1
-        )
+        algorithms.OSCFARDetector(num_guard_cells=0, num_training_cells=2, rank=5, target_pfa=0.1)
 
 
 def test_oscfar_detector_warns_on_low_rank(monkeypatch) -> None:
@@ -274,9 +272,7 @@ def test_oscfar_detector_warns_on_low_rank(monkeypatch) -> None:
     algorithms = _load_detector_algorithms(monkeypatch)
 
     with pytest.warns(UserWarning, match="likely underestimates the noise floor"):
-        algorithms.OSCFARDetector(
-            num_guard_cells=0, num_training_cells=2, rank=1, target_pfa=0.1
-        )
+        algorithms.OSCFARDetector(num_guard_cells=0, num_training_cells=2, rank=1, target_pfa=0.1)
 
 
 # --------------------------------------------------------------------------
@@ -357,9 +353,7 @@ def _fixed_and_calibrated_detectors(algorithms, calibration):
     fixed = algorithms.CACFARDetector(
         num_guard_cells=0, num_training_cells=1, threshold_factor=2.0
     )
-    calibrated = algorithms.CACFARDetector(
-        num_guard_cells=0, num_training_cells=1, target_pfa=0.1
-    )
+    calibrated = algorithms.CACFARDetector(num_guard_cells=0, num_training_cells=1, target_pfa=0.1)
     _calibrate(calibrated, calibration, seed=3)
     return fixed, calibrated
 
@@ -435,9 +429,7 @@ def test_switching_modes_by_setattr_works_once_the_final_state_is_valid(monkeypa
 def test_cacfar_detector_detects_isolated_peak(monkeypatch) -> None:
     """CA-CFAR should detect a strong isolated beam above a zero-power background."""
     algorithms, calibration = _load_detector_algorithms_and_calibration(monkeypatch)
-    detector = algorithms.CACFARDetector(
-        num_guard_cells=0, num_training_cells=1, target_pfa=0.5
-    )
+    detector = algorithms.CACFARDetector(num_guard_cells=0, num_training_cells=1, target_pfa=0.5)
     _calibrate(detector, calibration, seed=1)
 
     detections = detector.detect(np.array([[0.0], [0.0], [20.0], [0.0], [0.0]]))
@@ -449,9 +441,7 @@ def test_cacfar_detector_detects_isolated_peak(monkeypatch) -> None:
 def test_cacfar_detector_returns_no_detections_on_flat_signal(monkeypatch) -> None:
     """A uniform (all-zero) background should produce no detections."""
     algorithms, calibration = _load_detector_algorithms_and_calibration(monkeypatch)
-    detector = algorithms.CACFARDetector(
-        num_guard_cells=0, num_training_cells=2, target_pfa=0.3
-    )
+    detector = algorithms.CACFARDetector(num_guard_cells=0, num_training_cells=2, target_pfa=0.3)
     _calibrate(detector, calibration, seed=2)
 
     detections = detector.detect(np.zeros((7, 1)))
@@ -462,9 +452,7 @@ def test_cacfar_detector_returns_no_detections_on_flat_signal(monkeypatch) -> No
 def test_cacfar_default_is_circular_and_detects_edge_peak(monkeypatch) -> None:
     """The default (circular=True) mode should wrap training cells across the array edge."""
     algorithms, calibration = _load_detector_algorithms_and_calibration(monkeypatch)
-    detector = algorithms.CACFARDetector(
-        num_guard_cells=0, num_training_cells=1, target_pfa=0.5
-    )
+    detector = algorithms.CACFARDetector(num_guard_cells=0, num_training_cells=1, target_pfa=0.5)
     _calibrate(detector, calibration, seed=3)
 
     detections = detector.detect(np.array([[20.0], [0.0], [0.0], [0.0], [0.0]]))
@@ -496,9 +484,7 @@ def test_cacfar_non_circular_mode_folds_edge_peak_into_its_own_noise_estimate(
 def test_cacfar_handles_training_window_larger_than_input(monkeypatch) -> None:
     """Short inputs should not crash even when the training window exceeds the data length."""
     algorithms, calibration = _load_detector_algorithms_and_calibration(monkeypatch)
-    detector = algorithms.CACFARDetector(
-        num_guard_cells=0, num_training_cells=4, target_pfa=0.5
-    )
+    detector = algorithms.CACFARDetector(num_guard_cells=0, num_training_cells=4, target_pfa=0.5)
     _calibrate(detector, calibration, seed=5)
 
     detections = detector.detect(np.array([[0.0], [20.0], [0.0]]))
@@ -510,9 +496,7 @@ def test_cacfar_handles_training_window_larger_than_input(monkeypatch) -> None:
 def test_cacfar_alpha_is_memoized_per_num_frames(monkeypatch) -> None:
     """Alpha calibration should be cached per num_frames rather than recomputed every call."""
     algorithms, calibration = _load_detector_algorithms_and_calibration(monkeypatch)
-    detector = algorithms.CACFARDetector(
-        num_guard_cells=0, num_training_cells=1, target_pfa=0.5
-    )
+    detector = algorithms.CACFARDetector(num_guard_cells=0, num_training_cells=1, target_pfa=0.5)
     _calibrate(detector, calibration, seed=6)
     data = np.array([[0.0], [0.0], [20.0], [0.0], [0.0]])
 
@@ -527,9 +511,7 @@ def test_cacfar_alpha_is_memoized_per_num_frames(monkeypatch) -> None:
 def test_snr_map_matches_detect_output_values(monkeypatch) -> None:
     """detection_snr_map should report the same per-beam SNR values that detect() surfaces."""
     algorithms, calibration = _load_detector_algorithms_and_calibration(monkeypatch)
-    detector = algorithms.CACFARDetector(
-        num_guard_cells=0, num_training_cells=1, target_pfa=0.5
-    )
+    detector = algorithms.CACFARDetector(num_guard_cells=0, num_training_cells=1, target_pfa=0.5)
     _calibrate(detector, calibration, seed=7)
     data = np.array([[0.0], [0.0], [20.0], [0.0], [0.0]])
 
@@ -633,9 +615,7 @@ def test_oscfar_peak_prominence_suppresses_low_prominence_shoulder(monkeypatch) 
         circular=False,
     )
 
-    np.testing.assert_array_equal(
-        permissive._consolidate_peaks(snr_db, candidate_mask, 5), [1, 3]
-    )
+    np.testing.assert_array_equal(permissive._consolidate_peaks(snr_db, candidate_mask, 5), [1, 3])
     np.testing.assert_array_equal(strict._consolidate_peaks(snr_db, candidate_mask, 5), [1])
 
 
@@ -800,7 +780,10 @@ def test_calibrated_alpha_achieves_target_pfa_on_matching_data(monkeypatch, effe
     target_pfa, num_training_total, rank, num_frames = 0.05, 20, 15, 4
 
     alpha = fluctuation_models.solve_os_cfar_alpha(
-        target_pfa, num_training_total, rank, num_frames,
+        target_pfa,
+        num_training_total,
+        rank,
+        num_frames,
         effective_looks_per_frame=effective_looks,
     )
 
@@ -903,9 +886,11 @@ def test_cut_power_at_zero_snr_collapses_to_the_noise_only_model(monkeypatch, mo
     model = getattr(fluctuation_models, model_name)()
     noise_looks, num_frames = 26.5, 8
 
-    h0 = np.random.default_rng(1).gamma(
-        noise_looks, 1.0 / noise_looks, size=(200_000, num_frames)
-    ).mean(axis=1)
+    h0 = (
+        np.random.default_rng(1)
+        .gamma(noise_looks, 1.0 / noise_looks, size=(200_000, num_frames))
+        .mean(axis=1)
+    )
     cut = model.cut_power_samples(
         200_000, num_frames, 0.0, np.random.default_rng(2), noise_looks, 2.06
     )
@@ -956,8 +941,8 @@ def test_rayleigh_cut_power_defaults_reproduce_the_single_look_model(monkeypatch
     _algorithms, fluctuation_models = _load_fluctuation_models(monkeypatch)
     snr, num_frames, trials = 1.5, 5, 50_000
 
-    legacy = np.random.default_rng(5).exponential(1.0 + snr, size=(trials, num_frames)).mean(
-        axis=1
+    legacy = (
+        np.random.default_rng(5).exponential(1.0 + snr, size=(trials, num_frames)).mean(axis=1)
     )
     current = fluctuation_models.RayleighFluctuation().cut_power_samples(
         trials, num_frames, snr, np.random.default_rng(5)
@@ -999,9 +984,15 @@ def test_pd_at_zero_snr_recovers_the_calibrated_pfa_under_the_mixture(monkeypatc
         target_pfa, ntt, rank, num_frames, effective_looks_per_frame=noise_looks
     )
     pd_at_zero = model.os_cfar_pd(
-        alpha, ntt, rank, num_frames, 0.0, num_trials=200_000,
+        alpha,
+        ntt,
+        rank,
+        num_frames,
+        0.0,
+        num_trials=200_000,
         rng=np.random.default_rng(8),
-        effective_looks_per_frame=noise_looks, signal_looks_per_frame=2.0,
+        effective_looks_per_frame=noise_looks,
+        signal_looks_per_frame=2.0,
     )
 
     assert pd_at_zero == pytest.approx(target_pfa, rel=0.08)
@@ -1018,12 +1009,16 @@ def test_ca_cfar_closed_form_agrees_with_the_mixture_monte_carlo(monkeypatch) ->
     ntt, num_frames, noise_looks, snr = 20, 3, 8.0, 1.0
 
     alpha = fluctuation_models.solve_ca_cfar_alpha(0.05, ntt, num_frames, noise_looks)
-    exact = model.ca_cfar_pd(
-        alpha, ntt, num_frames, snr, effective_looks_per_frame=noise_looks
-    )
+    exact = model.ca_cfar_pd(alpha, ntt, num_frames, snr, effective_looks_per_frame=noise_looks)
     simulated = model.ca_cfar_pd(
-        alpha, ntt, num_frames, snr, num_trials=400_000, rng=np.random.default_rng(9),
-        effective_looks_per_frame=noise_looks, signal_looks_per_frame=noise_looks * 0.9999,
+        alpha,
+        ntt,
+        num_frames,
+        snr,
+        num_trials=400_000,
+        rng=np.random.default_rng(9),
+        effective_looks_per_frame=noise_looks,
+        signal_looks_per_frame=noise_looks * 0.9999,
     )
 
     assert simulated == pytest.approx(exact, abs=0.01)
@@ -1039,7 +1034,8 @@ def test_narrowband_target_lowers_pd_at_a_high_operating_point(monkeypatch) -> N
         0.01, ntt, rank, num_frames, effective_looks_per_frame=noise_looks
     )
     kwargs = dict(
-        num_trials=200_000, rng=np.random.default_rng(11),
+        num_trials=200_000,
+        rng=np.random.default_rng(11),
         effective_looks_per_frame=noise_looks,
     )
     band_filling = model.os_cfar_pd(alpha, ntt, rank, num_frames, snr, **kwargs)
@@ -1053,9 +1049,7 @@ def test_narrowband_target_lowers_pd_at_a_high_operating_point(monkeypatch) -> N
 def test_detect_rejects_a_precomputed_1d_snr_map_with_migration_guidance(monkeypatch) -> None:
     """The pre-refactor call passed a 1-D SNR map; say so instead of failing on the unpack."""
     algorithms = _load_detector_algorithms(monkeypatch)
-    detector = algorithms.CACFARDetector(
-        num_guard_cells=2, num_training_cells=8, target_pfa=1e-3
-    )
+    detector = algorithms.CACFARDetector(num_guard_cells=2, num_training_cells=8, target_pfa=1e-3)
 
     with pytest.raises(ValueError, match="1-D array of length 64"):
         detector.detect(np.zeros(64))
@@ -1064,9 +1058,7 @@ def test_detect_rejects_a_precomputed_1d_snr_map_with_migration_guidance(monkeyp
 def test_snr_map_rejects_1d_input_the_same_way_detect_does(monkeypatch) -> None:
     """Both raw-data entry points share one validator, so both give the same guidance."""
     algorithms = _load_detector_algorithms(monkeypatch)
-    detector = algorithms.CACFARDetector(
-        num_guard_cells=2, num_training_cells=8, target_pfa=1e-3
-    )
+    detector = algorithms.CACFARDetector(num_guard_cells=2, num_training_cells=8, target_pfa=1e-3)
 
     with pytest.raises(ValueError, match="num_beams, num_frames"):
         detector.detection_snr_map(np.zeros(64))
@@ -1075,9 +1067,7 @@ def test_snr_map_rejects_1d_input_the_same_way_detect_does(monkeypatch) -> None:
 def test_detect_rejects_banded_3d_input_pointing_at_the_multiband_detector(monkeypatch) -> None:
     """Stacked per-band data is a separate class's job, not a silently broadcast axis."""
     algorithms = _load_detector_algorithms(monkeypatch)
-    detector = algorithms.CACFARDetector(
-        num_guard_cells=2, num_training_cells=8, target_pfa=1e-3
-    )
+    detector = algorithms.CACFARDetector(num_guard_cells=2, num_training_cells=8, target_pfa=1e-3)
 
     with pytest.raises(ValueError, match="MultibandPassiveSonarDetector"):
         detector.detect(np.zeros((2, 64, 4)))
@@ -1105,9 +1095,7 @@ def test_removed_detector_kwargs_name_their_replacement(
 def test_consolidation_is_on_by_default(monkeypatch) -> None:
     """Operational detection is the default; the raw mode must be opted into."""
     algorithms = _load_detector_algorithms(monkeypatch)
-    detector = algorithms.CACFARDetector(
-        num_guard_cells=2, num_training_cells=8, target_pfa=1e-3
-    )
+    detector = algorithms.CACFARDetector(num_guard_cells=2, num_training_cells=8, target_pfa=1e-3)
 
     assert detector.consolidate_peaks is True
 

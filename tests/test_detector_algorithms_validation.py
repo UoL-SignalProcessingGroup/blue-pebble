@@ -679,7 +679,12 @@ def test_os_cfar_pd_non_fluctuating_mc_at_zero_snr_recovers_target_pfa(monkeypat
     alpha = fluctuation_models.solve_os_cfar_alpha_single_look(target_pfa, N, rank)
 
     pd = fluctuation_models.NonFluctuating().os_cfar_pd(
-        alpha, N, rank, num_frames=1, snr_linear=0.0, num_trials=300_000,
+        alpha,
+        N,
+        rank,
+        num_frames=1,
+        snr_linear=0.0,
+        num_trials=300_000,
         rng=np.random.default_rng(4),
     )
 

@@ -50,9 +50,10 @@ On Windows PowerShell, use `${PWD}` in place of `$(pwd)`.
 - Keep components modular with one primary responsibility each.
 - Write comments that explain why, not what the code already says.
 - Follow PEP 8 and project linting rules.
-- Lint with `ruff` (this project uses `ruff`, not `flake8`):
+- Format and lint with `ruff` (this project uses `ruff`, not `black` or `flake8`). CI fails on unformatted code, and `ruff check` enforces NumPy docstring conventions:
 
 ```bash
+ruff format .
 ruff check .
 ```
 
@@ -90,6 +91,7 @@ The build executes the tutorials but renders the examples as code only, since ru
 Run local checks before opening a PR:
 
 ```bash
+ruff format --check .
 ruff check .
 pyright
 pytest --cov=bluepebble --cov-report=term-missing --cov-fail-under=55

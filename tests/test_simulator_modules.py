@@ -1056,6 +1056,7 @@ def test_continuous_fractional_delay_paths_without_options(monkeypatch) -> None:
     assert [ts for ts, _ in generated] == [t0, t1]
     assert all(len(next(iter(payload)).raw_signals.shape) == 2 for _, payload in generated)
 
+
 def test_hold_last_finite_delays_fills_gaps_from_nearest_finite_knot(monkeypatch) -> None:
     """Non-finite delays should be replaced by the nearest finite delay for that sensor."""
     _base, _discrete, continuous = _load_simulator_modules(monkeypatch)
