@@ -11,8 +11,9 @@ from stonesoup.base import Base, Property
 from ..environment import Bathymetry, SoundSpeedProfile
 
 if TYPE_CHECKING:
-    from stonesoup.platform.base import Platform
     from stonesoup.types.state import State
+
+    from ...platform import PlatformState
 
 FloatArray: TypeAlias = NDArray[np.float64]
 ComplexArray: TypeAlias = NDArray[np.complexfloating[Any, Any]]
@@ -130,7 +131,7 @@ class AcousticPropagationModel(ABC, Base):
     ssp: SoundSpeedProfile = Property(doc="Sound speed profile")
 
     @abstractmethod
-    def propagate(self, platform: "Platform", source: "State") -> PropagationResult:
+    def propagate(self, platform: "PlatformState", source: "State") -> PropagationResult:
         """Propagate a signal from a source to a platform.
 
         Notes
@@ -140,7 +141,7 @@ class AcousticPropagationModel(ABC, Base):
         """
         ...
 
-    def compute_sensor_delays(self, platform: "Platform", source: "State") -> FloatArray:
+    def compute_sensor_delays(self, platform: "PlatformState", source: "State") -> FloatArray:
         """Compute time delays for each sensor in an array.
 
         The method calculates time-differences-of-arrival (TDOA) relative to the array reference
@@ -148,8 +149,8 @@ class AcousticPropagationModel(ABC, Base):
 
         Parameters
         ----------
-        platform : Platform
-            Platform object representing the sensor array.
+        platform : PlatformState
+            Platform state providing the sensor array geometry.
         source : State
             Source (State) object representing the acoustic point source.
 
@@ -191,7 +192,7 @@ class SpectrumPropagationModel(ABC):
     @abstractmethod
     def propagate_spectrum(
         self,
-        platform: "Platform",
+        platform: "PlatformState",
         source: "State",
         frequencies_hz: ArrayLike,
     ) -> SpectrumResult:
@@ -199,7 +200,7 @@ class SpectrumPropagationModel(ABC):
 
         Parameters
         ----------
-        platform : Platform
+        platform : PlatformState
             Platform state providing sensor array geometry.
         source : State
             Source state providing position and metadata.
@@ -239,7 +240,7 @@ class CylindricalAcousticPropagationModel(AcousticPropagationModel, SpectrumProp
         if self.attenuation_factor < 0:
             raise ValueError("Attenuation factor must be non-negative.")
 
-    def propagate(self, platform: "Platform", source: "State") -> tuple[float, float]:
+    def propagate(self, platform: "PlatformState", source: "State") -> tuple[float, float]:
         """Propagate a signal using a cylindrical spreading loss model.
 
         The model combines cylindrical spreading (10*log10(r)) with a frequency-independent
@@ -247,8 +248,8 @@ class CylindricalAcousticPropagationModel(AcousticPropagationModel, SpectrumProp
 
         Parameters
         ----------
-        platform : Platform
-            Platform object representing the sensor array.
+        platform : PlatformState
+            Platform state providing the sensor array geometry.
         source : State
             Source (State) object representing the acoustic point source.
 
@@ -269,7 +270,7 @@ class CylindricalAcousticPropagationModel(AcousticPropagationModel, SpectrumProp
         return float(tloss), float(time)
 
     def propagate_spectrum(
-        self, platform: "Platform", source: "State", frequencies_hz: ArrayLike
+        self, platform: "PlatformState", source: "State", frequencies_hz: ArrayLike
     ) -> SpectrumResult:
         """Propagate spectrum using cylindrical spreading.
 
@@ -278,8 +279,8 @@ class CylindricalAcousticPropagationModel(AcousticPropagationModel, SpectrumProp
 
         Parameters
         ----------
-        platform : Platform
-            Platform object representing the sensor array.
+        platform : PlatformState
+            Platform state providing the sensor array geometry.
         source : State
             Source (State) object representing the acoustic point source.
         frequencies_hz : ArrayLike
@@ -352,7 +353,7 @@ class SphericalAcousticPropagationModel(AcousticPropagationModel, SpectrumPropag
         if self.attenuation_factor < 0:
             raise ValueError("Attenuation factor must be non-negative.")
 
-    def propagate(self, platform: "Platform", source: "State") -> tuple[float, float]:
+    def propagate(self, platform: "PlatformState", source: "State") -> tuple[float, float]:
         """Propagate a signal using a spherical spreading loss model.
 
         The model combines spherical spreading (20*log10(r)) with a frequency-independent
@@ -360,8 +361,8 @@ class SphericalAcousticPropagationModel(AcousticPropagationModel, SpectrumPropag
 
         Parameters
         ----------
-        platform : Platform
-            Platform object representing the sensor array.
+        platform : PlatformState
+            Platform state providing the sensor array geometry.
         source : State
             Source (State) object representing the acoustic point source.
 
@@ -382,7 +383,7 @@ class SphericalAcousticPropagationModel(AcousticPropagationModel, SpectrumPropag
         return float(tloss), float(time)
 
     def propagate_spectrum(
-        self, platform: "Platform", source: "State", frequencies_hz: ArrayLike
+        self, platform: "PlatformState", source: "State", frequencies_hz: ArrayLike
     ) -> SpectrumResult:
         """Propagate spectrum using spherical spreading.
 
@@ -391,8 +392,8 @@ class SphericalAcousticPropagationModel(AcousticPropagationModel, SpectrumPropag
 
         Parameters
         ----------
-        platform : Platform
-            Platform object representing the sensor array.
+        platform : PlatformState
+            Platform state providing the sensor array geometry.
         source : State
             Source (State) object representing the acoustic point source.
         frequencies_hz : ArrayLike
@@ -619,7 +620,7 @@ class rtrsAcousticPropagationModel(AcousticPropagationModel, SpectrumPropagation
 
         return max_steps, max_range_m
 
-    def propagate(self, platform: "Platform", source: "State") -> PropagationResult:
+    def propagate(self, platform: "PlatformState", source: "State") -> PropagationResult:
         """Run an rtrs simulation for a single source and receiver.
 
         The method prepares the rtrs environment, runs the ray-tracing simulation and returns
@@ -646,7 +647,7 @@ class rtrsAcousticPropagationModel(AcousticPropagationModel, SpectrumPropagation
 
         # Flatten to 1D arrays for easier indexing
         source_pos = source_position.flatten()
-        array_pos = array_ref_position.flatten()
+        array_pos = np.asarray(array_ref_position, dtype=np.float64).flatten()
 
         # Calculate distance and dynamic parameters
         distance = float(np.linalg.norm(source_pos - array_pos))
@@ -812,7 +813,7 @@ class rtrsAcousticPropagationModel(AcousticPropagationModel, SpectrumPropagation
 
     def propagate_spectrum(
         self,
-        platform: "Platform",
+        platform: "PlatformState",
         source: "State",
         frequencies_hz: ArrayLike,
     ) -> SpectrumResult:
@@ -846,7 +847,7 @@ class rtrsAcousticPropagationModel(AcousticPropagationModel, SpectrumPropagation
 
         # Flatten to 1D
         source_pos = source_position.flatten()
-        array_ref_pos = array_ref_position.flatten()
+        array_ref_pos = np.asarray(array_ref_position, dtype=np.float64).flatten()
 
         # Calculate distance and dynamic parameters
         distance = float(np.linalg.norm(source_pos - array_ref_pos))
@@ -887,7 +888,7 @@ class rtrsAcousticPropagationModel(AcousticPropagationModel, SpectrumPropagation
         z_bty_flat = -z_bty.flatten(order="C")
 
         # Generate 3D SSP grid
-        z_range = [0.0, np.max(z_bty_flat)]
+        z_range = (0.0, float(np.max(z_bty_flat)))
         x_ssp, y_ssp, z_ssp, c_ssp = self.ssp.get_3d_grid(
             x_range,
             y_range,

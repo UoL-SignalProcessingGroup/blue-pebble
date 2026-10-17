@@ -1,5 +1,5 @@
 """Platform models public API."""
 
-from .towedarray import TowedArrayPlatform
+from .towedarray import PlatformState, TowedArrayPlatform
 
-__all__ = ["TowedArrayPlatform"]
+__all__ = ["PlatformState", "TowedArrayPlatform"]

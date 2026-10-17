@@ -306,10 +306,24 @@ def test_recorded_signal_to_float_mono_accepts_array_like(monkeypatch) -> None:
     """Float-mono conversion should accept array-like (duck-typed) input."""
     _, anthropogenic_models, _ = _load_anthropogenic_modules(monkeypatch)
 
-    mono = anthropogenic_models.RecordedAnthropogenicSignal._to_float_mono([[0, 2], [4, 6]])
+    mono = anthropogenic_models.RecordedAnthropogenicSignal._to_float_mono(
+        [[0.0, 0.2], [0.4, 0.6]]
+    )
 
     assert mono.dtype == np.float64
-    np.testing.assert_allclose(mono, np.array([1.0, 5.0], dtype=np.float64))
+    np.testing.assert_allclose(mono, np.array([0.1, 0.5], dtype=np.float64))
+
+
+def test_recorded_signal_to_float_mono_normalises_multichannel_integers(monkeypatch) -> None:
+    """Integer audio should be normalised the same whether it has one channel or several."""
+    _, anthropogenic_models, _ = _load_anthropogenic_modules(monkeypatch)
+    to_float_mono = anthropogenic_models.RecordedAnthropogenicSignal._to_float_mono
+    mono = np.array([16384, -16384], dtype=np.int16)
+
+    stereo = to_float_mono(np.stack([mono, mono], axis=1))
+
+    np.testing.assert_allclose(stereo, to_float_mono(mono))
+    np.testing.assert_allclose(stereo, [0.5, -0.5])
 
 
 def test_get_source_waveform_warns_on_different_source(monkeypatch) -> None:

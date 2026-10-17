@@ -199,7 +199,7 @@ def solve_ca_cfar_alpha(
     a = effective_looks_per_frame * num_frames
     b = num_training_total * effective_looks_per_frame * num_frames
     w0 = beta_dist.ppf(1 - target_pfa, a, b)
-    return num_training_total * w0 / (1 - w0)  # pyrefly: ignore[bad-return]
+    return float(num_training_total * w0 / (1 - w0))
 
 
 def _solve_alpha_for_log_pfa(log_pfa: Callable[[float], float], target_pfa: float) -> float:
@@ -554,6 +554,7 @@ def ca_cfar_roc(
 
     """
     model = model or RayleighFluctuation()
+    pfa_array = np.asarray(pfa_values, dtype=np.float64)
     return np.array(
         [
             model.ca_cfar_pd(
@@ -566,7 +567,7 @@ def ca_cfar_roc(
                 effective_looks_per_frame=effective_looks_per_frame,
                 signal_looks_per_frame=signal_looks_per_frame,
             )
-            for pfa in pfa_values
+            for pfa in pfa_array
         ]
     )
 
@@ -646,6 +647,7 @@ def os_cfar_roc(
 
     """
     model = model or RayleighFluctuation()
+    pfa_array = np.asarray(pfa_values, dtype=np.float64)
     single_look = effective_looks_per_frame == 1.0 and signal_looks_per_frame in (None, 1.0)
 
     if num_frames == 1 and single_look:
@@ -660,7 +662,7 @@ def os_cfar_roc(
                     num_trials=num_trials,
                     rng=rng,
                 )
-                for pfa in pfa_values
+                for pfa in pfa_array
             ]
         )
 
@@ -698,7 +700,7 @@ def os_cfar_roc(
             )
             * noise_estimate
         )
-        for pfa in pfa_values
+        for pfa in pfa_array
     ]
     return np.array(pds)
 
@@ -1057,7 +1059,7 @@ class RayleighFluctuation(FluctuationModel):
         a = noise_looks * num_frames
         b = num_training_total * noise_looks * num_frames
         w0 = alpha_eff / (num_training_total + alpha_eff)
-        return beta_dist.sf(w0, a, b)  # pyrefly: ignore[bad-return]
+        return float(beta_dist.sf(w0, a, b))
 
     def os_cfar_pd(
         self,

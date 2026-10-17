@@ -108,17 +108,16 @@ preset = "default"
 # Stone Soup Property values.
 untyped-import = "ignore"
 unnecessary-type-conversion = "ignore"
-# Downgraded to warnings until the findings from the pyright migration are fixed; restore each
-# to an error once `pyrefly check` reports none of that kind.
+
+# Warnings rather than errors until biological.py is overhauled; drop this once it is.
+[[tool.pyrefly.sub-config]]
+matches = "bluepebble/signal/biological.py"
+
+[tool.pyrefly.sub-config.errors]
 bad-argument-type = "warn"
 bad-override = "warn"
 bad-return = "warn"
 bad-unpacking = "warn"
-missing-attribute = "warn"
-no-matching-overload = "warn"
-not-iterable = "warn"
-unbound-name = "warn"
-unsupported-operation = "warn"
 
 [tool.setuptools]
 include-package-data = false

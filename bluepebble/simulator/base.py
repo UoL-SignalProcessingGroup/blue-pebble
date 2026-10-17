@@ -21,6 +21,8 @@ if TYPE_CHECKING:
     from stonesoup.types.groundtruth import GroundTruthPath
     from stonesoup.types.state import State
 
+    from ..platform import PlatformState
+
 ComplexArray: TypeAlias = NDArray[np.complexfloating[Any, Any]]
 FloatArray: TypeAlias = NDArray[np.float64]
 SensorBatch: TypeAlias = tuple[datetime, set[PassiveSonarSensorData]]
@@ -71,10 +73,26 @@ class PassiveSonarArraySimulatorBase(SensorSimulator):
 
         """
         super().__init__(*args, **kwargs)
-        if self.ground_truth_paths is None:
-            self.ground_truth_paths = []
-        else:
-            self.ground_truth_paths = list(self.ground_truth_paths)
+        # Typed wider than the property, since the constructor accepts None or any iterable.
+        paths: Iterable[GroundTruthPath] | None = self.ground_truth_paths
+        self.ground_truth_paths = [] if paths is None else list(paths)
+
+    def _platform_state_at(self, timestamp: datetime) -> "PlatformState":
+        """Return the platform state at ``timestamp``, raising if the platform has none.
+
+        Raises
+        ------
+        ValueError
+            If the platform has no state at ``timestamp``.
+
+        """
+        platform_state = self.platform.get_platform_state_at(timestamp)
+        if platform_state is None:
+            raise ValueError(
+                f"The platform has no state at {timestamp}, so there is no array geometry "
+                "to simulate with; move the platform through every simulated timestamp first."
+            )
+        return platform_state
 
     def _sorted_timestamps(self) -> list[datetime]:
         """Return unique platform timestamps in ascending order.
@@ -232,12 +250,7 @@ class PassiveSonarArraySimulatorBase(SensorSimulator):
         if not (self.beamformer and self.steering_calculator):
             return None, None
 
-        platform_state = self.platform.get_platform_state_at(timestamp)
-        if platform_state is None:
-            raise ValueError(
-                f"The platform has no state at {timestamp}, so there is no array geometry "
-                "to steer with; move the platform through every simulated timestamp first."
-            )
+        platform_state = self._platform_state_at(timestamp)
         steering_delays_s = self.steering_calculator.calculate(platform_state)
         # Read the same way as mirror_half_plane below, so steering calculators that predate
         # per-scan bearings (custom subclasses, test doubles) still work, without bearings.

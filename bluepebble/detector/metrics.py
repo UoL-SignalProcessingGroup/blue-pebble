@@ -31,6 +31,7 @@ import numpy as np
 from numpy.typing import ArrayLike, NDArray
 
 from .algorithms import (
+    _CFARDetectorBase,
     _directional_power,
 )
 from .calibration import detector_signature
@@ -273,14 +274,17 @@ class SweepResult:
             label=label,
         )
 
-    def _require_counts(self, prop_name: str) -> None:
-        if self.tp is None:
+    def _require_counts(self, prop_name: str) -> tuple[IntArray, IntArray, IntArray, IntArray]:
+        """Return ``(tp, fp, fn, tn)``, raising if this result has no counts."""
+        tp, fp, fn, tn = self.tp, self.fp, self.fn, self.tn
+        if tp is None or fp is None or fn is None or tn is None:
             raise ValueError(
                 f"{prop_name} needs confusion-matrix counts (tp/fp/fn/tn), which this "
                 "SweepResult doesn't have; it was built via from_theoretical_roc() from "
                 "a pure Pfa/Pd curve. A PR curve needs an assumed target prevalence that "
                 "Pfa/Pd theory alone doesn't provide; use .fpr/.tpr/.auc_roc instead."
             )
+        return tp, fp, fn, tn
 
     @property
     def precision(self) -> FloatArray:
@@ -288,9 +292,8 @@ class SweepResult:
 
         Defaults to 1 where TP + FP = 0 (no detections issued).
         """
-        self._require_counts("precision")
-        denom = self.tp + self.fp
-        return _safe_ratio(self.tp, denom, default=1.0)
+        tp, fp, _, _ = self._require_counts("precision")
+        return _safe_ratio(tp, tp + fp, default=1.0)
 
     @property
     def recall(self) -> FloatArray:
@@ -302,8 +305,8 @@ class SweepResult:
         """
         if self._tpr is not None:
             return self._tpr
-        denom = self.tp + self.fn
-        return _safe_ratio(self.tp, denom, default=0.0)
+        tp, _, fn, _ = self._require_counts("recall")
+        return _safe_ratio(tp, tp + fn, default=0.0)
 
     @property
     def tpr(self) -> FloatArray:
@@ -319,8 +322,8 @@ class SweepResult:
         """
         if self._fpr is not None:
             return self._fpr
-        denom = self.fp + self.tn
-        return _safe_ratio(self.fp, denom, default=0.0)
+        _, fp, _, tn = self._require_counts("fpr")
+        return _safe_ratio(fp, fp + tn, default=0.0)
 
     @property
     def f1(self) -> FloatArray:
@@ -467,8 +470,8 @@ def _clone_detector_with_param(spec: SweepSpec, value: float) -> DetectionAlgori
             )
     # A CFAR detector invalidates its memoised alpha when a calibration parameter changes (see
     # _CFARDetectorBase._alpha_for); clearing here as well keeps detectors that don't track
-    # that themselves safe. Not every DetectionAlgorithm has this cache, hence the guard.
-    if hasattr(detector_copy, "_alpha_cache"):
+    # that themselves safe. Only CFAR detectors have this cache, hence the guard.
+    if isinstance(detector_copy, _CFARDetectorBase):
         detector_copy._alpha_cache = {}
     return detector_copy
 
