@@ -173,7 +173,7 @@ than absolute times.
 - **Determinism**, by repeating calls and running with BLAS limited to one thread
   (`VECLIB_MAXIMUM_THREADS=1` on macOS, `OPENBLAS_NUM_THREADS=1` with OpenBLAS).
 - **The tests**, by breaking the new code in the way each new test targets and confirming it fails.
-- **The usual checks**, `ruff check .`, `pyright` and the full test suite.
+- **The usual checks**, `ruff check .`, `pyrefly check` and the full test suite.
 
 ## 10. Measure again and record the result
 

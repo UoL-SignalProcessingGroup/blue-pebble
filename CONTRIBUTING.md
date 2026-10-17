@@ -91,13 +91,13 @@ Run local checks before opening a PR:
 
 ```bash
 ruff check .
-pyright
+pyrefly check --min-severity warn
 pytest --cov=bluepebble --cov-report=term-missing --cov-fail-under=55
 python -m build --sdist --wheel
 make -C docs html
 ```
 
-CI runs `ruff`, the tests and the package build on Python 3.11 to 3.14, with the coverage gate on 3.12 only. It doesn't run `pyright` or the docs build, so run those locally.
+CI runs `ruff`, the tests and the package build on Python 3.11 to 3.14, with the coverage gate and `pyrefly check` on 3.12 only. It doesn't run the docs build, so run that locally. Several pyrefly error kinds are downgraded to warnings in `pyproject.toml` until existing findings are fixed, so please don't add new warnings.
 
 ## Licence
 

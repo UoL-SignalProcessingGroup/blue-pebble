@@ -52,6 +52,11 @@ jobs:
         run: |
           ruff check .
 
+      - name: Type check (Pyrefly)
+        if: matrix.python-version == '3.12'
+        run: |
+          pyrefly check
+
       - name: Tests (Pytest)
         run: |
           if [[ "${{ matrix.python-version }}" == "3.12" ]]; then

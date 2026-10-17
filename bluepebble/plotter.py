@@ -1242,7 +1242,7 @@ def plot_btr(
         if isinstance(timestamp, np.generic):
             timestamp = timestamp.item()
         if timestamp not in heading_cache:
-            state = platform.get_platform_state_at(timestamp)  # pyright: ignore[reportOptionalMemberAccess]
+            state = platform.get_platform_state_at(timestamp)  # pyrefly: ignore[missing-attribute]
             if state is None:
                 raise ValueError(
                     f"platform has no state at {timestamp}; relative bearings need its "

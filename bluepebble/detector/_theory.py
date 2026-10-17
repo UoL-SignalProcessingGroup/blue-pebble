@@ -199,7 +199,7 @@ def solve_ca_cfar_alpha(
     a = effective_looks_per_frame * num_frames
     b = num_training_total * effective_looks_per_frame * num_frames
     w0 = beta_dist.ppf(1 - target_pfa, a, b)
-    return num_training_total * w0 / (1 - w0)  # pyright: ignore[reportReturnType]
+    return num_training_total * w0 / (1 - w0)  # pyrefly: ignore[bad-return]
 
 
 def _solve_alpha_for_log_pfa(log_pfa: Callable[[float], float], target_pfa: float) -> float:
@@ -299,7 +299,7 @@ def _os_cfar_log_pfa_integrator(
 
     """
     n, k = num_training_total, rank
-    # Typed loosely: pyright models the frozen distribution as possibly discrete.
+    # Typed loosely: checkers infer the frozen distribution as possibly discrete.
     cell: Any = gamma_dist(a=total_looks, scale=1.0 / total_looks)
     tail = target_pfa * _OS_PFA_RELATIVE_TAIL
     # X_(k) = F^-1(B) with B ~ Beta(k, N - k + 1), and 1 - B ~ Beta(N - k + 1, k).
@@ -1057,7 +1057,7 @@ class RayleighFluctuation(FluctuationModel):
         a = noise_looks * num_frames
         b = num_training_total * noise_looks * num_frames
         w0 = alpha_eff / (num_training_total + alpha_eff)
-        return beta_dist.sf(w0, a, b)  # pyright: ignore[reportReturnType]
+        return beta_dist.sf(w0, a, b)  # pyrefly: ignore[bad-return]
 
     def os_cfar_pd(
         self,

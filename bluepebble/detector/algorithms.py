@@ -645,7 +645,7 @@ class CACFARDetector(_CFARDetectorBase):
         end_gap = start_gap + (2 * self.num_guard_cells) + 1
         kernel[start_gap:end_gap] = 0
 
-        padded_power = np.pad(directional_power, pad_width=one_sided_window, mode=self._pad_mode)  # pyright: ignore[reportCallIssue]
+        padded_power = np.pad(directional_power, pad_width=one_sided_window, mode=self._pad_mode)  # pyrefly: ignore[no-matching-overload]
         # "valid" convolution with a window this size reproduces a per-cell sliding sum over
         # the padded array, aligned so output[i] corresponds to input cell i.
         noise_sum = np.convolve(padded_power, kernel, mode="valid")
@@ -753,7 +753,7 @@ class OSCFARDetector(_CFARDetectorBase):
         one_sided_window = self.num_guard_cells + self.num_training_cells
         window_size = 2 * one_sided_window + 1
 
-        padded_power = np.pad(directional_power, pad_width=one_sided_window, mode=self._pad_mode)  # pyright: ignore[reportCallIssue]
+        padded_power = np.pad(directional_power, pad_width=one_sided_window, mode=self._pad_mode)  # pyrefly: ignore[no-matching-overload]
         # Each row of `windows` is one CUT's full window: [training][guard] CUT [guard][training].
         windows = sliding_window_view(padded_power, window_size)
 
