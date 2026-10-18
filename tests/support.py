@@ -41,20 +41,19 @@ class FakeProperty:
 
 
 class FakeBase:
-    """Minimal base class that applies descriptor defaults and runs ``__post_init__``."""
+    """Minimal base class that applies descriptor defaults.
+
+    Like Stone Soup's real Base, this never calls ``__post_init__``.
+    """
 
     def __init__(self, **kwargs):
-        """Populate descriptor defaults, apply overrides, and run post-init hooks."""
+        """Populate descriptor defaults and apply overrides."""
         for name, attr in type(self).__dict__.items():
             if isinstance(attr, FakeProperty) and name not in kwargs:
                 setattr(self, name, attr.default)
 
         for key, value in kwargs.items():
             setattr(self, key, value)
-
-        post_init = getattr(self, "__post_init__", None)
-        if callable(post_init):
-            post_init()
 
 
 def install_fake_stonesoup(monkeypatch) -> None:

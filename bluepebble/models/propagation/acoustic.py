@@ -231,12 +231,18 @@ class CylindricalAcousticPropagationModel(AcousticPropagationModel, SpectrumProp
     ssp : SoundSpeedProfile
         An instance of a sound speed profile.
 
+    Raises
+    ------
+    ValueError
+        If ``attenuation_factor`` is negative.
+
     """
 
     attenuation_factor: float = Property(default=0.5, doc="The absorption loss factor in dB/km")
 
-    def __post_init__(self) -> None:
-        """Validate the attenuation factor after initialisation."""
+    def __init__(self, *args: object, **kwargs: object) -> None:
+        """Initialise CylindricalAcousticPropagationModel with the given parameters."""
+        super().__init__(*args, **kwargs)
         if self.attenuation_factor < 0:
             raise ValueError("Attenuation factor must be non-negative.")
 
@@ -344,12 +350,18 @@ class SphericalAcousticPropagationModel(AcousticPropagationModel, SpectrumPropag
     ssp : SoundSpeedProfile
         An instance of a sound speed profile.
 
+    Raises
+    ------
+    ValueError
+        If ``attenuation_factor`` is negative.
+
     """
 
     attenuation_factor: float = Property(default=0.001, doc="The absorption loss factor in dB/km")
 
-    def __post_init__(self) -> None:
-        """Validate the attenuation factor after initialization."""
+    def __init__(self, *args: object, **kwargs: object) -> None:
+        """Initialise SphericalAcousticPropagationModel with the given parameters."""
+        super().__init__(*args, **kwargs)
         if self.attenuation_factor < 0:
             raise ValueError("Attenuation factor must be non-negative.")
 
@@ -495,6 +507,12 @@ class rtrsAcousticPropagationModel(AcousticPropagationModel, SpectrumPropagation
     integration_method : str
         Beam integration method for rtrs ("euler" or "rk2").
 
+    Raises
+    ------
+    ValueError
+        If ``integration_method`` is not ``"euler"`` or ``"rk2"``, or ``bottom_model`` is set
+        but is not a dict with a ``"model"`` key.
+
     """
 
     bathymetry: Bathymetry = Property(doc="Bathymetry model")
@@ -539,8 +557,9 @@ class rtrsAcousticPropagationModel(AcousticPropagationModel, SpectrumPropagation
         doc='Beam integration method for rtrs ("euler" or "rk2")',
     )
 
-    def __post_init__(self) -> None:
-        """Validate rtrs-specific configuration options."""
+    def __init__(self, *args: object, **kwargs: object) -> None:
+        """Initialise rtrsAcousticPropagationModel with the given parameters."""
+        super().__init__(*args, **kwargs)
         if self.integration_method not in {"euler", "rk2"}:
             raise ValueError("integration_method must be 'euler' or 'rk2'.")
         if self.bottom_model is not None and (
