@@ -220,6 +220,31 @@ def test_calibration_mismatch_raises_naming_the_setting(monkeypatch, change, mat
         detector.detect(np.ones((64, 2)))
 
 
+@pytest.mark.parametrize("name", ["ca", "os"])
+@pytest.mark.parametrize(
+    "change, match",
+    [
+        (dict(num_guard_cells=3), "num_guard_cells"),
+        (dict(num_training_cells=12), "num_training_cells"),
+        (dict(circular=False), "circular"),
+    ],
+)
+def test_calibration_mismatch_after_first_detect_raises(monkeypatch, name, change, match) -> None:
+    """Changing a calibrated setting after detect() has cached alpha is still rejected."""
+    algorithms, calibration_module = _load(monkeypatch)
+    calibration = _small_calibration(
+        algorithms, calibration_module, _make_detector(algorithms, name)
+    )
+    detector = _make_detector(algorithms, name, noise_calibration=calibration)
+    detector.detect(np.ones((64, 2)))
+
+    for setting, value in change.items():
+        setattr(detector, setting, value)
+
+    with pytest.raises(ValueError, match=match):
+        detector.detect(np.ones((64, 2)))
+
+
 def test_calibration_mismatch_on_frames_rank_or_detector_type_raises(monkeypatch) -> None:
     """Frame count, OS rank and detector type are all part of what a calibration applies to."""
     algorithms, calibration_module = _load(monkeypatch)

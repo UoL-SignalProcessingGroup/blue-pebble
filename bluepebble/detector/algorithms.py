@@ -15,7 +15,7 @@ from numpy.typing import ArrayLike, NDArray
 from scipy.signal import find_peaks, peak_prominences
 from stonesoup.base import Base, Property
 
-from .calibration import NoiseCalibration
+from .calibration import NoiseCalibration, detector_signature
 
 IntArray: TypeAlias = NDArray[np.integer[Any]]
 DetectionArray: TypeAlias = NDArray[np.float64]
@@ -420,12 +420,15 @@ class _CFARDetectorBase(DetectionAlgorithm, ABC):
 
     def _calibration_signature(self) -> tuple:
         """Every parameter alpha depends on, besides num_frames."""
+        # Built from detector_signature so the cache key can't drift from the settings a
+        # calibration is checked against; target_pfa is added because alpha depends on it even
+        # though the calibration's ratios don't.
         # The calibration object itself, not id(): NoiseCalibration compares by identity, and
         # holding the reference here keeps it alive, so a freed calibration's id can never be
         # reused by a replacement and mistaken for it.
         return (
             self.target_pfa,
-            self.num_training_cells,
+            detector_signature(self),
             self.noise_calibration,
         )
 
@@ -731,10 +734,6 @@ class OSCFARDetector(_CFARDetectorBase):
                 DeprecationWarning,
                 stacklevel=2,
             )
-
-    def _calibration_signature(self) -> tuple:
-        """Return the base calibration parameters plus rank."""
-        return (*super()._calibration_signature(), self.rank)
 
     def _local_noise_floor(self, directional_power: np.ndarray) -> np.ndarray:
         """Per-bearing local noise floor via order-statistic sliding window.
