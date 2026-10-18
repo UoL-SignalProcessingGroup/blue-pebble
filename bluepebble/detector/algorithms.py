@@ -711,11 +711,7 @@ class OSCFARDetector(_CFARDetectorBase):
         """Initialise the OS-CFAR detector with the given parameters."""
         super().__init__(*args, **kwargs)
 
-        if not 1 <= self.rank <= self.num_training_total:
-            raise ValueError(
-                f"Rank ({self.rank}) must be between 1 and "
-                f"2 * num_training_cells ({self.num_training_total})"
-            )
+        self._check_rank()
         # A low rank picks the noise estimate from the small-value tail of the training cells,
         # which underestimates the true noise floor whenever some training cells are
         # contaminated by a second target or sidelobe leakage; warn rather than fail, since
@@ -735,6 +731,14 @@ class OSCFARDetector(_CFARDetectorBase):
                 stacklevel=2,
             )
 
+    def _check_rank(self) -> None:
+        """Raise unless 1 <= rank <= 2 * num_training_cells."""
+        if not 1 <= self.rank <= self.num_training_total:
+            raise ValueError(
+                f"Rank ({self.rank}) must be between 1 and "
+                f"2 * num_training_cells ({self.num_training_total})"
+            )
+
     def _local_noise_floor(self, directional_power: np.ndarray) -> np.ndarray:
         """Per-bearing local noise floor via order-statistic sliding window.
 
@@ -749,6 +753,10 @@ class OSCFARDetector(_CFARDetectorBase):
             The local noise floor array of shape (num_beams,).
 
         """
+        # Rechecked here, not only in __init__, because parameter sweeps change rank and
+        # num_training_cells after construction; rank 0 would otherwise silently select the
+        # largest training cell instead of raising.
+        self._check_rank()
         one_sided_window = self.num_guard_cells + self.num_training_cells
         window_size = 2 * one_sided_window + 1
 
