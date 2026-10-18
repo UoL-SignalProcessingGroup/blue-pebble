@@ -1,5 +1,6 @@
 """Base simulator hierarchy and shared utilities for passive-sonar simulations."""
 
+import copy
 from abc import abstractmethod
 from collections.abc import Iterable, Iterator, Sequence
 from datetime import datetime
@@ -151,7 +152,9 @@ class PassiveSonarArraySimulatorBase(SensorSimulator):
         Returns
         -------
         list
-            Resolved model list with one entry per target when ``num_targets > 1``.
+            Resolved model list with one entry per target when ``num_targets > 1``. A single
+            model shared by several targets becomes one shallow copy per target, so the
+            caller's model is never used directly.
 
         Raises
         ------
@@ -169,7 +172,11 @@ class PassiveSonarArraySimulatorBase(SensorSimulator):
             return [resolved[0]]
 
         if len(resolved) == 1:
-            return resolved * num_targets
+            # Anthropogenic models cache one source's waveform and STFT, so a shared instance
+            # would hand the first target's signal to every target. Shallow copies keep that
+            # state per target while sharing the random generator, so targets draw independent
+            # noise that stays reproducible under a seed.
+            return [copy.copy(resolved[0]) for _ in range(num_targets)]
 
         if len(resolved) != num_targets:
             msg = (

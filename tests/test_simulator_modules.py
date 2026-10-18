@@ -164,6 +164,33 @@ def test_base_resolve_models_and_target_lookup(monkeypatch) -> None:
         discrete.DiscretePassiveSonarArraySimulator._resolve_models([1, 2], 3, "models")
 
 
+class _SourceCachingModel:
+    """Stands in for AnthropogenicSignal, which caches the first source's waveform."""
+
+    def __init__(self) -> None:
+        self.rng = object()
+        self.cached_source: str | None = None
+
+    def waveform_for(self, source: str) -> str:
+        if self.cached_source is None:
+            self.cached_source = source
+        return self.cached_source
+
+
+def test_base_resolve_models_gives_each_target_its_own_model(monkeypatch) -> None:
+    """One model shared by several targets must not hand the first target's waveform to all."""
+    _base, discrete, _continuous = _load_simulator_modules(monkeypatch)
+    model = _SourceCachingModel()
+
+    models = discrete.DiscretePassiveSonarArraySimulator._resolve_models([model], 2, "models")
+
+    assert [m.waveform_for(s) for m, s in zip(models, ("a", "b"), strict=True)] == ["a", "b"]
+    # A second run resolves the caller's model again, so it must be left uncached.
+    assert model.cached_source is None
+    # Copies share the random generator, so targets' noise is independent yet seeded.
+    assert all(m.rng is model.rng for m in models)
+
+
 def test_base_ground_truth_paths_default_is_not_shared(monkeypatch) -> None:
     """Simulator instances should not share mutable ``ground_truth_paths`` defaults."""
     _base, discrete, _continuous = _load_simulator_modules(monkeypatch)
