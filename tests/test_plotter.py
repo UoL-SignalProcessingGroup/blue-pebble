@@ -521,8 +521,8 @@ def test_plot_btr_wraps_detection_bearings_and_splits_wrapped_track(monkeypatch)
         SimpleNamespace(state_vector=np.array([np.deg2rad(-181.0)]), timestamp=t1),
     ]
     track = [
-        SimpleNamespace(state_vector=np.array([np.deg2rad(179.0)]), timestamp=t0),
-        SimpleNamespace(state_vector=np.array([np.deg2rad(-179.0)]), timestamp=t1),
+        SimpleNamespace(mean=np.array([np.deg2rad(179.0)]), timestamp=t0),
+        SimpleNamespace(mean=np.array([np.deg2rad(-179.0)]), timestamp=t1),
     ]
 
     fig = plotter.plot_btr(
@@ -541,6 +541,25 @@ def test_plot_btr_wraps_detection_bearings_and_splits_wrapped_track(monkeypatch)
     assert list(track_trace.x) == [179.0, None, -179.0]
 
 
+def test_plot_btr_plots_particle_track_at_its_mean(monkeypatch) -> None:
+    """A particle state's track point should sit at its mean, not fail on its particle array."""
+    plotter = _load_plotter(monkeypatch)
+    t0 = datetime(2026, 1, 1, 12, 0, 0)
+    particles = np.deg2rad([[10.0, 20.0, 30.0]])
+    track = [
+        SimpleNamespace(state_vector=particles, mean=particles.mean(axis=1), timestamp=t0),
+    ]
+
+    fig = plotter.plot_btr(
+        timesteps=np.array([t0]),
+        steering_azimuths=np.array([-180.0, 180.0]),
+        data=np.zeros((1, 2)),
+        tracks=[track],
+    )
+
+    assert list(fig.data[1].x) == pytest.approx([20.0])
+
+
 def test_plot_btr_groups_multiple_tracks_and_truths_in_legend(monkeypatch) -> None:
     """Multiple track and truth overlays should share legend groups with one group title."""
     plotter = _load_plotter(monkeypatch)
@@ -548,12 +567,12 @@ def test_plot_btr_groups_multiple_tracks_and_truths_in_legend(monkeypatch) -> No
     t1 = datetime(2026, 1, 1, 12, 1, 0)
     tracks = [
         [
-            SimpleNamespace(state_vector=np.array([np.deg2rad(10.0)]), timestamp=t0),
-            SimpleNamespace(state_vector=np.array([np.deg2rad(20.0)]), timestamp=t1),
+            SimpleNamespace(mean=np.array([np.deg2rad(10.0)]), timestamp=t0),
+            SimpleNamespace(mean=np.array([np.deg2rad(20.0)]), timestamp=t1),
         ],
         [
-            SimpleNamespace(state_vector=np.array([np.deg2rad(-10.0)]), timestamp=t0),
-            SimpleNamespace(state_vector=np.array([np.deg2rad(-20.0)]), timestamp=t1),
+            SimpleNamespace(mean=np.array([np.deg2rad(-10.0)]), timestamp=t0),
+            SimpleNamespace(mean=np.array([np.deg2rad(-20.0)]), timestamp=t1),
         ],
     ]
     truths = [

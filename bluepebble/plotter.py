@@ -1420,7 +1420,8 @@ def plot_btr(
                     len(track_color_map) % len(track_colorway)
                 ]
             track_color = track_color_map[track_key]
-            track_x = [_display_bearing(state.state_vector[0], state.timestamp) for state in track]
+            # mean, not state_vector, since a ParticleState's state_vector holds every particle.
+            track_x = [_display_bearing(state.mean[0], state.timestamp) for state in track]
             track_y = [state.timestamp for state in track]
             track_x, track_y = _split_wrapped_line(track_x, track_y)
             _track_name = f"Track {idx + 1}" if len(tracks) > 1 else "Track"
