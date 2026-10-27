@@ -66,7 +66,7 @@ dev = [
     "pytest",
     "pytest-cov",
     "build",
-    "pyright>=1.1.408",
+    "pyrefly>=1.4.0",
 ]
 docs = [
     "sphinx",
@@ -96,61 +96,28 @@ select = ["F", "E", "W", "I", "B", "D", "UP"]
 "docs/examples/*" = ["E402"]
 "docs/source/conf.py" = ["E501"]
 
-[tool.pyright]
-venvPath = "."
-venv = ".venv"
-pythonVersion = "3.11"
-typeCheckingMode = "basic"
-include = ["bluepebble"]
-exclude = [
-    ".venv",
-    "tests",
-    "docs",
-    "external_tools",
-    "**/node_modules",
-    "**/__pycache__",
-    "**/.*",
-]
-reportUnsupportedDunderAll = "none"
-reportAttributeAccessIssue = "warning"
-reportCallIssue = "warning"
-reportOperatorIssue = "warning"
-reportGeneralTypeIssues = "warning"
+[tool.pyrefly]
+project-includes = ["bluepebble"]
+# stubs/ holds a partial stub for stonesoup.base, so `x: int = Property(...)` type-checks.
+search-path = ["stubs", "."]
+python-version = "3.11"
+preset = "default"
 
-[[tool.pyright.executionEnvironments]]
-root = "bluepebble/detector"
-reportAssignmentType = "none"
-reportArgumentType = "none"
+[tool.pyrefly.errors]
+# scipy and tqdm ship no stubs, and most int()/bool() calls deliberately coerce unvalidated
+# Stone Soup Property values.
+untyped-import = "ignore"
+unnecessary-type-conversion = "ignore"
 
-[[tool.pyright.executionEnvironments]]
-root = "bluepebble/models"
-reportAssignmentType = "none"
-reportArgumentType = "none"
+# Warnings rather than errors until biological.py is overhauled; drop this once it is.
+[[tool.pyrefly.sub-config]]
+matches = "bluepebble/signal/biological.py"
 
-[[tool.pyright.executionEnvironments]]
-root = "bluepebble/platform"
-reportAssignmentType = "none"
-reportArgumentType = "none"
-
-[[tool.pyright.executionEnvironments]]
-root = "bluepebble/signal"
-reportAssignmentType = "none"
-reportArgumentType = "none"
-
-[[tool.pyright.executionEnvironments]]
-root = "bluepebble/sigproc"
-reportAssignmentType = "none"
-reportArgumentType = "none"
-
-[[tool.pyright.executionEnvironments]]
-root = "bluepebble/simulator"
-reportAssignmentType = "none"
-reportArgumentType = "none"
-
-[[tool.pyright.executionEnvironments]]
-root = "bluepebble/types"
-reportAssignmentType = "none"
-reportArgumentType = "none"
+[tool.pyrefly.sub-config.errors]
+bad-argument-type = "warn"
+bad-override = "warn"
+bad-return = "warn"
+bad-unpacking = "warn"
 
 [tool.setuptools]
 include-package-data = false
@@ -160,7 +127,7 @@ where = ["."]
 # "build*" keeps a stale local build/lib tree out of the wheel. Package discovery walks the
 # filesystem rather than the git index, so a developer with leftover build output otherwise
 # ships nested copies of the whole package inside their wheel.
-exclude = ["docs*", "tests*", "external_tools*", "build*"]
+exclude = ["docs*", "tests*", "external_tools*", "build*", "stubs*"]
 
 [tool.coverage.run]
 source = ["bluepebble"]

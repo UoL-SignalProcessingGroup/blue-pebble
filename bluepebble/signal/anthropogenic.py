@@ -4,7 +4,7 @@ import warnings
 from abc import ABC, abstractmethod
 from fractions import Fraction
 from pathlib import Path
-from typing import TYPE_CHECKING, TypeAlias, cast
+from typing import TYPE_CHECKING, Any, TypeAlias, cast
 
 import numpy as np
 from numpy.typing import ArrayLike, NDArray
@@ -14,7 +14,7 @@ from stonesoup.base import Property
 
 from .._seed import _spawn_rng
 from .base import ComplexArray, Signal, _get_source_metadata
-from .utils import compute_stft
+from .utils import WindowType, compute_stft
 
 if TYPE_CHECKING:
     from stonesoup.types.state import State
@@ -111,7 +111,7 @@ class AnthropogenicSignal(Signal, ABC):
         default=4,
         doc="Hop factor (hop = frame_len // hop_factor)",
     )
-    window_type: str = Property(default="hann", doc="Window type for STFT")
+    window_type: WindowType = Property(default="hann", doc="Window type for STFT")
 
     def __init__(self, *args: object, **kwargs: object) -> None:
         """Initialise shared STFT caches."""
@@ -316,8 +316,8 @@ class SyntheticAnthropogenicSignal(AnthropogenicSignal):
         STFT frame length in samples (power of 2 recommended). Default is 1024.
     hop_factor : int, optional
         Hop factor, where hop size = frame_len // hop_factor. Default is 4.
-    window_type : str, optional
-        Window type for STFT (e.g., 'hann'). Default is 'hann'.
+    window_type : {'hann', 'hamming', 'blackman'}, optional
+        Window type for STFT. Default is 'hann'.
     tonal_bandwidth_hz, noise_amplitude_upa, noise_spectral_exponent : float, optional
         Deprecated: set these in the source's metadata instead. Until their removal in the next
         release, each is used only for a source whose metadata lacks that key. In metadata,
@@ -466,7 +466,8 @@ class SyntheticAnthropogenicSignal(AnthropogenicSignal):
         metadata = _get_source_metadata(source)
 
         def read(key: str) -> float | None:
-            value = metadata[key] if key in metadata else getattr(self, key)
+            # Metadata is user-supplied, so float() is what validates it.
+            value: Any = metadata[key] if key in metadata else getattr(self, key)
             return None if value is None else float(value)
 
         bandwidth_hz = read("tonal_bandwidth_hz")
@@ -649,7 +650,7 @@ class SyntheticAnthropogenicSignal(AnthropogenicSignal):
         if noise_amplitude_upa > 0:
             # _source_characteristics requires an exponent whenever there is noise to shape.
             noise = self._generate_coloured_noise(noise_amplitude_upa, cast(float, noise_exponent))
-            signal = cast(ComplexArray, signal + noise)
+            signal = signal + noise
 
         return signal
 
@@ -732,10 +733,12 @@ class RecordedAnthropogenicSignal(AnthropogenicSignal):
 
         """
         audio_array = np.asarray(audio)
+        # Read before averaging channels, since the mean of integer samples is float64 and would
+        # otherwise skip the integer normalisation below.
+        audio_dtype = audio_array.dtype
         if audio_array.ndim > 1:
             audio_array = np.mean(audio_array, axis=1)
 
-        audio_dtype = audio_array.dtype
         if np.issubdtype(audio_dtype, np.floating):
             return np.asarray(audio_array, dtype=np.float64)
 

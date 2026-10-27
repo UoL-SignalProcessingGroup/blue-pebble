@@ -196,7 +196,7 @@ def _ratios_and_frame_counts(
     reference = float(np.median(counts))
     referred = [
         _refer_ratios(scan_ratios, frames, reference)
-        for scan_ratios, frames in zip(ratios, counts, strict=True)
+        for scan_ratios, frames in zip(ratios, frame_counts, strict=True)
     ]
     return np.concatenate(referred), counts
 

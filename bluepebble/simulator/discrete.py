@@ -223,7 +223,7 @@ class DiscretePassiveSonarArraySimulator(PassiveSonarArraySimulatorBase):
         n_steps = len(all_timestamps)
         target_states_by_time = [self._states_by_timestamp(path) for path in ground_truth_paths]
         for step_idx, timestamp in enumerate(all_timestamps):
-            platform_state = self.platform.get_platform_state_at(timestamp)
+            platform_state = self._platform_state_at(timestamp)
 
             start_sample = int(step_sample_idx[step_idx])
             if step_idx < n_steps - 1:

@@ -11,6 +11,7 @@ import numpy as np
 import plotly.express as px
 import plotly.graph_objects as go
 from numpy.typing import ArrayLike
+from plotly.basedatatypes import BaseTraceType
 from plotly.subplots import make_subplots
 from scipy import signal as scipy_signal
 from stonesoup.platform.base import Platform
@@ -112,6 +113,11 @@ def _get_cmocean_topo_cmap() -> _ColormapCallable:
     if not callable(cmap):
         raise AttributeError("cmocean.cm.topo colormap is unavailable")
     return cast(_ColormapCallable, cmap)
+
+
+def _figure_traces(fig: go.Figure) -> tuple[BaseTraceType, ...]:
+    """Return ``fig.data`` typed as traces, since plotly ships no type information."""
+    return cast("tuple[BaseTraceType, ...]", fig.data)
 
 
 def _distance_axis_scale(min_val: float, max_val: float) -> tuple[float, str]:
@@ -1242,7 +1248,7 @@ def plot_btr(
         if isinstance(timestamp, np.generic):
             timestamp = timestamp.item()
         if timestamp not in heading_cache:
-            state = platform.get_platform_state_at(timestamp)  # pyright: ignore[reportOptionalMemberAccess]
+            state = platform.get_platform_state_at(timestamp)  # pyrefly: ignore[missing-attribute]
             if state is None:
                 raise ValueError(
                     f"platform has no state at {timestamp}; relative bearings need its "
@@ -1319,7 +1325,7 @@ def plot_btr(
     using_subplot_target = fig is not None
     existing_group_counts: dict[str, int] = {}
     groups_with_titles: set[str] = set()
-    for trace in target_fig.data:
+    for trace in _figure_traces(target_fig):
         group = getattr(trace, "legendgroup", None)
         if not group:
             continue
@@ -1342,7 +1348,7 @@ def plot_btr(
 
     existing_legend_names: set[str] = set()
     if fig is not None:
-        for t in target_fig.data:
+        for t in _figure_traces(target_fig):
             if getattr(t, "showlegend", True) is not False and getattr(t, "name", None):
                 existing_legend_names.add(str(t.name))
 
@@ -2209,7 +2215,7 @@ def apply_shared_colourscale(
         The modified figure (mutated in-place and returned).
 
     """
-    heatmap_traces = [t for t in fig.data if getattr(t, "type", None) == "heatmap"]
+    heatmap_traces = [t for t in _figure_traces(fig) if isinstance(t, go.Heatmap)]
     if not heatmap_traces:
         return fig
 
@@ -2244,7 +2250,7 @@ def deduplicate_legend(fig: go.Figure) -> go.Figure:
 
     """
     seen: set[str] = set()
-    for trace in fig.data:
+    for trace in _figure_traces(fig):
         name = getattr(trace, "name", None)
         if not name:
             continue

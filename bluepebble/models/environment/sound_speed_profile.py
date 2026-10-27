@@ -80,6 +80,12 @@ COMMON_OCEAN_LATITUDES: tuple[float, float] = (-40.0, 60.0)
 ValidRanges: TypeAlias = dict[str, tuple[float, float]]
 
 
+def _positive_depth(depth: DepthInput) -> SpeedOutput:
+    """Return depth below the surface from either ``+z`` or ``-z``, keeping scalars as float."""
+    depth_positive = np.abs(np.asarray(depth, dtype=np.float64))
+    return float(depth_positive) if depth_positive.ndim == 0 else depth_positive
+
+
 class SoundSpeedRangeWarning(UserWarning):
     """Warns that an input fell outside an equation's stated range of validity.
 
@@ -634,7 +640,7 @@ class Linear(SoundSpeedProfile):
 
         """
         # Convert negative z-coordinate to positive depth below surface
-        depth_positive = abs(depth)
+        depth_positive = _positive_depth(depth)
         c = self.surface_speed + self.gradient * depth_positive
         return c
 
@@ -685,7 +691,7 @@ class Arctan(SoundSpeedProfile):
 
         """
         # Convert negative z-coordinate to positive depth below surface
-        depth_positive = abs(depth)
+        depth_positive = _positive_depth(depth)
         # The second arctan offsets the step so the profile starts at surface_speed.
         c = self.surface_speed + 50.0 * (
             np.arctan(self.steepness * (depth_positive - self.mid_depth))
@@ -778,7 +784,7 @@ class Munk(SoundSpeedProfile):
 
         """
         # Convert negative z-coordinate to positive depth below surface
-        depth_positive = abs(depth)
+        depth_positive = _positive_depth(depth)
 
         zt = 2.0 * (depth_positive - 1300.0) / 1300.0
         c = self.axis_speed * (1.0 + 0.00737 * (zt - 1.0 + np.exp(-zt)))
@@ -814,8 +820,8 @@ class Mackenzie(EmpiricalSoundSpeedProfile):
 
     """
 
-    _required_inputs = ("temp", "salt", "depth")
-    _valid_ranges: ValidRanges = {
+    _required_inputs: ClassVar[tuple[str, ...]] = ("temp", "salt", "depth")
+    _valid_ranges: ClassVar[ValidRanges] = {
         "temp": (2.0, 30.0),
         "salt": (25.0, 40.0),
         "depth": (0.0, 8000.0),
@@ -873,7 +879,7 @@ class Mackenzie(EmpiricalSoundSpeedProfile):
             Sound speed in m/s.
 
         """
-        depth_positive = abs(depth)
+        depth_positive = _positive_depth(depth)
         temp = self._get_temperature(depth_positive)
         salt = self._get_salinity(depth_positive)
         self._check_ranges(type(self), temp=temp, salt=salt, depth=depth_positive)
@@ -915,8 +921,12 @@ class Coppens(EmpiricalSoundSpeedProfile):
 
     """
 
-    _required_inputs = ("temp", "salt", "depth")
-    _valid_ranges: ValidRanges = {"temp": (0.0, 35.0), "salt": (0.0, 45.0), "depth": (0.0, 4000.0)}
+    _required_inputs: ClassVar[tuple[str, ...]] = ("temp", "salt", "depth")
+    _valid_ranges: ClassVar[ValidRanges] = {
+        "temp": (0.0, 35.0),
+        "salt": (0.0, 45.0),
+        "depth": (0.0, 4000.0),
+    }
 
     @staticmethod
     def _equation(temp: ArrayLike, salt: ArrayLike, depth: ArrayLike) -> FloatArray:
@@ -978,7 +988,7 @@ class Coppens(EmpiricalSoundSpeedProfile):
             Sound speed in m/s.
 
         """
-        depth_positive = abs(depth)
+        depth_positive = _positive_depth(depth)
         temp = self._get_temperature(depth_positive)
         salt = self._get_salinity(depth_positive)
         self._check_ranges(type(self), temp=temp, salt=salt, depth=depth_positive)
@@ -1022,8 +1032,8 @@ class UNESCO(EmpiricalSoundSpeedProfile):
 
     """
 
-    _required_inputs = ("temp", "salt", "pressure")
-    _valid_ranges: ValidRanges = {
+    _required_inputs: ClassVar[tuple[str, ...]] = ("temp", "salt", "pressure")
+    _valid_ranges: ClassVar[ValidRanges] = {
         "temp": (0.0, 40.0),
         "salt": (0.0, 40.0),
         "pressure": (0.0, 1000.0),
@@ -1117,7 +1127,7 @@ class UNESCO(EmpiricalSoundSpeedProfile):
             Sound speed in m/s.
 
         """
-        depth_positive = abs(depth)
+        depth_positive = _positive_depth(depth)
         temp = self._get_temperature(depth_positive)
         salt = self._get_salinity(depth_positive)
         pressure = self._get_pressure(depth_positive)
@@ -1169,8 +1179,8 @@ class DelGrosso(EmpiricalSoundSpeedProfile):
 
     """
 
-    _required_inputs = ("temp", "salt", "pressure")
-    _valid_ranges: ValidRanges = {
+    _required_inputs: ClassVar[tuple[str, ...]] = ("temp", "salt", "pressure")
+    _valid_ranges: ClassVar[ValidRanges] = {
         "temp": (0.0, 30.0),
         "salt": (30.0, 40.0),
         # Del Grosso states 0 to 1000 kg/cm^2; expressed here in bar to match _equation.
@@ -1245,7 +1255,7 @@ class DelGrosso(EmpiricalSoundSpeedProfile):
             Sound speed in m/s.
 
         """
-        depth_positive = abs(depth)
+        depth_positive = _positive_depth(depth)
         temp = self._get_temperature(depth_positive)
         salt = self._get_salinity(depth_positive)
         pressure = self._get_pressure(depth_positive)
@@ -1287,8 +1297,8 @@ class NPL(EmpiricalSoundSpeedProfile):
 
     """
 
-    _required_inputs = ("temp", "salt", "depth", "latitude")
-    _valid_ranges: ValidRanges = {"salt": (-np.inf, 42.0)}
+    _required_inputs: ClassVar[tuple[str, ...]] = ("temp", "salt", "depth", "latitude")
+    _valid_ranges: ClassVar[ValidRanges] = {"salt": (-np.inf, 42.0)}
 
     @staticmethod
     def _equation(
@@ -1354,7 +1364,7 @@ class NPL(EmpiricalSoundSpeedProfile):
 
         """
         # Convert negative z-coordinate to positive depth below surface
-        depth_positive = abs(depth)
+        depth_positive = _positive_depth(depth)
 
         temp = self._get_temperature(depth_positive)
         salt = self._get_salinity(depth_positive)

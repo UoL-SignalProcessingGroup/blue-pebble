@@ -1,6 +1,6 @@
 """Continuous acoustic sensor simulators module."""
 
-from collections.abc import Iterable, Iterator
+from collections.abc import Iterable, Iterator, Sequence
 from dataclasses import dataclass
 from datetime import datetime
 from typing import TYPE_CHECKING, Any, TypeAlias, cast
@@ -49,6 +49,16 @@ class _STFTTargetHistory:
     source_stft: Complex64Array
     H_hist: Complex64Array
     tau_hist: FloatArray
+
+
+@dataclass
+class _WOLATargetHistory:
+    """Per-target STFT source and delay-de-rotated channel histories for WOLA synthesis."""
+
+    source_stft: Complex64Array
+    tau_hist: FloatArray
+    H_mag_hist: FloatArray
+    H_phase_hist: FloatArray
 
 
 def _hold_last_finite_delays(delay_history_s: FloatArray) -> FloatArray:
@@ -434,7 +444,7 @@ class ContinuousSTFTPassiveSonarArraySimulator(PassiveSonarArraySimulatorBase):
     def _build_target_histories(
         self,
         ctx: _STFTCommonContext,
-        ground_truth_paths: "list[Iterable[State]]",
+        ground_truth_paths: "Sequence[Iterable[State]]",
         signal_models_list: "list[AnthropogenicSignal]",
         progress_bar: bool = False,
     ) -> list[_STFTTargetHistory]:
@@ -448,7 +458,7 @@ class ContinuousSTFTPassiveSonarArraySimulator(PassiveSonarArraySimulatorBase):
         ----------
         ctx : _STFTCommonContext
             Shared STFT context.
-        ground_truth_paths : list of Iterable of State
+        ground_truth_paths : Sequence of Iterable of State
             Target trajectories.
         signal_models_list : list
             Resolved signal-model list aligned with targets.
@@ -518,7 +528,7 @@ class ContinuousSTFTPassiveSonarArraySimulator(PassiveSonarArraySimulatorBase):
 
                 states_by_time = self._states_by_timestamp(target_path)
                 for step_idx, timestamp in enumerate(ctx.all_timestamps):
-                    platform_state = self.platform.get_platform_state_at(timestamp)
+                    platform_state = self._platform_state_at(timestamp)
                     target_state = states_by_time.get(timestamp)
                     if target_state is None:
                         bar.update(1)
@@ -797,7 +807,7 @@ class ContinuousSTFTPassiveSonarArraySimulator(PassiveSonarArraySimulatorBase):
 
         # Precompute residual channel magnitude/phase histories once per target.
         # Doing this inside the frame loop is the dominant runtime cost.
-        wola_histories = []
+        wola_histories: list[_WOLATargetHistory] = []
         for target_data in targets_data:
             H_mag_hist, H_phase_hist = self._build_residual_channel_histories(
                 H_hist=target_data.H_hist,
@@ -805,12 +815,12 @@ class ContinuousSTFTPassiveSonarArraySimulator(PassiveSonarArraySimulatorBase):
                 frequencies_hz=ctx.frequencies,
             )
             wola_histories.append(
-                {
-                    "source_stft": target_data.source_stft,
-                    "tau_hist": target_data.tau_hist,
-                    "H_mag_hist": H_mag_hist,
-                    "H_phase_hist": H_phase_hist,
-                }
+                _WOLATargetHistory(
+                    source_stft=target_data.source_stft,
+                    tau_hist=target_data.tau_hist,
+                    H_mag_hist=H_mag_hist,
+                    H_phase_hist=H_phase_hist,
+                )
             )
 
         for frame_idx in range(ctx.num_frames):
@@ -825,10 +835,10 @@ class ContinuousSTFTPassiveSonarArraySimulator(PassiveSonarArraySimulatorBase):
                 frame_sensor_sum = np.zeros(ctx.frame_len, dtype=np.complex64)
 
                 for wola_data in wola_histories:
-                    source_spec = wola_data["source_stft"][frame_idx, :]
-                    H_mag_hist = wola_data["H_mag_hist"][:, sensor_idx, :]
-                    H_phase_hist = wola_data["H_phase_hist"][:, sensor_idx, :]
-                    tau_hist = wola_data["tau_hist"][:, sensor_idx]
+                    source_spec = wola_data.source_stft[frame_idx, :]
+                    H_mag_hist = wola_data.H_mag_hist[:, sensor_idx, :]
+                    H_phase_hist = wola_data.H_phase_hist[:, sensor_idx, :]
+                    tau_hist = wola_data.tau_hist[:, sensor_idx]
 
                     H_interp = self._interpolate_channel_from_residual_histories(
                         H_mag_hist=H_mag_hist,
@@ -1128,14 +1138,13 @@ class ContinuousFractionalDelayPassiveSonarArraySimulator(PassiveSonarArraySimul
         sample_times_s = np.arange(out_len, dtype=np.float64) / fs
         receiver_accum = np.zeros((num_sensors, out_len), dtype=np.complex64)
 
-        if ground_truth_paths:
-            if not isinstance(self.propagation_model, SpectrumPropagationModel):
-                msg = (
-                    f"{type(self.propagation_model).__name__} does not implement "
-                    "'propagate_spectrum', which is required for STFT-based simulation"
-                )
-                raise TypeError(msg)
-            spectrum_propagation_model = cast(SpectrumPropagationModel, self.propagation_model)
+        if ground_truth_paths and not isinstance(self.propagation_model, SpectrumPropagationModel):
+            msg = (
+                f"{type(self.propagation_model).__name__} does not implement "
+                "'propagate_spectrum', which is required for STFT-based simulation"
+            )
+            raise TypeError(msg)
+        spectrum_propagation_model = cast(SpectrumPropagationModel, self.propagation_model)
 
         with tqdm(
             total=len(ground_truth_paths) * n_steps,
@@ -1164,7 +1173,7 @@ class ContinuousFractionalDelayPassiveSonarArraySimulator(PassiveSonarArraySimul
 
                 states_by_time = self._states_by_timestamp(target_path)
                 for step_idx, timestamp in enumerate(all_timestamps):
-                    platform_state = self.platform.get_platform_state_at(timestamp)
+                    platform_state = self._platform_state_at(timestamp)
                     target_state = states_by_time.get(timestamp)
                     if target_state is None:
                         bar.update(1)

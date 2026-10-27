@@ -7,7 +7,7 @@ Alpha, the threshold multiplier applied to the local noise estimate, is either g
 
 import warnings
 from abc import ABC, abstractmethod
-from typing import Any, TypeAlias, cast
+from typing import Any, Literal, TypeAlias, cast
 
 import numpy as np
 from numpy.lib.stride_tricks import sliding_window_view
@@ -435,7 +435,7 @@ class _CFARDetectorBase(DetectionAlgorithm, ABC):
         return max(self.wrap_pad_width or self.peak_distance, 1)
 
     @property
-    def _pad_mode(self) -> str:
+    def _pad_mode(self) -> Literal["wrap", "edge"]:
         """Edge-handling mode for noise-floor padding.
 
         ``"wrap"`` for a circular bearing axis; ``"edge"`` (replicate the boundary cell) otherwise,
@@ -645,7 +645,7 @@ class CACFARDetector(_CFARDetectorBase):
         end_gap = start_gap + (2 * self.num_guard_cells) + 1
         kernel[start_gap:end_gap] = 0
 
-        padded_power = np.pad(directional_power, pad_width=one_sided_window, mode=self._pad_mode)  # pyright: ignore[reportCallIssue]
+        padded_power = np.pad(directional_power, pad_width=one_sided_window, mode=self._pad_mode)
         # "valid" convolution with a window this size reproduces a per-cell sliding sum over
         # the padded array, aligned so output[i] corresponds to input cell i.
         noise_sum = np.convolve(padded_power, kernel, mode="valid")
@@ -753,7 +753,7 @@ class OSCFARDetector(_CFARDetectorBase):
         one_sided_window = self.num_guard_cells + self.num_training_cells
         window_size = 2 * one_sided_window + 1
 
-        padded_power = np.pad(directional_power, pad_width=one_sided_window, mode=self._pad_mode)  # pyright: ignore[reportCallIssue]
+        padded_power = np.pad(directional_power, pad_width=one_sided_window, mode=self._pad_mode)
         # Each row of `windows` is one CUT's full window: [training][guard] CUT [guard][training].
         windows = sliding_window_view(padded_power, window_size)
 

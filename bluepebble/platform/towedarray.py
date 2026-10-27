@@ -3,16 +3,19 @@
 from collections.abc import Sequence
 from dataclasses import dataclass
 from datetime import datetime
-from typing import Protocol, TypeAlias, cast
+from typing import TYPE_CHECKING, Protocol, TypeAlias, cast
 
 import numpy as np
 from numpy.typing import NDArray
 from stonesoup.base import Base, Property
 from stonesoup.movable.movable import MovingMovable
 from stonesoup.platform.base import MultiTransitionMovingPlatform
-from stonesoup.types.array import StateVector, StateVectors
+from stonesoup.types.array import StateVector
 from stonesoup.types.groundtruth import GroundTruthState
 from stonesoup.types.state import State
+
+if TYPE_CHECKING:
+    from stonesoup.movable.movable import Movable
 
 FloatArray: TypeAlias = NDArray[np.float64]
 
@@ -149,15 +152,15 @@ class HostState:
 
     Parameters
     ----------
-    state : GroundTruthState
-        The ground truth state of the host vehicle.
+    state : State
+        The state of the host vehicle.
     heading_rad : float
         The host vehicle's direction of travel, in radians anticlockwise from +x, in
         ``[-pi, pi)``.
 
     """
 
-    state: GroundTruthState
+    state: State
     heading_rad: float
 
 
@@ -169,15 +172,15 @@ class ArrayState:
     ----------
     num_sensors : int
         The total number of sensors in the array.
-    state_vector : StateVectors
-        The combined state vector of all sensors.
+    state_vector : FloatArray
+        The sensor state vectors stacked column-wise, shape ``(state_dim, num_sensors)``.
     ref_state_vector : StateVector
         The state vector of the reference sensor.
 
     """
 
     num_sensors: int
-    state_vector: StateVectors
+    state_vector: FloatArray
     ref_state_vector: StateVector
 
 
@@ -434,7 +437,7 @@ class TowedArrayPlatform(MultiTransitionMovingPlatform):
         )
 
     @staticmethod
-    def _state_at(movable: MovingMovable, timestamp: datetime) -> State | None:
+    def _state_at(movable: "Movable", timestamp: datetime) -> State | None:
         """Return a movable's state at ``timestamp``, or None if it has none.
 
         ``move`` has just appended the state being captured, so the latest state is checked
