@@ -82,14 +82,25 @@ class FlatBathymetry(Bathymetry):
         The constant depth of the seafloor in meters. Must be negative
         (below surface, Blue Pebble ``-z`` convention). Defaults to -5000.0 m.
 
+    Raises
+    ------
+    ValueError
+        If ``depth`` is non-negative.
+
     """
 
     depth: float = Property(default=-5000.0, doc="Constant depth of the seafloor in meters")
 
-    def __post_init__(self) -> None:
-        """Validate the depth after initialization."""
+    def __init__(self, *args: object, **kwargs: object) -> None:
+        """Initialise FlatBathymetry with the given parameters."""
+        super().__init__(*args, **kwargs)
         if self.depth >= 0:
-            raise ValueError("Depth must be negative for Blue Pebble -z convention.")
+            msg = "Depth must be negative (Blue Pebble uses +z up). "
+            if self.depth > 0:
+                msg += f"Received {self.depth}. Did you mean {-self.depth}?"
+            else:
+                msg += f"Received {self.depth}."
+            raise ValueError(msg)
 
     def get_depth(self, x: float, y: float) -> float:
         """Get the seafloor depth (constant everywhere).
@@ -229,6 +240,13 @@ class SeamountBathymetry(Bathymetry):
     plateau_depth : float
         Depth at the surrounding plateau in meters. Defaults to -5000.0 m.
 
+    Raises
+    ------
+    ValueError
+        If ``radius`` is non-positive.
+        If ``plateau_depth`` is non-negative.
+        If summit (``summit_position[2]``) is above the surface or not above ``plateau_depth``.
+
     """
 
     summit_position: tuple[float, float, float] = Property(
@@ -240,8 +258,9 @@ class SeamountBathymetry(Bathymetry):
         default=-5000.0, doc="Depth at the surrounding plateau in meters"
     )
 
-    def __post_init__(self) -> None:
-        """Validate parameters after initialization."""
+    def __init__(self, *args: object, **kwargs: object) -> None:
+        """Initialise SeamountBathymetry with the given parameters."""
+        super().__init__(*args, **kwargs)
         if self.radius <= 0:
             raise ValueError("Radius must be positive.")
         if self.plateau_depth >= 0:
@@ -331,6 +350,15 @@ class GEBCOBathymetry(Bathymetry):
     - Coordinates are converted from lat/lon to local Cartesian meters.
     - Internally and at output, depth follows the convention ``-z`` underwater.
 
+    Raises
+    ------
+    FileNotFoundError
+        If ``file_path`` does not exist.
+    ImportError
+        If ``netCDF4`` is not installed.
+    ValueError
+        If the file does not hold 1D lat/lon axes and a matching 2D elevation grid.
+
     """
 
     file_path: str = Property(doc="Path to GEBCO NetCDF file")
@@ -397,8 +425,10 @@ class GEBCOBathymetry(Bathymetry):
         self._z_grid_yx = np.minimum(elev_m, 0.0)
         self._is_loaded = True
 
-    def __post_init__(self) -> None:
-        """Attempt eager load; get_depth/get_grid also support lazy loading."""
+    def __init__(self, *args: object, **kwargs: object) -> None:
+        """Initialise, then load the GEBCO file so bad inputs fail at construction."""
+        # Stone Soup's Base never calls __post_init__, so loading here is what makes it eager.
+        super().__init__(*args, **kwargs)
         self._is_loaded = False
         self._load_data()
 

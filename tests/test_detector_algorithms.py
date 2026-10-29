@@ -269,6 +269,23 @@ def test_oscfar_detector_validates_rank(monkeypatch) -> None:
         )
 
 
+@pytest.mark.parametrize(
+    "change", [dict(rank=0), dict(rank=9), dict(num_training_cells=2)], ids=str
+)
+def test_oscfar_detector_validates_rank_changed_after_construction(monkeypatch, change) -> None:
+    """Parameter sweeps set properties after __init__, so detect() must recheck the rank."""
+    algorithms = _load_detector_algorithms(monkeypatch)
+    detector = algorithms.OSCFARDetector(
+        num_guard_cells=1, num_training_cells=4, rank=6, threshold_factor=3.0
+    )
+
+    for setting, value in change.items():
+        setattr(detector, setting, value)
+
+    with pytest.raises(ValueError, match="Rank"):
+        detector.detect(np.ones((64, 2)))
+
+
 def test_oscfar_detector_warns_on_low_rank(monkeypatch) -> None:
     """A rank below half the training-cell count risks underestimating the noise floor."""
     algorithms = _load_detector_algorithms(monkeypatch)
