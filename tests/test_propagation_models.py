@@ -214,6 +214,30 @@ def test_negative_attenuation_is_rejected(monkeypatch) -> None:
         )
 
 
+@pytest.mark.parametrize(
+    "model_name", ["CylindricalAcousticPropagationModel", "SphericalAcousticPropagationModel"]
+)
+def test_analytic_models_accept_zero_attenuation(monkeypatch, model_name) -> None:
+    """Zero attenuation is the edge of the valid range, so it should be accepted."""
+    propagation = _load_propagation_module(monkeypatch)
+
+    model = getattr(propagation, model_name)(ssp=ConstantSSP(1500.0), attenuation_factor=0.0)
+
+    assert model.attenuation_factor == 0.0
+
+
+def test_rtrs_rejects_bottom_model_without_model_key(monkeypatch) -> None:
+    """An rtrs bottom_model dict must name its model."""
+    propagation = _load_propagation_module(monkeypatch)
+
+    with pytest.raises(ValueError, match="bottom_model"):
+        propagation.rtrsAcousticPropagationModel(
+            ssp=ConstantSSP(1500.0),
+            bathymetry=SimpleNamespace(),
+            bottom_model={"density": 1.5},
+        )
+
+
 def test_rtrs_validation_and_helper_methods(monkeypatch) -> None:
     """Rtrs helper methods should validate options and compute derived values predictably."""
     propagation = _load_propagation_module(monkeypatch)
