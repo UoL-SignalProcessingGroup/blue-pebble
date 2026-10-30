@@ -10,6 +10,7 @@ from stonesoup.base import Base, Property
 
 from ..models.propagation import BellhopArrivalsModel
 from ..platform.sonobuoy import OmniSonobuoyPlatform
+from ..sensors.base import Sensor
 from ..sensors.bow_array import BowArraySensor
 from ..signal.active import ActiveSignal
 from ..signal.random import RandomSignal
@@ -173,8 +174,12 @@ class BellhopActiveSonarSimulatorOmni(Base):
             if range_m < 1.0:
                 continue  # degenerate case: target co-located with sonobuoy
 
-            out_rays = self.propagation_model.compute_eigenrays(sd, td, range_m, carrier_hz)
-            back_rays = self.propagation_model.compute_eigenrays(td, sd, range_m, carrier_hz)
+            out_rays = self.propagation_model.compute_eigenrays(
+                sd, td, (sx, sy), (tx, ty), carrier_hz
+            )
+            back_rays = self.propagation_model.compute_eigenrays(
+                td, sd, (tx, ty), (sx, sy), carrier_hz
+            )
 
             if not out_rays or not back_rays:
                 continue
@@ -213,7 +218,12 @@ def _apply_cutoff(rays: list, cutoff_fraction: float) -> list:
 
 
 class BellhopActiveSonarSimulatorArray(Base):
-    """Monostatic active sonar simulator using Bellhop eigenrays, for multi-element arrays.
+    """Active sonar simulator using Bellhop eigenrays, for multi-element arrays.
+
+    Monostatic by default (``platform`` both transmits and receives). Pass a separate
+    ``transmitter`` to make it bistatic: the out-path is then traced from the
+    transmitter's reference position and only the back-path ends at ``platform``, e.g. a
+    flank or towed array receiving echoes of a ping sent from the bow array.
 
     Like :class:`BellhopActiveSonarSimulatorOmni`, but the platform exposes multiple
     receive elements (``platform.array``) instead of a single hydrophone point.
@@ -228,10 +238,17 @@ class BellhopActiveSonarSimulatorArray(Base):
     multipath structure — the whole dome shares one set of eigenrays. Worth keeping
     in mind before relying on this for anything where near-field effects matter.
 
+    Hull baffling applies on both legs when the arrays report ``element_normals`` (see
+    :meth:`~bluepebble.sensors.base.ArrayState.element_gains`): each receive element is
+    attenuated for a target behind its face, and the transmitted level towards a target is
+    scaled by the transmitting array's
+    :meth:`~bluepebble.sensors.base.ArrayState.transmit_gain` (e.g. a bow dome cannot ping
+    a target astern at full level). Arrays without normals (towed, sonobuoy) are omni.
+
     Parameters
     ----------
-    platform : BowArraySensor
-        The array acting as both transmitter and receiver.
+    platform : Sensor
+        The receiving array (and the transmitter too, unless ``transmitter`` is given).
     propagation_model : BellhopArrivalsModel
         Bellhop arrivals model for eigenray computation.
     signal : ActiveSignal
@@ -253,11 +270,15 @@ class BellhopActiveSonarSimulatorArray(Base):
         Eigenrays with amplitude below ``amplitude_cutoff × max_amplitude``
         are discarded before combination. Default matches the MATLAB reference
         (``5e-3``).
+    transmitter : Sensor or None
+        Separate transmitting sensor for bistatic geometry; its array reference position
+        is the source of the out-path. ``None`` (the default) transmits from ``platform``.
 
     """
 
-    platform: BowArraySensor = Property(
-        doc="Array platform exposing .array (ArrayState) as transmitter/receiver"
+    platform: Sensor = Property(
+        doc="Receiving array exposing .array (ArrayState); also the transmitter unless "
+        "transmitter is given"
     )
     propagation_model: BellhopArrivalsModel = Property(
         doc="Bellhop arrivals model for eigenray computation"
@@ -289,6 +310,10 @@ class BellhopActiveSonarSimulatorArray(Base):
     noise_model: RandomSignal | None = Property(
         default=None,
         doc="Optional ambient noise model added to the raw hydrophone signal each ping",
+    )
+    transmitter: Sensor | None = Property(
+        default=None,
+        doc="Separate transmitting sensor (bistatic). None transmits from platform.",
     )
 
     def __post_init__(self) -> None:
@@ -366,6 +391,14 @@ class BellhopActiveSonarSimulatorArray(Base):
         # so normalise to a positive depth magnitude the same way the target depth already is.
         sd = abs(float(ref_pos[2]))
 
+        if self.transmitter is None:
+            tx_array = array
+        else:
+            tx_array = self.transmitter.get_platform_state_at(timestamp).array
+        tx_pos = tx_array.ref_state_vector.flatten()
+        src_x, src_y = float(tx_pos[0]), float(tx_pos[1])
+        src_d = abs(float(tx_pos[2]))
+
         for target_path in self.ground_truth_paths:
             state = _target_state_at(target_path, timestamp)
             if state is None:
@@ -377,13 +410,19 @@ class BellhopActiveSonarSimulatorArray(Base):
             td = abs(float(tv[pm[2], 0]))  # positive depth for Bellhop
 
             range_m = float(np.sqrt((sx - tx) ** 2 + (sy - ty) ** 2))
-            if range_m < 1.0:
-                continue  # degenerate case: target co-located with array reference
+            src_range_m = float(np.sqrt((src_x - tx) ** 2 + (src_y - ty) ** 2))
+            if range_m < 1.0 or src_range_m < 1.0:
+                continue  # degenerate case: target co-located with array/transmitter
 
             # Eigenrays computed once from the array reference position, then reused
-            # for every element via the per-element correction below.
-            out_rays = self.propagation_model.compute_eigenrays(sd, td, range_m, carrier_hz)
-            back_rays = self.propagation_model.compute_eigenrays(td, sd, range_m, carrier_hz)
+            # for every element via the per-element correction below. The out-path starts
+            # at the transmitter (the array itself unless bistatic).
+            out_rays = self.propagation_model.compute_eigenrays(
+                src_d, td, (src_x, src_y), (tx, ty), carrier_hz
+            )
+            back_rays = self.propagation_model.compute_eigenrays(
+                td, sd, (tx, ty), (sx, sy), carrier_hz
+            )
 
             if not out_rays or not back_rays:
                 continue
@@ -408,13 +447,20 @@ class BellhopActiveSonarSimulatorArray(Base):
             # reference, so its round-trip leg is shorter by that much -> earlier arrival.
             extra_delay_s = -(offsets.T @ unit_to_target) / self.platform.NOMINAL_SOUND_SPEED
 
+            # Hull baffling on both legs: receive elements whose face points away from the
+            # target (e.g. the starboard flank panel for a port-side target) are attenuated,
+            # and so is the ping sent towards a target behind the transmitter's face.
+            element_gain = array.element_gains(unit_to_target)
+            tx_gain = tx_array.transmit_gain(target_xyz - tx_pos)
+
             n_pulse = len(pulse)
             for r_out in out_rays:
                 for r_back in back_rays:
                     # Outbound leg (r_out) is common to all elements: transmit is modelled
-                    # from the array reference point, not per-element (no TX beamforming).
+                    # from the transmitter's reference point, not per-element (no TX
+                    # beamforming).
                     base_delay_s = r_out.delay_s + r_back.delay_s
-                    total_amp = r_out.amplitude * r_back.amplitude * target_amplitude
+                    total_amp = r_out.amplitude * r_back.amplitude * target_amplitude * tx_gain
 
                     total_delay_s = base_delay_s + extra_delay_s  # (num_sensors,)
                     n_shift = (total_delay_s * fs).astype(int)
@@ -426,7 +472,7 @@ class BellhopActiveSonarSimulatorArray(Base):
                             continue
                         copy_len = min(n_pulse, n_receive - n_shift[i])
                         received[i, n_shift[i] : n_shift[i] + copy_len] += (
-                            total_amp * phase[i] * pulse[:copy_len]
+                            total_amp * element_gain[i] * phase[i] * pulse[:copy_len]
                         )
 
         return received
@@ -442,6 +488,9 @@ class BellhopActiveSonarSimulatorArrayPerElement(Base):
     captures real near-field amplitude and multipath differences between
     elements, at the cost of ``num_sensors``x the Bellhop calls per target per
     ping compared to :class:`BellhopActiveSonarSimulatorArray`.
+
+    Hull baffling (``element_normals``) is applied on both legs exactly as in
+    :class:`BellhopActiveSonarSimulatorArray`.
 
     Parameters
     ----------
@@ -568,6 +617,7 @@ class BellhopActiveSonarSimulatorArrayPerElement(Base):
         num_sensors = array.num_sensors
         received = np.zeros((num_sensors, n_receive), dtype=np.complex128)
         elem_pos = array.state_vector  # (3, num_sensors) world frame
+        ref_pos = array.ref_state_vector.flatten()
 
         fs = self.signal.sampling_rate_hz
         carrier_hz = self.signal.carrier_frequency_hz
@@ -584,6 +634,12 @@ class BellhopActiveSonarSimulatorArrayPerElement(Base):
             ty = float(tv[pm[1], 0])
             td = abs(float(tv[pm[2], 0]))  # positive depth for Bellhop
 
+            # Hull baffling on both legs, as in BellhopActiveSonarSimulatorArray: the ping
+            # towards the target is scaled by the array's transmit gain, and each element's
+            # echo by its own receive gain.
+            to_target = np.array([tx, ty, float(tv[pm[2], 0])]) - ref_pos
+            baffle_gain = array.transmit_gain(to_target) * array.element_gains(to_target)
+
             for i in range(num_sensors):
                 ex, ey = float(elem_pos[0, i]), float(elem_pos[1, i])
                 ed = abs(float(elem_pos[2, i]))  # positive depth for Bellhop
@@ -592,8 +648,12 @@ class BellhopActiveSonarSimulatorArrayPerElement(Base):
                 if range_m < 1.0:
                     continue  # degenerate case: target co-located with this element
 
-                out_rays = self.propagation_model.compute_eigenrays(ed, td, range_m, carrier_hz)
-                back_rays = self.propagation_model.compute_eigenrays(td, ed, range_m, carrier_hz)
+                out_rays = self.propagation_model.compute_eigenrays(
+                    ed, td, (ex, ey), (tx, ty), carrier_hz
+                )
+                back_rays = self.propagation_model.compute_eigenrays(
+                    td, ed, (tx, ty), (ex, ey), carrier_hz
+                )
 
                 if not out_rays or not back_rays:
                     continue
@@ -604,7 +664,8 @@ class BellhopActiveSonarSimulatorArrayPerElement(Base):
                 for r_out in out_rays:
                     for r_back in back_rays:
                         total_delay_s = r_out.delay_s + r_back.delay_s
-                        total_amp = r_out.amplitude * r_back.amplitude * target_amplitude
+                        total_amp = (r_out.amplitude * r_back.amplitude * target_amplitude
+                                     * baffle_gain[i])
 
                         n_shift = int(total_delay_s * fs)
                         if n_shift >= n_receive:

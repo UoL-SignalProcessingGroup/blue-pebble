@@ -133,7 +133,7 @@ ambient_noise_params = {
 bf_params = {
     "beamformer_type": "DAS",
     "shading": None,
-    "domain": "time",
+    "domain": "frequency",
 }
 
 det_params = {
@@ -259,13 +259,6 @@ if bf["beamformer_type"] == "DAS":
         domain=bf["domain"],
     )
 elif bf["beamformer_type"] == "MVDR":
-    # MVDR returns a direction/time power map, not an echo waveform, so the matched-filter
-    # detection chain here needs DAS. Construction kept for reference:
-    #   beamformer = MinimumVarianceDistortionlessResponseBeamformer(
-    #       sampling_rate_hz=signal_params["sampling_rate_hz"],
-    #       fmin=bf.get("fmin"),
-    #       fmax=bf.get("fmax"),
-    #   )
     raise NotImplementedError(
         "MVDR is not wired into this example's matched-filter chain; use DAS."
     )

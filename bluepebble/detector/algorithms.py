@@ -328,3 +328,45 @@ class OSCFARDetector(DetectionAlgorithm):
             indices = np.where(power > threshold)[0]
 
         return _stack_detections(indices, data_array)
+
+
+class DetectorChain(DetectionAlgorithm):
+    """Run several detection algorithms one after another, as a single algorithm.
+
+    Each stage only sees the detections of the stage before it: those samples keep their
+    values and every other sample is set to ``-inf``. A typical chain is CFAR (which
+    samples stand out from their surroundings), then a threshold (which are strong
+    enough), then a peak picker (one detection per lobe). If any stage finds nothing, the
+    chain returns no detections.
+
+    Attributes
+    ----------
+    algorithms : list[DetectionAlgorithm]
+        The stages, applied in order.
+
+    """
+
+    algorithms: list[DetectionAlgorithm] = Property(
+        doc="Detection algorithms applied in order, each to the previous stage's detections"
+    )
+
+    def detect(self, data: ArrayLike) -> DetectionArray:
+        """Run every stage in turn on the data array.
+
+        Returns
+        -------
+        DetectionArray
+            The last stage's detections, ``[index, value]`` per row with values taken from
+            ``data``. Empty when there are no stages or any stage finds nothing.
+
+        """
+        data_array = np.asarray(data, dtype=np.float64)
+        stage_input = data_array
+        detections = _empty_detections()
+        for algorithm in self.algorithms:
+            detections = np.asarray(algorithm.detect(stage_input), dtype=np.float64)
+            if detections.size == 0:
+                return _empty_detections()
+            stage_input = np.full(len(data_array), -np.inf, dtype=np.float64)
+            stage_input[detections[:, 0].astype(int)] = detections[:, 1]
+        return detections

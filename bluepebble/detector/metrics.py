@@ -62,6 +62,8 @@ from typing import TYPE_CHECKING, Protocol, TypeAlias
 import numpy as np
 from numpy.typing import ArrayLike, NDArray
 
+from .algorithms import DetectorChain
+
 if TYPE_CHECKING:
     from .algorithms import DetectionAlgorithm
 
@@ -150,26 +152,7 @@ def _run_detection_chain(
         an empty ``(0, 2)`` array when no detections pass the full chain.
 
     """
-    snr_vector_array = np.asarray(snr_vector, dtype=np.float64)
-    if not detection_chain:
-        return _empty_detections()
-
-    input_data = snr_vector_array.copy()
-    final_detections = _empty_detections()
-
-    for algorithm in detection_chain:
-        current_detections = algorithm.detect(input_data)
-
-        if current_detections.size == 0:
-            return _empty_detections()
-
-        final_detections = current_detections
-
-        # Build a sparse input for the next stage: set non-detected cells to −∞
-        input_data = np.full(len(snr_vector_array), -np.inf, dtype=np.float64)
-        input_data[final_detections[:, 0].astype(int)] = final_detections[:, 1]
-
-    return np.asarray(final_detections, dtype=np.float64)
+    return DetectorChain(algorithms=list(detection_chain)).detect(snr_vector)
 
 
 def _compute_timestep_metrics(

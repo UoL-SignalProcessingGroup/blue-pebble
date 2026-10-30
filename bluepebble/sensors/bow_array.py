@@ -32,13 +32,15 @@ def _compute_dome_element_offsets(
     azimuth_extent_rad: float,
     elevation_extent_rad: float,
     element_spacing_m: float,
+    array_depth_offset_m: float,
 ) -> FloatArray:
     """Compute local body-frame element positions for a spherical-patch bow dome.
 
     The dome is treated as a patch of a sphere of radius ``dome_radius_m`` centred on the
     array's boresight (local +x, straight ahead). Rows are laid out in elevation and, within
     each row, elements are laid out in azimuth, both spaced no closer than
-    ``element_spacing_m`` (measured as arc length along the sphere).
+    ``element_spacing_m`` (measured as arc length along the sphere). The whole patch is then
+    lowered by ``array_depth_offset_m`` so it sits below the host mounting point.
 
     Parameters
     ----------
@@ -50,12 +52,15 @@ def _compute_dome_element_offsets(
         Angular width of the forward-facing patch in elevation, in radians.
     element_spacing_m : float
         Minimum centre-to-centre spacing between adjacent elements, in metres.
+    array_depth_offset_m : float
+        Distance the dome is mounted below the host reference point, in metres
+        (positive is deeper; the body frame is +x forward, +z up).
 
     Returns
     -------
     FloatArray
         Local element offsets with shape ``(3, num_elements)``, in the body frame (local +x
-        forward, +z down), relative to the dome's centre.
+        forward, +z up), relative to the host mounting point.
 
     """
     num_rows = int(np.floor(elevation_extent_rad * dome_radius_m / element_spacing_m)) + 1
@@ -73,7 +78,7 @@ def _compute_dome_element_offsets(
 
         x = dome_radius_m * np.cos(phi) * np.cos(azimuth_angles)
         y = dome_radius_m * np.cos(phi) * np.sin(azimuth_angles)
-        z = np.full_like(azimuth_angles, dome_radius_m * np.sin(phi))
+        z = np.full_like(azimuth_angles, dome_radius_m * np.sin(phi)) - array_depth_offset_m
         offsets.append(np.vstack([x, y, z]))
 
     return np.hstack(offsets)
@@ -105,6 +110,20 @@ class BowArraySensor(Sensor):
     freq_max_hz: float = Property(
         doc="Maximum frequency of the transmit pulse (LFM sweep or CW tone), in Hz. "
         "Used to check the grating-lobe spacing limit."
+    )
+
+    array_depth_offset_m: float = Property(
+        default=0.0,
+        doc="Distance the dome is mounted below the host reference point, in metres. "
+        "Lowers the elements and the array reference point together, so the "
+        "source/receiver depth used for propagation is the dome's depth, not the host's "
+        "(a surface ship at z = 0 still transmits from below the hull).",
+    )
+    baffle_attenuation_db: float = Property(
+        default=40.0,
+        doc="Attenuation of echoes arriving from behind the dome face (aft of the bow), "
+        "in dB. Set by the hull baffle; real values are typically 15-30 dB, lower at low "
+        "frequency.",
     )
 
     NOMINAL_SOUND_SPEED = 1500.0
@@ -150,7 +169,10 @@ class BowArraySensor(Sensor):
             self.azimuth_extent_rad,
             self.elevation_extent_rad,
             self.element_spacing_m,
+            self.array_depth_offset_m,
         )
+        # Reference point: the dome centre, directly below the host mounting point.
+        self._reference_offset_m = np.array([[0.0], [0.0], [-self.array_depth_offset_m]])
 
     def _array_from_position_velocity(
         self, position: StateVector, velocity: StateVector
@@ -166,11 +188,16 @@ class BowArraySensor(Sensor):
         rotation = _get_rotation_matrix(velocity) if is_moving else np.eye(3)
 
         world_positions = rotation @ self._element_offsets_m + position
+        # The hull behind the dome baffles every element, so all of them face forward.
+        forward = rotation @ np.array([[1.0], [0.0], [0.0]])
 
         return ArrayState(
             num_sensors=world_positions.shape[1],
             state_vector=StateVectors(world_positions),
-            ref_state_vector=position,
+            ref_state_vector=StateVector(rotation @ self._reference_offset_m + position),
+            element_normals=StateVectors(np.tile(forward, (1, world_positions.shape[1]))),
+            baffle_attenuation_db=self.baffle_attenuation_db,
+            axis=StateVector(forward),
         )
 
     @property
@@ -180,9 +207,8 @@ class BowArraySensor(Sensor):
         Rotates the local body-frame element layout by the host's *current*
         velocity-derived orientation (yaw and pitch; roll is not modelled, matching
         :class:`~stonesoup.movable.movable.MovingMovable`) and translates it by the host's
-        current position. The reference point is the host's own position, since the dome's
-        local origin is mounted directly at the host position (there is no separate
-        hull-mounting offset).
+        current position. The reference point is the dome centre: the host position lowered
+        by ``array_depth_offset_m``, so propagation is computed at the dome's depth.
 
         This always reflects the host's latest recorded state -- if the host has already
         been advanced past the timestamp you actually care about (e.g. a caller drives it
@@ -194,8 +220,11 @@ class BowArraySensor(Sensor):
         -------
         ArrayState
             Array state with ``num_sensors`` equal to the number of dome elements,
-            per-element world positions in ``state_vector``, and ``ref_state_vector`` set
-            to the host's current position.
+            per-element world positions in ``state_vector``, ``ref_state_vector`` at
+            the dome centre (``array_depth_offset_m`` below the host), and
+            ``element_normals`` all pointing along the host's heading (the dome is
+            baffled by the hull behind it), with
+            ``baffle_attenuation_db`` copied from the sensor.
 
         """
         return self._array_from_position_velocity(self.host.position, self.host.velocity)

@@ -473,7 +473,7 @@ fig_acc.update_yaxes(
 # %%
 from pathlib import Path
 
-out_dir = Path(__file__).resolve().parent / "figs_active_rtrs"
+out_dir = Path(__file__).resolve().parent / "figs_active"
 out_dir.mkdir(parents=True, exist_ok=True)
 
 for fname, fig in [

@@ -25,7 +25,9 @@ def _install_fake_simulator_dependencies(monkeypatch) -> None:
     propagation_module.SpectrumPropagationModel = type("SpectrumPropagationModel", (), {})
 
     platform_module = ModuleType("bluepebble.platform")
-    platform_module.TowedArrayPlatform = type("TowedArrayPlatform", (), {})
+
+    sensors_module = ModuleType("bluepebble.sensors")
+    sensors_module.TowedArraySensor = type("TowedArraySensor", (), {})
 
     signal_package = ModuleType("bluepebble.signal")
     signal_package.__path__ = []
@@ -66,6 +68,7 @@ def _install_fake_simulator_dependencies(monkeypatch) -> None:
 
     monkeypatch.setitem(sys.modules, "bluepebble.models.propagation", propagation_module)
     monkeypatch.setitem(sys.modules, "bluepebble.platform", platform_module)
+    monkeypatch.setitem(sys.modules, "bluepebble.sensors", sensors_module)
     monkeypatch.setitem(sys.modules, "bluepebble.signal", signal_package)
     monkeypatch.setitem(sys.modules, "bluepebble.signal.random", random_module)
     monkeypatch.setitem(sys.modules, "bluepebble.signal.anthropogenic", anthropogenic_module)
@@ -131,7 +134,7 @@ class _FakePath:
 class _FakePlatform:
     def __init__(self, timestamps: list[datetime], num_sensors: int):
         self.num_sensors = num_sensors
-        self.movement_controller = SimpleNamespace(states=[_FakeState(t) for t in timestamps])
+        self.host = SimpleNamespace(states=[_FakeState(t) for t in timestamps])
         self._states = {t: SimpleNamespace(timestamp=t) for t in timestamps}
 
     def get_platform_state_at(self, timestamp: datetime):

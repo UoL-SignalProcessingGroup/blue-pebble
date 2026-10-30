@@ -13,7 +13,7 @@ from stonesoup.types.detection import Detection
 from tqdm import tqdm
 
 from ..types.sensordata import PassiveSonarSensorData
-from .algorithms import DetectionAlgorithm
+from .algorithms import DetectionAlgorithm, DetectorChain
 
 FloatArray: TypeAlias = NDArray[np.float64]
 DetectionArray: TypeAlias = NDArray[np.float64]
@@ -194,24 +194,4 @@ class PassiveSonarDetector(DetectionReader):
             array if no detections are found at any stage.
 
         """
-        initial_snr_map_array = np.asarray(initial_snr_map, dtype=np.float64)
-        if not self.detection_chain:
-            return np.empty((0, 2), dtype=np.float64)
-
-        input_data_map = initial_snr_map_array
-        final_detections = np.empty((0, 2), dtype=np.float64)
-
-        for algorithm in self.detection_chain:
-            current_detections = algorithm.detect(input_data_map)
-
-            if current_detections.size == 0:
-                return np.empty((0, 2), dtype=np.float64)
-
-            final_detections = current_detections
-
-            input_data_map = np.full(len(initial_snr_map_array), -np.inf, dtype=np.float64)
-            indices = final_detections[:, 0].astype(int)
-            values = final_detections[:, 1]
-            input_data_map[indices] = values
-
-        return np.asarray(final_detections, dtype=np.float64)
+        return DetectorChain(algorithms=list(self.detection_chain)).detect(initial_snr_map)

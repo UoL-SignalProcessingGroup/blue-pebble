@@ -214,3 +214,37 @@ def test_oscfar_detector_casts_float_rank_from_parameter_sweeps(monkeypatch) -> 
     detections = detector.detect(np.array([0.0, 0.0, 20.0, 0.0, 0.0]))
 
     np.testing.assert_array_equal(detections, np.array([[2.0, 20.0]]))
+
+
+def test_detector_chain_passes_only_detections_forward(monkeypatch) -> None:
+    """Later stages see earlier detections with every other sample set to -inf."""
+    algorithms = _load_detector_algorithms(monkeypatch)
+    seen = []
+
+    class Recorder(algorithms.DetectionAlgorithm):
+        def detect(self, data):
+            seen.append(np.array(data))
+            return algorithms.PeakDetector().detect(data)
+
+    chain = algorithms.DetectorChain(
+        algorithms=[algorithms.ThresholdDetector(threshold=1.0), Recorder()]
+    )
+
+    detections = chain.detect(np.array([0.0, 3.0, 2.0, 0.5, 4.0, 0.0]))
+
+    np.testing.assert_array_equal(seen[0], [-np.inf, 3.0, 2.0, -np.inf, 4.0, -np.inf])
+    np.testing.assert_array_equal(detections, [[1.0, 3.0], [4.0, 4.0]])
+
+
+def test_detector_chain_stops_when_a_stage_finds_nothing(monkeypatch) -> None:
+    """An empty stage, or no stages at all, gives an empty (0, 2) result."""
+    algorithms = _load_detector_algorithms(monkeypatch)
+    data = np.array([0.0, 3.0, 0.0])
+
+    blocked = algorithms.DetectorChain(algorithms=[
+        algorithms.ThresholdDetector(threshold=10.0),
+        algorithms.PeakDetector(),
+    ])
+
+    assert blocked.detect(data).shape == (0, 2)
+    assert algorithms.DetectorChain(algorithms=[]).detect(data).shape == (0, 2)

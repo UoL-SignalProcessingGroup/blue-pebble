@@ -7,7 +7,71 @@ import sys
 import types
 from pathlib import Path
 
+import bluepebble
+
 REPO_ROOT = Path(__file__).resolve().parents[1]
+
+
+def isolate_real_bluepebble_imports():
+    """Evict any cached ``bluepebble`` modules so a following real import is guaranteed fresh.
+
+    Most tests in this suite import ``bluepebble`` code through the fake-dependency
+    ``install_fake_stonesoup*`` / ``load_package_module_from_repo`` helpers above, which never
+    touch the real package tree. Two problems arise for a test that instead does a plain
+    ``from bluepebble.x.y import Z``:
+
+    1. ``load_package_module_from_repo`` writes straight to ``sys.modules`` (not via
+       ``monkeypatch``), so a submodule it loads while a fake ``stonesoup.base`` is active
+       (e.g. ``bluepebble.signal.base``, loaded by ``test_signal_anthropogenic.py``) stays
+       cached under that fake ``Base``/``Property`` for the rest of the session. A later real
+       import of anything built on top of it (e.g. ``bluepebble.signal.active``) then picks up
+       that stale, fake-metaclass copy instead of re-executing the file, and blows up with
+       ``AttributeError: Cannot use Property on this class type``.
+    2. Python's import system also caches ``bluepebble.x`` (and ``y``) as real attributes on the
+       live ``bluepebble`` package object -- permanently, for the rest of the session -- which
+       breaks other tests that assert on ``bluepebble``'s lazy-import behaviour
+       (``test_package_api.py``) or that load a submodule fresh under fake dependencies
+       (``test_simulator_acoustic.py``).
+
+    Call this immediately before a real ``bluepebble`` import and pass the result to
+    :func:`restore_real_bluepebble_imports` (e.g. via a fixture) to put back whatever was there
+    -- real or fake -- once the real import is no longer needed.
+    """
+    # Keep "bluepebble" itself in place (not just its submodules): this module holds its own
+    # top-level `import bluepebble` reference, and re-creating that object here would leave
+    # this function updating a different object than the one other code actually ends up using.
+    removed_modules = {
+        name: sys.modules.pop(name)
+        for name in list(sys.modules)
+        if name.startswith("bluepebble.")
+    }
+    # Only the specific names bluepebble.__getattr__ lazily caches via `globals()[name] =
+    # module` (see bluepebble/__init__.py) -- never touch dunders (__name__, __all__, ...),
+    # which live in the same __dict__ and must not be disturbed mid-cleanup.
+    removed_attrs = {
+        name: bluepebble.__dict__.pop(name)
+        for name in _LAZY_BLUEPEBBLE_ATTRS
+        if name in bluepebble.__dict__
+    }
+    return removed_modules, removed_attrs
+
+
+def restore_real_bluepebble_imports(snapshot) -> None:
+    """Discard modules imported since :func:`isolate_real_bluepebble_imports` and put back."""
+    removed_modules, removed_attrs = snapshot
+    for name in list(sys.modules):
+        if name.startswith("bluepebble."):
+            del sys.modules[name]
+    sys.modules.update(removed_modules)
+    for name in _LAZY_BLUEPEBBLE_ATTRS:
+        bluepebble.__dict__.pop(name, None)
+    bluepebble.__dict__.update(removed_attrs)
+
+
+_LAZY_BLUEPEBBLE_ATTRS = frozenset({
+    "detector", "models", "platform", "plotter", "signal", "sigproc", "simulator", "types",
+    "get_rng", "set_seed",
+})
 
 
 class FakeProperty:

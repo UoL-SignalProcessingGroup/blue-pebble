@@ -377,6 +377,7 @@ def test_rtrs_propagate_spectrum_transposes_and_conjugates_transfer_functions(
                 "shape": [2, 2, 1, 1],
                 "pressure_re": [1.0, 2.0, 3.0, 4.0],
                 "pressure_im": [10.0, 20.0, 30.0, 40.0],
+                "delay_s": [0.0023, 0.0046],
             }
         }
 
@@ -405,11 +406,46 @@ def test_rtrs_propagate_spectrum_transposes_and_conjugates_transfer_functions(
             ]
         ),
     )
-    assert travel_time == pytest.approx(5.0 / 1500.0)
+    np.testing.assert_allclose(travel_time, [0.0023, 0.0046])
     env_config = captured["env_config"]
     assert env_config["receivers"]["x_rcvr_m"] == [3.0, 6.0]
     assert env_config["receivers"]["z_rcvr_m"] == [10.0, 10.0]
     assert env_config["source"]["freq_hz"] == [100.0, 250.0]
+
+
+def test_rtrs_propagate_spectrum_returns_real_delay_not_distance_over_speed(monkeypatch) -> None:
+    """propagate_spectrum must use rtrs's real delay_s, not a distance/speed placeholder.
+
+    Uses a fake delay_s that deliberately differs from the straight-line distance/speed value
+    (which would be ``5.0/1500.0`` for the reference sensor in ``_make_platform_and_source``), so
+    the test fails if the old placeholder formula is still used instead of the real field.
+    """
+    propagation = _load_propagation_module(monkeypatch)
+    platform, source = _make_platform_and_source()
+
+    fake_rtrs = ModuleType("rtrs")
+    fake_rtrs.run_simulation = lambda env_config: {
+        "pressure_field": {
+            "shape": [1, 2, 1, 1],
+            "pressure_re": [1.0, 2.0],
+            "pressure_im": [0.0, 0.0],
+            "delay_s": [0.0999, 0.1999],
+        }
+    }
+    monkeypatch.setitem(sys.modules, "rtrs", fake_rtrs)
+
+    model = propagation.rtrsAcousticPropagationModel(
+        ssp=GridSSP(1500.0),
+        bathymetry=FlatNegativeBathymetry(-200.0),
+    )
+
+    _, travel_time = model.propagate_spectrum(
+        platform,
+        source,
+        frequencies_hz=np.array([100.0]),
+    )
+
+    np.testing.assert_allclose(travel_time, [0.0999, 0.1999])
 
 
 def test_rtrs_propagate_runs_with_real_backend(monkeypatch) -> None:
@@ -469,4 +505,6 @@ def test_rtrs_propagate_spectrum_runs_with_real_backend(monkeypatch) -> None:
     assert transfer.shape == (2, 2)
     assert np.isfinite(transfer).all()
     assert np.any(np.abs(transfer) > 0.0)
-    assert travel_time == pytest.approx(5.0 / 1500.0)
+    assert travel_time.shape == (2,)
+    assert np.all(np.isfinite(travel_time))
+    assert np.all(travel_time > 0.0)

@@ -297,6 +297,8 @@ class TowedArraySensor(Sensor):
         "tow point the cable actually starts from (typically the stern), in metres.",
     )
 
+    NOMINAL_SOUND_SPEED = 1500.0
+
     def __init__(self, *args: object, **kwargs: object) -> None:
         """Initialise the TowedArraySensor.
 
@@ -443,10 +445,21 @@ class TowedArraySensor(Sensor):
 
         host_state_container = HostState(state=host_state, heading_rad=heading_rad)
 
+        positions = np.hstack([s.state_vector for s in sensor_states])
+        # Element 0 is nearest the tow point, so the line's forward axis runs from the last
+        # element to the first. A single element has no line, so fall back to the heading.
+        xyz = np.asarray(positions, dtype=float)
+        forward = xyz[:, 0] - xyz[:, -1]
+        if np.linalg.norm(forward) > 0:
+            axis = forward / np.linalg.norm(forward)
+        else:
+            axis = np.array([np.cos(heading_rad), np.sin(heading_rad), 0.0])
+
         array_state_container = ArrayState(
             num_sensors=self.num_sensors,
-            state_vector=np.hstack([s.state_vector for s in sensor_states]),
+            state_vector=positions,
             ref_state_vector=sensor_states[self.reference_sensor_idx].state_vector,
+            axis=StateVector(axis),
         )
 
         self.platform_history.append(

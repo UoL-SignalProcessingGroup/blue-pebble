@@ -152,7 +152,7 @@ self_noise_states = [
             "noise_spectral_exponent": ownship_noise_spectral_exponent,
         },
     )
-    for state in platform.movement_controller.states
+    for state in host.states
 ]
 self_noise_ground_truth = GroundTruthPath(self_noise_states)
 

@@ -21,8 +21,8 @@ Single Target Passive-Sonar Tracking Tutorial
 #
 # The key integration patterns to keep in mind are:
 #
-# - :class:`~.TowedArrayPlatform` is the plugin entry point for representing a passive towed
-#   array as a Stone Soup-compatible moving platform.
+# - :class:`~.HostPlatform` is the Stone Soup-compatible moving platform (the ship), and
+#   :class:`~.TowedArraySensor` is the passive towed array mounted on it.
 # - :class:`~stonesoup.types.groundtruth.GroundTruthState` and :class:`~stonesoup.types.groundtruth.GroundTruthPath` remain  # noqa: E501
 #   standard Stone Soup types; Blue Pebble reads extra acoustic metadata from their `metadata`
 #   fields.
@@ -78,10 +78,11 @@ timesteps = np.array([start_time + i * time_interval for i in range(num_steps)],
 # Build a Passive Towed Array Platform
 # ------------------------------------
 #
-# The first plugin-specific object is the host platform. :class:`~.TowedArrayPlatform` inherits
+# The first plugin-specific object is the host platform. :class:`~.HostPlatform` inherits
 # from Stone Soup's moving-platform machinery, so you still provide familiar Stone Soup
 # ingredients such as an initial :class:`~stonesoup.types.groundtruth.GroundTruthState`,
 # position/velocity mappings, and :class:`~stonesoup.models.transition.linear.CombinedLinearGaussianTransitionModel`.  # noqa: E501
+# :class:`~.TowedArraySensor` is then mounted on that host.
 #
 # Blue Pebble then adds the array-specific parameters that Stone Soup does not model by default:
 #
@@ -102,7 +103,8 @@ from stonesoup.models.transition.linear import (
 )
 from stonesoup.types.groundtruth import GroundTruthState
 
-from bluepebble.platform import TowedArrayPlatform
+from bluepebble.platform import HostPlatform
+from bluepebble.sensors import TowedArraySensor
 
 # Define the platform's initial state and transition model
 platform_start_vector = np.array([-2000.0, 5.0, 2000.0, 0.0, -5.0, 0.0])
@@ -120,12 +122,15 @@ array_depth_m = -50.0
 
 # Create the towed array platform and simulate its movement over time
 platform_initial_state = GroundTruthState(platform_start_vector, timestamp=start_time)
-platform = TowedArrayPlatform(
+host = HostPlatform(
     states=platform_initial_state,
     position_mapping=platform_position_mapping,
     velocity_mapping=platform_velocity_mapping,
     transition_models=[platform_transition_model],
     transition_times=[timedelta(seconds=sim_length_s)],
+)
+platform = TowedArraySensor(
+    host=host,
     num_sensors=num_sensors,
     cable_length_m=tow_cable_length_m,
     sensor_spacing_m=sensor_spacing_m,

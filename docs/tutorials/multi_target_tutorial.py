@@ -38,13 +38,14 @@ start_time = datetime.now().replace(hour=0, minute=0, second=0, microsecond=0)
 timesteps = np.array([start_time + i * time_interval for i in range(num_steps)], dtype=object)
 
 # %%
-# Build a Manoeuvring :class:`~.TowedArrayPlatform`
+# Build a Manoeuvring Host with a Towed Array
 # --------------------------------------------------
 #
 # This section shows how the plugin reuses Stone Soup motion modelling for a more
-# realistic host trajectory. The platform still starts from a Stone Soup
-# ``GroundTruthState`` and uses standard transition models, but :class:`~.TowedArrayPlatform`
-# turns that motion into an evolving array geometry suitable for passive beamforming.
+# realistic host trajectory. The host (:class:`~.HostPlatform`) still starts from a Stone
+# Soup ``GroundTruthState`` and uses standard transition models, and
+# :class:`~.TowedArraySensor` turns that motion into an evolving array geometry suitable
+# for passive beamforming.
 #
 # That distinction matters in multi-target scenes: array heading and curvature affect
 # the separability of bearing tracks, so the platform model is not just bookkeeping.
@@ -58,7 +59,8 @@ from stonesoup.models.transition.linear import (
 )
 from stonesoup.types.groundtruth import GroundTruthState
 
-from bluepebble.platform import TowedArrayPlatform
+from bluepebble.platform import HostPlatform
+from bluepebble.sensors import TowedArraySensor
 
 # Define the platform's initial state and transition model
 platform_start_vector = np.array([-7500.0, 1.15, -2000.0, 0.25, -5.0, 0.0])
@@ -96,12 +98,15 @@ array_depth_m = -50.0
 
 # Create the towed array platform and simulate its movement over time
 platform_initial_state = GroundTruthState(platform_start_vector, timestamp=start_time)
-platform = TowedArrayPlatform(
+host = HostPlatform(
     states=platform_initial_state,
     position_mapping=platform_position_mapping,
     velocity_mapping=platform_velocity_mapping,
     transition_models=transition_models,
     transition_times=transition_times,
+)
+platform = TowedArraySensor(
+    host=host,
     num_sensors=num_sensors,
     cable_length_m=tow_cable_length_m,
     sensor_spacing_m=sensor_spacing_m,

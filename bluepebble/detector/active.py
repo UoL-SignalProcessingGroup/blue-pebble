@@ -5,15 +5,15 @@ from datetime import datetime
 from typing import Any, TypeAlias
 
 import numpy as np
-from numpy.typing import NDArray, ArrayLike
-
+from numpy.typing import ArrayLike, NDArray
 from stonesoup.base import Property
 from stonesoup.buffered_generator import BufferedGenerator
 from stonesoup.reader.base import DetectionReader
 from stonesoup.types.detection import Detection
 
-from .algorithms import DetectionAlgorithm
+from ..sigproc.matched_filter import MatchedFilter
 from ..types.sensordata import ActiveSonarSensorData
+from .algorithms import DetectionAlgorithm, DetectorChain
 
 ComplexArray: TypeAlias = NDArray[np.complexfloating[Any, Any]]
 FloatArray: TypeAlias = NDArray[np.float64]
@@ -155,27 +155,7 @@ class ActiveSonarDetectorOmni(DetectionReader):
             array if no detections are found at any stage.
 
         """
-        initial_snr_map_array = np.asarray(initial_snr_map, dtype=np.float64)
-        if not self.detection_chain:
-            return np.empty((0, 2), dtype=np.float64)
-
-        input_data_map = initial_snr_map_array
-        final_detections = np.empty((0, 2), dtype=np.float64)
-
-        for algorithm in self.detection_chain:
-            current_detections = algorithm.detect(input_data_map)
-
-            if current_detections.size == 0:
-                return np.empty((0, 2), dtype=np.float64)
-
-            final_detections = current_detections
-
-            input_data_map = np.full(len(initial_snr_map_array), -np.inf, dtype=np.float64)
-            indices = final_detections[:, 0].astype(int)
-            values = final_detections[:, 1]
-            input_data_map[indices] = values
-
-        return np.asarray(final_detections, dtype=np.float64)
+        return DetectorChain(algorithms=list(self.detection_chain)).detect(initial_snr_map)
 
 
 def matched_filter(received: ComplexArray, pulse: ComplexArray) -> FloatArray:
@@ -200,13 +180,47 @@ def matched_filter(received: ComplexArray, pulse: ComplexArray) -> FloatArray:
         delay ``k / fs``.
 
     """
-    n = len(received) + len(pulse) - 1
-    R = np.fft.fft(received, n)
-    H = np.fft.fft(pulse, n)
-    mf_full = np.fft.ifft(R * np.conj(H), n)
-    envelope = np.abs(mf_full[: len(received)])
+    envelope = MatchedFilter().filter(received, pulse)
 
     peak = envelope.max()
     if peak > 0.0:
         envelope = envelope / peak
     return np.asarray(envelope, dtype=np.float64)
+
+
+def bistatic_range(
+    path_m: float, bearing_rad: float, rx_xy: ArrayLike, tx_xy: ArrayLike
+) -> float:
+    """Range from the receiver to a target, given the bistatic path length and bearing.
+
+    The target lies on the ellipse with foci at the transmitter and receiver whose
+    transmitter -> target -> receiver path length is ``path_m``. Along a known receive
+    bearing that gives ``r = (L^2 - b^2) / (2 (L - b cos psi))``, with ``b`` the baseline
+    and ``psi`` the angle between the receive bearing and the receiver -> transmitter
+    direction. Collapses to ``L / 2`` (monostatic) when transmitter and receiver coincide.
+
+    Parameters
+    ----------
+    path_m : float
+        Total path length transmitter -> target -> receiver, in metres (e.g. matched-filter
+        delay times sound speed). Must exceed the baseline.
+    bearing_rad : float
+        World-frame horizontal bearing from the receiver to the target, in radians
+        (anticlockwise from +x).
+    rx_xy : ArrayLike
+        Receiver horizontal position ``(x, y)``, in metres.
+    tx_xy : ArrayLike
+        Transmitter horizontal position ``(x, y)``, in metres.
+
+    Returns
+    -------
+    float
+        Horizontal range from the receiver to the target, in metres.
+
+    """
+    baseline = np.asarray(tx_xy, dtype=float).ravel() - np.asarray(rx_xy, dtype=float).ravel()
+    b = float(np.linalg.norm(baseline))
+    if b < 1e-6:
+        return path_m / 2.0
+    cos_psi = float(np.array([np.cos(bearing_rad), np.sin(bearing_rad)]) @ baseline / b)
+    return (path_m**2 - b**2) / (2.0 * (path_m - b * cos_psi))

@@ -1015,16 +1015,23 @@ class BellhopArrivalsModel(Base):
     Parameters
     ----------
     ssp : SoundSpeedProfile
-        Sound speed profile describing the water column.
+        Sound speed profile describing the water column. Depth-only (no range
+        dependence) - the same profile is used at every point along the radial.
     bathymetry : Bathymetry
-        Bathymetry model providing the water depth. For 2D runs the depth is
-        sampled at the origin ``(0, 0)``; flat bathymetry is assumed.
+        Bathymetry model providing the water depth. Sampled at multiple points
+        along the source-receiver radial and written as a range-dependent
+        Bellhop ``.bty`` file, so sloping/seamount/real bathymetry is resolved
+        along that radial (azimuthal variation is still not resolved - this
+        remains a single 2D radial per call).
     exe_path : str
         Name or full path of the ``bellhopcxx`` executable. Resolved lazily
         from ``PATH`` on the first call to :meth:`compute_eigenrays`.
     n_ssp_samples : int
         Number of depth samples used to build the SSP table written to the
         ``.env`` file.
+    n_bathy_samples : int
+        Number of range samples used to build the range-dependent bathymetry
+        profile written to the ``.bty`` file.
 
     """
 
@@ -1038,13 +1045,18 @@ class BellhopArrivalsModel(Base):
         default=50,
         doc="Number of depth points in the SSP table written to the Bellhop env file",
     )
+    n_bathy_samples: int = Property(
+        default=50,
+        doc="Number of range points in the bathymetry profile written to the Bellhop bty file",
+    )
 
 
     def compute_eigenrays(
         self,
         source_depth_m: float,
         receiver_depth_m: float,
-        range_m: float,
+        source_xy_m: tuple[float, float],
+        receiver_xy_m: tuple[float, float],
         frequency_hz: float,
     ) -> list[Eigenray]:
         """Run Bellhop for one source–receiver pair and return eigenrays.
@@ -1055,8 +1067,12 @@ class BellhopArrivalsModel(Base):
             Depth of the acoustic source in metres (positive downward).
         receiver_depth_m : float
             Depth of the receiver in metres (positive downward).
-        range_m : float
-            Horizontal range between source and receiver in metres.
+        source_xy_m : tuple[float, float]
+            World-frame ``(x, y)`` position of the source in metres. Together
+            with ``receiver_xy_m`` this defines the radial along which
+            ``bathymetry`` is sampled for the range-dependent ``.bty`` file.
+        receiver_xy_m : tuple[float, float]
+            World-frame ``(x, y)`` position of the receiver in metres.
         frequency_hz : float
             Centre frequency of the pulse in Hz.
 
@@ -1075,9 +1091,17 @@ class BellhopArrivalsModel(Base):
 
         """
         exe = self._resolve_exe()
+        range_m = float(np.hypot(
+            receiver_xy_m[0] - source_xy_m[0], receiver_xy_m[1] - source_xy_m[1]
+        ))
+        range_km, bty_depth_m = self._bathymetry_profile(source_xy_m, receiver_xy_m, range_m)
+        water_depth = float(bty_depth_m.max())
         with tempfile.TemporaryDirectory() as tmp:
             stem = Path(tmp) / "bp"
-            self._write_env(stem, source_depth_m, receiver_depth_m, range_m, frequency_hz)
+            self._write_env(
+                stem, source_depth_m, receiver_depth_m, range_m, water_depth, frequency_hz
+            )
+            self._write_bty(stem, range_km, bty_depth_m)
             self._run_bellhopcxx(exe, stem)
             return self._parse_arr(stem.with_suffix(".arr"))
 
@@ -1098,9 +1122,27 @@ class BellhopArrivalsModel(Base):
             cached = resolved
         return cached
 
-    def _water_depth_m(self) -> float:
-        """Return positive water depth from the bathymetry model."""
-        return abs(float(self.bathymetry.get_depth(0.0, 0.0)))
+    def _bathymetry_profile(
+        self,
+        source_xy_m: tuple[float, float],
+        receiver_xy_m: tuple[float, float],
+        range_m: float,
+    ) -> tuple[FloatArray, FloatArray]:
+        """Sample bottom depth along the source-receiver radial.
+
+        Returns ``(range_km, depth_m)`` pairs for the Bellhop ``.bty`` file,
+        with range measured from ``source_xy_m`` (0 km) to ``receiver_xy_m``
+        (``range_m`` / 1000 km).
+        """
+        sx, sy = source_xy_m
+        rx, ry = receiver_xy_m
+        t = np.linspace(0.0, 1.0, self.n_bathy_samples)
+        depth_m = np.array([
+            abs(float(self.bathymetry.get_depth(sx + ti * (rx - sx), sy + ti * (ry - sy))))
+            for ti in t
+        ])
+        range_km = t * range_m / 1000.0
+        return range_km, depth_m
 
     def _write_env(
         self,
@@ -1108,10 +1150,10 @@ class BellhopArrivalsModel(Base):
         source_depth_m: float,
         receiver_depth_m: float,
         range_m: float,
+        water_depth: float,
         frequency_hz: float,
     ) -> None:
         """Write a Bellhop arrivals-mode ``.env`` file."""
-        water_depth = self._water_depth_m()
         depths = np.linspace(0.0, water_depth, self.n_ssp_samples)
         speeds = [float(self.ssp.calculate(d)) for d in depths]
         pairs = zip(depths, speeds, strict=True)
@@ -1128,7 +1170,7 @@ class BellhopArrivalsModel(Base):
             "'SVW'",
             f"0 0.0 {water_depth:.2f}",
             ssp_lines,
-            "'A' 0.0",
+            "'A~' 0.0",
             f"{water_depth:.2f}  1700.0  0.0  1.5  0.5  /",
             "1",
             f"{source_depth_m:.4f} /",
@@ -1142,6 +1184,13 @@ class BellhopArrivalsModel(Base):
             f"0.0 {depth_box:.2f} {range_box:.6f}",
         ])
         stem.with_suffix(".env").write_text(env)
+
+    @staticmethod
+    def _write_bty(stem: Path, range_km: FloatArray, depth_m: FloatArray) -> None:
+        """Write a Bellhop range-dependent bathymetry (``.bty``) file."""
+        lines = ["'L'", str(len(range_km))]
+        lines += [f"{r:.6f} {d:.2f}" for r, d in zip(range_km, depth_m, strict=True)]
+        stem.with_suffix(".bty").write_text("\n".join(lines))
 
     @staticmethod
     def _run_bellhopcxx(exe: str, stem: Path) -> None:

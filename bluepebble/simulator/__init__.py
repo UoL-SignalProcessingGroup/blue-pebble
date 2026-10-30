@@ -5,7 +5,7 @@ from .active_bellhop import (
     BellhopActiveSonarSimulatorArrayPerElement,
     BellhopActiveSonarSimulatorOmni,
 )
-from .active_rtrs import RtrsActiveSonarSimulatorOmni
+from .active_rtrs import RtrsActiveSonarSimulatorArray, RtrsActiveSonarSimulatorOmni
 from .base import PassiveSonarArraySimulatorBase
 from .continuous import (
     ContinuousFractionalDelayPassiveSonarArraySimulator,
@@ -19,6 +19,7 @@ __all__ = [
     "BellhopActiveSonarSimulatorArray",
     "BellhopActiveSonarSimulatorArrayPerElement",
     "BellhopActiveSonarSimulatorOmni",
+    "RtrsActiveSonarSimulatorArray",
     "RtrsActiveSonarSimulatorOmni",
     "PassiveSonarArraySimulatorBase",
     "ContinuousSTFTPassiveSonarArraySimulator",
