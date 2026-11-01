@@ -1,8 +1,9 @@
 # `bluepebble.platform`
 
-Platform and array-geometry models used in Blue Pebble simulations.
+Sonar platforms (ownship hulls) that sensor arrays attach to.
 
 ```{eval-rst}
 .. automodule:: bluepebble.platform
    :members:
+   :exclude-members: PlatformState
 ```

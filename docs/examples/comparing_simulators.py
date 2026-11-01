@@ -41,9 +41,10 @@ from stonesoup.models.transition.linear import (
 from stonesoup.types.groundtruth import GroundTruthPath, GroundTruthState
 
 import bluepebble
+from bluepebble.arrays import TowedArray
 from bluepebble.models.environment import Constant
 from bluepebble.models.propagation import CylindricalAcousticPropagationModel
-from bluepebble.platform import TowedArrayPlatform
+from bluepebble.platform import SonarPlatform
 from bluepebble.plotter import plot_spectrogram, plot_world
 from bluepebble.signal.anthropogenic import (
     RecordedAnthropogenicSignal,
@@ -97,17 +98,20 @@ sensor_to_analyse = num_sensors // 2
 
 initial_state = GroundTruthState(platform_start_vector, timestamp=sim_start_time)
 
-platform = TowedArrayPlatform(
+platform = SonarPlatform(
     states=[initial_state],
     position_mapping=platform_position_mapping,
     velocity_mapping=platform_velocity_mapping,
     transition_models=[platform_transition_model],
     transition_times=[timedelta(seconds=total_duration_s)],
+)
+towed_array = TowedArray(
     num_sensors=num_sensors,
     cable_length_m=tow_cable_length_m,
     sensor_spacing_m=sensor_spacing_m,
     array_depth_m=array_depth_m,
 )
+platform.add_sensor(towed_array)
 
 for i in range(1, sim_num_steps):
     new_time = sim_start_time + i * sim_time_interval
@@ -147,7 +151,7 @@ for i in range(1, sim_num_steps):
 
 target_ground_truth = GroundTruthPath(target_states)
 
-fig_world = plot_world(truths=[target_ground_truth], platform=platform)
+fig_world = plot_world(truths=[target_ground_truth], platform=towed_array)
 fig_world = fig_world.update_layout(title="World Picture")
 
 # %%
@@ -325,7 +329,7 @@ sim_configs = [
 def build_simulator(config, signal_model):
     """Build a simulator based on the config dict and signal model."""
     common_kwargs = {
-        "platform": platform,
+        "array": towed_array,
         "propagation_model": propagation_model,
         "signal_models": [signal_model],
         "noise_model": None,

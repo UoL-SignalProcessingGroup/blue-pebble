@@ -6,6 +6,7 @@ This reference documents the public Blue Pebble package surface. It is intended 
 :maxdepth: 1
 
 bluepebble
+arrays
 detector
 models
 platform

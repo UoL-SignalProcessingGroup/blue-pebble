@@ -35,6 +35,7 @@ from stonesoup.models.transition.linear import (
 from stonesoup.types.groundtruth import GroundTruthPath, GroundTruthState
 
 import bluepebble
+from bluepebble.arrays import TowedArray
 from bluepebble.detector import (
     CACFARDetector,
     NoiseCalibrator,
@@ -43,7 +44,7 @@ from bluepebble.detector import (
 )
 from bluepebble.models.environment import FlatBathymetry, Linear
 from bluepebble.models.propagation import rtrsAcousticPropagationModel
-from bluepebble.platform import TowedArrayPlatform
+from bluepebble.platform import SonarPlatform
 from bluepebble.plotter import apply_shared_colourscale, plot_btr, plot_world
 from bluepebble.signal.anthropogenic import SyntheticAnthropogenicSignal
 from bluepebble.signal.random import ColouredNoiseSignal
@@ -122,17 +123,20 @@ sensor_spacing_m = 0.5
 array_depth_m = -50.0
 
 platform_initial_state = GroundTruthState(platform_start_vector, timestamp=start_time)
-platform = TowedArrayPlatform(
+platform = SonarPlatform(
     states=[platform_initial_state],
     position_mapping=platform_position_mapping,
     velocity_mapping=platform_velocity_mapping,
     transition_models=platform_transition_models,
     transition_times=platform_transition_times,
+)
+towed_array = TowedArray(
     num_sensors=num_sensors,
     cable_length_m=tow_cable_length_m,
     sensor_spacing_m=sensor_spacing_m,
     array_depth_m=array_depth_m,
 )
+platform.add_sensor(towed_array)
 
 for timestamp in timesteps[1:]:
     platform.move(timestamp)
@@ -158,7 +162,7 @@ self_noise_states = [
             "noise_spectral_exponent": ownship_noise_spectral_exponent,
         },
     )
-    for state in platform.movement_controller.states
+    for state in platform.states
 ]
 self_noise_ground_truth = GroundTruthPath(self_noise_states)
 
@@ -232,7 +236,7 @@ for target_start_vector in target_start_vectors:
 
     bearing_states = []
     for target_state in target_ground_truth.states:
-        platform_state = platform.get_platform_state_at(target_state.timestamp)
+        platform_state = towed_array.get_platform_state_at(target_state.timestamp)
         assert platform_state is not None
         ref_sensor_position = np.mean(platform_state.array.state_vector, axis=1)
 
@@ -246,7 +250,7 @@ for target_start_vector in target_start_vectors:
 
     bearing_truths.append(GroundTruthPath(bearing_states))
 
-fig_world = plot_world(truths=target_ground_truths, platform=platform).update_layout(
+fig_world = plot_world(truths=target_ground_truths, platform=towed_array).update_layout(
     title="World Picture: Target and Platform Trajectories",
     template="plotly_white",
     autosize=True,
@@ -354,7 +358,7 @@ num_beams = 180
 
 shading = None
 if beamformer_shading is not None:
-    shading = get_window(beamformer_shading, platform.num_sensors)
+    shading = get_window(beamformer_shading, towed_array.num_sensors)
 
 if beamformer_type == "DAS":
     if beamformer_domain == "broadband_power":
@@ -443,7 +447,7 @@ def _make_detector(
     )
 
     ambient_only_simulator = ContinuousSTFTPassiveSonarArraySimulator(
-        platform=simulator.platform,
+        array=simulator.array,
         propagation_model=simulator.propagation_model,
         signal_models=noise_only_signal_models,
         noise_model=simulator.noise_model,
@@ -466,7 +470,7 @@ def _make_detector(
 
 
 simulator_without_ownship_noise = ContinuousSTFTPassiveSonarArraySimulator(
-    platform=platform,
+    array=towed_array,
     propagation_model=propagation_model,
     signal_models=_make_signal_models(),
     noise_model=ambient_noise_model,
@@ -477,7 +481,7 @@ simulator_without_ownship_noise = ContinuousSTFTPassiveSonarArraySimulator(
 )
 
 simulator_with_ownship_noise = ContinuousSTFTPassiveSonarArraySimulator(
-    platform=platform,
+    array=towed_array,
     propagation_model=propagation_model,
     signal_models=_make_signal_models() + [_make_self_noise_model()],
     noise_model=ambient_noise_model,

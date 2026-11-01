@@ -420,7 +420,7 @@ class ContinuousSTFTPassiveSonarArraySimulator(PassiveSonarArraySimulatorBase):
         num_freq_bins, frequencies, hop, window, num_frames = ref_model.stft_geometry()
         frame_len = int(ref_model.frame_len)
         fs = float(ref_model.sampling_rate_hz)
-        num_sensors = int(self.platform.num_sensors)
+        num_sensors = int(self._array().num_sensors)
 
         t0 = all_timestamps[0]
         step_times_s = np.array(
@@ -1123,7 +1123,7 @@ class ContinuousFractionalDelayPassiveSonarArraySimulator(PassiveSonarArraySimul
             "signal models",
         )
         fs = float(ref_signal_model.sampling_rate_hz)
-        num_sensors = int(self.platform.num_sensors)
+        num_sensors = int(self._array().num_sensors)
 
         frame_len = int(ref_signal_model.frame_len)
         frequencies_hz = np.fft.rfftfreq(frame_len, d=1.0 / fs)

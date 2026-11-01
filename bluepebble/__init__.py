@@ -38,6 +38,7 @@ __all__ = [
     "__version__",
     "get_rng",
     "set_seed",
+    "arrays",
     "detector",
     "models",
     "platform",
@@ -52,6 +53,7 @@ __all__ = [
 def __getattr__(name: str):
     """Lazily import top-level subpackages and seed helpers on first access."""
     if name in {
+        "arrays",
         "detector",
         "models",
         "platform",

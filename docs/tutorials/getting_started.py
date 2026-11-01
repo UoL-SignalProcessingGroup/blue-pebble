@@ -62,12 +62,14 @@ timesteps = np.array([start_time + i * time_interval for i in range(num_steps)],
 # Build a Passive Towed Array Platform
 # ------------------------------------
 #
-# The first plugin-specific object is the host platform. :class:`~.TowedArrayPlatform` inherits
+# The first plugin-specific object is the sonar platform. :class:`~.SonarPlatform` inherits
 # from Stone Soup's moving-platform machinery, so you still provide familiar Stone Soup
 # ingredients such as an initial :class:`~stonesoup.types.groundtruth.GroundTruthState`,
 # position/velocity mappings, and :class:`~stonesoup.models.transition.linear.CombinedLinearGaussianTransitionModel`.  # noqa: E501
 #
-# Blue Pebble then adds the array-specific parameters that Stone Soup does not model by default:
+# The towed array is a :class:`~.TowedArray`, mounted on the platform with Stone Soup's
+# ``add_sensor``. The platform advances it on every move. It takes the array-specific
+# parameters that Stone Soup does not model by default:
 #
 # - `num_sensors`
 # - `cable_length_m`
@@ -81,7 +83,8 @@ from stonesoup.models.transition.linear import (
 )
 from stonesoup.types.groundtruth import GroundTruthState
 
-from bluepebble.platform import TowedArrayPlatform
+from bluepebble.arrays import TowedArray
+from bluepebble.platform import SonarPlatform
 
 # Define the platform's initial state and transition model
 platform_start_vector = np.array([-2000.0, 5.0, 2000.0, 0.0, -5.0, 0.0])
@@ -101,17 +104,20 @@ array_depth_m = -50.0
 
 # Create the towed array platform and simulate its movement over time
 platform_initial_state = GroundTruthState(platform_start_vector, timestamp=start_time)
-platform = TowedArrayPlatform(
+platform = SonarPlatform(
     states=platform_initial_state,
     position_mapping=platform_position_mapping,
     velocity_mapping=platform_velocity_mapping,
     transition_models=[platform_transition_model],
     transition_times=[timedelta(seconds=sim_length_s)],
+)
+towed_array = TowedArray(
     num_sensors=num_sensors,
     cable_length_m=tow_cable_length_m,
     sensor_spacing_m=sensor_spacing_m,
     array_depth_m=array_depth_m,
 )
+platform.add_sensor(towed_array)
 
 for timestamp in timesteps[1:]:
     platform.move(timestamp)
@@ -172,7 +178,7 @@ for timestamp in timesteps[1:]:
 target_truth = GroundTruthPath(target_states)
 target_truths = [target_truth]
 
-plot_world(truths=target_truths, platform=platform)
+plot_world(truths=target_truths, platform=towed_array)
 
 # %%
 # Choose a Blue Pebble Propagation Model
@@ -296,7 +302,7 @@ steering_calculator = SteeringCalculator(
 )
 
 simulator = ContinuousSTFTPassiveSonarArraySimulator(
-    platform=platform,
+    array=towed_array,
     propagation_model=propagation_model,
     signal_models=[signal_model],
     noise_model=ambient_noise_model,
@@ -397,7 +403,7 @@ plot_btr(
 # %%
 bearing_states = []
 for target_state in target_truth:
-    platform_state = platform.get_platform_state_at(target_state.timestamp)
+    platform_state = towed_array.get_platform_state_at(target_state.timestamp)
     assert platform_state is not None
     ref_sensor_position = np.mean(platform_state.array.state_vector, axis=1)
     target_xy = np.array([target_state.state_vector[0], target_state.state_vector[2]])
