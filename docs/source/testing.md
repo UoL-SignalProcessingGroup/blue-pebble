@@ -27,13 +27,14 @@ pytest --collect-only -q
 
 ### Signal models and utilities
 
-`tests/test_signal_utils.py`, `tests/test_signal_base.py`, `tests/test_signal_models.py`, `tests/test_signal_anthropogenic.py`, `tests/test_signal_biological.py`
+`tests/test_signal_utils.py`, `tests/test_signal_base.py`, `tests/test_signal_models.py`, `tests/test_signal_anthropogenic.py`, `tests/test_signal_biological.py`, `tests/test_signal_active.py`
 
 - STFT utilities, inverse-STFT round-trip behaviour and fade helpers
 - `Signal.generate` validation and attenuation/delay application branches
 - ambient-noise and effects helpers
 - anthropogenic source synthesis from each source's metadata, and the deprecated constructor arguments
 - biological signal generation, call template construction and snapping shrimp models
+- active pulses: CW tone, level and phase; LFM sweep, edge taper and configuration checks
 
 ### Seed management
 
@@ -94,6 +95,14 @@ pytest --collect-only -q
 - `rtrs` option validation, missing-package behaviour, transmission loss and spectrum transfer functions
 - real `rtrs` smoke tests for scalar and per-frequency transmission loss and broadband transfer functions
 
+`tests/test_propagation_bellhop.py`, `tests/test_scattering_models.py`
+
+- Bellhop environment and bathymetry files, arrivals parsing (including phase), world-to-depth
+  conversion, invalid geometry and executable errors, using a stub executable
+- with `bellhopcxx` on `PATH` (skipped otherwise, as in CI): direct and surface-reflected paths
+  in deep isovelocity water against spherical spreading and the image-source geometry
+- constant target strength gain and its frequency independence
+
 ### Simulators
 
 `tests/test_simulator_acoustic.py`, `tests/test_simulator_modules.py`
@@ -136,6 +145,7 @@ These run against the real Stone Soup platform and mounting classes.
 `tests/test_types_sensordata.py`
 
 - `PassiveSonarSensorData` construction, defaults and multiband band-label validation
+- `ActiveSonarSensorData` construction and waveform shape validation
 - types package public API exports
 
 ## Current gaps

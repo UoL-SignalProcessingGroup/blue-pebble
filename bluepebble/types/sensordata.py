@@ -105,3 +105,54 @@ class PassiveSonarSensorData(SensorData):
                 f"{bearings.shape} for beamformed_data of shape {data.shape}, whose beam "
                 f"axis is axis {beam_axis}"
             )
+
+
+class ActiveSonarSensorData(SensorData):
+    """Sensor data produced by one active sonar ping.
+
+    ``received_waveform`` always has one row per receiving sensor, so a single hydrophone is a
+    one-row array rather than a special case.
+
+    Raises
+    ------
+    ValueError
+        If ``received_waveform`` is not two-dimensional, or ``transmit_pulse`` is not
+        one-dimensional.
+
+    """
+
+    received_waveform: ComplexArray = Property(
+        doc="Complex analytic received waveform, shape (num_sensors, num_samples): every "
+        "delayed, scaled copy of the transmit pulse returned from every target, plus noise."
+    )
+    transmit_pulse: ComplexArray = Property(
+        doc="Transmitted pulse, shape (num_pulse_samples,), kept for matched filtering."
+    )
+    timestamp: datetime = Property(doc="Time at which the ping was transmitted")
+
+    def __init__(self, *args: object, **kwargs: object) -> None:
+        """Initialise the sensor data and check the waveform shapes.
+
+        Parameters
+        ----------
+        *args : tuple
+            Positional arguments passed to the superclass.
+        **kwargs : dict
+            Keyword arguments passed to the superclass.
+
+        """
+        super().__init__(*args, **kwargs)
+        received = np.asarray(self.received_waveform)
+        if received.ndim != 2:
+            raise ValueError(
+                "received_waveform must have shape (num_sensors, num_samples), got shape "
+                f"{received.shape}; give a single sensor's waveform as one row."
+            )
+        pulse = np.asarray(self.transmit_pulse)
+        if pulse.ndim != 1:
+            raise ValueError(f"transmit_pulse must be one-dimensional, got shape {pulse.shape}")
+
+    @property
+    def num_sensors(self) -> int:
+        """Number of receiving sensors (rows of ``received_waveform``)."""
+        return int(np.asarray(self.received_waveform).shape[0])

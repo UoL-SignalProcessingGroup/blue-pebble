@@ -1,5 +1,6 @@
 """Signal package public API."""
 
+from .active import ActiveSignal, CWSignal, LFMSignal
 from .anthropogenic import (
     AnthropogenicSignal,
     RecordedAnthropogenicSignal,
@@ -12,6 +13,9 @@ from .utils import apply_fade_in, apply_fade_out, compute_stft, inverse_stft
 
 __all__ = [
     "Signal",
+    "ActiveSignal",
+    "CWSignal",
+    "LFMSignal",
     "BiologicalSignal",
     "RandomSignal",
     "WhiteNoiseSignal",
