@@ -8,25 +8,24 @@ from stonesoup.platform.base import MultiTransitionMovingPlatform
 from ..arrays.base import SensorArray
 
 if TYPE_CHECKING:
+    from stonesoup.movable.movable import Movable
     from stonesoup.sensor.base import PlatformMountable
+    from stonesoup.types.array import StateVector
 
 
-class SonarPlatform(MultiTransitionMovingPlatform):
-    """The hull, ship or submarine, that sonar arrays mount on or tow behind.
+class _ArrayHost:
+    """Array-hosting behaviour shared by Blue Pebble's platforms.
 
-    Arrays are mounted with Stone Soup's :meth:`add_sensor` (or the ``sensors`` argument), take
-    their position and orientation from the platform's movement controller, and are listed by
-    :attr:`arrays`. The one thing this adds to Stone Soup's
-    :class:`~stonesoup.platform.base.MultiTransitionMovingPlatform` is that :meth:`move` also
-    advances every mounted array, which a :class:`~bluepebble.arrays.TowedArray` needs because
-    its sensors have their own dynamics rather than a fixed mounting offset. Rigidly mounted
-    arrays need nothing from it and work on any Stone Soup platform.
-
-    Depth is not a distinct concept from position: it is whatever z the 3D
-    ``position_mapping`` and transition model produce. A surface ship is a
-    ``SonarPlatform`` whose z stays at (or near) 0; a submarine is one whose z is free
-    to change over time, e.g. via a dive/surface transition model.
+    Mixed in ahead of a Stone Soup platform class: mounting a
+    :class:`~bluepebble.arrays.SensorArray` (with ``add_sensor`` or ``sensors=``) gives it a
+    chance to set itself up, and :meth:`move` lets every mounted array react to the move.
     """
+
+    if TYPE_CHECKING:
+        # Provided by the Stone Soup platform this is mixed into.
+        sensors: tuple["PlatformMountable", ...]
+        position: StateVector
+        movement_controller: "Movable"
 
     def __init__(self, *args: object, **kwargs: object) -> None:
         """Initialise the platform and any arrays passed in ``sensors``.
@@ -39,9 +38,9 @@ class SonarPlatform(MultiTransitionMovingPlatform):
             Keyword arguments passed to the superclass.
 
         """
-        super().__init__(*args, **kwargs)
+        super().__init__(*args, **kwargs)  # pyrefly: ignore[bad-argument-count]
         for array in self.arrays:
-            array._on_mounted()
+            array._on_mounted(self)
 
     @property
     def arrays(self) -> tuple[SensorArray, ...]:
@@ -67,9 +66,9 @@ class SonarPlatform(MultiTransitionMovingPlatform):
 
         """
         # Stone Soup annotates add_sensor with Sensor, but it only needs a PlatformMountable.
-        super().add_sensor(sensor)  # pyrefly: ignore[bad-argument-type]
+        super().add_sensor(sensor)  # pyrefly: ignore[missing-attribute]
         if isinstance(sensor, SensorArray):
-            sensor._on_mounted()
+            sensor._on_mounted(self)
 
     def move(self, timestamp: datetime, **kwargs) -> None:
         """Advance the platform, then let every mounted array react to the new state.
@@ -85,3 +84,21 @@ class SonarPlatform(MultiTransitionMovingPlatform):
         self.movement_controller.move(timestamp, **kwargs)
         for array in self.arrays:
             array._on_platform_moved(timestamp, **kwargs)
+
+
+class SonarPlatform(_ArrayHost, MultiTransitionMovingPlatform):
+    """The hull, ship or submarine, that sonar arrays mount on or tow behind.
+
+    Arrays are mounted with Stone Soup's :meth:`add_sensor` (or the ``sensors`` argument), take
+    their position and orientation from the platform's movement controller, and are listed by
+    :attr:`arrays`. The one thing this adds to Stone Soup's
+    :class:`~stonesoup.platform.base.MultiTransitionMovingPlatform` is that :meth:`move` also
+    advances every mounted array, which a :class:`~bluepebble.arrays.TowedArray` needs because
+    its sensors have their own dynamics rather than a fixed mounting offset. Rigidly mounted
+    arrays need nothing from it and work on any Stone Soup platform.
+
+    Depth is not a distinct concept from position: it is whatever z the 3D
+    ``position_mapping`` and transition model produce. A surface ship is a
+    ``SonarPlatform`` whose z stays at (or near) 0; a submarine is one whose z is free
+    to change over time, e.g. via a dive/surface transition model.
+    """

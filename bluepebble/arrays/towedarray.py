@@ -1,19 +1,17 @@
 """Defines a towed array: a line of sensors trailing behind a platform on a tow cable."""
 
 from collections.abc import Sequence
-from dataclasses import dataclass
 from datetime import datetime
 from typing import TYPE_CHECKING, Protocol, cast
 
 import numpy as np
 from stonesoup.base import Base, Property
 from stonesoup.movable.movable import MovingMovable
-from stonesoup.types.angle import mod_bearing
 from stonesoup.types.array import StateVector
 from stonesoup.types.groundtruth import GroundTruthState
 from stonesoup.types.state import State
 
-from .base import ArrayState, FloatArray, SensorArray
+from .base import ArrayState, FloatArray, HostState, PlatformState, SensorArray  # noqa: F401  (HostState re-exported for existing imports)
 
 if TYPE_CHECKING:
     from stonesoup.movable.movable import Movable
@@ -159,56 +157,6 @@ class _TowedArrayFollowerModel(_FollowerModel):
         return StateVector(new_position)
 
 
-@dataclass
-class HostState:
-    """A container for the platform's state.
-
-    Parameters
-    ----------
-    state : State
-        The state of the platform towing the array.
-    heading_rad : float
-        The platform's direction of travel, in radians anticlockwise from +x, in
-        ``[-pi, pi)``.
-
-    """
-
-    state: State
-    heading_rad: float
-
-
-@dataclass
-class PlatformState:
-    """A data class to hold the state of the platform and towed array at one timestamp.
-
-    Parameters
-    ----------
-    timestamp : datetime
-        The time at which this state is valid.
-    host : HostState
-        The state container for the platform towing the array.
-    array : ArrayState
-        The state container for the sensor array.
-
-    """
-
-    timestamp: datetime
-    host: HostState
-    array: ArrayState
-
-    @property
-    def position(self) -> StateVector:
-        """Return the position of the platform towing the array.
-
-        Returns
-        -------
-        StateVector
-            The 3D position vector (x, y, z) of the platform.
-
-        """
-        return StateVector(self.host.state.state_vector[[0, 2, 4]])
-
-
 class TowedArray(SensorArray):
     """A line of sensors towed behind a platform on a cable.
 
@@ -269,7 +217,7 @@ class TowedArray(SensorArray):
         # Timestamp -> index of its first entry in platform_history, so lookups need not scan it.
         self._platform_history_index: dict[datetime, int] = {}
 
-    def _on_mounted(self) -> None:
+    def _on_mounted(self, platform: object) -> None:
         """Lay the sensors out astern of the tow point and record the first state."""
         self._initialise_sensor_array()
         self._capture_platform_state(self._controller.state.timestamp)
@@ -289,9 +237,12 @@ class TowedArray(SensorArray):
             If a leader object does not expose a valid position.
 
         """
+        velocity_mapping = self._velocity_mapping
+        if velocity_mapping is None:
+            raise ValueError("A towed array must be mounted on a moving platform.")
         try:
             platform_state = self._controller.state
-            platform_vel_xy = platform_state.state_vector[self._velocity_mapping[:2]]
+            platform_vel_xy = platform_state.state_vector[velocity_mapping[:2]]
             tow_point_3d = cast(StateVector, self.position)  # not None once mounted
         except (IndexError, AttributeError, KeyError) as e:
             raise ValueError(
@@ -391,13 +342,8 @@ class TowedArray(SensorArray):
                 return
             sensor_states.append(sensor_state)
 
-        platform_vel_xy = platform_state.state_vector[self._velocity_mapping[:2]]
-        # arctan2 returns +pi for due -x; mod_bearing wraps it to [-pi, pi) like Bearing.
-        heading_rad = float(
-            mod_bearing(np.arctan2(platform_vel_xy[1, 0], platform_vel_xy[0, 0]))
-        )
-
-        host_state_container = HostState(state=platform_state, heading_rad=heading_rad)
+        heading_rad = self._heading_rad(platform_state)
+        host_state_container = self._host_state(platform_state)
 
         positions = np.hstack([s.state_vector for s in sensor_states])
         # Sensor 0 is nearest the tow point, so the line's forward axis runs from the last
