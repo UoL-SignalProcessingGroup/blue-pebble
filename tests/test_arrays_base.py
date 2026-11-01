@@ -1,4 +1,4 @@
-"""Tests for ArrayState (axis, baffle gains) and the towed array's reported axis."""
+"""Tests for ArrayState, RigidArray's shared geometry, and the towed array's axis."""
 
 from __future__ import annotations
 
@@ -95,3 +95,85 @@ def test_sensor_gains_are_one_without_normals(modules) -> None:
     )
 
     np.testing.assert_array_equal(array.sensor_gains([1.0, 0.0, 0.0]), np.ones(3))
+
+
+@pytest.fixture
+def rigid():
+    """Import the real classes needed to test RigidArray's shared geometry."""
+    snapshot = isolate_real_bluepebble_imports()
+    from bluepebble.arrays import RigidArray, SingleSensorArray
+    from bluepebble.platform import SonarPlatform
+
+    yield SonarPlatform, RigidArray, SingleSensorArray
+    restore_real_bluepebble_imports(snapshot)
+
+
+def test_rigid_array_reference_matches_stone_soup_mounting(rigid) -> None:
+    """The reference point equals Stone Soup's own mounted position, while moving and climbing.
+
+    This pins RigidArray's use of Stone Soup's private ``_get_rotation_matrix`` to the
+    rotation Stone Soup applies to ``mounting_offset``.
+    """
+    from stonesoup.models.transition.linear import KnownTurnRate
+
+    SonarPlatform, _, SingleSensorArray = rigid
+    turn = CombinedLinearGaussianTransitionModel(
+        [KnownTurnRate([0.0, 0.0], np.radians(5.0)), ConstantVelocity(0.0)]
+    )
+    platform = SonarPlatform(
+        states=[GroundTruthState(StateVector([0.0, 3.0, 0.0, 4.0, -5.0, 0.5]), timestamp=START)],
+        position_mapping=[0, 2, 4],
+        transition_models=[turn],
+        transition_times=[timedelta(hours=1)],
+    )
+    array = SingleSensorArray(mounting_offset=StateVector([-12.0, 3.0, -2.0]))
+    platform.add_sensor(array)
+
+    for k in range(1, 20):
+        platform.move(START + timedelta(seconds=k))
+        np.testing.assert_allclose(
+            np.asarray(array.array.ref_state_vector), np.asarray(array.position), atol=1e-12
+        )
+
+
+def test_rigid_array_subclass_only_supplies_a_layout(rigid) -> None:
+    """A new rigid array needs only its local layout; rotation_offset turns it."""
+    SonarPlatform, RigidArray, _ = rigid
+
+    class _Line(RigidArray):
+        def __init__(self, *args, **kwargs):
+            super().__init__(*args, **kwargs)
+            self._local_offsets = np.array([[0.0, 1.0, 2.0], [0.0, 0.0, 0.0], [0.0, 0.0, 0.0]])
+
+    platform = SonarPlatform(
+        states=[GroundTruthState(StateVector([0.0, 0.0, 0.0, 1.0, 0.0, 0.0]), timestamp=START)],
+        position_mapping=[0, 2, 4],
+        transition_models=[CombinedLinearGaussianTransitionModel([ConstantVelocity(0.0)] * 3)],
+        transition_times=[timedelta(hours=1)],
+    )
+    line = _Line(rotation_offset=StateVector([0.0, 0.0, np.pi / 2]))
+    platform.add_sensor(line)
+
+    # Heading north (+y), then yawed 90 degrees to port (-x).
+    np.testing.assert_allclose(line.array.state_vector[0], [0.0, -1.0, -2.0], atol=1e-12)
+    np.testing.assert_allclose(line.array.state_vector[1], 0.0, atol=1e-12)
+    assert line.num_sensors == 3
+    assert line.array.sensor_normals is None and line.array.axis is None
+
+
+def test_fixed_platform_heading_is_its_orientation_yaw(rigid) -> None:
+    """A fixed platform has no velocity mapping; its heading is its orientation's yaw."""
+    from stonesoup.platform.base import FixedPlatform
+    from stonesoup.types.state import State
+
+    _, _, SingleSensorArray = rigid
+    platform = FixedPlatform(
+        states=State(StateVector([0.0, 0.0, 0.0]), timestamp=START),
+        position_mapping=[0, 1, 2],
+        orientation=StateVector([0.0, 0.0, np.pi]),
+    )
+    array = SingleSensorArray()
+    platform.add_sensor(array)
+
+    assert array._velocity_mapping is None
+    assert array.get_platform_state_at(START).host.heading_rad == -np.pi

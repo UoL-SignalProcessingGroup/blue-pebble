@@ -120,6 +120,17 @@ These run against the real Stone Soup platform and mounting classes.
 - the deprecated `TowedArrayPlatform` reproducing `SonarPlatform` + `TowedArray` exactly, and the
   simulators' deprecated `platform=` argument
 
+`tests/test_bowarray.py`, `tests/test_flankarray.py`, `tests/test_sonobuoy.py`
+
+- bow dome layout on its sphere, mounting depth, forward-facing normals, axis and history through
+  a turn
+- flank panels per side: rotation offset, outward normals, grid layout and reference, the
+  bow-to-tow-point fit check, and configuration errors
+- sonobuoy hydrophone position and depth sign, and `SingleSensorArray` on a plain Stone Soup platform
+- sensor spacing checks (touching sensors, grating-lobe limit)
+- `RigidArray`'s reference point matching Stone Soup's own mounted position, and the heading of a
+  fixed platform
+
 ### Types
 
 `tests/test_types_sensordata.py`
