@@ -30,6 +30,7 @@ from stonesoup.models.transition.linear import (
 from stonesoup.types.groundtruth import GroundTruthPath, GroundTruthState
 
 import bluepebble
+from bluepebble.arrays import TowedArray
 from bluepebble.detector import (
     NonFluctuating,
     OSCFARDetector,
@@ -41,7 +42,7 @@ from bluepebble.detector import (
 from bluepebble.detector._theory import solve_os_cfar_alpha
 from bluepebble.models.environment import FlatBathymetry, Linear
 from bluepebble.models.propagation import rtrsAcousticPropagationModel
-from bluepebble.platform import TowedArrayPlatform
+from bluepebble.platform import SonarPlatform
 from bluepebble.signal.anthropogenic import SyntheticAnthropogenicSignal
 from bluepebble.signal.random import ColouredNoiseSignal
 from bluepebble.sigproc import (
@@ -69,7 +70,7 @@ start_time = datetime(2026, 1, 1)
 timesteps = [start_time + i * time_interval for i in range(num_scans)]
 total_duration_s = num_scans * time_interval.total_seconds()
 
-platform = TowedArrayPlatform(
+platform = SonarPlatform(
     states=GroundTruthState(np.array([0.0, 0.0, 0.0, 0.0, -5.0, 0.0]), timestamp=start_time),
     position_mapping=[0, 2, 4],
     velocity_mapping=[1, 3, 5],
@@ -77,11 +78,14 @@ platform = TowedArrayPlatform(
         CombinedLinearGaussianTransitionModel([ConstantVelocity(0.0) for _ in range(3)])
     ],
     transition_times=[timedelta(seconds=total_duration_s)],
+)
+towed_array = TowedArray(
     num_sensors=128,
     cable_length_m=100.0,
     sensor_spacing_m=2.5,
     array_depth_m=-50.0,
 )
+platform.add_sensor(towed_array)
 for timestamp in timesteps[1:]:
     platform.move(timestamp)
 
@@ -142,7 +146,7 @@ ambient_noise_model = ColouredNoiseSignal(
 steering_calculator = SteeringCalculator(ssp=ssp, steering_sector_rad=PORT, num_beams=361)
 
 simulator = ContinuousSTFTPassiveSonarArraySimulator(
-    platform=platform,
+    array=towed_array,
     propagation_model=propagation_model,
     signal_models=[make_signal_model()],
     noise_model=ambient_noise_model,
@@ -182,7 +186,7 @@ print(f"{len(scans)} of {num_scans} scans kept, each with {num_frames} frames")
 # ``snr_linear`` is the input the analytic model needs. Because the scenario is stationary,
 # averaging the per-scan readings gives one stable value.
 
-platform_state = platform.get_platform_state_at(timesteps[0])
+platform_state = towed_array.get_platform_state_at(timesteps[0])
 assert platform_state is not None
 array_centre_xy = np.mean(platform_state.array.state_vector, axis=1)[:2]
 target_bearing_rad = float(

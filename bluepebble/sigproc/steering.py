@@ -9,7 +9,7 @@ from ..models.environment import SoundSpeedProfile
 from .base import BoolArray, FloatArray, IntArray, MirrorPlan
 
 if TYPE_CHECKING:
-    from ..platform.towedarray import PlatformState
+    from ..arrays import PlatformState
 
 # Angles closer than this (radians) count as equal: sector ends meeting in a full circle, and a
 # sine sector's end touching endfire.
@@ -382,7 +382,7 @@ class SteeringCalculator(Base):
 
         This method assumes the platform has an `array` attribute which is an object with
         `state_vector` and `ref_state_vector` attributes, such as the one configured by
-        `TowedArrayPlatform`.
+        `TowedArray.get_platform_state_at`.
 
         Parameters
         ----------
@@ -434,7 +434,7 @@ class SteeringCalculator(Base):
 
         This method assumes the platform has an `array` attribute which is an object with
         `state_vector` and `ref_state_vector` attributes, such as the one configured by
-        `TowedArrayPlatform`.
+        `TowedArray.get_platform_state_at`.
 
         Parameters
         ----------

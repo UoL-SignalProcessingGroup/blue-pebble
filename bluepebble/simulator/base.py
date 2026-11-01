@@ -1,6 +1,7 @@
 """Base simulator hierarchy and shared utilities for passive-sonar simulations."""
 
 import copy
+import warnings
 from abc import abstractmethod
 from collections.abc import Iterable, Iterator, Sequence
 from datetime import datetime
@@ -11,6 +12,7 @@ from numpy.typing import NDArray
 from stonesoup.base import Property
 from stonesoup.simulator.base import SensorSimulator
 
+from ..arrays import TowedArray
 from ..models.propagation import AcousticPropagationModel
 from ..platform import TowedArrayPlatform
 from ..signal.random import RandomSignal
@@ -22,7 +24,7 @@ if TYPE_CHECKING:
     from stonesoup.types.groundtruth import GroundTruthPath
     from stonesoup.types.state import State
 
-    from ..platform import PlatformState
+    from ..arrays import PlatformState
 
 ComplexArray: TypeAlias = NDArray[np.complexfloating[Any, Any]]
 FloatArray: TypeAlias = NDArray[np.float64]
@@ -37,7 +39,10 @@ class PassiveSonarArraySimulatorBase(SensorSimulator):
     discrete-time and continuous broadband simulator implementations.
     """
 
-    platform: TowedArrayPlatform = Property(doc="Towed array platform")
+    array: TowedArray = Property(
+        default=None,
+        doc="Towed array to simulate, mounted on a SonarPlatform",
+    )
     propagation_model: AcousticPropagationModel = Property(
         doc="Acoustic propagation model",
     )
@@ -57,6 +62,10 @@ class PassiveSonarArraySimulatorBase(SensorSimulator):
         default=None,
         doc="List of GroundTruthPath objects",
     )
+    platform: TowedArrayPlatform | None = Property(
+        default=None,
+        doc="Deprecated: pass the mounted TowedArray as ``array`` instead.",
+    )
 
     def __init__(self, *args: object, **kwargs: object) -> None:
         """Initialise simulator state.
@@ -74,20 +83,43 @@ class PassiveSonarArraySimulatorBase(SensorSimulator):
 
         """
         super().__init__(*args, **kwargs)
+        if self.platform is not None:
+            warnings.warn(
+                "The simulator's platform argument is deprecated; mount a "
+                "bluepebble.arrays.TowedArray on a SonarPlatform and pass it as array=.",
+                DeprecationWarning,
+                stacklevel=2,
+            )
+            if self.array is None:
+                # Older code passes the combined TowedArrayPlatform; simulate its array.
+                self.array = getattr(self.platform, "towed_array", self.platform)
         # Typed wider than the property, since the constructor accepts None or any iterable.
         paths: Iterable[GroundTruthPath] | None = self.ground_truth_paths
         self.ground_truth_paths = [] if paths is None else list(paths)
 
+    def _array(self) -> TowedArray:
+        """Return the array to simulate.
+
+        Raises
+        ------
+        TypeError
+            If neither ``array`` nor the deprecated ``platform`` was given.
+
+        """
+        if self.array is None:
+            raise TypeError(f"{type(self).__name__} needs the towed array to simulate (array=).")
+        return self.array
+
     def _platform_state_at(self, timestamp: datetime) -> "PlatformState":
-        """Return the platform state at ``timestamp``, raising if the platform has none.
+        """Return the platform state at ``timestamp``, raising if the array has none.
 
         Raises
         ------
         ValueError
-            If the platform has no state at ``timestamp``.
+            If the array has no state at ``timestamp``.
 
         """
-        platform_state = self.platform.get_platform_state_at(timestamp)
+        platform_state = self._array().get_platform_state_at(timestamp)
         if platform_state is None:
             raise ValueError(
                 f"The platform has no state at {timestamp}, so there is no array geometry "
@@ -105,7 +137,7 @@ class PassiveSonarArraySimulatorBase(SensorSimulator):
 
         """
         return sorted(
-            list(set(state.timestamp for state in self.platform.movement_controller.states))
+            list(set(state.timestamp for state in self._array().movement_controller.states))
         )
 
     @staticmethod

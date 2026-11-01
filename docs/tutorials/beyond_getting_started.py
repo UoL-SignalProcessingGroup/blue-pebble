@@ -47,7 +47,7 @@ timesteps = np.array([start_time + i * time_interval for i in range(num_steps)],
 #
 # The platform sails a straight leg, turns 45 degrees to starboard, and sails a second
 # straight leg. Stone Soup's :class:`~stonesoup.models.transition.linear.KnownTurnRate`
-# model describes the turn; :class:`~.TowedArrayPlatform` works out where the towed array's
+# model describes the turn; :class:`~.TowedArray` works out where the towed array's
 # sensors are throughout, including while the array bends through the turn. The turn
 # matters later, when it separates real targets from their ghosts.
 
@@ -59,7 +59,8 @@ from stonesoup.models.transition.linear import (
 )
 from stonesoup.types.groundtruth import GroundTruthState
 
-from bluepebble.platform import TowedArrayPlatform
+from bluepebble.arrays import TowedArray
+from bluepebble.platform import SonarPlatform
 
 # 5 m/s, heading a little north of east.
 platform_start_vector = np.array([-7500.0, 4.88, -2000.0, 1.06, -5.0, 0.0])
@@ -93,17 +94,20 @@ tow_cable_length_m = 100.0
 sensor_spacing_m = 3.0
 array_depth_m = -50.0
 
-platform = TowedArrayPlatform(
+platform = SonarPlatform(
     states=GroundTruthState(platform_start_vector, timestamp=start_time),
     position_mapping=platform_position_mapping,
     velocity_mapping=platform_velocity_mapping,
     transition_models=[straight_model, turning_model, straight_model],
     transition_times=[leg1_duration, turn_duration, leg2_duration],
+)
+towed_array = TowedArray(
     num_sensors=num_sensors,
     cable_length_m=tow_cable_length_m,
     sensor_spacing_m=sensor_spacing_m,
     array_depth_m=array_depth_m,
 )
+platform.add_sensor(towed_array)
 
 for timestamp in timesteps[1:]:
     platform.move(timestamp)
@@ -163,7 +167,7 @@ for start_vector in target_start_vectors:
         )
     target_truths.append(GroundTruthPath(target_states))
 
-plot_world(truths=target_truths, platform=platform)
+plot_world(truths=target_truths, platform=towed_array)
 
 # %%
 # A Higher-Fidelity Propagation Model
@@ -282,7 +286,7 @@ steering_calculator = SteeringCalculator(
 def make_simulator(ground_truth_paths):
     """Build the simulator for this scene; an empty list gives ambient noise only."""
     return ContinuousSTFTPassiveSonarArraySimulator(
-        platform=platform,
+        array=towed_array,
         propagation_model=propagation_model,
         signal_models=signal_models,
         noise_model=ambient_noise_model,
@@ -408,7 +412,7 @@ bearing_truths = []
 for target_truth in target_truths:
     bearing_states = []
     for state in target_truth:
-        platform_state = platform.get_platform_state_at(state.timestamp)
+        platform_state = towed_array.get_platform_state_at(state.timestamp)
         assert platform_state is not None
         ref_sensor_position = np.mean(platform_state.array.state_vector, axis=1)
         target_xy = np.array([state.state_vector[0], state.state_vector[2]])

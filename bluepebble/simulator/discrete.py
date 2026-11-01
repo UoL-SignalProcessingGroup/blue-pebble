@@ -172,7 +172,7 @@ class DiscretePassiveSonarArraySimulator(PassiveSonarArraySimulatorBase):
             msg = "signal models must contain at least one model"
             raise ValueError(msg)
 
-        num_sensors = int(self.platform.num_sensors)
+        num_sensors = int(self._array().num_sensors)
         sampling_rate_hz = float(signal_models_list[0].sampling_rate_hz)
         total_samples = int(signal_models_list[0].num_samples)
 

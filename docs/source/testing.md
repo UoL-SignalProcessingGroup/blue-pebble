@@ -105,12 +105,20 @@ pytest --collect-only -q
 
 ### Towed-array models
 
-`tests/test_towedarray_models.py`
+`tests/test_towedarray_models.py`, `tests/test_arrays_base.py`,
+`tests/test_towedarray_platform_deprecated.py`
 
-- follower geometry for overlapping and separated platform states
+These run against the real Stone Soup platform and mounting classes.
+
+- follower geometry for overlapping and separated sensor states
 - horizontal offset handling and depth consistency
-- platform construction, sensor initialisation, state capture and heading wrapping at ±π
-- host and sensor path retrieval
+- sonar platform depth, mounting arrays and the move cascade to them
+- array mounting, sensor layout, `mounting_offset` as the tow point, state capture and heading
+  wrapping at ±π
+- platform and sensor path retrieval
+- the towed array's forward axis and baffle gains
+- the deprecated `TowedArrayPlatform` reproducing `SonarPlatform` + `TowedArray` exactly, and the
+  simulators' deprecated `platform=` argument
 
 ### Types
 

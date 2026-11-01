@@ -28,6 +28,9 @@ def _install_fake_simulator_dependencies(monkeypatch) -> None:
     platform_module = ModuleType("bluepebble.platform")
     platform_module.TowedArrayPlatform = type("TowedArrayPlatform", (), {})
 
+    arrays_module = ModuleType("bluepebble.arrays")
+    arrays_module.TowedArray = type("TowedArray", (), {})
+
     signal_package = ModuleType("bluepebble.signal")
     signal_package.__path__ = []
 
@@ -67,6 +70,7 @@ def _install_fake_simulator_dependencies(monkeypatch) -> None:
 
     monkeypatch.setitem(sys.modules, "bluepebble.models.propagation", propagation_module)
     monkeypatch.setitem(sys.modules, "bluepebble.platform", platform_module)
+    monkeypatch.setitem(sys.modules, "bluepebble.arrays", arrays_module)
     monkeypatch.setitem(sys.modules, "bluepebble.signal", signal_package)
     monkeypatch.setitem(sys.modules, "bluepebble.signal.random", random_module)
     monkeypatch.setitem(sys.modules, "bluepebble.signal.anthropogenic", anthropogenic_module)
@@ -257,7 +261,7 @@ def test_base_beamform_if_configured_and_make_sensor_data(monkeypatch) -> None:
 
     timestamp = datetime(2026, 1, 1, 12, 0, 0)
     simulator = discrete.DiscretePassiveSonarArraySimulator(
-        platform=_FakePlatform([timestamp], num_sensors=1)
+        array=_FakePlatform([timestamp], num_sensors=1)
     )
 
     sensor_signals = np.array([[1.0 + 0.0j]], dtype=np.complex64)
@@ -313,7 +317,7 @@ def test_base_beamform_if_configured_without_steering_bearings(monkeypatch) -> N
 
     timestamp = datetime(2026, 1, 1, 12, 0, 0)
     simulator = discrete.DiscretePassiveSonarArraySimulator(
-        platform=_FakePlatform([timestamp], num_sensors=1)
+        array=_FakePlatform([timestamp], num_sensors=1)
     )
     simulator.steering_calculator = SimpleNamespace(calculate=lambda state: np.array([0.1]))
     simulator.beamformer = SimpleNamespace(beamform=lambda signals, delays: np.array([1.0]))
@@ -333,7 +337,7 @@ def test_base_beamform_if_configured_raises_without_a_platform_state(monkeypatch
     timestamp = datetime(2026, 1, 1, 12, 0, 0)
     platform = _FakePlatform([timestamp], num_sensors=1)
     platform._states[timestamp] = None
-    simulator = discrete.DiscretePassiveSonarArraySimulator(platform=platform)
+    simulator = discrete.DiscretePassiveSonarArraySimulator(array=platform)
     simulator.steering_calculator = SimpleNamespace(calculate=lambda state: np.array([0.1]))
     simulator.beamformer = SimpleNamespace(beamform=lambda signals, delays: np.array([1.0]))
 
@@ -347,7 +351,7 @@ def test_base_beamform_if_configured_wires_mirror_plan_through(monkeypatch) -> N
 
     timestamp = datetime(2026, 1, 1, 12, 0, 0)
     simulator = discrete.DiscretePassiveSonarArraySimulator(
-        platform=_FakePlatform([timestamp], num_sensors=1)
+        array=_FakePlatform([timestamp], num_sensors=1)
     )
     sensor_signals = np.array([[1.0 + 0.0j]], dtype=np.complex64)
 
@@ -391,7 +395,7 @@ def test_base_band_labels_follow_the_configured_beamformer(monkeypatch) -> None:
 
     timestamp = datetime(2026, 1, 1, 12, 0, 0)
     simulator = discrete.DiscretePassiveSonarArraySimulator(
-        platform=_FakePlatform([timestamp], num_sensors=1)
+        array=_FakePlatform([timestamp], num_sensors=1)
     )
 
     # No beamformer at all, and a beamformer predating bands, both mean single-band output.
@@ -453,7 +457,7 @@ def test_discrete_sensor_data_gen_validates_inputs_and_clamps_empty_chunks(monke
     timestamp = datetime(2026, 1, 1, 12, 0, 0)
 
     simulator = discrete.DiscretePassiveSonarArraySimulator(
-        platform=_FakePlatform([timestamp], num_sensors=1),
+        array=_FakePlatform([timestamp], num_sensors=1),
         propagation_model=SimpleNamespace(),
         signal_models=[SimpleNamespace(sampling_rate_hz=1.0, num_samples=1)],
         ground_truth_paths=[],
@@ -462,7 +466,7 @@ def test_discrete_sensor_data_gen_validates_inputs_and_clamps_empty_chunks(monke
         list(simulator.sensor_data_gen())
 
     simulator = discrete.DiscretePassiveSonarArraySimulator(
-        platform=_FakePlatform([timestamp], num_sensors=1),
+        array=_FakePlatform([timestamp], num_sensors=1),
         propagation_model=_prop_model(
             lambda platform_state, target_state, frequencies: (
                 np.ones((1, len(frequencies)), dtype=np.complex64),
@@ -490,7 +494,7 @@ def test_discrete_sensor_data_gen_validates_inputs_and_clamps_empty_chunks(monke
             return self._generate_base_signal(source)
 
     simulator = discrete.DiscretePassiveSonarArraySimulator(
-        platform=_FakePlatform([timestamp, t1], num_sensors=1),
+        array=_FakePlatform([timestamp, t1], num_sensors=1),
         propagation_model=_prop_model(
             lambda platform_state, target_state, frequencies: (
                 np.ones((1, len(frequencies)), dtype=np.complex64),
@@ -538,7 +542,7 @@ def test_discrete_sensor_data_gen_validates_model_consistency(monkeypatch) -> No
         sampling_rate_hz = 20.0
 
     simulator = discrete.DiscretePassiveSonarArraySimulator(
-        platform=_FakePlatform([timestamp], num_sensors=1),
+        array=_FakePlatform([timestamp], num_sensors=1),
         propagation_model=propagation,
         signal_models=[SignalA(), SignalBadSamples()],
         ground_truth_paths=[path_a, path_b],
@@ -547,7 +551,7 @@ def test_discrete_sensor_data_gen_validates_model_consistency(monkeypatch) -> No
         list(simulator.sensor_data_gen())
 
     simulator = discrete.DiscretePassiveSonarArraySimulator(
-        platform=_FakePlatform([timestamp], num_sensors=1),
+        array=_FakePlatform([timestamp], num_sensors=1),
         propagation_model=propagation,
         signal_models=[SignalA(), SignalBadRate()],
         ground_truth_paths=[path_a, path_b],
@@ -556,7 +560,7 @@ def test_discrete_sensor_data_gen_validates_model_consistency(monkeypatch) -> No
         list(simulator.sensor_data_gen())
 
     simulator = discrete.DiscretePassiveSonarArraySimulator(
-        platform=_FakePlatform([timestamp], num_sensors=1),
+        array=_FakePlatform([timestamp], num_sensors=1),
         propagation_model=propagation,
         signal_models=[SignalA()],
         ground_truth_paths=[],
@@ -594,7 +598,7 @@ def test_discrete_sensor_data_gen_pads_truncates_and_skips_absent_targets(monkey
             return np.array([2.0, 0.0, 0.0, 0.0, 9.0], dtype=np.complex64)
 
     simulator = discrete.DiscretePassiveSonarArraySimulator(
-        platform=platform,
+        array=platform,
         propagation_model=_prop_model(
             lambda platform_state, target_state, frequencies: (
                 np.ones((1, len(frequencies)), dtype=np.complex64),
@@ -786,7 +790,7 @@ def test_continuous_build_target_histories_and_modes_cover_wola_and_cola(monkeyp
         compute_sensor_delays=lambda platform_state, target_state: np.array([0.0]),
     )
     simulator = continuous.ContinuousSTFTPassiveSonarArraySimulator(
-        platform=platform,
+        array=platform,
         propagation_model=propagation_stub,
         signal_models=[GoodModel()],
     )
@@ -804,7 +808,7 @@ def test_continuous_build_target_histories_and_modes_cover_wola_and_cola(monkeyp
 
     for mode in ("wola_interp", "cola"):
         sim = continuous.ContinuousSTFTPassiveSonarArraySimulator(
-            platform=platform,
+            array=platform,
             propagation_model=propagation,
             signal_models=[GoodModel()],
             ground_truth_paths=[path_a],
@@ -861,7 +865,7 @@ def test_fractional_delay_simulator_covers_errors_fallback_and_outputs(monkeypat
             )
 
     short_sim = continuous.ContinuousFractionalDelayPassiveSonarArraySimulator(
-        platform=_FakePlatform([t0], num_sensors=1),
+        array=_FakePlatform([t0], num_sensors=1),
         signal_models=[ToggleSourceModel(np.array([1.0, 2.0], dtype=np.complex64))],
         ground_truth_paths=[_FakePath(states=[_FakeState(t0)])],
     )
@@ -869,7 +873,7 @@ def test_fractional_delay_simulator_covers_errors_fallback_and_outputs(monkeypat
         list(short_sim.sensor_data_gen())
 
     no_target_sim = continuous.ContinuousFractionalDelayPassiveSonarArraySimulator(
-        platform=_FakePlatform([t0, t1], num_sensors=1),
+        array=_FakePlatform([t0, t1], num_sensors=1),
         signal_models=[ToggleSourceModel(np.array([1.0, 2.0], dtype=np.complex64))],
         ground_truth_paths=[],
     )
@@ -880,7 +884,7 @@ def test_fractional_delay_simulator_covers_errors_fallback_and_outputs(monkeypat
     path_a = _FakePath(states=[_FakeState(t0), _FakeState(t1)])
     path_b = _FakePath(states=[_FakeState(t0), _FakeState(t1)])
     mismatch_sim = continuous.ContinuousFractionalDelayPassiveSonarArraySimulator(
-        platform=_FakePlatform([t0, t1], num_sensors=1),
+        array=_FakePlatform([t0, t1], num_sensors=1),
         propagation_model=_prop_model(
             lambda platform_state, target_state, freqs: (
                 np.ones((1, len(freqs)), dtype=np.complex64),
@@ -930,7 +934,7 @@ def test_fractional_delay_simulator_covers_errors_fallback_and_outputs(monkeypat
             return sensor_signals.copy()
 
     success_sim = continuous.ContinuousFractionalDelayPassiveSonarArraySimulator(
-        platform=_FakePlatform([t0, t1], num_sensors=1),
+        array=_FakePlatform([t0, t1], num_sensors=1),
         propagation_model=_prop_model(
             lambda platform_state, target_state, freqs: (
                 np.ones((1, len(freqs)), dtype=np.complex64),
@@ -1063,7 +1067,7 @@ def test_continuous_fractional_delay_paths_without_options(monkeypatch) -> None:
             )
 
     frac = continuous.ContinuousFractionalDelayPassiveSonarArraySimulator(
-        platform=_FakePlatform([t0, t1], num_sensors=1),
+        array=_FakePlatform([t0, t1], num_sensors=1),
         propagation_model=_prop_model(
             lambda platform_state, target_state, freqs: (
                 np.ones((1, len(freqs)), dtype=np.complex64),
@@ -1164,7 +1168,7 @@ def test_build_target_histories_holds_non_finite_delays_finite(monkeypatch) -> N
     timestamps = [t0 + timedelta(seconds=i) for i in range(3)]
 
     simulator = continuous.ContinuousSTFTPassiveSonarArraySimulator(
-        platform=_FakePlatform(timestamps, num_sensors=2),
+        array=_FakePlatform(timestamps, num_sensors=2),
         propagation_model=_prop_model(_no_arrival_propagate),
         signal_models=[_NoArrivalModel()],
     )
@@ -1204,7 +1208,7 @@ def test_no_arrival_delays_silence_a_sensor_instead_of_producing_nan(monkeypatch
 
     for mode in ("wola_interp", "cola"):
         simulator = continuous.ContinuousSTFTPassiveSonarArraySimulator(
-            platform=platform,
+            array=platform,
             propagation_model=_prop_model(_no_arrival_propagate),
             signal_models=[_NoArrivalModel()],
             ground_truth_paths=[path],
@@ -1216,7 +1220,7 @@ def test_no_arrival_delays_silence_a_sensor_instead_of_producing_nan(monkeypatch
             check(np.asarray(next(iter(data)).raw_signals), f"mode={mode}")
 
     fractional = continuous.ContinuousFractionalDelayPassiveSonarArraySimulator(
-        platform=platform,
+        array=platform,
         propagation_model=_prop_model(_no_arrival_propagate),
         signal_models=[_NoArrivalModel()],
         ground_truth_paths=[path],
