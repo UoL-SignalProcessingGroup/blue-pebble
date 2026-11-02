@@ -57,6 +57,14 @@ pytest --collect-only -q
 - mainlobe width against the textbook beamwidth, and the CFAR windows derived from it
 - steering at an elevation: bit-identical horizontal delays at zero elevation, sin(e) and cos(e) scaling on vertical and horizontal lines, mirror pairing below the horizontal, and a broadband plane wave located in bearing and elevation by a crossed array
 
+### Matched filtering
+
+`tests/test_sigproc_matchedfilter.py`
+
+- the correlation peak at the echo delay with the echo's energy, and agreement with scipy's direct correlation
+- multi-channel rows filtered independently, and the replica taper
+- shape validation, and parabolic peak interpolation recovering an exact vertex
+
 ### Environment models
 
 `tests/test_environment_models.py`
