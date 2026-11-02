@@ -99,8 +99,14 @@ pytest --collect-only -q
 
 - Bellhop environment and bathymetry files, arrivals parsing (including phase), world-to-depth
   conversion, invalid geometry and executable errors, using a stub executable
+- Bellhop as a spectrum propagation model: transfer functions summed from arrivals (conjugate at
+  negative frequencies), receivers mapped to their grid points, no-arrival sensors, run counts
+  per receiver geometry, and `propagate` loss and travel time
 - with `bellhopcxx` on `PATH` (skipped otherwise, as in CI): direct and surface-reflected paths
-  in deep isovelocity water against spherical spreading and the image-source geometry
+  against spherical spreading and the image source; transfer functions against the analytic
+  Lloyd's mirror field; bottom-reflection phase against the Rayleigh coefficient; shared and
+  per-sensor runs agreeing over a flat bottom; and, with rtrs installed, Bellhop against a
+  converged rtrs in the same sediment half-space
 - constant target strength gain and its frequency independence
 
 ### Simulators
