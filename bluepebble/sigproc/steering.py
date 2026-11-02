@@ -1,4 +1,4 @@
-"""Steering-delay geometry for horizontal sensor arrays."""
+"""Steering-delay geometry for sensor arrays."""
 
 from typing import TYPE_CHECKING, Final, Literal
 
@@ -76,7 +76,7 @@ def _normalise_sector(start_rad: float, end_rad: float) -> tuple[float, float]:
 
 
 class SteeringCalculator(Base):
-    r"""Compute steering delays for a horizontal sensor array over a sector of bearings.
+    r"""Compute steering delays for a sensor array over a sector of bearings.
 
     The calculator builds its steering grid itself: ``num_beams`` angles :math:`\psi_k`
     across ``steering_sector_rad``, spaced as ``spacing`` selects. A partial sector includes
@@ -118,11 +118,26 @@ class SteeringCalculator(Base):
     :math:`1 / \cos\theta` towards endfire, and beams there become near-copies of each other.
     This is the u-space description of [1]_ (Ch. 2).
 
+    Every beam looks at the same ``steering_elevation_rad`` :math:`e`, measured up from the
+    horizontal. A plane wave arriving from bearing :math:`\phi` and elevation :math:`e` travels
+    along :math:`-\mathbf{d}`, with
+
+    .. math::
+
+        \mathbf{d} = (\cos e \cos\phi,\; \cos e \sin\phi,\; \sin e),
+
+    so sensor :math:`n`, at :math:`\mathbf{r}_n` relative to the reference sensor, is steered
+    with delay :math:`\tau_n = -\mathbf{d} \cdot \mathbf{r}_n / c`. To scan several
+    elevations, use one calculator per elevation.
+
     Assumptions
     -----------
     - The array is a straight horizontal line; delays use each sensor's actual position, but
       the array frame, the sine grid and mirror pairing take the array axis from the two end
-      sensors. Mid-turn this approximates a bent array's orientation.
+      sensors. Mid-turn this approximates a bent array's orientation. The elevation changes
+      only the delays, not this axis.
+    - The arriving wavefront is plane, and the sound speed :math:`c` is the profile's speed at
+      sensor 0's depth.
     - Sensor 0 is the front of the array, nearest the tow point.
     - The sensor positions are known exactly: the delays use the platform's true geometry.
     - For ``spacing="sine"`` in the ``"world"`` frame, the array heading is constant: the grid
@@ -160,7 +175,9 @@ class SteeringCalculator(Base):
     spacing: Literal["uniform", "sine"] = Property(
         default="uniform",
         doc="'uniform' spaces beams evenly in angle; 'sine' spaces them evenly in the sine "
-        "of the angle from broadside, for a sector within one side of the array.",
+        "of the angle from broadside, for a sector within one side of the array. Off the "
+        "horizontal, a line array's pattern depends on cos(elevation) times that sine, so the "
+        "grid stays evenly spaced in it.",
     )
     mirror_half_plane: bool = Property(
         default=False,
@@ -176,6 +193,11 @@ class SteeringCalculator(Base):
         "beam spacing. In either frame a bent array (e.g. during a turn) adds a further "
         "approximation.",
     )
+    steering_elevation_rad: float = Property(
+        default=0.0,
+        doc="Elevation every beam is steered to, in radians up from the horizontal (+z is up), "
+        "in [-pi/2, pi/2]. Negative values look down.",
+    )
 
     def __init__(self, *args: object, **kwargs: object) -> None:
         """Validate the sector and build the grid and any mirror bookkeeping.
@@ -188,7 +210,8 @@ class SteeringCalculator(Base):
             If the sector is empty or wider than a full circle, ``num_beams`` is below 2,
             ``spacing`` or ``frame`` is unknown, a sine-spaced sector is wider than a
             half-plane or, in the ``"array"`` frame, crosses the array axis, or
-            ``mirror_half_plane`` is set without a uniform full circle.
+            ``mirror_half_plane`` is set without a uniform full circle, or
+            ``steering_elevation_rad`` is outside ``[-pi/2, pi/2]``.
 
         """
         # Caught before Stone Soup's Base sees them: an unknown kwarg there surfaces as
@@ -209,6 +232,10 @@ class SteeringCalculator(Base):
             raise ValueError(f"num_beams ({self.num_beams}) must be >= 2")
         if self.spacing not in ("uniform", "sine"):
             raise ValueError(f"spacing ({self.spacing!r}) must be 'uniform' or 'sine'")
+        if not -np.pi / 2 <= self.steering_elevation_rad <= np.pi / 2:
+            raise ValueError(
+                f"steering_elevation_rad ({self.steering_elevation_rad}) must be in [-pi/2, pi/2]."
+            )
         if self.frame not in ("array", "world"):
             raise ValueError(f"frame ({self.frame!r}) must be 'array' or 'world'")
 
@@ -405,13 +432,12 @@ class SteeringCalculator(Base):
         reference_position = platform.array.ref_state_vector  # Shape: (3, 1)
         sensor_positions_relative = sensor_positions - reference_position
 
-        # Calculate the 2D direction vectors for each steering direction
-        # Elevation = 0 for horizontal array, so only x-y components
+        cos_elevation = np.cos(self.steering_elevation_rad)
         direction_vectors = np.array(
             [
-                np.cos(azimuths_rad),  # x component
-                np.sin(azimuths_rad),  # y component
-                np.zeros_like(azimuths_rad),  # z component (always 0)
+                cos_elevation * np.cos(azimuths_rad),
+                cos_elevation * np.sin(azimuths_rad),
+                np.full_like(azimuths_rad, np.sin(self.steering_elevation_rad)),
             ]
         )  # Shape: (3, num_directions)
 

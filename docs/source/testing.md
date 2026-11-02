@@ -55,6 +55,7 @@ pytest --collect-only -q
 - MVDR validation, finite output on deterministic inputs, and multiband output matching separate single-band runs
 - steering delays and array-axis wrapping at ±π
 - mainlobe width against the textbook beamwidth, and the CFAR windows derived from it
+- steering at an elevation: bit-identical horizontal delays at zero elevation, sin(e) and cos(e) scaling on vertical and horizontal lines, mirror pairing below the horizontal, and a broadband plane wave located in bearing and elevation by a crossed array
 
 ### Environment models
 
