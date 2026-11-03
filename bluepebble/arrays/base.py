@@ -231,11 +231,16 @@ class SensorArray(PlatformMountable):
             self.mounting_offset = StateVector(self.mounting_offset)
 
     @property
+    def num_sensors(self) -> int:
+        """Return the number of sensors. Must be overridden by subclasses."""
+        raise NotImplementedError
+
+    @property
     def array(self) -> ArrayState:
         """Return the current world-frame array state. Must be overridden by subclasses."""
         raise NotImplementedError
 
-    def get_platform_state_at(self, timestamp: datetime) -> object | None:
+    def get_platform_state_at(self, timestamp: datetime) -> PlatformState | None:
         """Return this array's state at ``timestamp``. Must be overridden by subclasses."""
         raise NotImplementedError
 
