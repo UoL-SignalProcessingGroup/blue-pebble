@@ -788,6 +788,68 @@ def test_array_frame_sides_follow_the_sign_convention(monkeypatch, side, side_y_
     assert np.all(side_y_sign * np.sin(bearings) >= -1e-12)
 
 
+def _dome_platform(axis) -> SimpleNamespace:
+    """Build a fake dome-like array: sensors spread across y, facing along ``axis``."""
+    y = np.linspace(-2.0, 2.0, 9)
+    state_vector = np.array([3.0 - 0.1 * y**2, y, np.full(y.size, -10.0)])
+    return SimpleNamespace(
+        array=SimpleNamespace(
+            state_vector=state_vector,
+            ref_state_vector=np.array([[0.0], [0.0], [-10.0]]),
+            axis=None if axis is None else np.asarray(axis, dtype=float).reshape(3, 1),
+        )
+    )
+
+
+@pytest.mark.parametrize("axis_rad", [0.0, 0.7, -2.5])
+def test_array_frame_follows_the_stated_axis(monkeypatch, axis_rad) -> None:
+    """An array state's axis sets the array frame, not the line through its end sensors.
+
+    The dome's end sensors lie across the ship, so reading them would turn its fan by 90
+    degrees.
+    """
+    beamformer = _load_beamformer_module(monkeypatch)
+    platform = _dome_platform([np.cos(axis_rad), np.sin(axis_rad), 0.0])
+
+    bearings = _steering_calculator(beamformer, (-np.pi / 2, np.pi / 2), 5).steering_bearings(
+        platform
+    )
+
+    np.testing.assert_allclose(np.angle(np.exp(1j * (bearings[2] - axis_rad))), 0.0, atol=1e-12)
+    assert beamformer.SteeringCalculator._array_axis_rad(platform) == pytest.approx(axis_rad)
+
+
+@pytest.mark.parametrize("axis", [None, [0.0, 0.0, 1.0]], ids=["no axis", "vertical axis"])
+def test_array_frame_falls_back_to_the_end_sensors(monkeypatch, axis) -> None:
+    """Without a horizontal stated axis, forward runs from the last sensor to sensor 0."""
+    beamformer = _load_beamformer_module(monkeypatch)
+    platform = _dome_platform(axis)
+
+    forward = beamformer.SteeringCalculator._array_forward_rad(platform)
+
+    assert forward == pytest.approx(-np.pi / 2)
+
+
+def test_towed_array_axis_leaves_the_frame_unchanged(monkeypatch) -> None:
+    """A towed array states the same forward axis its end sensors give, so nothing moves."""
+    beamformer = _load_beamformer_module(monkeypatch)
+    without = _rotated_array_platform(0.4)
+    positions = without.array.state_vector
+    forward = positions[:, 0] - positions[:, -1]
+    stated = SimpleNamespace(
+        array=SimpleNamespace(
+            state_vector=positions,
+            ref_state_vector=without.array.ref_state_vector,
+            axis=(forward / np.linalg.norm(forward)).reshape(3, 1),
+        )
+    )
+    calculator = _steering_calculator(beamformer, (0.0, np.pi), 9)
+
+    np.testing.assert_allclose(
+        calculator.steering_bearings(stated), calculator.steering_bearings(without), atol=1e-12
+    )
+
+
 @pytest.mark.parametrize("spacing", ["uniform", "sine"])
 def test_array_frame_grid_turns_with_the_array(monkeypatch, spacing) -> None:
     """Turning a straight array turns every bearing with it and leaves the delays unchanged.
