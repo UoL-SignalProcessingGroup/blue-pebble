@@ -163,14 +163,13 @@ def truth_at(name, ping_time):
 # -----------
 #
 # 221 beams cover 55 degrees either side of the bow in 0.5 degree steps, all steered 4 degrees
-# below the horizontal, towards the targets' depression angles of about 3-6 degrees. The ship
-# holds its heading along +x, so the sector is given in world bearings.
+# below the horizontal, towards the targets' depression angles of about 3-6 degrees. The fan
+# is measured from the array's forward axis, so it turns with the ship.
 
 steering = SteeringCalculator(
     ssp=Constant(speed=SOUND_SPEED_MPS),
     steering_sector_rad=(np.radians(-55.0), np.radians(55.0)),
     num_beams=221,
-    frame="world",
     steering_elevation_rad=np.radians(-4.0),
 )
 beamformer = DelayAndSumBeamformer(domain="frequency", sampling_rate_hz=SAMPLING_RATE_HZ)

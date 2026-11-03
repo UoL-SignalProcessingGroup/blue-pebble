@@ -219,10 +219,10 @@ def reference_xyz(array, ping_time):
 # ----------
 #
 # Each array has its own simulator, with the bow array as the transmitter, and its own beams.
-# The ship holds its heading along +x, so each fan is given in world bearings (anticlockwise
-# from +x): 90 degrees either side of the bow for the dome, the port and starboard beams for
-# the flank arrays, and the port half of the towed array, whose other half mirrors it, short of
-# 15 degrees from either end.
+# Each fan is measured anticlockwise from its array's forward axis, so it turns with the ship:
+# 90 degrees either side of the bow for the dome, the port and starboard beams for the flank
+# arrays, and the port half of the towed array, whose other half mirrors it, short of 15
+# degrees from either end.
 
 SECTORS_DEG = {
     "Bow": (-90.0, 90.0),
@@ -269,7 +269,6 @@ def simulator(name, ground_truth_paths, seed, ping_times=PING_TIMES):
             ssp=Constant(speed=SOUND_SPEED_MPS),
             steering_sector_rad=(np.radians(start_deg), np.radians(end_deg)),
             num_beams=int(round((end_deg - start_deg) / 0.5)) + 1,
-            frame="world",
             steering_elevation_rad=np.radians(-3.0),
         ),
         ping_timestamps=ping_times,
