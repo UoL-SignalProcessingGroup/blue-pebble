@@ -75,6 +75,25 @@ def _normalise_sector(start_rad: float, end_rad: float) -> tuple[float, float]:
     return float(_wrap_to_pi(np.array(start_rad))), float(width)
 
 
+# Below this horizontal length a stated axis is too near vertical to give a direction.
+_MIN_HORIZONTAL_AXIS = 1e-9
+
+
+def _stated_axis_rad(platform: "PlatformState") -> float | None:
+    """Return the azimuth of the array state's ``axis``, or None if it has no horizontal one.
+
+    Arrays without a natural line, such as a bow dome, state their forward axis; reading the
+    end sensors instead would turn a dome's frame across the ship.
+    """
+    axis = getattr(platform.array, "axis", None)
+    if axis is None:
+        return None
+    x, y = (float(v) for v in np.ravel(axis)[:2])
+    if np.hypot(x, y) < _MIN_HORIZONTAL_AXIS:
+        return None
+    return float(_wrap_to_pi(np.array(np.arctan2(y, x))))
+
+
 class SteeringCalculator(Base):
     r"""Compute steering delays for a sensor array over a sector of bearings.
 
@@ -132,13 +151,14 @@ class SteeringCalculator(Base):
 
     Assumptions
     -----------
-    - The array is a straight horizontal line; delays use each sensor's actual position, but
-      the array frame, the sine grid and mirror pairing take the array axis from the two end
-      sensors. Mid-turn this approximates a bent array's orientation. The elevation changes
-      only the delays, not this axis.
+    - Delays use each sensor's actual position, but the array frame, the sine grid and mirror
+      pairing take the array's direction from its state's ``axis`` (forward along the hull for
+      a hull-mounted array). An array state without one is taken as a straight horizontal
+      line, with its axis through the two end sensors; mid-turn this approximates a bent
+      array's orientation. The elevation changes only the delays, not this axis.
     - The arriving wavefront is plane, and the sound speed :math:`c` is the profile's speed at
       sensor 0's depth.
-    - Sensor 0 is the front of the array, nearest the tow point.
+    - Without a stated ``axis``, sensor 0 is the front of the array, nearest the tow point.
     - The sensor positions are known exactly: the delays use the platform's true geometry.
     - For ``spacing="sine"`` in the ``"world"`` frame, the array heading is constant: the grid
       is built from the axis at the first call and a later axis change raises.
@@ -378,12 +398,16 @@ class SteeringCalculator(Base):
 
     @staticmethod
     def _array_axis_rad(platform: "PlatformState") -> float:
-        """Return the array's instantaneous line orientation, from its two end sensors.
+        """Return the array's instantaneous line orientation.
 
-        Wrapped to ``[-pi, pi)``; since the mirror reflection ``2 * axis - theta`` is
+        The array state's ``axis`` when it has one, otherwise the line through its two end
+        sensors. Wrapped to ``[-pi, pi)``; since the mirror reflection ``2 * axis - theta`` is
         unaffected by a 180 deg ambiguity in which "end" of the array is used, either
         sensor ordering gives an equally valid axis.
         """
+        stated = _stated_axis_rad(platform)
+        if stated is not None:
+            return stated
         sensor_positions = platform.array.state_vector
         endpoints_xy = sensor_positions[:2, [0, -1]]
         dx, dy = endpoints_xy[:, 1] - endpoints_xy[:, 0]
@@ -392,12 +416,18 @@ class SteeringCalculator(Base):
 
     @staticmethod
     def _array_forward_rad(platform: "PlatformState") -> float:
-        """Return the array's forward direction, from its last sensor towards sensor 0.
+        """Return the array's forward direction.
 
-        This is the reference every ``"array"``-frame angle is measured from. Unlike
+        The array state's ``axis`` when it has one, which points forward by definition (along
+        the hull for hull-mounted arrays). Otherwise the direction from the last sensor towards
+        sensor 0, which is forward only for a towed line whose sensor 0 is nearest the tow
+        point. This is the reference every ``"array"``-frame angle is measured from. Unlike
         :meth:`_array_axis_rad` it has no pi ambiguity, which matters here because
         reversing it would swap port and starboard.
         """
+        stated = _stated_axis_rad(platform)
+        if stated is not None:
+            return stated
         sensor_positions = platform.array.state_vector
         dx, dy = sensor_positions[:2, 0] - sensor_positions[:2, -1]
         return float(_wrap_to_pi(np.array(np.arctan2(dy, dx))))
