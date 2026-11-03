@@ -242,6 +242,17 @@ def test_calibrated_false_alarm_rate(bp) -> None:
     assert target_pfa / 2 < false_alarm_rate < 2 * target_pfa
 
 
+def test_delay_is_refined_only_at_a_peak(bp) -> None:
+    """A CFAR cell on a slope keeps its own delay; at a peak it moves by under half a sample."""
+    from bluepebble.detector.active import _peak_offset
+
+    slope = np.array([1.0, 2.0, 3.01, 4.03, 5.06])
+    peak = np.array([1.0, 3.0, 4.0, 3.5, 1.0])
+
+    assert _peak_offset(slope, 2) == 0.0
+    assert 0.0 < _peak_offset(peak, 2) < 0.5
+
+
 def test_misconfigured_inputs_raise(bp) -> None:
     """Wrapping CFAR, several channels without beams, and resized beams are rejected."""
     single = _mounted(_platform(bp), bp.SingleSensorArray())
