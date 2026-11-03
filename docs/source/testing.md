@@ -127,6 +127,19 @@ pytest --collect-only -q
 - discrete simulator source-signal resolution and timestep validation
 - continuous STFT and fractional-delay simulator interpolation, fading and reconstruction branches
 
+`tests/test_simulator_active.py`
+
+- active echoes at the monostatic round-trip delay and the bistatic range sum, including a
+  sonobuoy receiving a hull array's ping, with the out leg traced from transmitter to target
+- echo level against the sonar equation with spherical spreading, and baffle gains on
+  transmit and receive
+- an LFM matched-filter peak, per-sensor delays across a line array, no wrap-around of late
+  echoes, and silence from targets that cannot be heard
+- default ping times, a missing transmitter state, seeded noise and settings validation
+- with `bellhopcxx` on `PATH`: the direct echo against spherical spreading, and a bistatic
+  sonobuoy echo
+- with rtrs installed: the direct echo against spherical spreading
+
 ### Towed-array models
 
 `tests/test_towedarray_models.py`, `tests/test_arrays_base.py`,

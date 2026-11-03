@@ -129,6 +129,23 @@ class ActiveSonarSensorData(SensorData):
         doc="Transmitted pulse, shape (num_pulse_samples,), kept for matched filtering."
     )
     timestamp: datetime = Property(doc="Time at which the ping was transmitted")
+    beamformed_data: ComplexArray | None = Property(
+        default=None,
+        doc="Beamformed waveform, shape (num_beams, num_samples), if a beamformer was "
+        "configured",
+    )
+    steering_bearings_rad: FloatArray | None = Property(
+        default=None,
+        doc="World-frame bearing of each beam in ``beamformed_data``, in radians",
+    )
+    transmitter_position: FloatArray | None = Property(
+        default=None,
+        doc="World-frame (x, y, z) of the transmitter's reference point at the ping",
+    )
+    receiver_reference_position: FloatArray | None = Property(
+        default=None,
+        doc="World-frame (x, y, z) of the receiving array's reference point at the ping",
+    )
 
     def __init__(self, *args: object, **kwargs: object) -> None:
         """Initialise the sensor data and check the waveform shapes.

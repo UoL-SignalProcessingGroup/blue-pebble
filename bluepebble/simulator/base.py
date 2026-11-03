@@ -1,4 +1,4 @@
-"""Base simulator hierarchy and shared utilities for passive-sonar simulations."""
+"""Base simulator hierarchy and shared utilities for passive and active sonar simulations."""
 
 import copy
 import warnings
@@ -12,7 +12,6 @@ from numpy.typing import NDArray
 from stonesoup.base import Property
 from stonesoup.simulator.base import SensorSimulator
 
-from ..arrays import TowedArray
 from ..models.propagation import AcousticPropagationModel
 from ..platform import TowedArrayPlatform
 from ..signal.random import RandomSignal
@@ -24,7 +23,7 @@ if TYPE_CHECKING:
     from stonesoup.types.groundtruth import GroundTruthPath
     from stonesoup.types.state import State
 
-    from ..arrays import PlatformState
+    from ..arrays import PlatformState, SensorArray
 
 ComplexArray: TypeAlias = NDArray[np.complexfloating[Any, Any]]
 FloatArray: TypeAlias = NDArray[np.float64]
@@ -32,19 +31,17 @@ SensorBatch: TypeAlias = tuple[datetime, set[PassiveSonarSensorData]]
 TModel = TypeVar("TModel")
 
 
-class PassiveSonarArraySimulatorBase(SensorSimulator):
-    """Common base class for passive-sonar array simulators.
+class SonarArraySimulatorBase(SensorSimulator):
+    """Common base class for sonar array simulators, passive or active.
 
-    This class centralises properties and utility methods shared by
-    discrete-time and continuous broadband simulator implementations.
+    It holds the array, noise, beamforming and ground-truth settings, and the helpers for
+    reading geometry, targets and noise that do not depend on whether the array listens or
+    pings.
     """
 
-    array: TowedArray = Property(
+    array: "SensorArray" = Property(
         default=None,
-        doc="Towed array to simulate, mounted on a SonarPlatform",
-    )
-    propagation_model: AcousticPropagationModel = Property(
-        doc="Acoustic propagation model",
+        doc="Sensor array to simulate, mounted on a platform",
     )
     noise_model: RandomSignal | None = Property(
         default=None,
@@ -61,10 +58,6 @@ class PassiveSonarArraySimulatorBase(SensorSimulator):
     ground_truth_paths: list["GroundTruthPath"] = Property(
         default=None,
         doc="List of GroundTruthPath objects",
-    )
-    platform: TowedArrayPlatform | None = Property(
-        default=None,
-        doc="Deprecated: pass the mounted TowedArray as ``array`` instead.",
     )
 
     def __init__(self, *args: object, **kwargs: object) -> None:
@@ -83,31 +76,21 @@ class PassiveSonarArraySimulatorBase(SensorSimulator):
 
         """
         super().__init__(*args, **kwargs)
-        if self.platform is not None:
-            warnings.warn(
-                "The simulator's platform argument is deprecated; mount a "
-                "bluepebble.arrays.TowedArray on a SonarPlatform and pass it as array=.",
-                DeprecationWarning,
-                stacklevel=2,
-            )
-            if self.array is None:
-                # Older code passes the combined TowedArrayPlatform; simulate its array.
-                self.array = getattr(self.platform, "towed_array", self.platform)
         # Typed wider than the property, since the constructor accepts None or any iterable.
         paths: Iterable[GroundTruthPath] | None = self.ground_truth_paths
         self.ground_truth_paths = [] if paths is None else list(paths)
 
-    def _array(self) -> TowedArray:
+    def _array(self) -> "SensorArray":
         """Return the array to simulate.
 
         Raises
         ------
         TypeError
-            If neither ``array`` nor the deprecated ``platform`` was given.
+            If no array was given.
 
         """
         if self.array is None:
-            raise TypeError(f"{type(self).__name__} needs the towed array to simulate (array=).")
+            raise TypeError(f"{type(self).__name__} needs the sensor array to simulate (array=).")
         return self.array
 
     def _platform_state_at(self, timestamp: datetime) -> "PlatformState":
@@ -305,6 +288,45 @@ class PassiveSonarArraySimulatorBase(SensorSimulator):
         else:
             output = self.beamformer.beamform(sensor_signals, steering_delays_s)
         return output, bearings
+
+
+class PassiveSonarArraySimulatorBase(SonarArraySimulatorBase):
+    """Common base class for passive-sonar array simulators.
+
+    This class centralises properties and utility methods shared by
+    discrete-time and continuous broadband simulator implementations.
+    """
+
+    propagation_model: AcousticPropagationModel = Property(
+        doc="Acoustic propagation model",
+    )
+    platform: TowedArrayPlatform | None = Property(
+        default=None,
+        doc="Deprecated: pass the mounted TowedArray as ``array`` instead.",
+    )
+
+    def __init__(self, *args: object, **kwargs: object) -> None:
+        """Initialise simulator state, mapping the deprecated ``platform`` to ``array``.
+
+        Parameters
+        ----------
+        *args : object
+            Positional arguments forwarded to ``SonarArraySimulatorBase``.
+        **kwargs : object
+            Keyword arguments forwarded to ``SonarArraySimulatorBase``.
+
+        """
+        super().__init__(*args, **kwargs)
+        if self.platform is not None:
+            warnings.warn(
+                "The simulator's platform argument is deprecated; mount a "
+                "bluepebble.arrays.TowedArray on a SonarPlatform and pass it as array=.",
+                DeprecationWarning,
+                stacklevel=2,
+            )
+            if self.array is None:
+                # Older code passes the combined TowedArrayPlatform; simulate its array.
+                self.array = getattr(self.platform, "towed_array", self.platform)
 
     def _band_labels(self) -> list[str] | None:
         """Return the configured beamformer's band labels.
