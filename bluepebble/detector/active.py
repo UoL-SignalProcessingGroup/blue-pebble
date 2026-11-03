@@ -134,7 +134,7 @@ class ActiveSonarDetector(DetectionReader):
             amplitude = np.sqrt(beam_power)
             for cell, snr_db in self.detector.detect(beam_power[:, np.newaxis]):
                 k = int(cell)
-                delay_s = (k + parabolic_peak_offset(amplitude, k)) / self.sampling_rate_hz
+                delay_s = (k + _peak_offset(amplitude, k)) / self.sampling_rate_hz
                 range_m = metres_per_second * delay_s
                 if range_m < self.min_range_m:
                     continue
@@ -235,6 +235,17 @@ def matched_filter_scans_from_sensor_data(
         for sensor_data in sensor_data_set:
             for beam_power in matched_filter_power(sensor_data, matched_filter):
                 yield beam_power[:, np.newaxis]
+
+
+def _peak_offset(amplitude: FloatArray, k: int) -> float:
+    """Return the parabolic sub-sample offset at ``k``, or 0 if ``k`` is not a local maximum.
+
+    A CFAR cell need not be a peak of the matched-filter output, and on a slope the parabola's
+    vertex can lie many samples away.
+    """
+    if 0 < k < len(amplitude) - 1 and amplitude[k] >= max(amplitude[k - 1], amplitude[k + 1]):
+        return parabolic_peak_offset(amplitude, k)
+    return 0.0
 
 
 def _is_bistatic(sensor_data: ActiveSonarSensorData) -> bool:
