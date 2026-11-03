@@ -7,6 +7,11 @@ from ._theory import (
     ca_cfar_roc,
     os_cfar_roc,
 )
+from .active import (
+    ActiveSonarDetector,
+    matched_filter_power,
+    matched_filter_scans_from_sensor_data,
+)
 from .algorithms import (
     CACFARDetector,
     DetectionAlgorithm,
@@ -34,6 +39,7 @@ from .passive import (
 )
 
 __all__ = [
+    "ActiveSonarDetector",
     "BandDetector",
     "CACFARDetector",
     "DetectionAlgorithm",
@@ -50,6 +56,8 @@ __all__ = [
     "beamformed_scans_from_sensor_data",
     "ca_cfar_roc",
     "estimate_effective_looks_per_frame",
+    "matched_filter_power",
+    "matched_filter_scans_from_sensor_data",
     "os_cfar_roc",
     "beam_power",
     "beam_snr",

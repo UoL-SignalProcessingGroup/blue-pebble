@@ -75,7 +75,7 @@ pytest --collect-only -q
 
 ### Detection
 
-`tests/test_detector_algorithms.py`, `tests/test_detector_algorithms_validation.py`, `tests/test_detector_cfar_correctness.py`, `tests/test_detector_noise_calibration.py`, `tests/test_detector_passive.py`, `tests/test_detector_multiband.py`, `tests/test_detector_metrics.py`
+`tests/test_detector_algorithms.py`, `tests/test_detector_algorithms_validation.py`, `tests/test_detector_cfar_correctness.py`, `tests/test_detector_noise_calibration.py`, `tests/test_detector_passive.py`, `tests/test_detector_multiband.py`, `tests/test_detector_metrics.py`, `tests/test_detector_active.py`
 
 - CA-CFAR and OS-CFAR construction, validation and the two threshold modes (fixed `threshold_factor`, or `target_pfa` with a noise calibration)
 - closed-form thresholds and detection probabilities pinned to published values (Rohling; Gandhi and Kassam; Chalabi)
@@ -83,6 +83,9 @@ pytest --collect-only -q
 - noise calibration: exact recovery on i.i.d. Gamma data, generalised Pareto tail extrapolation, and held-out Pfa on correlated noise
 - peak consolidation, including clusters that straddle the ±180° wrap
 - passive and multiband detector wiring from beamformed data to Stone Soup detections with `Bearing` state vectors
+- active detection on simulated pings: monostatic range within c/(2B), bearing and range from beams,
+  the bistatic range sum, a minimum range, held-out Pfa after calibrating on noise-only pings, and
+  rejection of wrapping CFAR, unbeamformed multi-channel data and resized beams
 - timestep metrics, parameter sweeps and theoretical ROC helpers
 
 ### Plotting helpers
