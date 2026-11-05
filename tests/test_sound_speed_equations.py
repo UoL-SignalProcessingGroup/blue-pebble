@@ -487,35 +487,22 @@ def test_copernicus_preserves_land_mask(monkeypatch, tmp_path) -> None:
     assert np.all(np.isfinite(profile._c_z_mean))
 
 
-def test_copernicus_defaults_to_npl_and_matches_legacy_alias(monkeypatch, tmp_path) -> None:
-    """The deprecated alias must stay equivalent to an explicit NPL configuration."""
-    ssp = _load(monkeypatch, "copernicus_alias")
-    temperature_path, salinity_path = _write_copernicus_pair(tmp_path)
-    paths = {
-        "temperature_file_path": temperature_path,
-        "salinity_file_path": salinity_path,
-    }
-
-    default_profile = ssp.CopernicusSoundSpeedProfile(**paths)
-    with pytest.deprecated_call():
-        alias_profile = ssp.LeroyCopernicusSoundSpeedProfile(**paths)
-    for profile in (default_profile, alias_profile):
-        profile._ensure_loaded()
-
-    assert default_profile.equation_cls is ssp.NPL
-    assert alias_profile.equation_cls is ssp.NPL
-    np.testing.assert_array_equal(default_profile._c_zyx, alias_profile._c_zyx)
-
-
-def test_legacy_alias_emits_deprecation_warning(monkeypatch, tmp_path) -> None:
-    """Instantiating the alias should point callers at the replacement."""
-    ssp = _load(monkeypatch, "copernicus_deprecation")
+def test_copernicus_defaults_to_npl(monkeypatch, tmp_path) -> None:
+    """With no equation named, the Copernicus profile evaluates NPL."""
+    ssp = _load(monkeypatch, "copernicus_default")
     temperature_path, salinity_path = _write_copernicus_pair(tmp_path)
 
-    with pytest.warns(DeprecationWarning, match="CopernicusSoundSpeedProfile"):
-        ssp.LeroyCopernicusSoundSpeedProfile(
-            temperature_file_path=temperature_path, salinity_file_path=salinity_path
-        )
+    profile = ssp.CopernicusSoundSpeedProfile(
+        temperature_file_path=temperature_path, salinity_file_path=salinity_path
+    )
+
+    assert profile.equation_cls is ssp.NPL
+
+
+def test_removed_legacy_alias_names_its_replacement() -> None:
+    """Importing the alias removed in v0.6.0 says what replaces it."""
+    with pytest.raises(ImportError, match=r"CopernicusSoundSpeedProfile\(equation_cls=NPL\)"):
+        from bluepebble.models.environment import LeroyCopernicusSoundSpeedProfile  # noqa: F401
 
 
 def test_replacement_class_does_not_warn(monkeypatch, tmp_path) -> None:
@@ -638,66 +625,12 @@ def test_analytic_profiles_keep_v040_positional_order(
         assert getattr(profile, name) == value
 
 
-def test_munk_accepts_surface_speed_with_a_warning() -> None:
-    """surface_speed still sets the axis speed for a release, as it always did."""
+def test_munk_points_the_removed_surface_speed_at_axis_speed() -> None:
+    """surface_speed was removed in v0.6.0; passing it names axis_speed."""
     from bluepebble.models.environment import Munk
 
-    with pytest.warns(DeprecationWarning, match="axis_speed") as recorded:
-        profile = Munk(surface_speed=1490.0)
-
-    assert profile.axis_speed == 1490.0
-    assert profile.calculate(1300.0) == pytest.approx(1490.0)
-    assert recorded[0].filename == __file__
-
-
-def test_munk_rejects_both_speed_names() -> None:
-    """Passing the old and new names together is ambiguous, so it must fail."""
-    from bluepebble.models.environment import Munk
-
-    with pytest.raises(TypeError, match="pass only"):
-        Munk(surface_speed=1490.0, axis_speed=1500.0)
-
-
-def test_munk_surface_speed_attribute_reads_and_writes_axis_speed() -> None:
-    """Reading or setting surface_speed goes through to axis_speed, with a warning."""
-    from bluepebble.models.environment import Munk
-
-    profile = Munk(axis_speed=1490.0)
-
-    with pytest.warns(DeprecationWarning, match="axis_speed"):
-        assert profile.surface_speed == 1490.0
-    with pytest.warns(DeprecationWarning, match="axis_speed"):
-        profile.surface_speed = 1470.0
-    assert profile.axis_speed == 1470.0
-
-
-def test_legacy_alias_binds_positional_arguments_in_v040_order(tmp_path) -> None:
-    """Positional calls written against v0.4.0 must bind to the same properties as before."""
-    from bluepebble.models.environment import LeroyCopernicusSoundSpeedProfile
-
-    temperature_path, salinity_path = _write_copernicus_pair(tmp_path)
-
-    with pytest.deprecated_call():
-        profile = LeroyCopernicusSoundSpeedProfile(
-            temperature_path, salinity_path, 61.0, -8.0, 1490.0
-        )
-
-    assert profile.reference_lat_deg == 61.0
-    assert profile.reference_lon_deg == -8.0
-    assert profile.fill_speed_m_s == 1490.0
-    assert profile.temperature_profile is None
-
-
-def test_legacy_alias_rejects_an_argument_given_twice(tmp_path) -> None:
-    """Mapping positional arguments by name must not let a keyword silently override one."""
-    from bluepebble.models.environment import LeroyCopernicusSoundSpeedProfile
-
-    temperature_path, salinity_path = _write_copernicus_pair(tmp_path)
-
-    with pytest.deprecated_call(), pytest.raises(TypeError, match="reference_lat_deg"):
-        LeroyCopernicusSoundSpeedProfile(
-            temperature_path, salinity_path, 61.0, reference_lat_deg=60.0
-        )
+    with pytest.raises(TypeError, match="axis_speed"):
+        Munk(surface_speed=1490.0)
 
 
 # ---------------------------------------------------------------------------

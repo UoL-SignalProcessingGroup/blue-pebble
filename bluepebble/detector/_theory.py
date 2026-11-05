@@ -71,7 +71,6 @@ midpoint.
 
 from __future__ import annotations
 
-import warnings
 from abc import ABC, abstractmethod
 from collections.abc import Callable
 from typing import Any, TypeAlias
@@ -348,8 +347,7 @@ def solve_os_cfar_alpha(
 
     The result is deterministic. Checked against the single-look closed form (alpha within
     1e-9 relative), adaptive quadrature (Pfa within 1e-6 relative down to 1e-12) and Monte Carlo,
-    for looks from 0.15 to 1e6. It replaces the Monte Carlo quantile of
-    :func:`calibrate_os_cfar_alpha_mc`, whose accuracy depended on the trial count.
+    for looks from 0.15 to 1e6.
 
     Parameters
     ----------
@@ -397,111 +395,6 @@ def solve_os_cfar_alpha(
         return solve_os_cfar_alpha_single_look(target_pfa, num_training_total, rank)
     log_pfa = _os_cfar_log_pfa_integrator(num_training_total, rank, total_looks, target_pfa)
     return _solve_alpha_for_log_pfa(log_pfa, target_pfa)
-
-
-def calibrate_os_cfar_alpha_mc(
-    target_pfa: float,
-    num_training_total: int,
-    rank: int,
-    num_frames: int,
-    num_trials: int = 200_000,
-    rng: np.random.Generator | None = None,
-    effective_looks_per_frame: float = 1.0,
-) -> float:
-    """Calibrate OS-CFAR alpha for a target Pfa using Monte Carlo simulation.
-
-    .. deprecated::
-        Use :func:`solve_os_cfar_alpha`, which computes the same alpha deterministically by
-        numerical integration and is accurate at any target_pfa. This function is kept so
-        existing code runs unchanged and will be removed in a future release.
-
-    M-frame averaged power is Gamma(M, ...)-distributed, not exponential, so Rohling's closed form
-    doesn't apply directly. Caveat: for target_pfa << 1, num_trials needs scaling up (rule of thumb
-    ~100 / target_pfa) or the calibrated alpha will be noisy.
-
-    Parameters
-    ----------
-    target_pfa : float
-        The desired probability of false alarm.
-    num_training_total : int
-        The total number of training cells.
-    rank : int
-        The rank of the cell under test.
-    num_frames : int
-        The number of independent frames (averages).
-    num_trials : int, optional
-        The number of Monte Carlo trials to run, by default 200_000.
-    rng : np.random.Generator | None, optional
-        A random number generator for reproducibility, by default None.
-    effective_looks_per_frame : float, optional
-        Effective number of independent Exponential(1) looks already integrated into each
-        per-frame power sample, by default 1.0 (the classic single-bin square-law model).
-        Broadband STFT beamformers (``MinimumVarianceDistortionlessResponseBeamformer``,
-        ``DelayAndSumBeamformer`` in ``'broadband_power'`` domain) sum power over every
-        active frequency bin in [fmin, fmax] before the detector sees it, so each per-frame
-        sample is Gamma(K, 1/K)-distributed (unit mean) with K well above 1. Window
-        spectral leakage correlates adjacent bins, so K is smaller than the bin count;
-        estimate it from noise-only per-cell power as ``1 / CV**2 / num_frames`` (CV of the
-        frame-averaged cell power across independent scans). Need not be an integer.
-
-    Returns
-    -------
-    float
-        The calibrated alpha value.
-
-    References
-    ----------
-    .. [1] Rohling, H. "Radar CFAR Thresholding in Clutter and Multiple Target Situations."
-           IEEE Transactions on Aerospace and Electronic Systems, AES-19(4), 608-621, 1983.
-    .. [2] Chalabi, I. "Application of CFAR detection to multiple pulses for gamma distributed
-           clutter." Remote Sensing Letters, 13(10), 1011-1019, 2022. Independently derives the
-           same multi-look OS-CFAR problem and states explicitly that no closed form exists for
-           it; see RayleighFluctuation.os_cfar_pd for the numerical
-           cross-check against their eq. 20 (shape=1). This function calibrates alpha for the
-           same model RayleighFluctuation.os_cfar_pd evaluates Pd against.
-
-    """
-    warnings.warn(
-        "calibrate_os_cfar_alpha_mc is deprecated; use solve_os_cfar_alpha, which gives the same "
-        "alpha deterministically.",
-        DeprecationWarning,
-        stacklevel=2,
-    )
-    rng = rng or np.random.default_rng()
-
-    # Each per-frame look is Gamma(K, 1/K): unit mean, K effective independent exponential
-    # looks integrated per frame. K = 1 is exactly the classic Exponential(1) per-look model.
-    k = effective_looks_per_frame
-
-    # Simulate M-frame-averaged noise-only training cells: mean of `num_frames` unit-mean
-    # per-frame looks per cell, for every training cell, over all trials.
-    # Only the frame-average is ever used, and the mean of M iid Gamma(k, 1/k) draws is
-    # exactly Gamma(M*k, 1/(M*k)), so the frame axis is drawn in closed form rather than
-    # materialised. Sampling it would cost (num_trials, num_training_total, num_frames)
-    # float64: over a gigabyte for a window sized to a wide mainlobe, and tens of gigabytes
-    # for broadband STFT data with thousands of frames. This is the same distribution, not
-    # an approximation.
-    shape_m = k * num_frames
-    ref_samples = rng.gamma(
-        shape=shape_m, scale=1.0 / shape_m, size=(num_trials, num_training_total)
-    )
-
-    # OS-CFAR's noise estimate is the rank-th smallest training cell per trial.
-    ref_sorted = np.sort(ref_samples, axis=1)
-    noise_estimate = ref_sorted[:, rank - 1]
-
-    # Simulate the (noise-only) CUT under the same M-frame averaging.
-    cut_samples = rng.gamma(shape=shape_m, scale=1.0 / shape_m, size=num_trials)
-
-    ratio = cut_samples / noise_estimate
-
-    # alpha is the value the CUT/noise ratio exceeds with probability target_pfa under H0.
-    return float(np.quantile(ratio, 1 - target_pfa))
-
-
-# ---------------------------------------------------------------------------
-# Theoretical Pd-vs-Pfa curves (no data, pure model; see module docstring)
-# ---------------------------------------------------------------------------
 
 
 def ca_cfar_roc(
