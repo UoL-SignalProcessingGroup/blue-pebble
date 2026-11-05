@@ -33,7 +33,7 @@ keywords:
   - simulation framework
 
 preferred-citation:
-  type: paper-conference
+  type: conference-paper
   title: "A Sonar Signal Processing Plugin for Stone Soup"
   authors:
     - family-names: Wakefield
@@ -47,7 +47,14 @@ preferred-citation:
     - family-names: Williams
       given-names: Duncan P.
   year: 2026
+  month: 6
+  start: 1
+  end: 8
+  doi: "10.23919/FUSION67272.2026.11726579"
   conference:
     name: "29th International Conference on Information Fusion (FUSION)"
-  publisher: IEEE
-  status: forthcoming
+    location: "Trondheim, Norway"
+    date-start: "2026-06-23"
+    date-end: "2026-06-26"
+  publisher:
+    name: IEEE
