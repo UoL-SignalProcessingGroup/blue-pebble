@@ -46,6 +46,7 @@ Assumptions
 - The bistatic conversion is horizontal, so it ignores the 100-150 m depth differences between
   the targets and the arrays. That lengthens each converted range by 1.5-6 m.
 """  # noqa: D205, D212, D400, D415
+# sphinx_gallery_thumbnail_path = "_static/thumbnails/tracking_targets_with_bistatic_sonar.png"
 
 # %%
 # Imports
