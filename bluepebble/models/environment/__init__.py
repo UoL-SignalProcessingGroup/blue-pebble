@@ -16,7 +16,6 @@ from .sound_speed_profile import (
     Coppens,
     DelGrosso,
     EmpiricalSoundSpeedProfile,
-    LeroyCopernicusSoundSpeedProfile,
     Linear,
     Mackenzie,
     Munk,
@@ -36,7 +35,6 @@ __all__ = [
     "EmpiricalSoundSpeedProfile",
     "FlatBathymetry",
     "GEBCOBathymetry",
-    "LeroyCopernicusSoundSpeedProfile",
     "Linear",
     "Mackenzie",
     "Munk",
@@ -45,3 +43,21 @@ __all__ = [
     "SoundSpeedRangeWarning",
     "WedgeBathymetry",
 ]
+
+# Removed names, mapped to their replacements. ImportError rather than AttributeError, because
+# `from ... import X` discards an AttributeError's message.
+_REMOVED = {
+    "LeroyCopernicusSoundSpeedProfile": (
+        "Use CopernicusSoundSpeedProfile(equation_cls=NPL), naming its arguments; NPL is the "
+        "equation of Leroy, Robinson and Goldsmith (2008) the old name referred to."
+    ),
+}
+
+
+def __getattr__(name: str):
+    """Point callers of a removed name at its replacement."""
+    if name in _REMOVED:
+        raise ImportError(
+            f"{name} was removed from bluepebble.models.environment in v0.6.0. {_REMOVED[name]}"
+        )
+    raise AttributeError(f"module {__name__!r} has no attribute {name!r}")

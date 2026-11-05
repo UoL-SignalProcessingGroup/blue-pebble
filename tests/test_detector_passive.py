@@ -670,42 +670,17 @@ def test_steering_bearings_history_empty_before_any_detections(monkeypatch) -> N
     assert detector.steering_bearings_history.shape == (0,)
 
 
-def test_deprecated_fixed_grid_warns_and_covers_data_without_bearings(monkeypatch) -> None:
-    """The old steering_azimuths_rad still works for one release, with a warning."""
+def test_removed_fixed_grid_names_its_replacement(monkeypatch) -> None:
+    """steering_azimuths_rad was removed in v0.6.0; bearings come from the sensor data."""
     passive = _load_passive_detector_module(monkeypatch)
     timestamp = datetime(2026, 1, 1, 12, 0, 0)
-    sensor_data = SimpleNamespace(beamformed_data=np.array([[1.0 + 0.0j]]), timestamp=timestamp)
 
-    with pytest.warns(DeprecationWarning, match="steering_azimuths_rad"):
-        detector = passive.PassiveSonarDetector(
+    with pytest.raises(TypeError, match="PassiveSonarDetector.*steering_bearings_rad"):
+        passive.PassiveSonarDetector(
             detector=_one_beam_zero_detector(),
-            sensor_data_gen=iter([(timestamp, [sensor_data])]),
+            sensor_data_gen=iter([(timestamp, [])]),
             steering_azimuths_rad=np.array([0.4]),
         )
-    generated = list(detector.detections_gen())
-
-    assert float(next(iter(generated[0][1])).state_vector[0, 0]) == pytest.approx(0.4)
-
-
-def test_sensor_data_bearings_take_precedence_over_the_deprecated_grid(monkeypatch) -> None:
-    """A scan's own bearings describe where its beams pointed; the fixed grid is a fallback."""
-    passive = _load_passive_detector_module(monkeypatch)
-    timestamp = datetime(2026, 1, 1, 12, 0, 0)
-    sensor_data = SimpleNamespace(
-        beamformed_data=np.array([[1.0 + 0.0j]]),
-        timestamp=timestamp,
-        steering_bearings_rad=np.array([0.8]),
-    )
-
-    with pytest.warns(DeprecationWarning):
-        detector = passive.PassiveSonarDetector(
-            detector=_one_beam_zero_detector(),
-            sensor_data_gen=iter([(timestamp, [sensor_data])]),
-            steering_azimuths_rad=np.array([0.4]),
-        )
-    generated = list(detector.detections_gen())
-
-    assert float(next(iter(generated[0][1])).state_vector[0, 0]) == pytest.approx(0.8)
 
 
 def test_detections_gen_raises_when_beams_have_no_bearings(monkeypatch) -> None:

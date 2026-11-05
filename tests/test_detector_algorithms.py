@@ -2,8 +2,6 @@
 
 from __future__ import annotations
 
-import warnings
-
 import numpy as np
 import pytest
 
@@ -163,38 +161,17 @@ def test_os_cfar_pd_single_look_increases_with_snr_linear(monkeypatch) -> None:
     assert pd_high > pd_low
 
 
-def test_calibrate_os_cfar_alpha_mc_is_deprecated_but_still_agrees(monkeypatch) -> None:
-    """The Monte Carlo calibration still runs for existing code, warns, and lands near exact."""
-    _algorithms, fluctuation_models = _load_fluctuation_models(monkeypatch)
-    exact_alpha = fluctuation_models.solve_os_cfar_alpha(0.05, 20, 15, num_frames=4)
-
-    with pytest.warns(DeprecationWarning, match="solve_os_cfar_alpha"):
-        mc_alpha = fluctuation_models.calibrate_os_cfar_alpha_mc(
-            0.05, 20, 15, num_frames=4, num_trials=40_000, rng=np.random.default_rng(42)
-        )
-
-    assert mc_alpha == pytest.approx(exact_alpha, rel=0.05)
-
-
 @pytest.mark.parametrize("keyword", [{"mc_trials": 1000}, {"rng": np.random.default_rng(0)}])
-def test_oscfar_detector_monte_carlo_settings_are_deprecated_and_ignored(
+def test_oscfar_detector_points_removed_monte_carlo_settings_at_noise_calibration(
     monkeypatch, keyword
 ) -> None:
-    """mc_trials and rng no longer affect alpha; setting them warns instead of failing."""
-    algorithms, calibration = _load_detector_algorithms_and_calibration(monkeypatch)
-    common = dict(num_guard_cells=0, num_training_cells=10, rank=15, target_pfa=0.01)
+    """mc_trials and rng were removed in v0.6.0; passing one names what replaces it."""
+    algorithms, _calibration = _load_detector_algorithms_and_calibration(monkeypatch)
 
-    with pytest.warns(DeprecationWarning, match="deprecated and ignored"):
-        legacy = algorithms.OSCFARDetector(**common, **keyword)
-    with warnings.catch_warnings():
-        warnings.simplefilter("error")
-        current = algorithms.OSCFARDetector(**common)
-
-    # mc_trials/rng aren't part of the calibration signature, so the same calibration applies.
-    _calibrate(legacy, calibration, num_frames=4, seed=12)
-    current.noise_calibration = legacy.noise_calibration
-
-    assert legacy._alpha_for(4) == current._alpha_for(4)
+    with pytest.raises(TypeError, match="noise_calibration"):
+        algorithms.OSCFARDetector(
+            num_guard_cells=0, num_training_cells=10, rank=15, target_pfa=0.01, **keyword
+        )
 
 
 def test_os_cfar_pd_mc_matches_single_look_closed_form(monkeypatch) -> None:

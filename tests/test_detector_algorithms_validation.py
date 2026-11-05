@@ -557,22 +557,6 @@ def test_minimal_guard_and_training_do_not_crash(
 # ---------------------------------------------------------------------------
 
 
-def test_calibrate_os_cfar_alpha_mc_is_deterministic_given_fixed_seed(monkeypatch) -> None:
-    """Two calibration runs with the same seeded Generator should agree exactly."""
-    _algorithms, fluctuation_models = _load_fluctuation_models(monkeypatch)
-
-    with pytest.warns(DeprecationWarning):
-        a1 = fluctuation_models.calibrate_os_cfar_alpha_mc(
-            1e-3, 20, 15, num_frames=5, num_trials=10_000, rng=np.random.default_rng(42)
-        )
-    with pytest.warns(DeprecationWarning):
-        a2 = fluctuation_models.calibrate_os_cfar_alpha_mc(
-            1e-3, 20, 15, num_frames=5, num_trials=10_000, rng=np.random.default_rng(42)
-        )
-
-    assert a1 == a2
-
-
 def test_os_cfar_pd_mc_is_deterministic_given_fixed_seed(monkeypatch) -> None:
     """Two Pd Monte Carlo runs with the same seeded Generator should agree exactly."""
     _algorithms, fluctuation_models = _load_fluctuation_models(monkeypatch)

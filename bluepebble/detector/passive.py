@@ -1,6 +1,5 @@
 """Defines a passive sonar detector that processes beamformed sensor data."""
 
-import warnings
 from collections import defaultdict, deque
 from collections.abc import Generator, Iterable
 from datetime import datetime
@@ -46,35 +45,32 @@ def _lazy_progress_bar(iterable: Iterable, desc: str, total: int | None) -> Iter
             bar.close()
 
 
-def _warn_fixed_grid_deprecated(detector_name: str) -> None:
-    """Warn that a detector was given the deprecated fixed ``steering_azimuths_rad`` grid."""
-    warnings.warn(
-        f"Passing steering_azimuths_rad to {detector_name} is deprecated and will be removed "
-        "in the next release: each scan's bearings now travel on the sensor data "
-        "(PassiveSonarSensorData.steering_bearings_rad), which the simulator fills in. Until "
-        "then the grid is used only for sensor data without bearings.",
-        DeprecationWarning,
-        stacklevel=3,
-    )
+def _reject_removed_kwargs(detector_name: str, kwargs: dict[str, object]) -> None:
+    """Point callers of the removed fixed ``steering_azimuths_rad`` grid at its replacement."""
+    # Caught before Stone Soup's Base, whose "unexpected keyword argument" names the mistake but
+    # not its replacement.
+    if "steering_azimuths_rad" in kwargs:
+        raise TypeError(
+            f"steering_azimuths_rad was removed from {detector_name} in v0.6.0. Each scan's "
+            "bearings travel on the sensor data (PassiveSonarSensorData.steering_bearings_rad), "
+            "which the simulator fills in."
+        )
 
 
-def _scan_bearings(
-    sensor_data: PassiveSonarSensorData, fallback_rad: FloatArray | None
-) -> FloatArray:
-    """Return a scan's beam bearings: its own, else the deprecated fixed grid.
+def _scan_bearings(sensor_data: PassiveSonarSensorData) -> FloatArray:
+    """Return a scan's beam bearings.
 
     Raises
     ------
     ValueError
-        If the sensor data carries no bearings and there is no fixed grid to fall back on.
+        If the sensor data carries no bearings.
 
     """
-    # getattr, so sensor data from readers that predate per-scan bearings still falls back.
+    # getattr, so sensor data from readers that predate per-scan bearings gets the error below
+    # rather than an AttributeError.
     bearings_rad = getattr(sensor_data, "steering_bearings_rad", None)
     if bearings_rad is not None:
         return np.asarray(bearings_rad, dtype=np.float64)
-    if fallback_rad is not None:
-        return np.asarray(fallback_rad, dtype=np.float64)
     raise ValueError(
         f"The sensor data at {sensor_data.timestamp} has no steering_bearings_rad, so its "
         "beams have no bearings. Simulators with a steering calculator fill them in; for "
@@ -241,9 +237,6 @@ class PassiveSonarDetector(DetectionReader):
         raw beamformed data.
     sensor_data_gen : Generator[SensorDataStep, None, None]
         Generator yielding sensor-data batches.
-    steering_azimuths_rad : FloatArray, optional
-        Deprecated fixed steering grid, used only for sensor data without
-        ``steering_bearings_rad``.
 
     """
 
@@ -252,12 +245,6 @@ class PassiveSonarDetector(DetectionReader):
     )
     sensor_data_gen: Generator[SensorDataStep, None, None] = Property(
         doc="Generator that yields PassiveSonarSensorData objects",
-    )
-    steering_azimuths_rad: FloatArray | None = Property(
-        default=None,
-        doc="Deprecated: each scan's bearings now come from the sensor data's "
-        "steering_bearings_rad. A fixed grid, in radians anticlockwise from +x, used only for "
-        "sensor data without them.",
     )
     reported_snr_reference: str = Property(
         default="global",
@@ -276,9 +263,8 @@ class PassiveSonarDetector(DetectionReader):
 
     def __init__(self, *args: object, **kwargs: object) -> None:
         """Initialise the passive sonar detector."""
+        _reject_removed_kwargs(type(self).__name__, kwargs)
         super().__init__(*args, **kwargs)
-        if self.steering_azimuths_rad is not None:
-            _warn_fixed_grid_deprecated(type(self).__name__)
         self._reported_snr_history: list[FloatArray] = []
         self._steering_bearings_history: list[FloatArray] = []
 
@@ -356,7 +342,7 @@ class PassiveSonarDetector(DetectionReader):
                 if beamformed_data is None or beamformed_data.size == 0:
                     continue
 
-                bearings_rad = _scan_bearings(sensor_data, self.steering_azimuths_rad)
+                bearings_rad = _scan_bearings(sensor_data)
                 # detection_snr_map() and detect() each estimate the noise floor independently, a
                 # modest redundant computation in exchange for keeping "report the full
                 # picture" and "decide detections" as separate concerns. Worth revisiting if
@@ -540,12 +526,6 @@ class MultibandPassiveSonarDetector(DetectionReader):
     sensor_data_gen: Generator[SensorDataStep, None, None] = Property(
         doc="Generator that yields PassiveSonarSensorData objects",
     )
-    steering_azimuths_rad: FloatArray | None = Property(
-        default=None,
-        doc="Deprecated: each scan's bearings now come from the sensor data's "
-        "steering_bearings_rad. A fixed grid, in radians anticlockwise from +x, used only for "
-        "sensor data without them.",
-    )
     default_detector: BandDetector | None = Property(
         default=None,
         doc="Detector for bands with no entry in 'band_detectors'. When None, an "
@@ -554,9 +534,8 @@ class MultibandPassiveSonarDetector(DetectionReader):
 
     def __init__(self, *args: object, **kwargs: object) -> None:
         """Initialise the multiband detector."""
+        _reject_removed_kwargs(type(self).__name__, kwargs)
         super().__init__(*args, **kwargs)
-        if self.steering_azimuths_rad is not None:
-            _warn_fixed_grid_deprecated(type(self).__name__)
         self._reported_snr_history: dict[str, list[FloatArray]] = defaultdict(list)
         self._steering_bearings_history: list[FloatArray] = []
         self._pump = _SensorDataPump(self._banded_steps())
@@ -684,7 +663,7 @@ class MultibandPassiveSonarDetector(DetectionReader):
                         "PassiveSonarDetector for single-band output."
                     )
 
-                bearings_rad = _scan_bearings(sensor_data, self.steering_azimuths_rad)
+                bearings_rad = _scan_bearings(sensor_data)
                 self._steering_bearings_history.append(bearings_rad)
                 for band_idx, band_label in enumerate(band_labels):
                     band_detector = self._detector_for(band_label)

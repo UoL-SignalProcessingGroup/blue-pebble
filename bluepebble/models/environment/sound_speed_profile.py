@@ -729,44 +729,15 @@ class Munk(SoundSpeedProfile):
     )
 
     def __init__(self, *args, **kwargs) -> None:
-        """Initialise, accepting the deprecated ``surface_speed`` for ``axis_speed``."""
-        # Taken from kwargs rather than declared, so the old name stays out of the generated
-        # signature and the API docs. Remove in v0.6.0.
+        """Initialise, pointing callers of the removed ``surface_speed`` at ``axis_speed``."""
+        # Caught before Stone Soup's Base, whose "unexpected keyword argument" names the mistake
+        # but not its replacement.
         if "surface_speed" in kwargs:
-            if "axis_speed" in kwargs:
-                raise TypeError(
-                    "Munk got both surface_speed (deprecated) and axis_speed; pass only "
-                    "axis_speed."
-                )
-            warnings.warn(
-                "Munk(surface_speed=...) is deprecated and will be removed in v0.6.0; use "
-                "axis_speed. It has always set the speed at the channel axis, not the surface "
-                "speed.",
-                DeprecationWarning,
-                stacklevel=2,
+            raise TypeError(
+                "Munk(surface_speed=...) was removed in v0.6.0; use axis_speed. It always set "
+                "the speed at the channel axis, not at the surface."
             )
-            kwargs["axis_speed"] = kwargs.pop("surface_speed")
         super().__init__(*args, **kwargs)
-
-    @property
-    def surface_speed(self) -> float:
-        """Deprecated alias for ``axis_speed``; remove in v0.6.0."""
-        warnings.warn(
-            "Munk.surface_speed is deprecated and will be removed in v0.6.0; use axis_speed, "
-            "which is what it has always returned.",
-            DeprecationWarning,
-            stacklevel=2,
-        )
-        return self.axis_speed
-
-    @surface_speed.setter
-    def surface_speed(self, value: float) -> None:
-        warnings.warn(
-            "Munk.surface_speed is deprecated and will be removed in v0.6.0; set axis_speed.",
-            DeprecationWarning,
-            stacklevel=2,
-        )
-        self.axis_speed = value
 
     def calculate(self, depth: DepthInput) -> SpeedOutput:
         """Calculate sound speed using the Munk equation.
@@ -1847,56 +1818,3 @@ class CopernicusSoundSpeedProfile(EmpiricalSoundSpeedProfile):
         c_grid_flat = np.transpose(c_reg, (2, 1, 0)).flatten(order="C")
 
         return x_grid, y_grid, z_grid, c_grid_flat
-
-
-class LeroyCopernicusSoundSpeedProfile(CopernicusSoundSpeedProfile):
-    """Deprecated alias for ``CopernicusSoundSpeedProfile(equation_cls=NPL)``.
-
-    Kept for backward compatibility, and equivalent to the class it aliases except that
-    positional arguments bind in v0.4.0's order: the two file paths, ``reference_lat_deg``,
-    ``reference_lon_deg``, then ``fill_speed_m_s``. Prefer ``CopernicusSoundSpeedProfile``
-    directly, naming ``equation_cls`` explicitly. The "Leroy" in the name refers to the NPL
-    equation of Leroy, Robinson and Goldsmith (2008); see :class:`NPL`.
-
-    .. deprecated:: 0.5.0
-        Use ``CopernicusSoundSpeedProfile(equation_cls=NPL)`` instead; this alias will be
-        removed in 0.6.0. Instantiating it emits a ``DeprecationWarning``.
-
-    """
-
-    equation_cls: type[EquationProfile] = Property(
-        default=NPL,
-        doc="Which empirical equation class to evaluate. Defaults to NPL, the equation the "
-        "'Leroy' in this class's name refers to.",
-    )
-
-    # The inherited equation inputs now precede reference_lat_deg in the generated signature, so
-    # positional calls written against v0.4.0 would silently bind to the wrong properties.
-    _v040_positional: ClassVar[tuple[str, ...]] = (
-        "temperature_file_path",
-        "salinity_file_path",
-        "reference_lat_deg",
-        "reference_lon_deg",
-        "fill_speed_m_s",
-    )
-
-    def __init__(self, *args, **kwargs) -> None:
-        """Warn that this alias is deprecated, then initialise with v0.4.0's argument order."""
-        warnings.warn(
-            "LeroyCopernicusSoundSpeedProfile is deprecated and will be removed in v0.6.0; use "
-            "CopernicusSoundSpeedProfile(equation_cls=NPL) instead.",
-            DeprecationWarning,
-            stacklevel=2,
-        )
-        if len(args) > len(self._v040_positional):
-            raise TypeError(
-                f"LeroyCopernicusSoundSpeedProfile takes at most {len(self._v040_positional)} "
-                f"positional arguments ({len(args)} given)."
-            )
-        for name, value in zip(self._v040_positional, args, strict=False):
-            if name in kwargs:
-                raise TypeError(
-                    f"LeroyCopernicusSoundSpeedProfile got multiple values for argument {name!r}."
-                )
-            kwargs[name] = value
-        super().__init__(**kwargs)
