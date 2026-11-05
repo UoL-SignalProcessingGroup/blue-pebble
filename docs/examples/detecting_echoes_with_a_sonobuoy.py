@@ -30,6 +30,7 @@ Assumptions
 - Each target is a point scatterer with a 15 dB target strength. There is no reverberation.
 - Geometry is frozen during each ping, so there is no Doppler.
 """  # noqa: D205, D212, D400, D415
+# sphinx_gallery_thumbnail_path = "_static/thumbnails/detecting_echoes_with_a_sonobuoy.png"
 
 # %%
 # Imports
