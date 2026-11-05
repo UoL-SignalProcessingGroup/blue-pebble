@@ -671,12 +671,6 @@ class OSCFARDetector(_CFARDetectorBase):
         k-th smallest training-cell value (1-indexed) used as the noise estimate. Avoid low values
         (e.g. 1) in multi-target / leakage-prone environments. A common starting point is
         ~0.75 * (2 * num_training_cells).
-    mc_trials : int
-        Deprecated and ignored: alpha is calibrated empirically now (see ``noise_calibration``),
-        not by any model, Monte Carlo or otherwise.
-    rng : np.random.Generator, optional
-        Deprecated and ignored: alpha is calibrated empirically now (see ``noise_calibration``),
-        not by any model, Monte Carlo or otherwise.
 
     Notes
     -----
@@ -696,19 +690,15 @@ class OSCFARDetector(_CFARDetectorBase):
         doc="k-th smallest training-cell value (1-indexed). Avoid low values in multi-target / "
         "leakage-prone environments.",
     )
-    mc_trials: int = Property(
-        default=200_000,
-        doc="Deprecated and ignored: alpha is calibrated empirically now (see noise_calibration), "
-        "not by any model, Monte Carlo or otherwise.",
-    )
-    rng: np.random.Generator | None = Property(
-        default=None,
-        doc="Deprecated and ignored: alpha is calibrated empirically now (see noise_calibration), "
-        "not by any model, Monte Carlo or otherwise.",
-    )
 
     def __init__(self, *args: object, **kwargs: object) -> None:
         """Initialise the OS-CFAR detector with the given parameters."""
+        for removed in ("mc_trials", "rng"):
+            if removed in kwargs:
+                raise TypeError(
+                    f"{removed} was removed from OSCFARDetector in v0.6.0. Alpha is calibrated "
+                    "empirically (see noise_calibration), not by Monte Carlo."
+                )
         super().__init__(*args, **kwargs)
 
         self._check_rank()
@@ -721,13 +711,6 @@ class OSCFARDetector(_CFARDetectorBase):
                 f"rank={self.rank} is low relative to num_training_total="
                 f"{self.num_training_total}; likely underestimates the "
                 "noise floor in multi-target or leakage-prone environments.",
-                stacklevel=2,
-            )
-        if self.mc_trials != 200_000 or self.rng is not None:
-            warnings.warn(
-                "OSCFARDetector mc_trials and rng are deprecated and ignored: alpha is "
-                "calibrated empirically now (see noise_calibration), not by any model.",
-                DeprecationWarning,
                 stacklevel=2,
             )
 
