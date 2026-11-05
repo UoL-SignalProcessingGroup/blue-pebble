@@ -6,26 +6,28 @@ Detecting Echoes with a Sonobuoy
 This example pings from a single sonobuoy hydrophone, detects the echoes and tracks a target in
 range. It shows the active sonar chain at its simplest, with no beamforming:
 
-- :class:`~bluepebble.simulator.ActiveSonarSimulator` synthesises each ping's echoes through a
-  Bellhop propagation model;
-- :class:`~bluepebble.detector.ActiveSonarDetector` matched-filters the hydrophone signal and
-  runs CFAR (Constant False Alarm Rate) detection along range, with its threshold calibrated
-  from noise-only pings for a stated probability of false alarm (Pfa);
-- a one-dimensional Kalman filter tracks an opening target's range.
+- **Simulation**: :class:`~bluepebble.simulator.ActiveSonarSimulator` synthesises each ping's
+  echoes through a Bellhop propagation model.
+- **Detection**: :class:`~bluepebble.detector.ActiveSonarDetector` matched-filters the hydrophone
+  signal and runs CFAR (Constant False Alarm Rate) detection along range. Its threshold is
+  calibrated from noise-only pings for a stated probability of false alarm (Pfa).
+- **Tracking**: a one-dimensional Kalman filter tracks an opening target's range.
 
-Five static targets, from 500 m to 2.5 km, check the timing: each one's detected range should
-fall within a resolution cell or two of its true slant range. Their echo levels are compared with
-the sonar equation for spherical spreading, :math:`SL - 40\log_{10} R + TS`.
+Five static targets, from 500 m to 2.5 km, check the chain in two ways.
+
+- **Timing**: each one's detected range should fall within two resolution cells of its true
+  slant range.
+- **Echo level**: each one's echo level is compared with the sonar equation.
 
 A single hydrophone measures range only, so the static targets' bearings play no part.
 
 Assumptions
 -----------
 - Constant 1500 m/s sound speed over a flat 200 m seabed matched to the water, so it reflects
-  nothing. Each leg then has two straight-line paths, direct and surface-reflected. A reflective
-  seabed would add a train of bottom bounces up to 100 m behind each echo, some as strong as the
-  direct path.
-- Each target is a point scatterer with a 15 dB target strength; there is no reverberation.
+  nothing. Each leg of the echo, buoy to target and target to buoy, then has two straight-line
+  paths, direct and surface-reflected. A reflective seabed would add a train of bottom bounces
+  up to 100 m behind each echo, some as strong as the direct path.
+- Each target is a point scatterer with a 15 dB target strength. There is no reverberation.
 - Geometry is frozen during each ping, so there is no Doppler.
 """  # noqa: D205, D212, D400, D415
 
@@ -69,9 +71,9 @@ from bluepebble.simulator import ActiveSonarSimulator
 # Configuration
 # -------------
 #
-# The pulse is a 1 s linear frequency-modulated (LFM) sweep over 800-1200 Hz, so the range
-# resolution is :math:`c / 2B = 1.875` m. The listen window of 5 s covers echoes out to
-# 3.75 km.
+# The pulse is a 1 s linear frequency-modulated (LFM) sweep over 800-1200 Hz. With sound speed
+# :math:`c` and bandwidth :math:`B`, the range resolution is :math:`c / 2B = 1.875` m. The listen
+# window of 5 s covers echoes out to 3.75 km.
 
 set_seed(7)
 
@@ -98,9 +100,11 @@ TARGET_PFA = 1e-4
 # Scenario
 # --------
 #
-# The sonobuoy floats at the origin with its hydrophone 50 m down. Five static targets sit
-# 100 m deep at 500-2500 m, and a sixth opens from 3 km at 3 m/s on a bearing of 45 degrees.
-# The fixed buoy is moved through every ping time so its hydrophone has a state at each one.
+# - **Sonobuoy**: floats at the origin with its hydrophone 50 m down. The fixed buoy is moved
+#   through every ping time so its hydrophone has a state at each one.
+# - **Static targets**: five, 100 m deep at 500-2500 m.
+# - **Moving target**: a sixth, also 100 m deep, opening from 3 km at 3 m/s on a bearing of 45
+#   degrees.
 
 buoy = Sonobuoy(
     states=GroundTruthState(StateVector([0.0, 0.0, 0.0]), timestamp=START),
@@ -150,11 +154,38 @@ def slant_range_m(state):
 
 
 # %%
+# Plan view
+# ---------
+
+figure = go.Figure()
+for index, path in enumerate(targets):
+    xy = np.array([[float(s.state_vector[0, 0]), float(s.state_vector[2, 0])] for s in path])
+    figure.add_trace(
+        go.Scatter(
+            x=xy[:, 0],
+            y=xy[:, 1],
+            mode="lines+markers",
+            name="Moving target" if path is moving_target else f"Static target {index + 1}",
+        )
+    )
+figure.add_trace(
+    go.Scatter(x=[0.0], y=[0.0], mode="markers", marker={"symbol": "star", "size": 14},
+               name="Sonobuoy")
+)
+figure.update_layout(
+    template="plotly_white",
+    title="Plan View",
+    xaxis_title="x (m)",
+    yaxis_title="y (m)",
+    yaxis_scaleanchor="x",
+).show()
+
+# %%
 # Simulation
 # ----------
 #
-# Bellhop traces each leg (buoy to target and back) at every ping. Ambient noise is pink
-# (power falling as :math:`1/f`) at 70 dB re 1 µPa across the band.
+# Bellhop traces both legs at every ping. Ambient noise is pink (power falling as :math:`1/f`)
+# at 70 dB re 1 µPa across the band.
 
 pulse = LFMSignal(
     freq_min_hz=FREQ_MIN_HZ,
@@ -193,130 +224,6 @@ def simulator(ground_truth_paths, seed):
 
 
 pings = [next(iter(data)) for _, data in simulator(targets, seed=1).sensor_data_gen()]
-
-# %%
-# Detection
-# ---------
-#
-# An ordered-statistic CFAR detector runs along range on the matched-filter output power. Its
-# noise estimate is the 600th smallest of 800 training cells, so the surface-reflected arrivals
-# and range sidelobes of a nearby echo don't inflate it as they would a mean. Guard cells either
-# side of the cell under test keep the echo's own mainlobe (about :math:`f_s / B = 25` samples
-# wide) out of the estimate. The threshold for the requested Pfa is calibrated from noise-only
-# pings: the same simulator with no targets.
-
-cfar = OSCFARDetector(
-    num_guard_cells=100,
-    num_training_cells=400,
-    rank=600,
-    target_pfa=TARGET_PFA,
-    circular=False,
-    peak_distance=40,
-)
-NoiseCalibrator(cfar).calibrate_from_noise(
-    matched_filter_scans_from_sensor_data(simulator([], seed=2).sensor_data_gen())
-)
-detector = ActiveSonarDetector(
-    detector=cfar,
-    sensor_data_gen=[(ping.timestamp, {ping}) for ping in pings],
-    sampling_rate_hz=SAMPLING_RATE_HZ,
-    sound_speed_ms=SOUND_SPEED_MPS,
-    min_range_m=100.0,
-)
-detections_by_ping = [detections for _, detections in detector.detections_gen()]
-for ping_time, detections in zip(PING_TIMES, detections_by_ping, strict=True):
-    print(f"{ping_time:%H:%M:%S}: {len(detections)} detections")
-
-# %%
-# Timing check
-# ------------
-#
-# Each static target's nearest detection on every ping is compared with its true slant range.
-# On each leg the surface-reflected path arrives :math:`2 z_1 z_2 / R` behind the direct one,
-# where :math:`z_1` and :math:`z_2` are the two depths. At short range that gap is many
-# resolution cells and the direct echo is clean, so the error is a fraction of a cell. By
-# 2-2.5 km the gap has closed to about one cell (2-2.5 m in range). The two arrivals then
-# overlap in the matched filter and their interference shifts the peak by up to a cell. So the
-# check allows two cells, :math:`c / B`.
-
-print(f"\nRange resolution c/2B = {RANGE_RESOLUTION_M:.3f} m")
-print(f"{'Target':>8} {'True (m)':>10} {'Worst error (m)':>16}  Within c/B")
-for index, path in enumerate(static_targets):
-    true_m = slant_range_m(path.states[0])
-    errors = [
-        min((abs(float(d.state_vector[-1, 0]) - true_m) for d in detections), default=np.inf)
-        for detections in detections_by_ping
-    ]
-    worst = max(errors)
-    print(f"{index + 1:>8} {true_m:>10.1f} {worst:>16.3f}  {worst <= 2 * RANGE_RESOLUTION_M}")
-
-# %%
-# Range tracking
-# --------------
-#
-# A Kalman filter tracks the opening target's range and range rate. Each ping it takes the
-# detection nearest its prediction, gated at four standard deviations, with the range
-# resolution as the measurement's standard deviation.
-
-measurement_model = LinearGaussian(
-    ndim_state=2, mapping=[0], noise_covar=np.array([[RANGE_RESOLUTION_M**2]])
-)
-predictor = KalmanPredictor(ConstantVelocity(1e-4))
-updater = KalmanUpdater(measurement_model)
-associator = NearestNeighbour(
-    DistanceHypothesiser(predictor, updater, Mahalanobis(), missed_distance=4)
-)
-
-first_range_m = slant_range_m(moving_target.states[0])
-first = min(detections_by_ping[0], key=lambda d: abs(float(d.state_vector[-1, 0]) - first_range_m))
-track = Track(
-    [
-        GaussianState(
-            StateVector([float(first.state_vector[-1, 0]), 0.0]),
-            np.diag([RANGE_RESOLUTION_M**2, 5.0**2]),
-            timestamp=PING_TIMES[0],
-        )
-    ]
-)
-for ping_time, detections in zip(PING_TIMES[1:], detections_by_ping[1:], strict=True):
-    hypothesis = associator.associate({track}, detections, ping_time)[track]
-    if hypothesis:
-        track.append(updater.update(hypothesis))
-    else:
-        track.append(hypothesis.prediction)
-
-final_truth_m = slant_range_m(moving_target.states[-1])
-print(
-    f"Final track range {float(track.state_vector[0, 0]):.1f} m (truth {final_truth_m:.1f} m), "
-    f"range rate {float(track.state_vector[1, 0]):.2f} m/s"
-)
-
-# %%
-# Plan view
-# ---------
-
-figure = go.Figure()
-for index, path in enumerate(targets):
-    xy = np.array([[float(s.state_vector[0, 0]), float(s.state_vector[2, 0])] for s in path])
-    figure.add_trace(
-        go.Scatter(
-            x=xy[:, 0],
-            y=xy[:, 1],
-            mode="lines+markers",
-            name="Moving target" if path is moving_target else f"Static target {index + 1}",
-        )
-    )
-figure.add_trace(
-    go.Scatter(x=[0.0], y=[0.0], mode="markers", marker={"symbol": "star", "size": 14},
-               name="Sonobuoy")
-)
-figure.update_layout(
-    template="plotly_white",
-    title="Plan View",
-    xaxis_title="x (m)",
-    yaxis_title="y (m)",
-    yaxis_scaleanchor="x",
-).show()
 
 # %%
 # Matched-filter waterfall
@@ -364,43 +271,114 @@ figure.update_layout(
 ).show()
 
 # %%
-# Range against time
-# ------------------
+# Detection
+# ---------
+#
+# An ordered-statistic CFAR detector runs along range on the matched-filter output power.
+#
+# - **Noise estimate**: the 600th smallest of 800 training cells. The surface-reflected arrivals
+#   and range sidelobes of a nearby echo don't inflate it as they would a mean.
+# - **Guard cells**: either side of the cell under test, they keep the echo's own mainlobe out of
+#   the estimate. At sampling rate :math:`f_s` the mainlobe is about :math:`f_s / B = 25`
+#   samples wide.
+# - **Threshold**: calibrated for the requested Pfa from noise-only pings, made by the same
+#   simulator with no targets.
 
-figure = go.Figure()
-detection_times = [t for t, ds in zip(PING_TIMES, detections_by_ping, strict=True) for _ in ds]
-detection_ranges = [float(d.state_vector[-1, 0]) for ds in detections_by_ping for d in ds]
-figure.add_trace(
-    go.Scatter(x=detection_times, y=detection_ranges, mode="markers", name="Detections",
-               marker={"size": 5, "color": "grey"})
+cfar = OSCFARDetector(
+    num_guard_cells=100,
+    num_training_cells=400,
+    rank=600,
+    target_pfa=TARGET_PFA,
+    circular=False,
+    peak_distance=40,
 )
-for path in targets:
-    figure.add_trace(
-        go.Scatter(x=PING_TIMES, y=[slant_range_m(s) for s in path], mode="lines",
-                   line={"dash": "dash", "color": "black"}, showlegend=path is moving_target,
-                   name="Truth")
-    )
-figure.add_trace(
-    go.Scatter(x=[s.timestamp for s in track], y=[float(s.state_vector[0, 0]) for s in track],
-               mode="lines+markers", name="Kalman track", line={"color": "crimson"})
+NoiseCalibrator(cfar).calibrate_from_noise(
+    matched_filter_scans_from_sensor_data(simulator([], seed=2).sensor_data_gen())
+)
+detector = ActiveSonarDetector(
+    detector=cfar,
+    sensor_data_gen=[(ping.timestamp, {ping}) for ping in pings],
+    sampling_rate_hz=SAMPLING_RATE_HZ,
+    sound_speed_ms=SOUND_SPEED_MPS,
+    min_range_m=100.0,
+)
+detections_by_ping = [detections for _, detections in detector.detections_gen()]
+for ping_time, detections in zip(PING_TIMES, detections_by_ping, strict=True):
+    print(f"{ping_time:%H:%M:%S}: {len(detections)} detections")
+
+# %%
+# Timing check
+# ------------
+#
+# Each static target's nearest detection on every ping is compared with its true slant range.
+# On each leg the surface-reflected path arrives :math:`2 z_1 z_2 / R` behind the direct one,
+# where :math:`z_1` and :math:`z_2` are the two depths and :math:`R` the range.
+#
+# - **Short range**: the gap is many resolution cells and the direct echo is clean, so the error
+#   is a fraction of a cell.
+# - **2-2.5 km**: the gap has closed to about one cell (2-2.5 m in range). The two arrivals
+#   overlap in the matched filter, and their interference shifts the peak by up to a cell.
+#
+# So the check allows two cells, :math:`c / B`.
+
+print(f"\nRange resolution c/2B = {RANGE_RESOLUTION_M:.3f} m")
+print(f"{'Target':>8} {'True (m)':>10} {'Worst error (m)':>16}  Within c/B")
+for index, path in enumerate(static_targets):
+    true_m = slant_range_m(path.states[0])
+    errors = [
+        min((abs(float(d.state_vector[-1, 0]) - true_m) for d in detections), default=np.inf)
+        for detections in detections_by_ping
+    ]
+    worst = max(errors)
+    print(f"{index + 1:>8} {true_m:>10.1f} {worst:>16.3f}  {worst <= 2 * RANGE_RESOLUTION_M}")
+
+# %%
+# Detected against true range
+# ---------------------------
+#
+# Each point is one static target's nearest detection on one ping, less its true slant range.
+# The errors grow with range as the surface-reflected arrival closes on the direct one.
+
+true_points, detected_points = [], []
+for path in static_targets:
+    true_m = slant_range_m(path.states[0])
+    for detections in detections_by_ping:
+        nearest = min(detections, key=lambda d: abs(float(d.state_vector[-1, 0]) - true_m))
+        true_points.append(true_m)
+        detected_points.append(float(nearest.state_vector[-1, 0]))
+true_points, detected_points = np.array(true_points), np.array(detected_points)
+figure = go.Figure(
+    [
+        go.Scatter(x=true_points, y=detected_points - true_points, mode="markers",
+                   name="Detected - true"),
+        go.Scatter(x=[0, 3000], y=[RANGE_RESOLUTION_M] * 2, mode="lines",
+                   line={"dash": "dash", "color": "grey"}, name="±c/2B (one cell)"),
+        go.Scatter(x=[0, 3000], y=[-RANGE_RESOLUTION_M] * 2, mode="lines",
+                   line={"dash": "dash", "color": "grey"}, showlegend=False),
+    ]
 )
 figure.update_layout(
-    template="plotly_white", title="Range Against Time", xaxis_title="Time",
-    yaxis_title="Slant range (m)",
+    template="plotly_white", title="Range Error of the Static Targets",
+    xaxis_title="True slant range (m)", yaxis_title="Detected - true (m)",
 ).show()
 
 # %%
 # Echo level and the sonar equation
 # ---------------------------------
 #
-# A matched filter's peak is the echo's amplitude gain times the pulse energy, so an arrival's
-# level is :math:`SL + 20\log_{10}(\text{peak} / \sum |p|^2)`. For spherical spreading on both
-# legs the sonar equation predicts :math:`SL - 40\log_{10} R + TS`.
+# A matched filter's peak is the echo's amplitude gain times the pulse energy
+# :math:`\sum |p|^2`, where :math:`p` is the transmitted pulse. With source level :math:`SL`, an
+# arrival's level is therefore :math:`SL + 20\log_{10}(\text{peak} / \sum |p|^2)`. For spherical
+# spreading on both legs, the sonar equation predicts :math:`SL - 40\log_{10} R + TS`, where
+# :math:`R` is the slant range and :math:`TS` the target strength.
 #
-# The direct-path echo, read at its true delay, follows that line to within 2.5 dB; the
-# remainder is the neighbouring arrivals' overlap. The strongest arrival is about 6 dB higher.
-# It is the two mixed paths, out direct and back via the surface and the reverse, which have
-# the same length, so they arrive together and add in phase, doubling the amplitude of either.
+# The arrivals compare with that line as follows.
+#
+# - **Direct-path echo**: read at its true delay, it follows the line to within 2.5 dB. The rest
+#   of the difference comes from neighbouring arrivals that overlap it.
+# - **Strongest arrival**: about 6 dB higher. It comes from the two mixed paths. One goes out
+#   direct and comes back via the surface, and the other does the reverse. Both have the same
+#   length, so they arrive together and add in phase, which doubles the amplitude of either.
 
 pulse_energy = float(np.sum(np.abs(pings[0].transmit_pulse) ** 2))
 window = int(round(10 * SAMPLING_RATE_HZ / BANDWIDTH_HZ))
@@ -436,33 +414,73 @@ figure.update_layout(
 ).show()
 
 # %%
-# Detected against true range
-# ---------------------------
+# Range tracking
+# --------------
 #
-# The residual of every static target's nearest detection on every ping, against its true slant
-# range. The errors grow with range as the surface-reflected arrival closes on the direct one.
+# A Kalman filter tracks the opening target's range.
+#
+# - **State**: range and range rate.
+# - **Association**: each ping, the filter takes the detection nearest its prediction, gated at
+#   four standard deviations.
+# - **Measurement noise**: the range resolution is the measurement's standard deviation.
 
-true_points, detected_points = [], []
-for path in static_targets:
-    true_m = slant_range_m(path.states[0])
-    for detections in detections_by_ping:
-        nearest = min(detections, key=lambda d: abs(float(d.state_vector[-1, 0]) - true_m))
-        true_points.append(true_m)
-        detected_points.append(float(nearest.state_vector[-1, 0]))
-true_points, detected_points = np.array(true_points), np.array(detected_points)
-figure = go.Figure(
+measurement_model = LinearGaussian(
+    ndim_state=2, mapping=[0], noise_covar=np.array([[RANGE_RESOLUTION_M**2]])
+)
+predictor = KalmanPredictor(ConstantVelocity(1e-4))
+updater = KalmanUpdater(measurement_model)
+associator = NearestNeighbour(
+    DistanceHypothesiser(predictor, updater, Mahalanobis(), missed_distance=4)
+)
+
+first_range_m = slant_range_m(moving_target.states[0])
+first = min(detections_by_ping[0], key=lambda d: abs(float(d.state_vector[-1, 0]) - first_range_m))
+track = Track(
     [
-        go.Scatter(x=true_points, y=detected_points - true_points, mode="markers",
-                   name="Detected - true"),
-        go.Scatter(x=[0, 3000], y=[RANGE_RESOLUTION_M] * 2, mode="lines",
-                   line={"dash": "dash", "color": "grey"}, name="±c/2B (one cell)"),
-        go.Scatter(x=[0, 3000], y=[-RANGE_RESOLUTION_M] * 2, mode="lines",
-                   line={"dash": "dash", "color": "grey"}, showlegend=False),
+        GaussianState(
+            StateVector([float(first.state_vector[-1, 0]), 0.0]),
+            np.diag([RANGE_RESOLUTION_M**2, 5.0**2]),
+            timestamp=PING_TIMES[0],
+        )
     ]
 )
+for ping_time, detections in zip(PING_TIMES[1:], detections_by_ping[1:], strict=True):
+    hypothesis = associator.associate({track}, detections, ping_time)[track]
+    if hypothesis:
+        track.append(updater.update(hypothesis))
+    else:
+        track.append(hypothesis.prediction)
+
+final_truth_m = slant_range_m(moving_target.states[-1])
+print(
+    f"Final track range {float(track.state_vector[0, 0]):.1f} m (truth {final_truth_m:.1f} m), "
+    f"range rate {float(track.state_vector[1, 0]):.2f} m/s"
+)
+
+# %%
+# Range against time
+# ------------------
+
+figure = go.Figure()
+detection_times = [t for t, ds in zip(PING_TIMES, detections_by_ping, strict=True) for _ in ds]
+detection_ranges = [float(d.state_vector[-1, 0]) for ds in detections_by_ping for d in ds]
+figure.add_trace(
+    go.Scatter(x=detection_times, y=detection_ranges, mode="markers", name="Detections",
+               marker={"size": 5, "color": "grey"})
+)
+for path in targets:
+    figure.add_trace(
+        go.Scatter(x=PING_TIMES, y=[slant_range_m(s) for s in path], mode="lines",
+                   line={"dash": "dash", "color": "black"}, showlegend=path is moving_target,
+                   name="Truth")
+    )
+figure.add_trace(
+    go.Scatter(x=[s.timestamp for s in track], y=[float(s.state_vector[0, 0]) for s in track],
+               mode="lines+markers", name="Kalman track", line={"color": "crimson"})
+)
 figure.update_layout(
-    template="plotly_white", title="Range Error of the Static Targets",
-    xaxis_title="True slant range (m)", yaxis_title="Detected - true (m)",
+    template="plotly_white", title="Range Against Time", xaxis_title="Time",
+    yaxis_title="Slant range (m)",
 ).show()
 
 # %%
@@ -471,7 +489,7 @@ figure.update_layout(
 #
 # The simulator works with any spectrum propagation model, so the same chain runs on rtrs (3-D
 # ray tracing) by changing one line. rtrs needs a fine launch-angle grid for an accurate single
-# hydrophone; at its 1 degree default the echo comes out several dB low:
+# hydrophone. At its 1 degree default, the direct-path echo comes out 2-8 dB low.
 #
 # .. code-block:: python
 #

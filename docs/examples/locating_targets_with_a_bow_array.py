@@ -5,25 +5,29 @@ Locating Targets with a Bow Array
 
 This example pings from a ship's bow array and locates three targets in bearing and range.
 Unlike a single hydrophone (:ref:`sphx_glr_auto_examples_detecting_echoes_with_a_sonobuoy.py`),
-an array can beamform, so each echo is detected on the beam pointing at it:
+an array can beamform, so each echo is detected on the beam pointing at it.
 
-- :class:`~bluepebble.simulator.ActiveSonarSimulator` synthesises the echoes at every sensor of
-  a :class:`~bluepebble.arrays.BowArray`, through a Bellhop propagation model, and beamforms
-  them with a frequency-domain delay-and-sum (DAS) beamformer, which keeps every sample so that
-  sample :math:`k` is still a round-trip delay of :math:`k / f_s`;
-- :class:`~bluepebble.detector.ActiveSonarDetector` matched-filters each beam and runs CFAR
-  (Constant False Alarm Rate) detection along range, giving detections of bearing and range;
-- a strong echo is detected on its own beam and on neighbouring beams, so detections at the
-  same range and nearby bearings are grouped into one, and its bearing is refined between beams.
+- **Simulation**: :class:`~bluepebble.simulator.ActiveSonarSimulator` synthesises the echoes at
+  every sensor of a :class:`~bluepebble.arrays.BowArray` through a Bellhop propagation model. It
+  beamforms them with a frequency-domain delay-and-sum (DAS) beamformer, which keeps every
+  sample. At sampling rate :math:`f_s`, sample :math:`k` of a beam is then still a round-trip
+  delay of :math:`k / f_s`.
+- **Detection**: :class:`~bluepebble.detector.ActiveSonarDetector` matched-filters each beam and
+  runs CFAR (Constant False Alarm Rate) detection along range. Each detection has a bearing and
+  a range.
+- **Grouping**: a strong echo is detected on its own beam and on neighbouring beams. Detections
+  at the same range and nearby bearings are grouped into one, and its bearing is refined between
+  beams.
 
 Finally, the DAS bearing response at each target's echo is compared with a minimum variance
-distortionless response (MVDR) beamformer's, which suppresses the sidelobes DAS leaves.
+distortionless response (MVDR) beamformer's. MVDR narrows the mainlobe and lowers the sidelobes
+for the target dead ahead, but not for the two targets off the bow.
 
 Assumptions
 -----------
 - Constant 1500 m/s sound speed over a flat 300 m seabed matched to the water, so it reflects
-  nothing; only the direct and surface-reflected paths remain.
-- Each target is a point scatterer with a 15 dB target strength; there is no reverberation.
+  nothing. Only the direct and surface-reflected paths remain.
+- Each target is a point scatterer with a 15 dB target strength. There is no reverberation.
 - Geometry is frozen during each ping, so there is no Doppler.
 """  # noqa: D205, D212, D400, D415
 
@@ -70,8 +74,8 @@ from bluepebble.simulator import ActiveSonarSimulator
 # Configuration
 # -------------
 #
-# The pulse is a 0.5 s LFM sweep over 1500-2500 Hz, so the range resolution is
-# :math:`c / 2B = 0.75` m.
+# The pulse is a 0.5 s linear frequency-modulated (LFM) sweep over 1500-2500 Hz. With sound speed
+# :math:`c` and bandwidth :math:`B`, the range resolution is :math:`c / 2B = 0.75` m.
 
 set_seed(7)
 
@@ -94,9 +98,10 @@ TARGET_PFA = 1e-7
 # Scenario
 # --------
 #
-# The ship steams along +x at 3 m/s with its bow dome 11 m down: the hull reference is 8 m
-# deep and the dome centre 3 m below it. The dome's sensors cover 90 degrees in azimuth and 16
-# in elevation at 0.2 m spacing. The targets sit 1.5-2.5 km ahead, 120-160 m deep.
+# - **Ship**: steams along +x at 3 m/s, with its hull reference point 8 m deep.
+# - **Bow dome**: centred 3 m below the hull reference point, at 11 m. Its sensors cover 90
+#   degrees in azimuth and 16 in elevation at 0.2 m spacing.
+# - **Targets**: three, 1.5-2.5 km ahead and 120-160 m deep.
 
 platform = SonarPlatform(
     states=[GroundTruthState(StateVector([0.0, 3.0, 0.0, 0.0, -8.0, 0.0]), timestamp=START)],
@@ -118,8 +123,8 @@ for ping_time in PING_TIMES[1:]:
     platform.move(ping_time)
 print(f"Bow array: {bow.num_sensors} sensors")
 
-# Range, bearing (degrees anticlockwise from the bow) and depth of each target at the first
-# ping, and its velocity.
+# Each target is given by its range, bearing (degrees anticlockwise from the bow) and depth at
+# the first ping, and its velocity.
 TARGETS = {
     "T1": (2000.0, -32.0, 140.0, (0.0, 0.5)),
     "T2": (1500.0, 0.0, 160.0, (-3.0, 0.0)),
@@ -226,15 +231,16 @@ pings = [next(iter(data)) for _, data in simulator(list(targets.values()), 1).se
 # Detection
 # ---------
 #
-# CFAR runs along range on every beam's matched-filter output, with its threshold calibrated on
-# a noise-only ping for the requested Pfa. With 221 beams of 32,000 range cells each, a Pfa of
-# :math:`10^{-7}` allows about one false alarm per ping. A target is then detected on several
-# beams: its mainlobe spans a few beams and its sidelobes, 10-15 dB down, reach further.
-# Detections are
-# grouped greedily, strongest first by matched-filter power. CFAR's own SNR is no guide here:
-# on the target's beam the echo's surface-reflected arrivals sit in the training cells and
-# raise its noise estimate. Each kept detection's bearing is refined by fitting a parabola, in
-# dB, to its beam's matched-filter power and its two neighbours', when its beam is the peak.
+# - **CFAR**: runs along range on every beam's matched-filter output. Its threshold is calibrated
+#   on a noise-only ping for the requested probability of false alarm (Pfa). With 221 beams of
+#   32,000 range cells each, a Pfa of :math:`10^{-7}` allows about one false alarm per ping.
+# - **Detections on several beams**: a target is detected on several beams, because its mainlobe
+#   spans a few beams and its sidelobes, 10-15 dB down, reach further.
+# - **Grouping**: detections are grouped greedily, strongest first by matched-filter power. The
+#   CFAR detector's own signal-to-noise ratio (SNR) would rank them poorly. On the target's beam,
+#   the echo's surface-reflected arrivals sit in the training cells and raise its noise estimate.
+# - **Bearing refinement**: when a kept detection's beam is the peak, its bearing is refined by
+#   fitting a parabola, in dB, to that beam's matched-filter power and its two neighbours'.
 
 cfar = CACFARDetector(
     num_guard_cells=40,
@@ -270,8 +276,9 @@ def group_detections(detections, ping):
     for detection in detections:
         bearing, range_m = (float(v) for v in detection.state_vector[:, 0])
         beam = int(np.argmin(np.abs(np.angle(np.exp(1j * (bearings - bearing))))))
-        sample = min(int(round(detection.metadata["delay_s"] * SAMPLING_RATE_HZ)),
-                     power.shape[1] - 1)
+        sample = min(
+            int(round(detection.metadata["delay_s"] * SAMPLING_RATE_HZ)), power.shape[1] - 1
+        )
         candidates.append((10 * np.log10(power[beam, sample]), bearing, range_m, beam, sample))
     kept = []
     for power_db, bearing, range_m, beam, sample in sorted(candidates, reverse=True):
@@ -295,15 +302,59 @@ for ping_time, raw, kept in zip(PING_TIMES, raw_detections, grouped, strict=True
     print(f"{ping_time:%H:%M:%S}: {len(raw)} beam detections grouped into {len(kept)}")
 
 # %%
+# Matched-filter output on each target's beam
+# -------------------------------------------
+#
+# Each panel shows the matched-filter level along a target's nearest beam on the first ping,
+# relative to the median across the ping. The dashed line is the target's true range. Each echo
+# is followed closely by its surface-reflected arrivals.
+
+ping = pings[0]
+power = matched_filter_power(ping)
+noise_floor = np.median(power)
+range_axis_m = np.arange(power.shape[1]) * SOUND_SPEED_MPS / (2 * SAMPLING_RATE_HZ)
+beam_bearings = np.asarray(ping.steering_bearings_rad)
+figure = make_subplots(rows=len(targets), cols=1, subplot_titles=list(targets))
+for row, name in enumerate(targets, start=1):
+    true_r, true_b = truth_at(name, ping.timestamp)
+    beam = int(np.argmin(np.abs(np.angle(np.exp(1j * (beam_bearings - true_b))))))
+    window = (range_axis_m > true_r - 30) & (range_axis_m < true_r + 60)
+    figure.add_trace(
+        go.Scatter(
+            x=range_axis_m[window],
+            y=10 * np.log10(power[beam, window] / noise_floor),
+            mode="lines",
+            showlegend=False,
+        ),
+        row=row,
+        col=1,
+    )
+    figure.add_vline(x=true_r, line_dash="dash", line_color="black", row=row, col=1)
+    figure.update_xaxes(range=[true_r - 30, true_r + 60], row=row, col=1)
+figure.update_xaxes(title_text="Range (m)", row=len(targets), col=1)
+figure.update_yaxes(title_text="dB re median")
+figure.update_layout(
+    template="plotly_white", title="Matched-Filter Output (Ping 1)", height=700
+).show()
+
+# %%
 # Bearing and range errors
 # ------------------------
 #
-# Each target's grouped detection is the one nearest its true position on each ping. Bearings
-# come out within a fraction of a degree. Ranges are about 0.5-1.4 m long, and that is physics,
-# not error. As in the sonobuoy example, the strongest arrival is the pair of mixed paths (out
-# direct and back via the surface, and the reverse), which add in phase. They arrive
-# :math:`z_1 z_2 / R` behind the direct echo in range, where :math:`z_1` and :math:`z_2` are the
-# dome and target depths: 1.2, 0.8 and 0.5 m for T2, T1 and T3.
+# Each target's grouped detection is the one nearest its true position on each ping.
+#
+# - **Bearings**: within a fraction of a degree.
+# - **Ranges**: 0.5-1.4 m long, because of surface multipath.
+#
+# As in the sonobuoy example, the strongest arrival is the pair of mixed paths, which add in
+# phase. One goes out direct and comes back via the surface, and the other does the reverse. In
+# range, they arrive :math:`z_1 z_2 / R` behind the direct echo, where :math:`z_1` and :math:`z_2`
+# are the dome and target depths and :math:`R` the range. The offset for each target is as
+# follows.
+#
+# - **T1**: 0.8 m.
+# - **T2**: 1.2 m.
+# - **T3**: 0.5 m.
 
 
 def nearest(kept, true_range_m, true_bearing_rad):
@@ -311,8 +362,10 @@ def nearest(kept, true_range_m, true_bearing_rad):
 
     def distance(item):
         b, r, _ = item
-        return np.hypot(r * np.cos(b) - true_range_m * np.cos(true_bearing_rad),
-                        r * np.sin(b) - true_range_m * np.sin(true_bearing_rad))
+        return np.hypot(
+            r * np.cos(b) - true_range_m * np.cos(true_bearing_rad),
+            r * np.sin(b) - true_range_m * np.sin(true_bearing_rad),
+        )
 
     return min(kept, key=distance)
 
@@ -328,17 +381,72 @@ for ping_time, kept in zip(PING_TIMES, grouped, strict=True):
         print(f"{ping_time:%H:%M:%S} {name:>6} {range_err:>14.2f} {bearing_err:>18.2f}")
 
 # %%
+# Plan view
+# ---------
+#
+# The plan view shows the ship track, the target tracks and every grouped detection, placed at
+# its bearing and range from the dome.
+
+figure = go.Figure()
+ship_xy = np.array(
+    [[float(s.state_vector[0, 0]), float(s.state_vector[2, 0])] for s in platform.states]
+)
+figure.add_trace(go.Scatter(x=ship_xy[:, 0], y=ship_xy[:, 1], mode="lines+markers", name="Ship"))
+for name, path in targets.items():
+    xy = np.array([[float(s.state_vector[0, 0]), float(s.state_vector[2, 0])] for s in path])
+    figure.add_trace(
+        go.Scatter(x=xy[:, 0], y=xy[:, 1], mode="lines+markers", name=name, marker={"size": 12})
+    )
+detection_xy = np.array(
+    [
+        np.ravel(bow.get_platform_state_at(t).array.ref_state_vector)[:2]
+        + r * np.array([np.cos(b), np.sin(b)])
+        for t, kept in zip(PING_TIMES, grouped, strict=True)
+        for b, r, _ in kept
+    ]
+)
+figure.add_trace(
+    go.Scatter(
+        x=detection_xy[:, 0],
+        y=detection_xy[:, 1],
+        mode="markers",
+        marker={"symbol": "x-thin-open", "size": 10, "color": "black", "line": {"width": 2}},
+        name="Detections",
+    )
+)
+figure.update_layout(
+    template="plotly_white",
+    title="Plan View",
+    xaxis_title="x (m)",
+    yaxis_title="y (m)",
+    yaxis_scaleanchor="x",
+).show()
+
+# %%
 # DAS and MVDR bearing responses
 # ------------------------------
 #
 # For each target on the first ping, the sensor signals during its echo are beamformed again as
-# broadband power, once with DAS and once with MVDR, both integrating 1400-2600 Hz over 256-point
-# frames. For T2, dead ahead, MVDR's mainlobe is several times narrower than DAS's and its
-# sidelobes are lower, because its weights adapt to null everything but the look direction.
-# For T1 and T3, 30 degrees off the bow, it gains nothing here and its sidelobe floor is
-# higher. MVDR is known to lose its advantage when the arriving wavefront differs from its
-# steering vector, or when a coherent copy of the signal arrives from another direction, as
-# the surface-reflected echo does; either may be at work.
+# broadband power, once with DAS and once with MVDR. Both integrate 1400-2600 Hz over 256-point
+# frames.
+#
+# - **T2, dead ahead**: MVDR's -3 dB mainlobe is 2 degrees wide against DAS's 7 degrees. Its
+#   highest sidelobe within 25 degrees is 16 dB down, against 8 dB for DAS. Its weights adapt to
+#   null everything but the look direction.
+# - **T1 and T3, about 30 degrees off the bow**: MVDR's mainlobe is no narrower than DAS's and
+#   its sidelobes are higher.
+#
+# MVDR loses its advantage in two known cases. Either may be at work here.
+#
+# - **Mismatch**: the arriving wavefront differs from its steering vector [1]_.
+# - **Coherent interference**: a coherent copy of the signal arrives from another direction
+#   [2]_, as the surface-reflected echo does.
+#
+# .. [1] Cox, H. "Resolving power and sensitivity to mismatch of optimum array processors."
+#        J. Acoust. Soc. Am. 54(3), 771-785, 1973.
+# .. [2] Widrow, B., Duvall, K. M., Gooch, R. P. and Newman, W. C. "Signal cancellation
+#        phenomena in adaptive antennas: causes and cures." IEEE Trans. Antennas Propag. 30(3),
+#        469-478, 1982.
 
 ping = pings[0]
 platform_state = bow.get_platform_state_at(ping.timestamp)
@@ -358,74 +466,24 @@ for column, name in enumerate(targets, start=1):
     for label, beamformer_, colour in (("DAS", das, "steelblue"), ("MVDR", mvdr, "crimson")):
         response = np.asarray(beamformer_.beamform(echo, steering_delays_s)).sum(axis=-1)
         figure.add_trace(
-            go.Scatter(x=bearings_deg, y=10 * np.log10(response / response.max()), name=label,
-                       line={"color": colour}, showlegend=column == 1),
-            row=1, col=column,
+            go.Scatter(
+                x=bearings_deg,
+                y=10 * np.log10(response / response.max()),
+                name=label,
+                line={"color": colour},
+                showlegend=column == 1,
+            ),
+            row=1,
+            col=column,
         )
-    figure.add_vline(x=np.degrees(true_b), line_dash="dash", line_color="black", row=1,
-                     col=column)
-    figure.update_xaxes(title_text="Bearing (deg)", range=[np.degrees(true_b) - 25,
-                                                           np.degrees(true_b) + 25],
-                        row=1, col=column)
-figure.update_yaxes(title_text="Power (dB re peak)", range=[-30, 1], row=1, col=1)
-figure.update_layout(template="plotly_white", title="DAS and MVDR Bearing Responses (Ping 1)",
-                     height=420).show()
-
-# %%
-# Plan view
-# ---------
-#
-# Ship track, target tracks and every grouped detection, placed at its bearing and range from
-# the dome.
-
-figure = go.Figure()
-ship_xy = np.array([[float(s.state_vector[0, 0]), float(s.state_vector[2, 0])]
-                    for s in platform.states])
-figure.add_trace(go.Scatter(x=ship_xy[:, 0], y=ship_xy[:, 1], mode="lines+markers", name="Ship"))
-for name, path in targets.items():
-    xy = np.array([[float(s.state_vector[0, 0]), float(s.state_vector[2, 0])] for s in path])
-    figure.add_trace(go.Scatter(x=xy[:, 0], y=xy[:, 1], mode="lines+markers", name=name,
-                                marker={"size": 12}))
-detection_xy = np.array(
-    [
-        np.ravel(bow.get_platform_state_at(t).array.ref_state_vector)[:2]
-        + r * np.array([np.cos(b), np.sin(b)])
-        for t, kept in zip(PING_TIMES, grouped, strict=True)
-        for b, r, _ in kept
-    ]
-)
-figure.add_trace(go.Scatter(x=detection_xy[:, 0], y=detection_xy[:, 1], mode="markers",
-                            marker={"symbol": "x-thin-open", "size": 10, "color": "black",
-                                    "line": {"width": 2}},
-                            name="Detections"))
-figure.update_layout(template="plotly_white", title="Plan View", xaxis_title="x (m)",
-                     yaxis_title="y (m)", yaxis_scaleanchor="x").show()
-
-# %%
-# Matched-filter output on each target's beam
-# -------------------------------------------
-#
-# The matched-filter level along each target's nearest beam on the first ping, relative to the
-# median across the ping, with its true range dashed. Each echo is followed closely by its
-# surface-reflected arrivals.
-
-power = matched_filter_power(ping)
-noise_floor = np.median(power)
-range_axis_m = np.arange(power.shape[1]) * SOUND_SPEED_MPS / (2 * SAMPLING_RATE_HZ)
-beam_bearings = np.asarray(ping.steering_bearings_rad)
-figure = make_subplots(rows=len(targets), cols=1, subplot_titles=list(targets))
-for row, name in enumerate(targets, start=1):
-    true_r, true_b = truth_at(name, ping.timestamp)
-    beam = int(np.argmin(np.abs(np.angle(np.exp(1j * (beam_bearings - true_b))))))
-    window = (range_axis_m > true_r - 30) & (range_axis_m < true_r + 60)
-    figure.add_trace(
-        go.Scatter(x=range_axis_m[window], y=10 * np.log10(power[beam, window] / noise_floor),
-                   mode="lines", showlegend=False),
-        row=row, col=1,
+    figure.add_vline(x=np.degrees(true_b), line_dash="dash", line_color="black", row=1, col=column)
+    figure.update_xaxes(
+        title_text="Bearing (deg)",
+        range=[np.degrees(true_b) - 25, np.degrees(true_b) + 25],
+        row=1,
+        col=column,
     )
-    figure.add_vline(x=true_r, line_dash="dash", line_color="black", row=row, col=1)
-    figure.update_xaxes(range=[true_r - 30, true_r + 60], row=row, col=1)
-figure.update_xaxes(title_text="Range (m)", row=len(targets), col=1)
-figure.update_yaxes(title_text="dB re median")
-figure.update_layout(template="plotly_white", title="Matched-Filter Output (Ping 1)",
-                     height=700).show()
+figure.update_yaxes(title_text="Power (dB re peak)", range=[-30, 1], row=1, col=1)
+figure.update_layout(
+    template="plotly_white", title="DAS and MVDR Bearing Responses (Ping 1)", height=420
+).show()
