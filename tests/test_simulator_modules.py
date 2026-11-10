@@ -1016,6 +1016,30 @@ def test_stft_interp_receiver_matches_vectorised_reference(monkeypatch, two_side
     np.testing.assert_allclose(receiver, expected, rtol=0, atol=1e-6 * np.abs(expected).max())
 
 
+@pytest.mark.parametrize("two_sided", [True, False])
+def test_stft_interp_receiver_unchanged_without_a_bulk_delay(monkeypatch, two_sided) -> None:
+    """With every delay under half a hop there is no frame shift, so the output is as before."""
+    _base, _discrete, continuous = _load_simulator_modules(monkeypatch)
+    simulator = continuous.ContinuousSTFTPassiveSonarArraySimulator(
+        fade_in_ms=0.0, fade_out_ms=0.0
+    )
+    ctx, targets = _stft_interp_inputs(continuous, two_sided)
+    half_hop_s = 0.5 * ctx.hop / ctx.fs
+    for target in targets:
+        target.tau_hist = (target.tau_hist - 0.5) % (0.9 * half_hop_s)
+    step_idx, alpha = simulator._frame_interp_indices(ctx)
+    real_utils = load_package_module_from_repo(
+        "bluepebble/signal/utils.py", "tests_reference_signal_utils"
+    )
+
+    receiver = continuous._stft_interp_receiver(ctx, targets, step_idx, alpha)
+    before_fix = reference_stft_interp_receiver(
+        ctx, targets, step_idx, alpha, real_utils.inverse_stft, bulk_delay=False
+    )
+
+    np.testing.assert_allclose(receiver, before_fix, rtol=0, atol=1e-6 * np.abs(before_fix).max())
+
+
 def test_stft_interp_receiver_is_zero_without_targets(monkeypatch) -> None:
     """With no targets the receiver is silent, with the length a reconstruction would have."""
     _base, _discrete, continuous = _load_simulator_modules(monkeypatch)
@@ -1038,6 +1062,109 @@ def test_stft_interp_receiver_rejects_an_invalid_bin_count(monkeypatch) -> None:
 
     with pytest.raises(ValueError, match="Invalid STFT shape"):
         continuous._stft_interp_receiver(ctx, targets, step_idx, np.zeros(ctx.num_frames))
+
+
+def test_bulk_delay_hops_ignores_sensors_the_target_never_reaches(monkeypatch) -> None:
+    """A never-reached sensor's held zero delay must not cancel the other sensors' shift."""
+    _base, _discrete, continuous = _load_simulator_modules(monkeypatch)
+    H_hist = np.ones((2, 2, 3), dtype=np.complex64)
+    H_hist[:, 1, :] = 0.0  # sensor 1 is never reached
+    tau_hist = np.array([[0.9, 0.0], [1.1, 0.0]])
+    target = continuous._STFTTargetHistory(
+        source_stft=np.ones((4, 3), dtype=np.complex64), H_hist=H_hist, tau_hist=tau_hist
+    )
+
+    hops = continuous._bulk_delay_hops(
+        target, np.zeros(3, dtype=np.int32), np.array([0.0, 0.5, 1.0]), fs=10.0, hop=1
+    )
+    np.testing.assert_array_equal(hops, [9, 10, 11])
+
+    H_hist[:] = 0.0  # reached by no sensor: fall back to the earliest delay of all
+    hops = continuous._bulk_delay_hops(
+        target, np.zeros(1, dtype=np.int32), np.zeros(1), fs=10.0, hop=1
+    )
+    np.testing.assert_array_equal(hops, [0])
+
+
+class _WhiteNoiseSource:
+    """Signal model stub: complex white noise and its Hann STFT (0.2 s frames, 0.02 s hop)."""
+
+    sampling_rate_hz = 200.0
+    frame_len = 40
+    hop_factor = 10
+    duration_s = 20
+
+    def __init__(self) -> None:
+        rng = np.random.default_rng(20261110)
+        n = int(self.duration_s * self.sampling_rate_hz)
+        self.waveform = (rng.standard_normal(n) + 1j * rng.standard_normal(n)).astype(np.complex64)
+        utils = load_package_module_from_repo(
+            "bluepebble/signal/utils.py", "tests_reference_signal_utils"
+        )
+        stft, freqs, self.hop, self.window = utils.compute_stft(
+            self.waveform, self.frame_len, self.hop_factor, "hann"
+        )
+        self.stft = np.asarray(stft, dtype=np.complex64)
+        self.freqs_hz = np.asarray(freqs, dtype=np.float64) * self.sampling_rate_hz
+
+    def compute_stft(self, state):
+        """Return the cached source STFT."""
+        _ = state
+        return self.stft, self.freqs_hz, self.hop, self.window
+
+    def stft_geometry(self):
+        """Return STFT geometry matching ``compute_stft``."""
+        return self.stft.shape[1], self.freqs_hz, self.hop, self.window, self.stft.shape[0]
+
+
+@pytest.mark.parametrize("mode", ["stft_interp", "wola_interp", "cola"])
+@pytest.mark.parametrize("frames_past_9s", [0.0, 0.25, 0.5])
+def test_stft_modes_delay_by_the_propagation_delay(monkeypatch, mode, frames_past_9s) -> None:
+    """A pure delay of several seconds must delay the signal, without losing power.
+
+    Applying a delay longer than a frame as frame phase wraps it within the frame instead, so
+    the signal was never delayed and lost up to about 12 dB as ``tau mod frame`` varied. A
+    quarter frame is 2.5 hops, the worst case for the residual left after whole-hop shifting.
+    """
+    _base, _discrete, continuous = _load_simulator_modules(monkeypatch)
+    source = _WhiteNoiseSource()
+    fs, frame_len = source.sampling_rate_hz, source.frame_len
+    t0 = datetime(2026, 1, 1, 12, 0, 0)
+    timestamps = [t0 + timedelta(seconds=i) for i in range(source.duration_s + 1)]
+    # Two sensors two samples apart, to check each keeps its own delay.
+    delays_s = 9.0 + frames_past_9s * frame_len / fs + np.array([0.0, 2 / fs])
+
+    def pure_delay(platform_state, target_state, freqs):
+        _ = (platform_state, target_state)
+        return np.exp(-2j * np.pi * np.outer(delays_s, freqs)), delays_s
+
+    simulator = continuous.ContinuousSTFTPassiveSonarArraySimulator(
+        array=_FakePlatform(timestamps, num_sensors=2),
+        propagation_model=_prop_model(pure_delay),
+        signal_models=[source],
+        ground_truth_paths=[_FakePath(states=[_FakeState(ts) for ts in timestamps])],
+        mode=mode,
+        fade_in_ms=0.0,
+        fade_out_ms=0.0,
+    )
+    received = np.concatenate(
+        [next(iter(data)).raw_signals for _ts, data in simulator.sensor_data_gen()], axis=1
+    )
+
+    x = source.waveform
+    # stft_interp drops the first hop of its overlap-add, so the delay measures a hop short.
+    offset = source.hop if mode == "stft_interp" else 0
+    for sensor, tau in enumerate(delays_s):
+        y = received[sensor]
+        lag = round(tau * fs) - offset
+        arrived = y[lag + frame_len : len(y) - frame_len]
+        power_db = 10 * np.log10(np.mean(np.abs(arrived) ** 2) / np.mean(np.abs(x) ** 2))
+        assert abs(power_db) < 0.5, f"sensor {sensor}: {power_db:+.1f} dB"
+
+        n = 2 * len(y)
+        xcorr = np.fft.ifft(np.fft.fft(y, n) * np.conj(np.fft.fft(x, n)))
+        peak = int(np.argmax(np.abs(xcorr[: len(y)])))
+        assert abs(peak - lag) <= 1, f"sensor {sensor}: peak at {peak}, expected {lag}"
 
 
 def test_continuous_fractional_delay_paths_without_options(monkeypatch) -> None:
