@@ -159,29 +159,53 @@ def load_package_module_from_repo(relative_path: str, module_name: str):
     return module
 
 
-def reference_stft_interp_receiver(ctx, targets_data, step_idx, alpha, inverse_stft):
+def reference_stft_interp_receiver(
+    ctx, targets_data, step_idx, alpha, inverse_stft, *, bulk_delay=True
+):
     """Synthesise ``stft_interp`` receiver signals the vectorised way, one sensor at a time.
 
     This is how the simulator did it before the fused Numba kernel, so it is the reference the
     kernel is checked against. Passing a fake ``inverse_stft`` lets simulator tests control the
     reconstructed signals, as they did before.
+
+    Each target's bulk delay, ``D = rint(tau_ref * fs / hop)`` whole hops with ``tau_ref`` the
+    earliest delay over the sensors it reaches, is applied by taking output frame ``i`` from
+    source frame ``i - D``, and only the rest as phase. ``bulk_delay=False`` gives the earlier
+    algorithm, which applied the whole delay as phase.
     """
+    w0 = 1.0 - alpha
+    frames = np.arange(ctx.num_frames)
     signals = []
     for s in range(ctx.num_sensors):
         total = np.zeros((ctx.num_frames, ctx.num_freq_bins), dtype=np.complex64)
         for target in targets_data:
+            hops = np.zeros(ctx.num_frames, dtype=int)
+            if bulk_delay:
+                reached = np.abs(target.H_hist).sum(axis=-1) > 0
+                tau_ref = np.array(
+                    [
+                        row[mask].min() if mask.any() else row.min()
+                        for row, mask in zip(target.tau_hist, reached, strict=True)
+                    ]
+                )
+                tau_ref_frames = tau_ref[step_idx] * w0 + tau_ref[step_idx + 1] * alpha
+                hops = np.rint(tau_ref_frames * ctx.fs / ctx.hop).astype(int)
+            source_idx = frames - hops
+            arrived = (source_idx >= 0) & (source_idx < ctx.num_frames)
+            source = np.zeros_like(target.source_stft)
+            source[arrived] = target.source_stft[source_idx[arrived]]
+
             tau = np.asarray(target.tau_hist[:, s], dtype=np.float64)
             residual = target.H_hist[:, s, :] * np.exp(
                 2j * np.pi * tau[:, None] * ctx.frequencies[None, :]
             )
             mag = np.abs(residual).astype(np.float64)
             phase = np.unwrap(np.angle(residual), axis=0).astype(np.float64)
-            w0 = 1.0 - alpha
             m = mag[step_idx] * w0[:, None] + mag[step_idx + 1] * alpha[:, None]
             p = phase[step_idx] * w0[:, None] + phase[step_idx + 1] * alpha[:, None]
-            t = tau[step_idx] * w0 + tau[step_idx + 1] * alpha
+            t = tau[step_idx] * w0 + tau[step_idx + 1] * alpha - hops * ctx.hop / ctx.fs
             rerotate = np.exp(-2j * np.pi * t[:, None] * ctx.frequencies[None, :])
-            total += target.source_stft * (m * np.exp(1j * p) * rerotate)
+            total += source * (m * np.exp(1j * p) * rerotate)
         signal = inverse_stft(total, ctx.frame_len, ctx.hop, ctx.window)
         signals.append(np.asarray(signal, dtype=np.complex64))
     length = max(len(signal) for signal in signals)

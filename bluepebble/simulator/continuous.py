@@ -59,6 +59,7 @@ class _WOLATargetHistory:
     tau_hist: FloatArray
     H_mag_hist: FloatArray
     H_phase_hist: FloatArray
+    bulk_hops: IntArray
 
 
 def _hold_last_finite_delays(delay_history_s: FloatArray) -> FloatArray:
@@ -91,19 +92,55 @@ def _hold_last_finite_delays(delay_history_s: FloatArray) -> FloatArray:
     return np.where(finite, delays, np.where(has_source, held, 0.0))
 
 
+def _bulk_delay_hops(
+    target: _STFTTargetHistory,
+    step_idx: IntArray,
+    alpha: FloatArray,
+    fs: float,
+    hop: int,
+) -> IntArray:
+    """Return one target's bulk delay in whole hops, ``D = rint(tau_ref * fs / hop)``, per frame.
+
+    ``tau_ref`` is the earliest delay at each knot over the sensors the target reaches, or over
+    all sensors where it reaches none, so the zero delay held for a never-reached sensor cannot
+    cancel the shift. It is interpolated to the frames with ``step_idx`` and ``alpha``;
+    ``step_idx`` may be the last knot where ``alpha`` is zero.
+    """
+    reached = np.any(target.H_hist != 0, axis=-1)
+    tau_ref = np.where(reached, target.tau_hist, np.inf).min(axis=-1)
+    tau_ref = np.where(np.isfinite(tau_ref), tau_ref, target.tau_hist.min(axis=-1))
+    upper = np.minimum(step_idx + 1, len(tau_ref) - 1)
+    tau_frames = tau_ref[step_idx] * (1.0 - alpha) + tau_ref[upper] * alpha
+    return np.rint(tau_frames * fs / hop).astype(np.int64)
+
+
 @njit(cache=True, parallel=True)
 def _stft_interp_synthesis(
-    source_stft, H_hist, tau_hist, step_idx, alpha, frequencies, window, hop, trim, out
+    source_stft,
+    H_hist,
+    tau_hist,
+    bulk_hops,
+    step_idx,
+    alpha,
+    frequencies,
+    window,
+    hop,
+    fs,
+    trim,
+    out,
 ):
     """Synthesise every sensor's signal from frame-interpolated channels, in parallel.
 
     Fuses ``_build_residual_channel_histories``, ``_interpolate_channel_from_residual_histories``
-    and ``inverse_stft`` into one loop per sensor, adding the channel and delay phases before a
-    single exponential. Each thread writes only its own sensor's row of ``out``.
+    and ``inverse_stft`` into one loop per sensor, adding the channel and residual delay phases
+    before a single exponential. Output frame ``i`` takes source frame ``i - bulk_hops[g, i]``,
+    and nothing from target ``g`` if that is out of range. Each thread writes only its own
+    sensor's row of ``out``.
 
     Shapes: ``source_stft`` (targets, frames, bins), ``H_hist`` (targets, steps, sensors, bins),
-    ``tau_hist`` (targets, steps, sensors), ``out`` (sensors, samples). ``trim`` samples are
-    dropped from each end of the overlap-added signal, as ``inverse_stft`` does.
+    ``tau_hist`` (targets, steps, sensors), ``bulk_hops`` (targets, frames), ``out`` (sensors,
+    samples). ``trim`` samples are dropped from each end of the overlap-added signal, as
+    ``inverse_stft`` does.
     """
     n_targets, n_steps, n_sensors, n_bins = H_hist.shape
     n_frames = source_stft.shape[1]
@@ -139,14 +176,18 @@ def _stft_interp_synthesis(
                     previous = current
                     phase[k, j] = current + correction
             for i in range(n_frames):
+                src = i - bulk_hops[g, i]
+                if src < 0 or src >= n_frames:
+                    continue
                 k = step_idx[i]
                 a = alpha[i]
                 w0 = 1.0 - a
                 tau = tau_hist[g, k, s] * w0 + tau_hist[g, k + 1, s] * a
+                tau -= bulk_hops[g, i] * hop / fs
                 for j in range(n_bins):
                     m = mag[k, j] * w0 + mag[k + 1, j] * a
                     p = phase[k, j] * w0 + phase[k + 1, j] * a - two_pi * tau * frequencies[j]
-                    total[i, j] += source_stft[g, i, j] * complex(m * np.cos(p), m * np.sin(p))
+                    total[i, j] += source_stft[g, src, j] * complex(m * np.cos(p), m * np.sin(p))
 
         signal = np.zeros((n_frames - 1) * hop + frame_len, np.complex64)
         window_sum = np.zeros(signal.shape[0], np.float32)
@@ -227,11 +268,13 @@ def _stft_interp_receiver(
         np.ascontiguousarray([t.source_stft for t in targets_data], dtype=np.complex64),
         np.ascontiguousarray([t.H_hist for t in targets_data], dtype=np.complex64),
         np.ascontiguousarray([t.tau_hist for t in targets_data], dtype=np.float64),
+        np.array([_bulk_delay_hops(t, step_idx, alpha, ctx.fs, ctx.hop) for t in targets_data]),
         np.ascontiguousarray(step_idx),
         np.ascontiguousarray(alpha, dtype=np.float64),
         np.ascontiguousarray(ctx.frequencies, dtype=np.float64),
         np.ascontiguousarray(ctx.window),
         ctx.hop,
+        float(ctx.fs),
         trim,
         receiver,
     )
@@ -248,7 +291,8 @@ class ContinuousSTFTPassiveSonarArraySimulator(PassiveSonarArraySimulatorBase):
     - ``stft_interp`` and ``wola_interp`` common interpolation steps:
         1. De-rotate channel phase using per-sensor delay history (remove delay phase).
         2. Interpolate residual channel magnitude and unwrapped phase at frame-center times.
-        3. Re-apply interpolated delay phase and form per-target frame spectra.
+        3. Shift source frames by the bulk delay, re-apply the rest of the interpolated delay
+           phase and form per-target frame spectra (see Propagation delay).
 
     - ``stft_interp``
         4. Sum target spectra in the frequency domain.
@@ -261,7 +305,8 @@ class ContinuousSTFTPassiveSonarArraySimulator(PassiveSonarArraySimulatorBase):
 
     - ``cola``
         1. Select the nearest previous knot transfer function for each frame.
-        2. Apply knot transfer function to each target source spectrum.
+        2. Apply knot transfer function, less the bulk delay's phase, to each target's
+           bulk-shifted source spectrum.
         3. IFFT and overlap-add frame signals.
         4. Apply COLA-style overlap normalization.
 
@@ -269,6 +314,36 @@ class ContinuousSTFTPassiveSonarArraySimulator(PassiveSonarArraySimulatorBase):
     In practice, each method produces largely similar results. The default ``stft_interp``
     and ``wola_interp`` methods are recommended. The ``cola`` method can produce
     interference artefacts, but is good as a fast baseline.
+
+    Propagation delay
+    -----------------
+    A frame spectrum's phase can only shift its content circularly within the frame, so each
+    target's delay is split into a bulk part, applied as a whole-hop shift of source frames,
+    and a residual, applied as phase. Output frame ``i`` of sensor ``s`` is
+
+    ``Y_s[i, f] = X[i - D_i, f] * R_s(t_i, f) * exp(-2j * pi * f * (tau_s(t_i) - D_i * hop / fs))``
+
+    where ``X`` is the source STFT, ``R_s`` the delay-de-rotated channel, ``tau_s`` the
+    sensor's delay, ``D_i = rint(tau_ref(t_i) * fs / hop)`` and ``tau_ref`` the earliest delay
+    over the sensors the target reaches. ``cola`` takes the channel and ``D_i`` from the
+    nearest previous knot instead of interpolating.
+
+    The residual, at most half a hop plus the array's delay spread, is still a circular shift
+    within each frame, so those samples wrap round the frame's edges, where the window is
+    small. Measured against the exactly delayed signal with a Hann window and
+    ``hop = frame_len / 10``, a constant half-hop residual costs 0.15 dB of power with an
+    error 36 dB below the signal. ``D_i`` steps by one every ``hop * c / fs`` of range
+    change; frames either side of a step agree, since the source-frame shift cancels the
+    residual's jump, but the error rises to about 27 dB below the signal for the hops around
+    it (20 to 120 Hz noise, 3 m/s range rate). Other windows and hop factors were not
+    measured.
+
+    Assumptions
+    -----------
+    - The source emits nothing before the first timestep: a target contributes nothing to
+      frames with ``i - D_i < 0``, so it is first heard about ``tau_ref`` seconds in.
+    - One ``D_i`` serves every sensor, which keeps them mutually coherent; the delay spread
+      across the array is assumed small next to a frame, since it adds to the residual.
 
     Doppler
     -------
@@ -620,8 +695,9 @@ class ContinuousSTFTPassiveSonarArraySimulator(PassiveSonarArraySimulatorBase):
         step_idx: int | IntArray,
         alpha: float | ArrayLike,
         frequencies_hz: FloatArray,
+        bulk_delay_s: float | ArrayLike = 0.0,
     ) -> ComplexArray:
-        """Interpolate residual channel history and re-apply delay phase.
+        """Interpolate residual channel history and re-apply the delay phase, less a bulk delay.
 
         Parameters
         ----------
@@ -637,6 +713,9 @@ class ContinuousSTFTPassiveSonarArraySimulator(PassiveSonarArraySimulatorBase):
             Interpolation fraction(s) in ``[0, 1]``.
         frequencies_hz : numpy.ndarray
             Frequency bins in hertz.
+        bulk_delay_s : float or array-like, optional
+            Delay (per frame, for array ``alpha``) the caller applies by shifting source
+            frames, so it is left out of the re-applied phase.
 
         Returns
         -------
@@ -650,7 +729,7 @@ class ContinuousSTFTPassiveSonarArraySimulator(PassiveSonarArraySimulatorBase):
         if np.ndim(alpha_arr) == 0:
             H_mag = H_mag_hist[step_idx, :] * w0 + H_mag_hist[step_idx + 1, :] * alpha_arr
             H_phase = H_phase_hist[step_idx, :] * w0 + H_phase_hist[step_idx + 1, :] * alpha_arr
-            tau = tau_hist[step_idx] * w0 + tau_hist[step_idx + 1] * alpha_arr
+            tau = tau_hist[step_idx] * w0 + tau_hist[step_idx + 1] * alpha_arr - bulk_delay_s
             phase_rerotate = np.exp(-2j * np.pi * frequencies_hz * tau)
             return H_mag * np.exp(1j * H_phase) * phase_rerotate
 
@@ -662,7 +741,7 @@ class ContinuousSTFTPassiveSonarArraySimulator(PassiveSonarArraySimulatorBase):
             H_phase_hist[step_idx, :] * w0[:, np.newaxis]
             + H_phase_hist[step_idx + 1, :] * alpha_arr[:, np.newaxis]
         )
-        tau = tau_hist[step_idx] * w0 + tau_hist[step_idx + 1] * alpha_arr
+        tau = tau_hist[step_idx] * w0 + tau_hist[step_idx + 1] * alpha_arr - bulk_delay_s
         phase_rerotate = np.exp(-2j * np.pi * tau[:, np.newaxis] * frequencies_hz[np.newaxis, :])
         return H_mag * np.exp(1j * H_phase) * phase_rerotate
 
@@ -807,6 +886,7 @@ class ContinuousSTFTPassiveSonarArraySimulator(PassiveSonarArraySimulatorBase):
 
         # Precompute residual channel magnitude/phase histories once per target.
         # Doing this inside the frame loop is the dominant runtime cost.
+        frame_step_idx, frame_alpha = self._frame_interp_indices(ctx)
         wola_histories: list[_WOLATargetHistory] = []
         for target_data in targets_data:
             H_mag_hist, H_phase_hist = self._build_residual_channel_histories(
@@ -820,6 +900,9 @@ class ContinuousSTFTPassiveSonarArraySimulator(PassiveSonarArraySimulatorBase):
                     tau_hist=target_data.tau_hist,
                     H_mag_hist=H_mag_hist,
                     H_phase_hist=H_phase_hist,
+                    bulk_hops=_bulk_delay_hops(
+                        target_data, frame_step_idx, frame_alpha, ctx.fs, ctx.hop
+                    ),
                 )
             )
 
@@ -835,7 +918,11 @@ class ContinuousSTFTPassiveSonarArraySimulator(PassiveSonarArraySimulatorBase):
                 frame_sensor_sum = np.zeros(ctx.frame_len, dtype=np.complex64)
 
                 for wola_data in wola_histories:
-                    source_spec = wola_data.source_stft[frame_idx, :]
+                    bulk_hops = int(wola_data.bulk_hops[frame_idx])
+                    source_idx = frame_idx - bulk_hops
+                    if not 0 <= source_idx < ctx.num_frames:
+                        continue
+                    source_spec = wola_data.source_stft[source_idx, :]
                     H_mag_hist = wola_data.H_mag_hist[:, sensor_idx, :]
                     H_phase_hist = wola_data.H_phase_hist[:, sensor_idx, :]
                     tau_hist = wola_data.tau_hist[:, sensor_idx]
@@ -847,6 +934,7 @@ class ContinuousSTFTPassiveSonarArraySimulator(PassiveSonarArraySimulatorBase):
                         step_idx=step_idx,
                         alpha=alpha,
                         frequencies_hz=ctx.frequencies,
+                        bulk_delay_s=bulk_hops * ctx.hop / ctx.fs,
                     )
 
                     frame_spec = source_spec * H_interp
@@ -889,20 +977,40 @@ class ContinuousSTFTPassiveSonarArraySimulator(PassiveSonarArraySimulatorBase):
         window_arr = np.asarray(ctx.window, dtype=np.float32)
         window_sq = np.asarray(ctx.window, dtype=np.float64) ** 2
 
+        frame_centres_s = (
+            np.arange(ctx.num_frames, dtype=np.float64) * ctx.hop + 0.5 * ctx.frame_len
+        ) / ctx.fs
+        knot_indices = np.searchsorted(ctx.step_times_s, frame_centres_s, side="right") - 1
+        knot_indices = np.clip(knot_indices, 0, ctx.n_steps - 1)
+        no_interp = np.zeros(ctx.num_frames)
+        bulk_hops = [
+            _bulk_delay_hops(target_data, knot_indices, no_interp, ctx.fs, ctx.hop)
+            for target_data in targets_data
+        ]
+
         for frame_idx in range(ctx.num_frames):
             start = frame_idx * ctx.hop
             end = start + ctx.frame_len
-            frame_center_s = (start + 0.5 * ctx.frame_len) / ctx.fs
-
-            knot_idx = int(np.searchsorted(ctx.step_times_s, frame_center_s, side="right") - 1)
-            knot_idx = int(np.clip(knot_idx, 0, ctx.n_steps - 1))
+            knot_idx = int(knot_indices[frame_idx])
+            # The knot channels carry the whole delay's phase, so the part the frame shift
+            # applies is taken out of the shifted source spectrum (None before it arrives).
+            shifted_sources: list[ComplexArray | None] = []
+            for target_data, hops in zip(targets_data, bulk_hops, strict=True):
+                source_idx = frame_idx - int(hops[frame_idx])
+                if not 0 <= source_idx < ctx.num_frames:
+                    shifted_sources.append(None)
+                    continue
+                bulk_delay_s = hops[frame_idx] * ctx.hop / ctx.fs
+                derotate = np.exp(2j * np.pi * ctx.frequencies * bulk_delay_s).astype(np.complex64)
+                shifted_sources.append(target_data.source_stft[source_idx, :] * derotate)
 
             norm_accum[start:end] += window_sq
 
             for sensor_idx in range(ctx.num_sensors):
                 frame_sensor_sum = np.zeros(ctx.frame_len, dtype=np.complex64)
-                for target_data in targets_data:
-                    source_spec = target_data.source_stft[frame_idx, :]
+                for target_data, source_spec in zip(targets_data, shifted_sources, strict=True):
+                    if source_spec is None:
+                        continue
                     H_knot = target_data.H_hist[knot_idx, sensor_idx, :]
                     frame_spec = source_spec * H_knot
                     frame_td = self._ifft_frame(frame_spec, ctx.frame_len, ctx.num_freq_bins)
