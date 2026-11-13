@@ -38,6 +38,7 @@ from stonesoup.models.transition.linear import (
 from stonesoup.types.groundtruth import GroundTruthPath, GroundTruthState
 
 import bluepebble
+from bluepebble.arrays import TowedArray
 from bluepebble.detector import (
     CACFARDetector,
     NoiseCalibrator,
@@ -46,7 +47,7 @@ from bluepebble.detector import (
 )
 from bluepebble.models.environment import NPL, CopernicusSoundSpeedProfile, GEBCOBathymetry
 from bluepebble.models.propagation import rtrsAcousticPropagationModel
-from bluepebble.platform import TowedArrayPlatform
+from bluepebble.platform import SonarPlatform
 from bluepebble.plotter import (
     apply_shared_colourscale,
     launch_bathymetry_and_sound_speed_viewer,
@@ -188,17 +189,20 @@ sensor_spacing_m = 1.1
 array_depth_m = -100.0
 
 initial_state = GroundTruthState(platform_start_vector, timestamp=start_time)
-platform = TowedArrayPlatform(
+platform = SonarPlatform(
     states=[initial_state],
     position_mapping=platform_position_mapping,
     velocity_mapping=platform_velocity_mapping,
     transition_models=platform_transition_models,
     transition_times=platform_transition_times,
+)
+towed_array = TowedArray(
     num_sensors=num_sensors,
     cable_length_m=tow_cable_length_m,
     sensor_spacing_m=sensor_spacing_m,
     array_depth_m=array_depth_m,
 )
+platform.add_sensor(towed_array)
 
 for i in range(1, num_steps):
     new_time = start_time + i * time_interval
@@ -268,7 +272,7 @@ for target_start_vector in target_start_vectors:
 
     bearing_states = []
     for target_state in target_ground_truth.states:
-        platform_state = platform.get_platform_state_at(target_state.timestamp)
+        platform_state = towed_array.get_platform_state_at(target_state.timestamp)
         ref_sensor_position = np.mean(platform_state.array.state_vector, axis=1)
         target_pos = np.array([target_state.state_vector[0], target_state.state_vector[2]])
         relative_pos = target_pos - ref_sensor_position[:2]
@@ -296,7 +300,7 @@ ssp = CopernicusSoundSpeedProfile(
 
 fig_world = plot_world(
     truths=target_ground_truths,
-    platform=platform,
+    platform=towed_array,
     bathymetry=bathymetry,
 ).update_layout(
     title="World Picture: Platform and Target Trajectories",
@@ -452,7 +456,7 @@ cfar_circular = True
 peak_distance = 3
 
 simulator = ContinuousSTFTPassiveSonarArraySimulator(
-    platform=platform,
+    array=towed_array,
     propagation_model=prop_model,
     signal_models=signal_models,
     noise_model=ambient_noise_model,
@@ -484,7 +488,7 @@ from itertools import islice
 num_survey_scans = 120
 
 ambient_only_simulator = ContinuousSTFTPassiveSonarArraySimulator(
-    platform=platform,
+    array=towed_array,
     propagation_model=prop_model,
     signal_models=signal_models,
     noise_model=ambient_noise_model,

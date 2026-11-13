@@ -350,11 +350,11 @@ def test_steering_bearings_history_has_one_row_per_scan(monkeypatch) -> None:
     np.testing.assert_array_equal(detector.steering_bearings_history, [BEARINGS_RAD] * 2)
 
 
-def test_multiband_deprecated_fixed_grid_warns(monkeypatch) -> None:
-    """The old steering_azimuths_rad warns, as on the single-band detector."""
+def test_multiband_rejects_the_removed_fixed_grid(monkeypatch) -> None:
+    """The removed steering_azimuths_rad names its replacement, as on the single-band detector."""
     passive = _load_passive_detector_module(monkeypatch)
 
-    with pytest.warns(DeprecationWarning, match="MultibandPassiveSonarDetector"):
+    with pytest.raises(TypeError, match="MultibandPassiveSonarDetector.*steering_bearings_rad"):
         passive.MultibandPassiveSonarDetector(
             band_detectors={"low": _band_detector(passive, 4.0)},
             sensor_data_gen=_two_band_source(),

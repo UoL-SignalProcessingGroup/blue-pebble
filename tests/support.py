@@ -12,6 +12,8 @@ import numpy as np
 from scipy import integrate
 from scipy.stats import gamma as gamma_dist
 
+import bluepebble
+
 REPO_ROOT = Path(__file__).resolve().parents[1]
 
 
@@ -157,29 +159,53 @@ def load_package_module_from_repo(relative_path: str, module_name: str):
     return module
 
 
-def reference_stft_interp_receiver(ctx, targets_data, step_idx, alpha, inverse_stft):
+def reference_stft_interp_receiver(
+    ctx, targets_data, step_idx, alpha, inverse_stft, *, bulk_delay=True
+):
     """Synthesise ``stft_interp`` receiver signals the vectorised way, one sensor at a time.
 
     This is how the simulator did it before the fused Numba kernel, so it is the reference the
     kernel is checked against. Passing a fake ``inverse_stft`` lets simulator tests control the
     reconstructed signals, as they did before.
+
+    Each target's bulk delay, ``D = rint(tau_ref * fs / hop)`` whole hops with ``tau_ref`` the
+    earliest delay over the sensors it reaches, is applied by taking output frame ``i`` from
+    source frame ``i - D``, and only the rest as phase. ``bulk_delay=False`` gives the earlier
+    algorithm, which applied the whole delay as phase.
     """
+    w0 = 1.0 - alpha
+    frames = np.arange(ctx.num_frames)
     signals = []
     for s in range(ctx.num_sensors):
         total = np.zeros((ctx.num_frames, ctx.num_freq_bins), dtype=np.complex64)
         for target in targets_data:
+            hops = np.zeros(ctx.num_frames, dtype=int)
+            if bulk_delay:
+                reached = np.abs(target.H_hist).sum(axis=-1) > 0
+                tau_ref = np.array(
+                    [
+                        row[mask].min() if mask.any() else row.min()
+                        for row, mask in zip(target.tau_hist, reached, strict=True)
+                    ]
+                )
+                tau_ref_frames = tau_ref[step_idx] * w0 + tau_ref[step_idx + 1] * alpha
+                hops = np.rint(tau_ref_frames * ctx.fs / ctx.hop).astype(int)
+            source_idx = frames - hops
+            arrived = (source_idx >= 0) & (source_idx < ctx.num_frames)
+            source = np.zeros_like(target.source_stft)
+            source[arrived] = target.source_stft[source_idx[arrived]]
+
             tau = np.asarray(target.tau_hist[:, s], dtype=np.float64)
             residual = target.H_hist[:, s, :] * np.exp(
                 2j * np.pi * tau[:, None] * ctx.frequencies[None, :]
             )
             mag = np.abs(residual).astype(np.float64)
             phase = np.unwrap(np.angle(residual), axis=0).astype(np.float64)
-            w0 = 1.0 - alpha
             m = mag[step_idx] * w0[:, None] + mag[step_idx + 1] * alpha[:, None]
             p = phase[step_idx] * w0[:, None] + phase[step_idx + 1] * alpha[:, None]
-            t = tau[step_idx] * w0 + tau[step_idx + 1] * alpha
+            t = tau[step_idx] * w0 + tau[step_idx + 1] * alpha - hops * ctx.hop / ctx.fs
             rerotate = np.exp(-2j * np.pi * t[:, None] * ctx.frequencies[None, :])
-            total += target.source_stft * (m * np.exp(1j * p) * rerotate)
+            total += source * (m * np.exp(1j * p) * rerotate)
         signal = inverse_stft(total, ctx.frame_len, ctx.hop, ctx.window)
         signals.append(np.asarray(signal, dtype=np.complex64))
     length = max(len(signal) for signal in signals)
@@ -227,3 +253,76 @@ def os_pfa_by_quadrature(alpha, num_training_total, rank, total_looks):
     upper = cell.ppf(1 - 1e-12)
     value, _ = integrate.quad(integrand, 0.0, upper, limit=500, epsabs=1e-13, epsrel=1e-9)
     return value
+
+
+def isolate_real_bluepebble_imports():
+    """Evict any cached ``bluepebble`` modules so a following real import is guaranteed fresh.
+
+    Most tests in this suite import ``bluepebble`` code through the fake-dependency
+    ``install_fake_stonesoup*`` / ``load_package_module_from_repo`` helpers above, which never
+    touch the real package tree. Two problems arise for a test that instead does a plain
+    ``from bluepebble.x.y import Z``:
+
+    1. ``load_package_module_from_repo`` writes straight to ``sys.modules`` (not via
+       ``monkeypatch``), so a submodule it loads while a fake ``stonesoup.base`` is active
+       (e.g. ``bluepebble.signal.base``, loaded by ``test_signal_anthropogenic.py``) stays
+       cached under that fake ``Base``/``Property`` for the rest of the session. A later real
+       import of anything built on top of it (e.g. ``bluepebble.signal.active``) then picks up
+       that stale, fake-metaclass copy instead of re-executing the file, and blows up with
+       ``AttributeError: Cannot use Property on this class type``.
+    2. Python's import system also caches ``bluepebble.x`` (and ``y``) as real attributes on the
+       live ``bluepebble`` package object -- permanently, for the rest of the session -- which
+       breaks other tests that assert on ``bluepebble``'s lazy-import behaviour
+       (``test_package_api.py``) or that load a submodule fresh under fake dependencies
+       (``test_simulator_acoustic.py``).
+
+    Call this immediately before a real ``bluepebble`` import and pass the result to
+    :func:`restore_real_bluepebble_imports` (e.g. via a fixture) to put back whatever was there
+    -- real or fake -- once the real import is no longer needed.
+    """
+    # Keep "bluepebble" itself in place (not just its submodules): this module holds its own
+    # top-level `import bluepebble` reference, and re-creating that object here would leave
+    # this function updating a different object than the one other code actually ends up using.
+    removed_modules = {
+        name: sys.modules.pop(name)
+        for name in list(sys.modules)
+        if name.startswith("bluepebble.")
+    }
+    # Only the specific names bluepebble.__getattr__ lazily caches via `globals()[name] =
+    # module` (see bluepebble/__init__.py) -- never touch dunders (__name__, __all__, ...),
+    # which live in the same __dict__ and must not be disturbed mid-cleanup.
+    removed_attrs = {
+        name: bluepebble.__dict__.pop(name)
+        for name in _LAZY_BLUEPEBBLE_ATTRS
+        if name in bluepebble.__dict__
+    }
+    return removed_modules, removed_attrs
+
+
+def restore_real_bluepebble_imports(snapshot) -> None:
+    """Discard modules imported since :func:`isolate_real_bluepebble_imports` and put back."""
+    removed_modules, removed_attrs = snapshot
+    for name in list(sys.modules):
+        if name.startswith("bluepebble."):
+            del sys.modules[name]
+    sys.modules.update(removed_modules)
+    for name in _LAZY_BLUEPEBBLE_ATTRS:
+        bluepebble.__dict__.pop(name, None)
+    bluepebble.__dict__.update(removed_attrs)
+
+
+_LAZY_BLUEPEBBLE_ATTRS = frozenset(
+    {
+        "arrays",
+        "detector",
+        "models",
+        "platform",
+        "plotter",
+        "signal",
+        "sigproc",
+        "simulator",
+        "types",
+        "get_rng",
+        "set_seed",
+    }
+)

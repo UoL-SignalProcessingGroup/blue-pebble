@@ -773,8 +773,9 @@ def plot_world(
     ----------
     truths : Sequence[GroundTruthPath]
         Ground-truth paths representing target trajectories.
-    platform : Platform
-        The platform whose trajectory is to be plotted.
+    platform : TowedArray
+        The towed array whose platform and sensor trajectories are plotted, read from its
+        ``platform_history``.
     bathymetry : object | None
         Optional bathymetry model implementing ``get_grid(x_range, y_range)``.
         If provided, bathymetry is rendered as a background heatmap.
@@ -1158,7 +1159,7 @@ def plot_btr(
         bearings, clockwise from the platform's heading: 000 dead ahead, 090 to starboard.
         Converted bearings run from 000 to 360; the axis covers only the arc the steering
         azimuths span. Detections, tracks and truths are converted with the same convention.
-    platform : TowedArrayPlatform, optional
+    platform : TowedArray, optional
         Source of the heading at each plotted time, read from
         ``get_platform_state_at(timestamp).host.heading_rad`` (the direction of travel, not
         the towed array's axis, which lags it through a turn). Required when

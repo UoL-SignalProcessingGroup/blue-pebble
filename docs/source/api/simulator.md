@@ -1,14 +1,15 @@
 # `bluepebble.simulator`
 
-Stone Soup-compatible simulator entrypoints for passive sonar array data generation.
+Stone Soup-compatible simulator entrypoints for passive and active sonar array data generation.
 
 Current primary simulator entrypoints are:
 
 - `ContinuousSTFTPassiveSonarArraySimulator` for broadband STFT-domain propagation and reconstruction.
 - `DiscretePassiveSonarArraySimulator` for discrete timestep broadband workflows.
 - `ContinuousFractionalDelayPassiveSonarArraySimulator` for continuous fractional-delay synthesis.
+- `ActiveSonarSimulator` for active sonar pings, monostatic or bistatic, with any spectrum propagation model.
 
-`PassiveSonarSensorData` lives in `bluepebble.types` and is documented with the types API surface.
+`PassiveSonarSensorData` and `ActiveSonarSensorData` live in `bluepebble.types` and are documented with the types API surface.
 
 ## Doppler
 
@@ -19,7 +20,9 @@ No propagation model computes a Doppler term. `H(f)` is instantaneous and the so
 - `ContinuousSTFTPassiveSonarArraySimulator` (`cola`) staircases Doppler between knots. The channel `H(f)` is full per-frequency-bin (nearest knot).
 - `DiscretePassiveSonarArraySimulator` has no Doppler, since each step is an independent frozen-geometry snapshot. The channel `H(f)` is full per-frequency-bin, frozen per step.
 
-No single simulator gives both correct wideband Doppler and a full frequency-dependent channel: raise `hop_factor` or switch to the fractional-delay simulator to lift the STFT alias limit.
+`ActiveSonarSimulator` has no Doppler either: each ping's geometry is frozen at the transmit time.
+
+No single passive simulator gives both correct wideband Doppler and a full frequency-dependent channel: raise `hop_factor` or switch to the fractional-delay simulator to lift the STFT alias limit.
 
 ```{eval-rst}
 .. automodule:: bluepebble.simulator

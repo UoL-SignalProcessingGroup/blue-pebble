@@ -32,6 +32,7 @@ from stonesoup.types.groundtruth import GroundTruthPath, GroundTruthState
 from tqdm import tqdm
 
 import bluepebble
+from bluepebble.arrays import TowedArray
 from bluepebble.detector import (
     BandDetector,
     CACFARDetector,
@@ -41,7 +42,7 @@ from bluepebble.detector import (
 )
 from bluepebble.models.environment import FlatBathymetry, Linear
 from bluepebble.models.propagation import CylindricalAcousticPropagationModel
-from bluepebble.platform import TowedArrayPlatform
+from bluepebble.platform import SonarPlatform
 from bluepebble.plotter import apply_shared_colourscale, deduplicate_legend, plot_btr, plot_world
 from bluepebble.signal.anthropogenic import SyntheticAnthropogenicSignal
 from bluepebble.signal.random import ColouredNoiseSignal
@@ -150,17 +151,20 @@ for maneuver in maneuvers:
 
 platform_start_vector = np.array([5000.0, 0.0, 1000.0, 5.0, -5.0, 0.0])
 
-platform = TowedArrayPlatform(
+platform = SonarPlatform(
     states=[GroundTruthState(platform_start_vector, timestamp=start_time)],
     position_mapping=[0, 2, 4],
     velocity_mapping=[1, 3, 5],
     transition_models=platform_transition_models,
     transition_times=platform_transition_times,
+)
+towed_array = TowedArray(
     num_sensors=num_sensors,
     cable_length_m=tow_cable_length_m,
     sensor_spacing_m=sensor_spacing_m,
     array_depth_m=array_depth_m,
 )
+platform.add_sensor(towed_array)
 
 for i in range(1, num_steps):
     platform.move(start_time + i * time_interval)
@@ -243,7 +247,7 @@ for target_config in target_configs:
 
     bearing_states = []
     for target_state in target_ground_truth.states:
-        platform_state = platform.get_platform_state_at(target_state.timestamp)
+        platform_state = towed_array.get_platform_state_at(target_state.timestamp)
         assert platform_state is not None
         ref_sensor_position = np.mean(platform_state.array.state_vector, axis=1)
         target_position = np.array([target_state.state_vector[0], target_state.state_vector[2]])
@@ -258,7 +262,7 @@ for target_config in target_configs:
 
     bearing_truths.append(GroundTruthPath(bearing_states))
 
-fig_world = plot_world(truths=target_ground_truths, platform=platform).update_layout(
+fig_world = plot_world(truths=target_ground_truths, platform=towed_array).update_layout(
     title="World Picture: Target and Platform Trajectories",
     template="plotly_white",
     autosize=True,
@@ -399,7 +403,7 @@ steering_calculator = SteeringCalculator(
 )
 
 simulator = ContinuousSTFTPassiveSonarArraySimulator(
-    platform=platform,
+    array=towed_array,
     propagation_model=propagation_model,
     signal_models=_make_signal_models(),
     noise_model=ambient_noise_model,
@@ -418,7 +422,7 @@ simulator = ContinuousSTFTPassiveSonarArraySimulator(
 # simulated once and cached, since it holds every band's data per timestep;
 # beamformed_scans_from_sensor_data then selects one band's slice per calibration.
 ambient_only_simulator = ContinuousSTFTPassiveSonarArraySimulator(
-    platform=platform,
+    array=towed_array,
     propagation_model=propagation_model,
     signal_models=_make_signal_models(),
     noise_model=ambient_noise_model,

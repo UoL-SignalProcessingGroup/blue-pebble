@@ -28,6 +28,9 @@ def _install_fake_acoustic_dependencies(monkeypatch) -> None:
     platform_module = ModuleType("bluepebble.platform")
     platform_module.TowedArrayPlatform = type("TowedArrayPlatform", (), {})
 
+    arrays_module = ModuleType("bluepebble.arrays")
+    arrays_module.TowedArray = type("TowedArray", (), {})
+
     signal_package = ModuleType("bluepebble.signal")
     signal_package.__path__ = []
 
@@ -66,6 +69,7 @@ def _install_fake_acoustic_dependencies(monkeypatch) -> None:
 
     monkeypatch.setitem(sys.modules, "bluepebble.models.propagation", propagation_module)
     monkeypatch.setitem(sys.modules, "bluepebble.platform", platform_module)
+    monkeypatch.setitem(sys.modules, "bluepebble.arrays", arrays_module)
     monkeypatch.setitem(sys.modules, "bluepebble.signal", signal_package)
     monkeypatch.setitem(sys.modules, "bluepebble.signal.random", random_module)
     monkeypatch.setitem(sys.modules, "bluepebble.signal.anthropogenic", anthropogenic_module)
@@ -272,7 +276,7 @@ def test_passive_generate_sensor_data_combines_targets_noise_and_beamforming(mon
     beamformer = FakeBeamformer()
     target_path = FakePath(states=[FakeState(timestamp=timestamp, state_vector=np.array([1.0]))])
     simulator = acoustic.PassiveSonarArraySimulator(
-        platform=platform,
+        array=platform,
         propagation_model=FakePropagationModel(),
         signal_models=[FakeSignalModel()],
         noise_model=FakeNoiseModel(),
@@ -330,7 +334,7 @@ def test_passive_sensor_data_gen_yields_sorted_unique_timestamps(monkeypatch) ->
         ]
     )
     simulator = acoustic.PassiveSonarArraySimulator(
-        platform=platform,
+        array=platform,
         propagation_model=FakePropagationModel(),
         signal_models=[FakeSignalModel()],
         noise_model=None,
@@ -364,7 +368,7 @@ def test_passive_sensor_data_gen_raises_when_platform_has_no_states(monkeypatch)
             raise AssertionError("should not be reached")
 
     simulator = discrete.DiscretePassiveSonarArraySimulator(
-        platform=platform,
+        array=platform,
         propagation_model=FakePropagationModel(),
         signal_models=[],
         noise_model=None,
@@ -408,7 +412,7 @@ def test_passive_generate_sensor_data_uses_zero_signal_when_target_absent(monkey
             return np.ones((2, len(frequencies)), dtype=np.complex128), 0.0
 
     simulator = acoustic.PassiveSonarArraySimulator(
-        platform=platform,
+        array=platform,
         propagation_model=FakePropagationModel(),
         signal_models=[FakeSignalModel()],
         noise_model=None,
@@ -443,7 +447,7 @@ def test_passive_sensor_data_gen_emits_zero_snapshots_when_no_targets(monkeypatc
             return np.ones((1, len(frequencies)), dtype=np.complex128), 0.0
 
     simulator = acoustic.PassiveSonarArraySimulator(
-        platform=platform,
+        array=platform,
         propagation_model=FakePropagationModel(),
         signal_models=[FakeSignalModel()],
         noise_model=None,
@@ -469,7 +473,7 @@ def test_broadband_requires_at_least_two_timesteps(monkeypatch) -> None:
     platform = FakePlatform([timestamp], num_sensors=1)
 
     simulator = acoustic.BroadbandPassiveSonarArraySimulator(
-        platform=platform,
+        array=platform,
         propagation_model=SimpleNamespace(),
         signal_models=[SimpleNamespace()],
         noise_model=None,
@@ -494,7 +498,7 @@ def test_stft_simulator_zero_targets_emits_noise_only(monkeypatch) -> None:
             return np.ones((num_sensors, num_samples or 1), dtype=np.complex64) * 5.0
 
     simulator = acoustic.BroadbandPassiveSonarArraySimulator(
-        platform=platform,
+        array=platform,
         propagation_model=SimpleNamespace(),
         signal_models=[FakeBroadbandSignalModel()],
         noise_model=ConstantNoise(),
@@ -525,7 +529,7 @@ def test_fractional_delay_simulator_zero_targets_emits_noise_only(monkeypatch) -
             return np.ones((num_sensors, num_samples or 1), dtype=np.complex64) * 7.0
 
     simulator = acoustic.FractionalDelayPassiveSonarArraySimulator(
-        platform=platform,
+        array=platform,
         propagation_model=SimpleNamespace(),
         signal_models=[FakeBroadbandSignalModel()],
         noise_model=ConstantNoise(),
@@ -567,7 +571,7 @@ def test_broadband_rejects_mismatched_signal_model_count(monkeypatch) -> None:
             return np.ones(8, dtype=np.float32)
 
     simulator = acoustic.BroadbandPassiveSonarArraySimulator(
-        platform=platform,
+        array=platform,
         propagation_model=SimpleNamespace(),
         signal_models=[FakeBroadbandSignalModel()],
         noise_model=None,
@@ -613,7 +617,7 @@ def test_broadband_truncates_long_noise(monkeypatch) -> None:
 
     noise_model = LongNoiseModel()
     simulator = acoustic.BroadbandPassiveSonarArraySimulator(
-        platform=platform,
+        array=platform,
         propagation_model=FakePropagationModel(),
         signal_models=[FakeBroadbandSignalModel()],
         noise_model=noise_model,
@@ -655,7 +659,7 @@ def test_stft_progress_bar_does_not_change_output(monkeypatch) -> None:
 
     def build_simulator():
         return acoustic.BroadbandPassiveSonarArraySimulator(
-            platform=platform,
+            array=platform,
             propagation_model=FakePropagationModel(),
             signal_models=[FakeBroadbandSignalModel()],
             noise_model=None,
@@ -697,7 +701,7 @@ def test_fractional_delay_progress_bar_does_not_change_output(monkeypatch) -> No
 
     def build_simulator():
         return acoustic.FractionalDelayPassiveSonarArraySimulator(
-            platform=platform,
+            array=platform,
             propagation_model=FakePropagationModel(),
             signal_models=[FakeSignalModel()],
             noise_model=None,
@@ -758,7 +762,7 @@ def test_broadband_pads_short_noise_and_beamforms_real_part(monkeypatch) -> None
     beamformer = RecordingBeamformer()
     steering_calculator = FakeSteeringCalculator()
     simulator = acoustic.BroadbandPassiveSonarArraySimulator(
-        platform=platform,
+        array=platform,
         propagation_model=FakePropagationModel(),
         signal_models=[FakeBroadbandSignalModel()],
         noise_model=ShortNoiseModel(),
@@ -822,7 +826,7 @@ def test_broadband_sums_multiple_targets_with_shared_signal_model(monkeypatch) -
             return np.array([0.0], dtype=float)
 
     simulator = acoustic.BroadbandPassiveSonarArraySimulator(
-        platform=platform,
+        array=platform,
         propagation_model=FakePropagationModel(),
         signal_models=[FakeBroadbandSignalModel()],
         noise_model=None,
@@ -863,7 +867,7 @@ def test_broadband_handles_target_missing_at_a_timestep(monkeypatch) -> None:
             return np.array([0.0], dtype=float)
 
     simulator = acoustic.BroadbandPassiveSonarArraySimulator(
-        platform=platform,
+        array=platform,
         propagation_model=FakePropagationModel(),
         signal_models=[TinyBroadbandSignalModel()],
         noise_model=None,
@@ -921,7 +925,7 @@ def test_broadband_beamformer_receives_sensors_in_native_array_order(monkeypatch
 
     beamformer = RecordingBeamformer()
     simulator = acoustic.BroadbandPassiveSonarArraySimulator(
-        platform=platform,
+        array=platform,
         propagation_model=FakePropagationModel(),
         signal_models=[TinyBroadbandSignalModel()],
         noise_model=None,

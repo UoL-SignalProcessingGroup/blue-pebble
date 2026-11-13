@@ -788,6 +788,68 @@ def test_array_frame_sides_follow_the_sign_convention(monkeypatch, side, side_y_
     assert np.all(side_y_sign * np.sin(bearings) >= -1e-12)
 
 
+def _dome_platform(axis) -> SimpleNamespace:
+    """Build a fake dome-like array: sensors spread across y, facing along ``axis``."""
+    y = np.linspace(-2.0, 2.0, 9)
+    state_vector = np.array([3.0 - 0.1 * y**2, y, np.full(y.size, -10.0)])
+    return SimpleNamespace(
+        array=SimpleNamespace(
+            state_vector=state_vector,
+            ref_state_vector=np.array([[0.0], [0.0], [-10.0]]),
+            axis=None if axis is None else np.asarray(axis, dtype=float).reshape(3, 1),
+        )
+    )
+
+
+@pytest.mark.parametrize("axis_rad", [0.0, 0.7, -2.5])
+def test_array_frame_follows_the_stated_axis(monkeypatch, axis_rad) -> None:
+    """An array state's axis sets the array frame, not the line through its end sensors.
+
+    The dome's end sensors lie across the ship, so reading them would turn its fan by 90
+    degrees.
+    """
+    beamformer = _load_beamformer_module(monkeypatch)
+    platform = _dome_platform([np.cos(axis_rad), np.sin(axis_rad), 0.0])
+
+    bearings = _steering_calculator(beamformer, (-np.pi / 2, np.pi / 2), 5).steering_bearings(
+        platform
+    )
+
+    np.testing.assert_allclose(np.angle(np.exp(1j * (bearings[2] - axis_rad))), 0.0, atol=1e-12)
+    assert beamformer.SteeringCalculator._array_axis_rad(platform) == pytest.approx(axis_rad)
+
+
+@pytest.mark.parametrize("axis", [None, [0.0, 0.0, 1.0]], ids=["no axis", "vertical axis"])
+def test_array_frame_falls_back_to_the_end_sensors(monkeypatch, axis) -> None:
+    """Without a horizontal stated axis, forward runs from the last sensor to sensor 0."""
+    beamformer = _load_beamformer_module(monkeypatch)
+    platform = _dome_platform(axis)
+
+    forward = beamformer.SteeringCalculator._array_forward_rad(platform)
+
+    assert forward == pytest.approx(-np.pi / 2)
+
+
+def test_towed_array_axis_leaves_the_frame_unchanged(monkeypatch) -> None:
+    """A towed array states the same forward axis its end sensors give, so nothing moves."""
+    beamformer = _load_beamformer_module(monkeypatch)
+    without = _rotated_array_platform(0.4)
+    positions = without.array.state_vector
+    forward = positions[:, 0] - positions[:, -1]
+    stated = SimpleNamespace(
+        array=SimpleNamespace(
+            state_vector=positions,
+            ref_state_vector=without.array.ref_state_vector,
+            axis=(forward / np.linalg.norm(forward)).reshape(3, 1),
+        )
+    )
+    calculator = _steering_calculator(beamformer, (0.0, np.pi), 9)
+
+    np.testing.assert_allclose(
+        calculator.steering_bearings(stated), calculator.steering_bearings(without), atol=1e-12
+    )
+
+
 @pytest.mark.parametrize("spacing", ["uniform", "sine"])
 def test_array_frame_grid_turns_with_the_array(monkeypatch, spacing) -> None:
     """Turning a straight array turns every bearing with it and leaves the delays unchanged.
@@ -1010,3 +1072,174 @@ def test_array_frame_mirror_plan_is_exact_when_the_axis_is_off_grid(monkeypatch)
 
     assert plan.roll_shift == 0
     np.testing.assert_allclose(mirrored, direct, rtol=1e-9, atol=1e-9)
+
+
+def _vertical_array_platform(num_sensors: int = 4, spacing_m: float = 1.0) -> SimpleNamespace:
+    """Build a fake platform whose sensors hang in a vertical line below sensor 0."""
+    z = -10.0 - np.arange(num_sensors, dtype=np.float64) * spacing_m
+    state_vector = np.array([np.zeros(num_sensors), np.zeros(num_sensors), z])
+    return SimpleNamespace(
+        array=SimpleNamespace(state_vector=state_vector, ref_state_vector=state_vector[:, [0]])
+    )
+
+
+def _crossed_array_platform(num_sensors: int = 16, spacing_m: float = 0.5) -> SimpleNamespace:
+    """Build a fake platform with a line of sensors along +x and another down -z from sensor 0."""
+    offsets = np.arange(num_sensors, dtype=np.float64) * spacing_m
+    horizontal = np.array([offsets, np.zeros(num_sensors), np.full(num_sensors, -50.0)])
+    vertical = np.array(
+        [np.zeros(num_sensors - 1), np.zeros(num_sensors - 1), -50.0 - offsets[1:]]
+    )
+    state_vector = np.hstack([horizontal, vertical])
+    return SimpleNamespace(
+        array=SimpleNamespace(state_vector=state_vector, ref_state_vector=state_vector[:, [0]])
+    )
+
+
+def _world_calculator(beamformer, elevation_rad: float = 0.0, **kwargs):
+    """Build a world-frame calculator over the first quadrant at one elevation."""
+    settings = {"steering_sector_rad": (0.0, np.pi / 2), "num_beams": 4, **kwargs}
+    return beamformer.SteeringCalculator(
+        ssp=ConstantSSP(1500.0), frame="world", steering_elevation_rad=elevation_rad, **settings
+    )
+
+
+def test_zero_elevation_leaves_delays_bit_identical(monkeypatch) -> None:
+    """The default elevation reproduces the horizontal delays exactly."""
+    beamformer = _load_beamformer_module(monkeypatch)
+    platform = _crossed_array_platform(num_sensors=4)
+    calculator = _world_calculator(beamformer)
+    bearings = calculator.steering_bearings(platform)
+    relative = platform.array.state_vector - platform.array.ref_state_vector
+    horizontal = np.array([np.cos(bearings), np.sin(bearings), np.zeros_like(bearings)])
+
+    np.testing.assert_array_equal(
+        calculator.calculate(platform), -(horizontal.T @ relative) / 1500.0
+    )
+
+
+@pytest.mark.parametrize("elevation_deg", [-60.0, -3.0, 0.0, 25.0, 90.0])
+def test_vertical_array_delays_follow_the_sine_of_elevation(monkeypatch, elevation_deg) -> None:
+    """A vertical line's delays are -dz sin(e) / c on every bearing; at e = 0 they vanish."""
+    beamformer = _load_beamformer_module(monkeypatch)
+    platform = _vertical_array_platform()
+    elevation_rad = np.radians(elevation_deg)
+    dz = platform.array.state_vector[2] - platform.array.ref_state_vector[2]
+
+    delays = _world_calculator(beamformer, elevation_rad).calculate(platform)
+
+    expected = np.broadcast_to(-dz * np.sin(elevation_rad) / 1500.0, delays.shape)
+    np.testing.assert_allclose(delays, expected, rtol=0.0, atol=1e-15)
+
+
+@pytest.mark.parametrize("elevation_deg", [-45.0, -3.0, 30.0])
+def test_horizontal_array_delays_scale_with_the_cosine_of_elevation(
+    monkeypatch, elevation_deg
+) -> None:
+    """Steering a horizontal line off the horizontal shrinks its delays by cos(e)."""
+    beamformer = _load_beamformer_module(monkeypatch)
+    platform = _straight_array_platform()
+    elevation_rad = np.radians(elevation_deg)
+
+    level = _world_calculator(beamformer).calculate(platform)
+    tilted = _world_calculator(beamformer, elevation_rad).calculate(platform)
+
+    np.testing.assert_allclose(tilted, np.cos(elevation_rad) * level, rtol=1e-12, atol=1e-18)
+
+
+@pytest.mark.parametrize("elevation_rad", [-np.pi / 2 - 1e-6, np.pi / 2 + 1e-6, 2.0])
+def test_steering_calculator_rejects_elevation_beyond_vertical(monkeypatch, elevation_rad) -> None:
+    """Elevations outside [-pi/2, pi/2] do not name a direction uniquely, so they raise."""
+    beamformer = _load_beamformer_module(monkeypatch)
+
+    with pytest.raises(ValueError, match="steering_elevation_rad"):
+        _world_calculator(beamformer, elevation_rad)
+
+
+def test_mirror_plan_matches_full_grid_off_the_horizontal(monkeypatch) -> None:
+    """Mirror pairing stays exact for a straight horizontal array steered below horizontal."""
+    beamformer = _load_beamformer_module(monkeypatch)
+    platform = _straight_array_platform(num_sensors=8, spacing_m=1.0)
+    settings = {
+        "ssp": ConstantSSP(1500.0),
+        "steering_sector_rad": (-np.pi, np.pi),
+        "num_beams": 16,
+        "steering_elevation_rad": np.radians(-3.0),
+    }
+    full_calculator = beamformer.SteeringCalculator(**settings)
+    mirror_calculator = beamformer.SteeringCalculator(**settings, mirror_half_plane=True)
+    full_delays = full_calculator.calculate(platform)
+
+    fs = 500.0
+    t = np.arange(256) / fs
+    raw_signals = np.exp(2j * np.pi * 100.0 * (t[None, :] - full_delays[2][:, None]))
+    das = beamformer.DelayAndSumBeamformer(
+        sampling_rate_hz=fs, domain="broadband_power", nfft=64, overlap=32, fmin=50.0, fmax=150.0
+    )
+
+    full_power = das.beamform(raw_signals, full_delays)
+    mirrored_power = das.beamform(
+        raw_signals,
+        mirror_calculator.calculate(platform),
+        mirror_plan=mirror_calculator.mirror_plan(platform),
+    )
+
+    np.testing.assert_allclose(mirrored_power, full_power, rtol=1e-9, atol=1e-9)
+
+
+def test_delay_and_sum_locates_a_plane_wave_in_bearing_and_elevation(monkeypatch) -> None:
+    """Scanning elevations with one calculator each finds a broadband plane wave's direction.
+
+    A crossed horizontal and vertical line resolves both angles. On a 1 deg grid the
+    beam-power peak is within a grid step of the source, which sits between grid points. On
+    0.05 deg cuts through the source, the peak is at its bearing and elevation, so the
+    steering geometry adds no bias of its own.
+    """
+    beamformer = _load_beamformer_module(monkeypatch)
+    platform = _crossed_array_platform()
+    true_bearing_rad, true_elevation_rad = np.radians(30.4), np.radians(-10.3)
+
+    def calculator(sector_deg, num_beams, elevation_rad):
+        return beamformer.SteeringCalculator(
+            ssp=ConstantSSP(1500.0),
+            steering_sector_rad=tuple(np.radians(sector_deg)),
+            num_beams=num_beams,
+            frame="world",
+            steering_elevation_rad=elevation_rad,
+        )
+
+    source = calculator((0.0, 1.0), 2, true_elevation_rad)
+    arrival_delays = source._delays_for_azimuths(platform, np.array([true_bearing_rad]))[0]
+    fs, num_samples = 4000.0, 4096
+    rng = np.random.default_rng(7)
+    spectrum = np.fft.fft(rng.normal(size=num_samples) + 1j * rng.normal(size=num_samples))
+    f = np.fft.fftfreq(num_samples, 1 / fs)
+    raw_signals = np.fft.ifft(spectrum * np.exp(-2j * np.pi * f * arrival_delays[:, None]), axis=1)
+    das = beamformer.DelayAndSumBeamformer(
+        sampling_rate_hz=fs,
+        domain="broadband_power",
+        nfft=256,
+        overlap=128,
+        fmin=500.0,
+        fmax=1400.0,
+    )
+
+    def power(sector_deg, num_beams, elevation_rad):
+        steering = calculator(sector_deg, num_beams, elevation_rad)
+        return steering.steering_bearings(platform), das.beamform(
+            raw_signals, steering.calculate(platform)
+        ).sum(axis=1)
+
+    elevations_rad = np.radians(np.arange(-30.0, 31.0))
+    coarse = np.array([power((0.0, 60.0), 61, elevation)[1] for elevation in elevations_rad])
+    i_el, i_az = np.unravel_index(np.argmax(coarse), coarse.shape)
+    assert abs(i_az - 30.4) <= 1.0
+    assert abs(np.degrees(elevations_rad[i_el]) - (-10.3)) <= 1.0
+
+    bearings, bearing_cut = power((28.0, 33.0), 101, true_elevation_rad)
+    assert bearings[np.argmax(bearing_cut)] == pytest.approx(true_bearing_rad, abs=1e-9)
+    fine_elevations_rad = np.radians(np.linspace(-12.5, -7.5, 101))
+    elevation_cut = [power((30.4, 30.45), 2, elevation)[1][0] for elevation in fine_elevations_rad]
+    assert fine_elevations_rad[np.argmax(elevation_cut)] == pytest.approx(
+        true_elevation_rad, abs=1e-9
+    )

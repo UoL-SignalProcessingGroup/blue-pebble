@@ -27,13 +27,14 @@ pytest --collect-only -q
 
 ### Signal models and utilities
 
-`tests/test_signal_utils.py`, `tests/test_signal_base.py`, `tests/test_signal_models.py`, `tests/test_signal_anthropogenic.py`, `tests/test_signal_biological.py`
+`tests/test_signal_utils.py`, `tests/test_signal_base.py`, `tests/test_signal_models.py`, `tests/test_signal_anthropogenic.py`, `tests/test_signal_biological.py`, `tests/test_signal_active.py`
 
 - STFT utilities, inverse-STFT round-trip behaviour and fade helpers
 - `Signal.generate` validation and attenuation/delay application branches
 - ambient-noise and effects helpers
 - anthropogenic source synthesis from each source's metadata, and the deprecated constructor arguments
 - biological signal generation, call template construction and snapping shrimp models
+- active pulses: CW tone, level and phase; LFM sweep, edge taper and configuration checks
 
 ### Seed management
 
@@ -54,6 +55,15 @@ pytest --collect-only -q
 - MVDR validation, finite output on deterministic inputs, and multiband output matching separate single-band runs
 - steering delays and array-axis wrapping at ±π
 - mainlobe width against the textbook beamwidth, and the CFAR windows derived from it
+- steering at an elevation: bit-identical horizontal delays at zero elevation, sin(e) and cos(e) scaling on vertical and horizontal lines, mirror pairing below the horizontal, and a broadband plane wave located in bearing and elevation by a crossed array
+
+### Matched filtering
+
+`tests/test_sigproc_matchedfilter.py`
+
+- the correlation peak at the echo delay with the echo's energy, and agreement with scipy's direct correlation
+- multi-channel rows filtered independently, and the replica taper
+- shape validation, and parabolic peak interpolation recovering an exact vertex
 
 ### Environment models
 
@@ -65,7 +75,7 @@ pytest --collect-only -q
 
 ### Detection
 
-`tests/test_detector_algorithms.py`, `tests/test_detector_algorithms_validation.py`, `tests/test_detector_cfar_correctness.py`, `tests/test_detector_noise_calibration.py`, `tests/test_detector_passive.py`, `tests/test_detector_multiband.py`, `tests/test_detector_metrics.py`
+`tests/test_detector_algorithms.py`, `tests/test_detector_algorithms_validation.py`, `tests/test_detector_cfar_correctness.py`, `tests/test_detector_noise_calibration.py`, `tests/test_detector_passive.py`, `tests/test_detector_multiband.py`, `tests/test_detector_metrics.py`, `tests/test_detector_active.py`
 
 - CA-CFAR and OS-CFAR construction, validation and the two threshold modes (fixed `threshold_factor`, or `target_pfa` with a noise calibration)
 - closed-form thresholds and detection probabilities pinned to published values (Rohling; Gandhi and Kassam; Chalabi)
@@ -73,6 +83,9 @@ pytest --collect-only -q
 - noise calibration: exact recovery on i.i.d. Gamma data, generalised Pareto tail extrapolation, and held-out Pfa on correlated noise
 - peak consolidation, including clusters that straddle the ±180° wrap
 - passive and multiband detector wiring from beamformed data to Stone Soup detections with `Bearing` state vectors
+- active detection on simulated pings: monostatic range within c/(2B), bearing and range from beams,
+  the bistatic range sum, a minimum range, held-out Pfa after calibrating on noise-only pings, and
+  rejection of wrapping CFAR, unbeamformed multi-channel data and resized beams
 - timestep metrics, parameter sweeps and theoretical ROC helpers
 
 ### Plotting helpers
@@ -94,6 +107,20 @@ pytest --collect-only -q
 - `rtrs` option validation, missing-package behaviour, transmission loss and spectrum transfer functions
 - real `rtrs` smoke tests for scalar and per-frequency transmission loss and broadband transfer functions
 
+`tests/test_propagation_bellhop.py`, `tests/test_scattering_models.py`
+
+- Bellhop environment and bathymetry files, arrivals parsing (including phase), world-to-depth
+  conversion, invalid geometry and executable errors, using a stub executable
+- Bellhop as a spectrum propagation model: transfer functions summed from arrivals (conjugate at
+  negative frequencies), receivers mapped to their grid points, no-arrival sensors, run counts
+  per receiver geometry, and `propagate` loss and travel time
+- with `bellhopcxx` on `PATH` (skipped otherwise, as in CI): direct and surface-reflected paths
+  against spherical spreading and the image source; transfer functions against the analytic
+  Lloyd's mirror field; bottom-reflection phase against the Rayleigh coefficient; shared and
+  per-sensor runs agreeing over a flat bottom; and, with rtrs installed, Bellhop against a
+  converged rtrs in the same sediment half-space
+- constant target strength gain and its frequency independence
+
 ### Simulators
 
 `tests/test_simulator_acoustic.py`, `tests/test_simulator_modules.py`
@@ -103,20 +130,53 @@ pytest --collect-only -q
 - discrete simulator source-signal resolution and timestep validation
 - continuous STFT and fractional-delay simulator interpolation, fading and reconstruction branches
 
+`tests/test_simulator_active.py`
+
+- active echoes at the monostatic round-trip delay and the bistatic range sum, including a
+  sonobuoy receiving a hull array's ping, with the out leg traced from transmitter to target
+- echo level against the sonar equation with spherical spreading, and baffle gains on
+  transmit and receive
+- an LFM matched-filter peak, per-sensor delays across a line array, no wrap-around of late
+  echoes, and silence from targets that cannot be heard
+- default ping times, a missing transmitter state, seeded noise and settings validation
+- with `bellhopcxx` on `PATH`: the direct echo against spherical spreading, and a bistatic
+  sonobuoy echo
+- with rtrs installed: the direct echo against spherical spreading
+
 ### Towed-array models
 
-`tests/test_towedarray_models.py`
+`tests/test_towedarray_models.py`, `tests/test_arrays_base.py`,
+`tests/test_towedarray_platform_deprecated.py`
 
-- follower geometry for overlapping and separated platform states
+These run against the real Stone Soup platform and mounting classes.
+
+- follower geometry for overlapping and separated sensor states
 - horizontal offset handling and depth consistency
-- platform construction, sensor initialisation, state capture and heading wrapping at ±π
-- host and sensor path retrieval
+- sonar platform depth, mounting arrays and the move cascade to them
+- array mounting, sensor layout, `mounting_offset` as the tow point, state capture and heading
+  wrapping at ±π
+- platform and sensor path retrieval
+- the towed array's forward axis and baffle gains
+- the deprecated `TowedArrayPlatform` reproducing `SonarPlatform` + `TowedArray` exactly, and the
+  simulators' deprecated `platform=` argument
+
+`tests/test_bowarray.py`, `tests/test_flankarray.py`, `tests/test_sonobuoy.py`
+
+- bow dome layout on its sphere, mounting depth, forward-facing normals, axis and history through
+  a turn
+- flank panels per side: rotation offset, outward normals, grid layout and reference, the
+  bow-to-tow-point fit check, and configuration errors
+- sonobuoy hydrophone position and depth sign, and `SingleSensorArray` on a plain Stone Soup platform
+- sensor spacing checks (touching sensors, grating-lobe limit)
+- `RigidArray`'s reference point matching Stone Soup's own mounted position, and the heading of a
+  fixed platform
 
 ### Types
 
 `tests/test_types_sensordata.py`
 
 - `PassiveSonarSensorData` construction, defaults and multiband band-label validation
+- `ActiveSonarSensorData` construction and waveform shape validation
 - types package public API exports
 
 ## Current gaps

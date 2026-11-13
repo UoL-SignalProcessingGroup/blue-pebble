@@ -194,3 +194,38 @@ def test_passive_sonar_sensor_data_rejects_mismatched_bearings(
             timestamp=datetime(2026, 1, 1, 12, 0, 0),
             steering_bearings_rad=bearings,
         )
+
+
+def test_active_sonar_sensor_data_stores_one_row_per_sensor(monkeypatch):
+    """Active sensor data keeps the waveform, pulse and ping time, one row per sensor."""
+    sensordata_module, types_module = _load_types_modules(monkeypatch)
+    received = np.zeros((3, 100), dtype=np.complex128)
+    pulse = np.ones(20, dtype=np.complex128)
+    timestamp = datetime(2026, 1, 1, 12, 0, 0)
+
+    data = sensordata_module.ActiveSonarSensorData(
+        received_waveform=received, transmit_pulse=pulse, timestamp=timestamp
+    )
+
+    assert data.num_sensors == 3
+    np.testing.assert_array_equal(data.transmit_pulse, pulse)
+    assert data.timestamp == timestamp
+    assert "ActiveSonarSensorData" in types_module.__all__
+
+
+@pytest.mark.parametrize(
+    ("received_shape", "pulse_shape", "match"),
+    [((100,), (20,), "one row"), ((1, 100), (1, 20), "one-dimensional")],
+)
+def test_active_sonar_sensor_data_rejects_wrong_shapes(
+    monkeypatch, received_shape, pulse_shape, match
+):
+    """A 1-D received waveform or a 2-D pulse is rejected."""
+    sensordata_module, _ = _load_types_modules(monkeypatch)
+
+    with pytest.raises(ValueError, match=match):
+        sensordata_module.ActiveSonarSensorData(
+            received_waveform=np.zeros(received_shape, dtype=np.complex128),
+            transmit_pulse=np.ones(pulse_shape, dtype=np.complex128),
+            timestamp=datetime(2026, 1, 1),
+        )
