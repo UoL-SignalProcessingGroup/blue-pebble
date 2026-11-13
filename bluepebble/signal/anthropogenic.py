@@ -1,6 +1,5 @@
 """Anthropogenic signal models for sensor arrays."""
 
-import warnings
 from abc import ABC
 from fractions import Fraction
 from pathlib import Path
@@ -74,8 +73,8 @@ def _extract_tonal_metadata(
     )
 
 
-# Source characteristics read from metadata alongside the tonals. Their same-named constructor
-# arguments on SyntheticAnthropogenicSignal are deprecated.
+# Source characteristics that were SyntheticAnthropogenicSignal arguments before v0.8.0 and are
+# now read only from each source's metadata.
 _SOURCE_METADATA_KEYS = ("tonal_bandwidth_hz", "noise_amplitude_upa", "noise_spectral_exponent")
 
 
@@ -97,9 +96,12 @@ class SyntheticAnthropogenicSignal(AnthropogenicSignal):
     What the source emits comes from the source state's metadata: the tonals
     (``amplitudes_upa``, ``frequencies_hz``, ``phases_rad``), their ``tonal_bandwidth_hz``, and
     the broadband noise, ``noise_amplitude_upa`` (0 for none) and ``noise_spectral_exponent``
-    (needed only when ``noise_amplitude_upa`` is positive). A missing key raises
-    ``ValueError``. This model holds only how the waveform is synthesised. The propagation
-    model also reads ``position_mapping`` from the metadata, to locate the source.
+    (needed only when ``noise_amplitude_upa`` is positive). ``tonal_bandwidth_hz`` is each
+    tonal's bandwidth in Hz, ``noise_amplitude_upa`` the broadband noise's RMS amplitude in µPa,
+    and ``noise_spectral_exponent`` its spectral slope (-1 pink, -2 red/brownian, 0 white). A
+    missing key raises ``ValueError``. This model holds only how the waveform is synthesised.
+    The propagation model also reads ``position_mapping`` from the metadata, to locate the
+    source.
 
     Parameters
     ----------
@@ -109,12 +111,6 @@ class SyntheticAnthropogenicSignal(AnthropogenicSignal):
         Hop factor, where hop size = frame_len // hop_factor. Default is 4.
     window_type : {'hann', 'hamming', 'blackman'}, optional
         Window type for STFT. Default is 'hann'.
-    tonal_bandwidth_hz, noise_amplitude_upa, noise_spectral_exponent : float, optional
-        Deprecated: set these in the source's metadata instead. Until their removal in the next
-        release, each is used only for a source whose metadata lacks that key. In metadata,
-        ``tonal_bandwidth_hz`` is each tonal's bandwidth in Hz, ``noise_amplitude_upa`` the
-        broadband noise's RMS amplitude in µPa, and ``noise_spectral_exponent`` its spectral
-        slope (-1 pink, -2 red/brownian, 0 white).
     noise_freq_range_hz : tuple, optional
         Tuple of (min_freq, max_freq) for noise generation. Default is (20.0, 200.0), covering
         typical machinery noise ranges.
@@ -162,18 +158,6 @@ class SyntheticAnthropogenicSignal(AnthropogenicSignal):
 
     """
 
-    tonal_bandwidth_hz: float | None = Property(
-        default=None,
-        doc="Deprecated: set in the source's metadata. Used only when the metadata lacks it.",
-    )
-    noise_amplitude_upa: float | None = Property(
-        default=None,
-        doc="Deprecated: set in the source's metadata. Used only when the metadata lacks it.",
-    )
-    noise_spectral_exponent: float | None = Property(
-        default=None,
-        doc="Deprecated: set in the source's metadata. Used only when the metadata lacks it.",
-    )
     noise_freq_range_hz: tuple[float, float] = Property(
         default=(20.0, 200.0), doc="Frequency range for noise (Hz)"
     )
@@ -210,20 +194,24 @@ class SyntheticAnthropogenicSignal(AnthropogenicSignal):
     )
 
     def __init__(self, *args: object, **kwargs: object) -> None:
-        """Initialise realistic ship signal generator."""
-        super().__init__(*args, **kwargs)
-        deprecated = [key for key in _SOURCE_METADATA_KEYS if getattr(self, key) is not None]
-        if deprecated:
-            warnings.warn(
-                f"Passing {', '.join(deprecated)} to SyntheticAnthropogenicSignal is deprecated "
-                "and will be removed in the next release: set them in each source's metadata "
-                "instead, alongside the tonals. Until then they are used only for sources whose "
-                "metadata lacks them.",
-                DeprecationWarning,
-                stacklevel=2,
+        """Initialise realistic ship signal generator.
+
+        Raises
+        ------
+        TypeError
+            If a removed source characteristic (``tonal_bandwidth_hz``, ``noise_amplitude_upa``
+            or ``noise_spectral_exponent``) is passed.
+
+        """
+        # Caught before Stone Soup's Base, whose "unexpected keyword argument" names the mistake
+        # but not its replacement.
+        removed = [key for key in _SOURCE_METADATA_KEYS if key in kwargs]
+        if removed:
+            raise TypeError(
+                f"SyntheticAnthropogenicSignal no longer takes {', '.join(removed)} (removed in "
+                "v0.8.0). Set them in each source's metadata instead, alongside the tonals."
             )
-        if self.tonal_bandwidth_hz is not None:
-            self._validate_tonal_bandwidth(self.tonal_bandwidth_hz)
+        super().__init__(*args, **kwargs)
         self._validate_noise_variance(self.noise_variance)
         self._rng = _spawn_rng(self.seed)
         self._noise_realization: ComplexArray | None = None
@@ -250,15 +238,13 @@ class SyntheticAnthropogenicSignal(AnthropogenicSignal):
     def _source_characteristics(self, source: "State") -> tuple[float, float, float | None]:
         """Return ``(tonal_bandwidth_hz, noise_amplitude_upa, noise_spectral_exponent)``.
 
-        Read from the source's metadata; a key it lacks falls back to the deprecated constructor
-        argument of the same name, if given. ``noise_spectral_exponent`` is ``None`` when there
-        is no broadband noise to shape.
+        ``noise_spectral_exponent`` is ``None`` when there is no broadband noise to shape.
         """
         metadata = _get_source_metadata(source)
 
         def read(key: str) -> float | None:
             # Metadata is user-supplied, so float() is what validates it.
-            value: Any = metadata[key] if key in metadata else getattr(self, key)
+            value: Any = metadata.get(key)
             return None if value is None else float(value)
 
         bandwidth_hz = read("tonal_bandwidth_hz")

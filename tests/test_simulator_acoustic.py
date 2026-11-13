@@ -25,9 +25,6 @@ def _install_fake_acoustic_dependencies(monkeypatch) -> None:
     propagation_module.AcousticPropagationModel = type("AcousticPropagationModel", (), {})
     propagation_module.SpectrumPropagationModel = type("SpectrumPropagationModel", (), {})
 
-    platform_module = ModuleType("bluepebble.platform")
-    platform_module.TowedArrayPlatform = type("TowedArrayPlatform", (), {})
-
     arrays_module = ModuleType("bluepebble.arrays")
     arrays_module.TowedArray = type("TowedArray", (), {})
 
@@ -69,7 +66,6 @@ def _install_fake_acoustic_dependencies(monkeypatch) -> None:
     signal_package.biological = biological_module
 
     monkeypatch.setitem(sys.modules, "bluepebble.models.propagation", propagation_module)
-    monkeypatch.setitem(sys.modules, "bluepebble.platform", platform_module)
     monkeypatch.setitem(sys.modules, "bluepebble.arrays", arrays_module)
     monkeypatch.setitem(sys.modules, "bluepebble.signal", signal_package)
     monkeypatch.setitem(sys.modules, "bluepebble.signal.random", random_module)

@@ -176,33 +176,15 @@ def test_synthetic_signal_rejects_negative_noise_amplitude(monkeypatch) -> None:
         _synthetic_model(anthropogenic_models).compute_stft(_source(noise_amplitude_upa=-1.0))
 
 
-def test_deprecated_constructor_characteristics_warn_and_fill_only_missing_keys(
-    monkeypatch,
-) -> None:
-    """The old constructor arguments still work for one release, but metadata takes priority."""
+@pytest.mark.parametrize(
+    "removed", ["tonal_bandwidth_hz", "noise_amplitude_upa", "noise_spectral_exponent"]
+)
+def test_removed_constructor_characteristics_point_to_metadata(monkeypatch, removed) -> None:
+    """Each removed constructor argument raises an error that names metadata as its home."""
     _, anthropogenic_models, _ = _load_anthropogenic_modules(monkeypatch)
 
-    with pytest.warns(DeprecationWarning, match="noise_amplitude_upa"):
-        model = _synthetic_model(anthropogenic_models, noise_amplitude_upa=5.0)
-    source = _source(noise_amplitude_upa=0.0)
-    del source.metadata["tonal_bandwidth_hz"]  # neither given: still an error
-    with pytest.raises(ValueError, match="tonal_bandwidth_hz"):
-        model.compute_stft(source)
-
-    with pytest.warns(DeprecationWarning, match="tonal_bandwidth_hz"):
-        bridged = _synthetic_model(anthropogenic_models, tonal_bandwidth_hz=2.0)
-    source = _source(noise_amplitude_upa=0.0)
-    del source.metadata["tonal_bandwidth_hz"]  # filled from the deprecated argument
-    bridged.compute_stft(source)
-
-    # When both are given, the metadata wins: a zero-noise source gets no broadband noise even
-    # though the deprecated argument asks for some. The same seed makes the tonals identical.
-    with pytest.warns(DeprecationWarning):
-        both = _synthetic_model(anthropogenic_models, noise_amplitude_upa=5.0, seed=0)
-    both.compute_stft(_source(noise_amplitude_upa=0.0))
-    reference = _synthetic_model(anthropogenic_models, seed=0)
-    reference.compute_stft(_source(noise_amplitude_upa=0.0))
-    np.testing.assert_allclose(both.get_source_signal(), reference.get_source_signal())
+    with pytest.raises(TypeError, match=rf"{removed} \(removed in v0\.8\.0\).*metadata"):
+        _synthetic_model(anthropogenic_models, **{removed: 1.0})
 
 
 def test_synthetic_signal_rejects_invalid_noise_variance_after_init(monkeypatch) -> None:
