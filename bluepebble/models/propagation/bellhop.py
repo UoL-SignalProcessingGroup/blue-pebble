@@ -281,7 +281,9 @@ class BellhopAcousticPropagationModel(AcousticPropagationModel, SpectrumPropagat
         receiver_position : ArrayLike
             World-frame ``(x, y, z)`` of the receiver in metres, with the same convention.
         frequency_hz : float
-            Frequency in Hz, which sets the bottom loss and beam widths.
+            Frequency of the run in Hz. With a fixed ``num_beams`` the arrivals do not depend
+            on it, because the beams are geometric and the bottom attenuation is per
+            wavelength. With ``num_beams=0`` Bellhop sizes the fan from it.
 
         Returns
         -------
