@@ -112,6 +112,11 @@ pytest --collect-only -q
 - `rtrs` option validation, missing-package behaviour, transmission loss and spectrum transfer functions
 - real `rtrs` smoke tests for scalar and per-frequency transmission loss and broadband transfer functions
 
+`tests/test_propagation_absorption.py`
+
+- Thorp's absorption formula against each of its terms worked by hand, and its symmetry in
+  frequency
+
 `tests/test_propagation_bellhop.py`, `tests/test_scattering_models.py`
 
 - Bellhop environment and bathymetry files, arrivals parsing (including phase), world-to-depth
@@ -119,11 +124,16 @@ pytest --collect-only -q
 - Bellhop as a spectrum propagation model: transfer functions summed from arrivals (conjugate at
   negative frequencies), receivers mapped to their grid points, no-arrival sensors, run counts
   per receiver geometry, and `propagate` loss and travel time
+- seawater absorption, using a stub executable: each bin of a full FFT grid absorbed by its own
+  amount over the path length read from the imaginary delay, the `propagate` loss, results
+  without absorption unchanged from v0.8.0, and rejection of unknown formulas
 - with `bellhopcxx` on `PATH` (skipped otherwise, as in CI): direct and surface-reflected paths
   against spherical spreading and the image source; transfer functions against the analytic
   Lloyd's mirror field; bottom-reflection phase against the Rayleigh coefficient; shared and
-  per-sensor runs agreeing over a flat bottom; and, with rtrs installed, Bellhop against a
-  converged rtrs in the same sediment half-space
+  per-sensor runs agreeing over a flat bottom; Bellhop's own Thorp absorption against
+  `thorp_db_per_km` over straight paths; path lengths against the analytic arc of a ray in a
+  linear profile out to 60 km; arrivals otherwise unchanged by absorption; and, with rtrs
+  installed, Bellhop against a converged rtrs in the same sediment half-space
 - constant target strength gain and its frequency independence
 
 ### Simulators
