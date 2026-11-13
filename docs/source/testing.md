@@ -181,6 +181,9 @@ These run against the real Stone Soup platform and mounting classes.
 
 - bow dome layout on its sphere, mounting depth, forward-facing normals, axis and history through
   a turn
+- cylindrical bow layout against a 440-sensor check case, a sector as a subset of the full ring,
+  outward normals, baffling of the staves facing away from a contact, the pitch checks, and the
+  deprecated positional arguments
 - flank panels per side: rotation offset, outward normals, grid layout and reference, the
   bow-to-tow-point fit check, and configuration errors
 - sonobuoy hydrophone position and depth sign, and `SingleSensorArray` on a plain Stone Soup platform
