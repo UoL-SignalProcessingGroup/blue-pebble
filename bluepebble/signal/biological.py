@@ -2,6 +2,7 @@
 
 import warnings
 from abc import ABC, abstractmethod
+from functools import lru_cache
 from typing import TYPE_CHECKING, TypedDict
 
 import numpy as np
@@ -93,6 +94,81 @@ def _get_snap_rate_from_temp(temperature_celsius: float, slope: float, intercept
     """
     # Snaps per minute -> snaps per second
     return max(0, (slope * temperature_celsius) + intercept) / 60.0
+
+
+# Linear fit of a colony's snap rate, in snaps per minute, to water temperature in Celsius.
+SNAP_RATE_SLOPE_PER_MIN = 137.0
+SNAP_RATE_INTERCEPT_PER_MIN = -685.0
+
+# The calibration Monte Carlo has a seed of its own, so its result is a constant of the model
+# parameters and takes nothing from a run's random stream.
+_CALIBRATION_SEED = 20261113
+# Windows are simulated until about this many snaps are drawn, within the bounds below, in
+# chunks that keep the draws in memory at once near _CALIBRATION_CHUNK_SNAPS.
+_CALIBRATION_SNAPS = 20_000_000
+_CALIBRATION_WINDOW_BOUNDS = (4_000, 200_000)
+_CALIBRATION_CHUNK_SNAPS = 2_000_000
+
+
+def snap_rate_from_temperature(temperature_celsius: float) -> float:
+    """Return a colony's mean snap rate, in snaps per second, at a water temperature.
+
+    ``rate = max(0, 137 * T - 685) / 60`` with ``T`` in degrees Celsius, which is zero at and
+    below 5 degrees and 34.2 snaps per second at 20 degrees.
+
+    The fit is attributed to the annual record of one oyster-reef site in [SR1]_, Fig. 5b, where
+    snap rate (detections per minute at one hydrophone) is linear in water temperature with a
+    correlation of 0.93. The slope and intercept are only printed in that figure; the values
+    here are the ones this package has always used and were not re-read from it.
+
+    Parameters
+    ----------
+    temperature_celsius : float
+        Water temperature in degrees Celsius.
+
+    Returns
+    -------
+    float
+        Snap rate in snaps per second.
+
+    References
+    ----------
+    .. [SR1] Bohnenstiehl, D. R., Lillis, A. and Eggleston, D. B. "The curious acoustic
+       behavior of estuarine snapping shrimp: temporal patterns of snapping shrimp sound in
+       sub-tidal oyster reef habitat." PLoS ONE 11(1), e0143691, 2016.
+
+    """
+    return _get_snap_rate_from_temp(
+        temperature_celsius, SNAP_RATE_SLOPE_PER_MIN, SNAP_RATE_INTERCEPT_PER_MIN
+    )
+
+
+@lru_cache(maxsize=32)
+def _median_window_energy(alpha: float, mean_snaps: float, amplitude_cap: float | None) -> float:
+    """Return the median, over calibration windows, of the summed squared snap amplitudes.
+
+    A window holds a Poisson number of snaps of mean ``mean_snaps``, each with a unit-scale
+    symmetric alpha-stable amplitude clipped at ``amplitude_cap``. The median is taken over
+    simulated windows: enough to draw about ``_CALIBRATION_SNAPS`` snaps, which at 1000 snaps
+    per window left the result within 0.02 dB (one standard deviation) across seeds.
+    """
+    rng = np.random.default_rng(_CALIBRATION_SEED)
+    num_windows = int(np.clip(_CALIBRATION_SNAPS / mean_snaps, *_CALIBRATION_WINDOW_BOUNDS))
+    windows_per_chunk = max(1, int(_CALIBRATION_CHUNK_SNAPS / max(mean_snaps, 1.0)))
+    energies = np.empty(num_windows)
+    for start in range(0, num_windows, windows_per_chunk):
+        counts = rng.poisson(mean_snaps, min(windows_per_chunk, num_windows - start))
+        amplitudes = np.asarray(
+            levy_stable.rvs(alpha, 0.0, size=int(counts.sum()), random_state=rng),
+            dtype=np.float64,
+        )
+        if amplitude_cap is not None:
+            amplitudes = np.clip(amplitudes, -amplitude_cap, amplitude_cap)
+        window_of_snap = np.repeat(np.arange(counts.size), counts)
+        energies[start : start + counts.size] = np.bincount(
+            window_of_snap, weights=amplitudes**2, minlength=counts.size
+        )
+    return float(np.median(energies))
 
 
 class BiologicalSignal(SourceSignal, ABC):
@@ -311,6 +387,196 @@ class BiologicalSignal(SourceSignal, ABC):
         return signals.astype(np.complex128)
 
 
+class SnappingShrimpColonySignal(BiologicalSignal):
+    """Point-source snapping shrimp colony, band-limited and calibrated on a median level.
+
+    The colony is one point source whose waveform is a train of snaps:
+
+    ``x(t) = s * sum_i A_i * h(t - t_i)``
+
+    - ``t_i`` are the snap times, a homogeneous Poisson process of rate ``snap_rate_hz``.
+    - ``A_i`` are the snap amplitudes, independent draws from a symmetric alpha-stable (SαS)
+      law with characteristic exponent ``alpha``, zero skew and unit scale, clipped to
+      ``±amplitude_cap`` when a cap is set.
+    - ``h`` is a zero-phase Butterworth band-pass pulse over ``band_hz`` with unit energy,
+      ``integral of h(t)^2 dt = 1 s``, so snap ``i`` carries an energy of ``(s * A_i)^2`` in
+      µPa²·s at 1 m.
+    - ``s`` is the scale that sets the level (see Calibration).
+
+    Snaps are placed on whole samples and the train is filtered once, so the model works at
+    any sampling rate whose Nyquist frequency lies above the band. The source's position comes
+    from the ground-truth path; nothing else is read from the source state.
+
+    Calibration
+    -----------
+    For ``alpha < 2`` the mean of ``A^2`` does not exist, so the level is set on a median
+    rather than a mean. ``median_source_level_db`` ``L`` is the band level, in dB re 1 µPa²
+    at 1 m, of the median window of length ``T = calibration_window_s``:
+
+    ``s^2 = 10^(L / 10) * T / median(sum of A_i^2 over a window)``
+
+    Set ``T`` to the scan interval, so that ``L`` is the level of the median scan. The median
+    on the right is over windows holding a Poisson number of snaps of mean
+    ``snap_rate_hz * T``. It is estimated once by simulating windows with a fixed seed (about
+    a second for a new set of parameters), so the scale is a constant of the parameters and
+    repeats from run to run. At 5 kHz sampling, a 500 to 2000 Hz band, 34.2 snaps per second
+    and ``T = 30 s``, the median level of 2880 windows was 0.06 dB below ``L`` uncapped
+    (standard error 0.07 dB) and within 0.01 dB of it with a cap of 31.6 (0.02 dB). Other
+    settings are only covered by the tests, to 0.2 dB.
+
+    Amplitude cap
+    -------------
+    ``amplitude_cap`` has no physically grounded default. Uncapped, the SαS law gives a long
+    run a few very large snaps. In one 3.85 h waveform at the settings above (about 470,000
+    snaps), 30 s levels sat -3.0, +6.5 and +18 dB from the median at the 10th, 90th and 99th
+    percentiles, with a maximum of +28 dB; the maximum is set by the largest single snap and
+    varies widely from run to run. A cap of 31.6 (30 dB above the unit scale) narrowed those
+    to -1.1, +1.1, +1.8 and +2.6 dB, which removes most of the impulsiveness at that time
+    scale.
+
+    Assumptions
+    -----------
+    - The colony is a point source: the array does not resolve it. A colony 100 m across at
+      10 km subtends 0.6 degrees.
+    - Snaps add incoherently, so a window's level is the sum of its snaps' energies.
+    - Each snap's spectrum is flat within ``band_hz``, up to the Butterworth roll-off.
+    - Snap times are Poisson: no clustering, and no diurnal or tidal change of rate.
+    - The alpha-stable law describes each snap's amplitude. [SC1]_ fits it to the samples of
+      snapping-shrimp-dominated ambient noise, not to individual snaps; carrying it over to
+      snap amplitudes is this model's assumption.
+
+    Raises
+    ------
+    ValueError
+        If ``band_hz`` is not inside ``(0, Nyquist)``, ``alpha`` is outside ``(0, 2]``,
+        ``snap_rate_hz`` is negative, ``calibration_window_s``, ``filter_order`` or
+        ``amplitude_cap`` is not positive, or the calibration window holds too few snaps for
+        its median level to be above zero.
+
+    References
+    ----------
+    .. [SC1] Chitre, M. A., Potter, J. R. and Ong, S.-H. "Optimal and near-optimal signal
+       detection in snapping shrimp dominated ambient noise." IEEE Journal of Oceanic
+       Engineering 31(2), 497-503, 2006.
+
+    """
+
+    snap_rate_hz: float = Property(
+        doc="Mean snap rate of the colony, in snaps per second; see "
+        ":func:`snap_rate_from_temperature`"
+    )
+    median_source_level_db: float = Property(
+        doc="Band level of the median calibration window, in dB re 1 µPa² at 1 m"
+    )
+    band_hz: tuple[float, float] = Property(doc="Pass band of each snap, in Hz")
+    calibration_window_s: float = Property(
+        default=30.0, doc="Length of the window the median level refers to, in seconds"
+    )
+    alpha: float = Property(
+        default=1.5, doc="Characteristic exponent of the SαS amplitude law, in (0, 2]"
+    )
+    amplitude_cap: float | None = Property(
+        default=None,
+        doc="Clip each snap amplitude to this many unit scales; ``None`` leaves the SαS tail "
+        "uncapped (see Amplitude cap)",
+    )
+    filter_order: int = Property(
+        default=8, doc="Order of the Butterworth band-pass; zero-phase filtering doubles it"
+    )
+
+    def __init__(self, *args: object, **kwargs: object) -> None:
+        """Check the parameters, including that the level can be calibrated."""
+        super().__init__(*args, **kwargs)
+        low_hz, high_hz = self.band_hz
+        nyquist_hz = self.sampling_rate_hz / 2
+        if not 0 < low_hz < high_hz < nyquist_hz:
+            raise ValueError(
+                f"band_hz must satisfy 0 < low < high < Nyquist ({nyquist_hz} Hz), "
+                f"got {self.band_hz}"
+            )
+        if not 0 < self.alpha <= 2:
+            raise ValueError(f"alpha must be in (0, 2], got {self.alpha}")
+        if self.snap_rate_hz < 0:
+            raise ValueError(f"snap_rate_hz must be non-negative, got {self.snap_rate_hz}")
+        if self.calibration_window_s <= 0:
+            raise ValueError(
+                f"calibration_window_s must be positive, got {self.calibration_window_s}"
+            )
+        if self.filter_order < 1:
+            raise ValueError(f"filter_order must be at least 1, got {self.filter_order}")
+        if self.amplitude_cap is not None and self.amplitude_cap <= 0:
+            raise ValueError(f"amplitude_cap must be positive, got {self.amplitude_cap}")
+        self._amplitude_scale()
+
+    def _amplitude_scale(self) -> float:
+        """Return ``s``, the µPa scale that puts the median window at the requested level."""
+        mean_snaps = self.snap_rate_hz * self.calibration_window_s
+        if mean_snaps == 0:
+            return 0.0
+        median_energy = _median_window_energy(self.alpha, mean_snaps, self.amplitude_cap)
+        if median_energy == 0:
+            raise ValueError(
+                f"A {self.calibration_window_s} s calibration window holds {mean_snaps:g} snaps "
+                "on average, too few for its median level to be above zero; lengthen "
+                "calibration_window_s or raise snap_rate_hz."
+            )
+        target_energy = 10 ** (self.median_source_level_db / 10) * self.calibration_window_s
+        return float(np.sqrt(target_energy / median_energy))
+
+    def _unit_energy_filter(self) -> tuple[NDArray[np.float64], float]:
+        """Return the band-pass sections and the gain that gives one snap unit energy."""
+        sos = np.asarray(
+            signal.butter(
+                self.filter_order,
+                self.band_hz,
+                btype="bandpass",
+                fs=self.sampling_rate_hz,
+                output="sos",
+            ),
+            dtype=np.float64,
+        )
+        impulse = np.zeros(1 << 14)
+        impulse[impulse.size // 2] = 1.0
+        pulse = signal.sosfiltfilt(sos, impulse)
+        return sos, float(np.sqrt(self.sampling_rate_hz / np.sum(pulse**2)))
+
+    def _snap_samples(self) -> NDArray[np.int64]:
+        """Return the sample index of each snap, in ascending order.
+
+        Override this to change when the colony snaps, for example to cluster snaps; the
+        amplitudes and the calibration assume nothing about the times beyond their mean rate.
+        """
+        count = self._rng.poisson(self.snap_rate_hz * self.duration_s)
+        return np.sort(self._rng.integers(0, self.num_samples, count))
+
+    def _generate_base_signal(self, source: "State") -> ComplexArray:
+        """Generate the colony's source waveform.
+
+        Parameters
+        ----------
+        source : State
+            Unused; the colony's position comes from the ground-truth path.
+
+        Returns
+        -------
+        ComplexArray
+            Real waveform in µPa at 1 m, of length ``num_samples``, as ``complex128``.
+
+        """
+        snap_train = np.zeros(self.num_samples)
+        snap_samples = self._snap_samples()
+        if snap_samples.size:
+            amplitudes = np.asarray(
+                levy_stable.rvs(self.alpha, 0.0, size=snap_samples.size, random_state=self._rng),
+                dtype=np.float64,
+            )
+            if self.amplitude_cap is not None:
+                amplitudes = np.clip(amplitudes, -self.amplitude_cap, self.amplitude_cap)
+            np.add.at(snap_train, snap_samples, self._amplitude_scale() * amplitudes)
+        sos, pulse_gain = self._unit_energy_filter()
+        return (pulse_gain * signal.sosfiltfilt(sos, snap_train)).astype(np.complex128)
+
+
 class PointSourceSnappingShrimpSignal(BiologicalSignal):
     """Generates a point-source signal representing a colony of snapping shrimp.
 
@@ -320,6 +586,12 @@ class PointSourceSnappingShrimpSignal(BiologicalSignal):
 
     By treating the colony as a single point source, the generated signal is coherent across the
     array, allowing for localisation and tracking.
+
+    .. deprecated:: 0.7.0
+        Use :class:`SnappingShrimpColonySignal`, whose snaps are band-limited to the
+        simulation band and whose level is calibrated. This class needs a sampling rate above
+        twice ``high_cutoff_hz``, and its ``amplitude_upa`` is the scale of an alpha-stable
+        law, not a calibrated level.
     """
 
     TEMP_TO_RATE_SLOPE = 137.0
@@ -362,6 +634,16 @@ class PointSourceSnappingShrimpSignal(BiologicalSignal):
         default=None,
         doc="Deprecated: effects applied by the deprecated ``generate``; removed with it.",
     )
+
+    def __init__(self, *args: object, **kwargs: object) -> None:
+        """Warn that this class is deprecated."""
+        warnings.warn(
+            "PointSourceSnappingShrimpSignal is deprecated; use SnappingShrimpColonySignal "
+            "instead, which is band-limited to the simulation band and has a calibrated level.",
+            DeprecationWarning,
+            stacklevel=2,
+        )
+        super().__init__(*args, **kwargs)
 
     def _create_snap_template(self) -> FloatArray:
         """Generate the prototypical waveform for a single shrimp snap.
@@ -512,7 +794,12 @@ class DiffuseSnappingShrimpSignal(BiologicalSignal):
 
     This model simulates the sound of a snapping shrimp colony as a diffuse
     field composed of many incoherent point sources distributed over an area.
-    This creates a realistic, non-localizable ambient noise signal.
+
+    .. deprecated:: 0.7.0
+        Use :class:`SnappingShrimpColonySignal`. This class is not spatially diffuse: each
+        sub-source only shifts the common propagation time, so every snap reaches the array
+        with the same delays between sensors, from one bearing. It also cannot run in a
+        simulator, since its ``_generate_base_signal`` takes an extra argument.
     """
 
     # --- Model Constants ---
@@ -560,6 +847,16 @@ class DiffuseSnappingShrimpSignal(BiologicalSignal):
         default=None,
         doc="Deprecated: effects applied by the deprecated ``generate``; removed with it.",
     )
+
+    def __init__(self, *args: object, **kwargs: object) -> None:
+        """Warn that this class is deprecated."""
+        warnings.warn(
+            "DiffuseSnappingShrimpSignal is deprecated; use SnappingShrimpColonySignal instead. "
+            "It is not spatially diffuse: every snap reaches the array from one bearing.",
+            DeprecationWarning,
+            stacklevel=2,
+        )
+        super().__init__(*args, **kwargs)
 
     def _create_snap_template(self) -> FloatArray:
         """Generate the prototypical waveform for a single shrimp snap."""

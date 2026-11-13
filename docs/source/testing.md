@@ -27,14 +27,16 @@ pytest --collect-only -q
 
 ### Signal models and utilities
 
-`tests/test_signal_utils.py`, `tests/test_signal_base.py`, `tests/test_signal_models.py`, `tests/test_signal_anthropogenic.py`, `tests/test_signal_biological.py`, `tests/test_signal_active.py`
+`tests/test_signal_utils.py`, `tests/test_signal_base.py`, `tests/test_signal_models.py`, `tests/test_signal_anthropogenic.py`, `tests/test_signal_biological.py`, `tests/test_signal_shrimp_colony.py`, `tests/test_signal_active.py`
 
 - STFT utilities, inverse-STFT round-trip behaviour and fade helpers
 - source waveform padding, truncation and shape checks, and the deprecated
   `BiologicalSignal.generate`'s validation and attenuation/delay branches
 - ambient-noise helpers and the deprecated effects
 - anthropogenic source synthesis from each source's metadata, and the deprecated constructor arguments
-- biological signal generation, call template construction and snapping shrimp models
+- biological signal generation, call template construction and the deprecated snapping shrimp models
+- the snapping shrimp colony: median window level against the requested level, the
+  unit-energy snap, band power, Poisson snap counts, the snap-rate fit and parameter checks
 - active pulses: CW tone, level and phase; LFM sweep, edge taper and configuration checks
 
 ### Seed management
@@ -142,6 +144,8 @@ pytest --collect-only -q
   at its true bearing, spherical spreading with range, and arrival order across the array
 - the shared source lifecycle (`compute_stft`, `reset`), and the deprecation warnings of
   `BiologicalSignal.generate` and the effects
+- a snapping shrimp colony's bearing and median scan level against spherical spreading, and a
+  colony sharing an STFT run with a synthetic ship
 
 `tests/test_simulator_active.py`
 

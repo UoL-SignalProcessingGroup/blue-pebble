@@ -16,10 +16,12 @@ from .support import (
     load_package_module_from_repo,
 )
 
-# These tests exercise the deprecated ``generate`` and effects on purpose; they go when those do.
+# These tests exercise the deprecated ``generate``, effects and old shrimp classes on purpose;
+# they go when those do.
 pytestmark = [
     pytest.mark.filterwarnings("ignore:.*generate\\(\\) is deprecated:DeprecationWarning"),
     pytest.mark.filterwarnings("ignore:.*signal effects are removed:DeprecationWarning"),
+    pytest.mark.filterwarnings("ignore:.*use SnappingShrimpColonySignal:DeprecationWarning"),
 ]
 
 # Sampling rates that satisfy each model's bandpass filter requirements.

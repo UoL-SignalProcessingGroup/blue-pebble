@@ -31,6 +31,7 @@ BAND_HZ = (300.0, 700.0)
 NUM_SENSORS = 32
 SPACING_M = 0.75
 SIMULATORS = ["stft", "fractional_delay", "discrete"]
+COLONY_LEVEL_DB = 150.0
 
 
 @pytest.fixture
@@ -42,7 +43,13 @@ def bp():
     from bluepebble.models.environment import Constant
     from bluepebble.models.propagation import SphericalAcousticPropagationModel
     from bluepebble.platform import SonarPlatform
-    from bluepebble.signal import AnthropogenicSignal, BiologicalSignal, SourceSignal
+    from bluepebble.signal import (
+        AnthropogenicSignal,
+        BiologicalSignal,
+        SnappingShrimpColonySignal,
+        SourceSignal,
+        SyntheticAnthropogenicSignal,
+    )
     from bluepebble.signal.effects import Effect, Reverb
     from bluepebble.sigproc import DelayAndSumBeamformer, SteeringCalculator
     from bluepebble.simulator import (
@@ -76,10 +83,12 @@ def bp():
         Effect=Effect,
         Line=Line,
         Reverb=Reverb,
+        SnappingShrimpColonySignal=SnappingShrimpColonySignal,
         SonarPlatform=SonarPlatform,
         SourceSignal=SourceSignal,
         SphericalAcousticPropagationModel=SphericalAcousticPropagationModel,
         SteeringCalculator=SteeringCalculator,
+        SyntheticAnthropogenicSignal=SyntheticAnthropogenicSignal,
         signal_package=signal_package,
         simulators={
             "stft": ContinuousSTFTPassiveSonarArraySimulator,
@@ -90,25 +99,25 @@ def bp():
     restore_real_bluepebble_imports(snapshot)
 
 
-def _timestamps():
-    return [START + timedelta(seconds=STEP_S * step) for step in range(NUM_STEPS)]
+def _timestamps(num_steps=NUM_STEPS):
+    return [START + timedelta(seconds=STEP_S * step) for step in range(num_steps)]
 
 
-def _array(bp):
+def _array(bp, num_steps=NUM_STEPS):
     platform = bp.SonarPlatform(
         states=[GroundTruthState(StateVector([0.0, 0.0, 0.0, 0.0, -50.0, 0.0]), timestamp=START)],
         position_mapping=[0, 2, 4],
         transition_models=[CombinedLinearGaussianTransitionModel([ConstantVelocity(0.0)] * 3)],
         transition_times=[timedelta(hours=1)],
     )
-    for timestamp in _timestamps()[1:]:
+    for timestamp in _timestamps(num_steps)[1:]:
         platform.move(timestamp)
     array = bp.Line()
     platform.add_sensor(array)
     return array
 
 
-def _stationary_path(range_m, bearing_deg):
+def _stationary_path(range_m, bearing_deg, num_steps=NUM_STEPS, **metadata):
     """Return a source held at ``range_m`` and ``bearing_deg`` from the array's first sensor."""
     bearing = np.deg2rad(bearing_deg)
     state_vector = StateVector(
@@ -116,8 +125,10 @@ def _stationary_path(range_m, bearing_deg):
     )
     return GroundTruthPath(
         [
-            GroundTruthState(state_vector, timestamp=ts, metadata={"position_mapping": [0, 2, 4]})
-            for ts in _timestamps()
+            GroundTruthState(
+                state_vector, timestamp=ts, metadata={"position_mapping": [0, 2, 4], **metadata}
+            )
+            for ts in _timestamps(num_steps)
         ]
     )
 
@@ -128,8 +139,8 @@ def _source(bp, seed=1, **kwargs):
     )
 
 
-def _scans(bp, simulator, range_m, bearing_deg, beamform=False):
-    """Run one noise-free source through ``simulator``; return its sensor data per scan."""
+def _run(bp, simulator, models, paths, beamform=False, num_steps=NUM_STEPS):
+    """Run noise-free sources through ``simulator``; return its sensor data per scan."""
     beamforming = {}
     if beamform:
         beamforming = {
@@ -139,15 +150,29 @@ def _scans(bp, simulator, range_m, bearing_deg, beamform=False):
             ),
         }
     generator = bp.simulators[simulator](
-        array=_array(bp),
+        array=_array(bp, num_steps),
         propagation_model=bp.SphericalAcousticPropagationModel(
             ssp=bp.Constant(speed=C), attenuation_factor=0.0
         ),
-        signal_models=[_source(bp)],
-        ground_truth_paths=[_stationary_path(range_m, bearing_deg)],
+        signal_models=models,
+        ground_truth_paths=paths,
         **beamforming,
     ).sensor_data_gen()
     return [next(iter(data)) for _, data in generator]
+
+
+def _scans(bp, simulator, range_m, bearing_deg, beamform=False):
+    """Run one band-noise source through ``simulator``; return its sensor data per scan."""
+    return _run(bp, simulator, [_source(bp)], [_stationary_path(range_m, bearing_deg)], beamform)
+
+
+def _beam_power(scans, first_step=3):
+    """Return delay-and-sum power per beam, summed from ``first_step`` on, and the bearings."""
+    power = sum(
+        np.sum(np.abs(scan.beamformed_data) ** 2, axis=tuple(range(1, scan.beamformed_data.ndim)))
+        for scan in scans[first_step:]
+    )
+    return power, np.rad2deg(scans[-1].steering_bearings_rad)
 
 
 def _steady_signals(scans, first_step=3):
@@ -177,12 +202,8 @@ def test_stationary_biological_source_peaks_at_its_bearing(bp, simulator):
         assert scan.raw_signals.shape[0] == NUM_SENSORS
         assert np.all(np.isfinite(scan.raw_signals))
 
-    power = sum(
-        np.sum(np.abs(scan.beamformed_data) ** 2, axis=tuple(range(1, scan.beamformed_data.ndim)))
-        for scan in scans[3:]
-    )
-    peak_bearing_deg = np.rad2deg(scans[-1].steering_bearings_rad[np.argmax(power)])
-    assert peak_bearing_deg == pytest.approx(true_bearing_deg, abs=2.0)
+    power, bearings_deg = _beam_power(scans)
+    assert bearings_deg[np.argmax(power)] == pytest.approx(true_bearing_deg, abs=2.0)
 
 
 @pytest.mark.parametrize("simulator", SIMULATORS)
@@ -259,3 +280,73 @@ def test_effects_are_deprecated(bp):
         bp.Reverb(duration_s=0.1)
     with pytest.warns(DeprecationWarning, match="Doubler is deprecated"):
         Doubler()
+
+
+def _colony(bp, num_steps=NUM_STEPS, seed=2):
+    """Return a colony whose calibration window is one scan, so its level is per scan."""
+    return bp.SnappingShrimpColonySignal(
+        duration_s=num_steps * STEP_S,
+        sampling_rate_hz=FS,
+        snap_rate_hz=200.0,
+        median_source_level_db=COLONY_LEVEL_DB,
+        band_hz=BAND_HZ,
+        calibration_window_s=STEP_S,
+        amplitude_cap=31.6,
+        seed=seed,
+    )
+
+
+def test_colony_peaks_at_its_bearing_at_its_level_less_the_spreading_loss(bp):
+    """A colony's median scan level at a sensor is ``L - 20 log10(r)`` under spherical spreading.
+
+    Over eight seeds the median of these 61 scans scattered by 0.23 dB (standard deviation)
+    about that level, so 1 dB is about four standard deviations.
+    """
+    num_steps, range_m, bearing_deg = 64, 2000.0, 60.0
+    scans = _run(
+        bp,
+        "stft",
+        [_colony(bp, num_steps)],
+        [_stationary_path(range_m, bearing_deg, num_steps)],
+        beamform=True,
+        num_steps=num_steps,
+    )
+
+    power, bearings_deg = _beam_power(scans)
+    assert bearings_deg[np.argmax(power)] == pytest.approx(bearing_deg, abs=2.0)
+
+    scan_powers = [np.mean(np.abs(scan.raw_signals[0]) ** 2) for scan in scans[3:]]
+    median_level_db = 10 * np.log10(np.median(scan_powers))
+    assert median_level_db == pytest.approx(COLONY_LEVEL_DB - 20 * np.log10(range_m), abs=1.0)
+
+
+def test_colony_and_ship_share_a_run_and_each_peaks_at_its_own_bearing(bp):
+    """A real colony waveform and a complex ship waveform go through one STFT run together."""
+    colony_bearing_deg, ship_bearing_deg = 60.0, 120.0
+    ship_path = _stationary_path(
+        2000.0,
+        ship_bearing_deg,
+        frequencies_hz=np.array([400.0, 550.0]),
+        amplitudes_upa=np.full(2, 10 ** (COLONY_LEVEL_DB / 20)),
+        phases_rad=np.zeros(2),
+        tonal_bandwidth_hz=2.0,
+        noise_amplitude_upa=0.0,
+    )
+    ship = bp.SyntheticAnthropogenicSignal(
+        duration_s=NUM_STEPS * STEP_S, sampling_rate_hz=FS, seed=3
+    )
+
+    scans = _run(
+        bp,
+        "stft",
+        [_colony(bp), ship],
+        [_stationary_path(2000.0, colony_bearing_deg), ship_path],
+        beamform=True,
+    )
+
+    power, bearings_deg = _beam_power(scans)
+    peaks, _ = sp_signal.find_peaks(power)
+    two_strongest = peaks[np.argsort(power[peaks])[-2:]]
+    assert sorted(bearings_deg[two_strongest]) == pytest.approx(
+        [colony_bearing_deg, ship_bearing_deg], abs=2.0
+    )

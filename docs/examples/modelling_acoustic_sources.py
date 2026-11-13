@@ -27,11 +27,12 @@ from stonesoup.types.groundtruth import GroundTruthState
 
 import bluepebble
 from bluepebble.plotter import plot_spectrogram
+from bluepebble.signal import SnappingShrimpColonySignal, snap_rate_from_temperature
 from bluepebble.signal.anthropogenic import (
     RecordedAnthropogenicSignal,
     SyntheticAnthropogenicSignal,
 )
-from bluepebble.signal.biological import PointSourceSnappingShrimpSignal, WhaleCallSignal
+from bluepebble.signal.biological import WhaleCallSignal
 from bluepebble.signal.random import WhiteNoiseSignal
 
 # %%
@@ -206,40 +207,33 @@ fig_whale = plot_spectrogram(
 # - The snap is short, impulsive, and strongly broadband.
 # - This makes it a useful contrast against the tonal or structured signals elsewhere
 #   in the example.
-# - The example uses a point-source far-field approximation rather than a diffuse colony
-#   model.
+# - The colony is a point source: at ranges where an array cannot resolve it, a colony tens
+#   of metres across behaves as one. A spatially diffuse field is not modelled.
+# - Snaps arrive as a Poisson process at a rate set by the water temperature, each band-limited
+#   to 1.5-10 kHz with a heavy-tailed (alpha-stable) amplitude.
+# - ``median_source_level_db`` is the band level of the median one-second window. The value
+#   here is chosen for a clear spectrogram, not taken from a measurement.
 #
 # The snapping-shrimp spectrogram is dominated by short, impulsive broadband events, visible as
 # dense vertical stripes across the time axis. Unlike the whale-call example, which shows organised
-# harmonic structure, this signal is transient and noise-like, with energy spread over a wide
-# frequency range and concentrated most strongly in the mid-to-high bands. The result is a highly
-# cluttered spectrogram signature that is useful for representing biologically generated impulsive
-# interference in passive acoustic scenes.
+# harmonic structure, this signal is transient and noise-like, with energy spread across the
+# model's 1.5-10 kHz band. A few snaps are far louder than the rest, as the heavy-tailed
+# amplitudes imply. The result is a highly cluttered spectrogram signature that is useful for
+# representing biologically generated impulsive interference in passive acoustic scenes.
 
 shrimp_source = GroundTruthState(
     [0, 0, 0, 0, -50, 0],
     timestamp=reference_time,
-    metadata={
-        "amplitude_upa": 10 ** (195 / 20),
-        "position_mapping": [0, 2, 4],
-    },
+    metadata={"position_mapping": [0, 2, 4]},
 )
 
-shrimp_signal_model = PointSourceSnappingShrimpSignal(
+shrimp_signal_model = SnappingShrimpColonySignal(
     duration_s=signal_duration_s,
     sampling_rate_hz=sampling_rate_Hz,
-    temperature_celsius=25,
-    start_time_hours=18.0,
-    diurnal_amplitude=0.25,
-    diurnal_phase_hours=6,
-    delay_duration=0.0006,
-    onset_duration=0.0001,
-    snap_duration=0.0014,
-    onset_level=0.15,
-    onset_freq=2500,
-    snap_decay=1000,
-    low_cutoff_hz=1500,
-    high_cutoff_hz=10000,
+    snap_rate_hz=snap_rate_from_temperature(25.0),
+    median_source_level_db=180.0,
+    band_hz=(1500.0, 10000.0),
+    calibration_window_s=1.0,
 )
 
 # As for the whale, with a flat 80 dB transmission loss.
