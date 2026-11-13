@@ -57,8 +57,10 @@ def bp():
     class BandNoise(AnthropogenicSignal):
         """Seeded noise in ``BAND_HZ``, so the DC and Nyquist bins carry no energy."""
 
-        complex_valued: bool = Property(default=False, doc="Add an independent imaginary part")
-        noise_seed: int = Property(default=0, doc="Seed of this source's waveform")
+        # The types are arguments, not annotations: this module's annotations are strings
+        # (``from __future__ import annotations``), which Stone Soup cannot read on Python 3.14.
+        complex_valued = Property(bool, default=False, doc="Add an independent imaginary part")
+        noise_seed = Property(int, default=0, doc="Seed of this source's waveform")
 
         def _generate_base_signal(self, source):
             rng = np.random.default_rng(self.noise_seed)
