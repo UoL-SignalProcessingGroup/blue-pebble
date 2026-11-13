@@ -30,7 +30,7 @@ from .acoustic import (
 if TYPE_CHECKING:
     from stonesoup.types.state import State
 
-    from ...platform import PlatformState
+    from ...arrays import PlatformState
 
 FloatArray: TypeAlias = NDArray[np.float64]
 ComplexArray: TypeAlias = NDArray[np.complexfloating[Any, Any]]

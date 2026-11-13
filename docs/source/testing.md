@@ -33,7 +33,8 @@ pytest --collect-only -q
 - source waveform padding, truncation and shape checks, and the deprecated
   `BiologicalSignal.generate`'s validation and attenuation/delay branches
 - ambient-noise helpers and the deprecated effects
-- anthropogenic source synthesis from each source's metadata, and the deprecated constructor arguments
+- anthropogenic source synthesis from each source's metadata, and the removed constructor arguments
+  raising an error that points to metadata
 - biological signal generation, call template construction and the deprecated snapping shrimp models
 - the snapping shrimp colony: median window level against the requested level, the
   unit-energy snap, band power, Poisson snap counts, the snap-rate fit and parameter checks
@@ -163,7 +164,7 @@ pytest --collect-only -q
 ### Towed-array models
 
 `tests/test_towedarray_models.py`, `tests/test_arrays_base.py`,
-`tests/test_towedarray_platform_deprecated.py`
+`tests/test_removed_towedarray_platform.py`
 
 These run against the real Stone Soup platform and mounting classes.
 
@@ -174,8 +175,8 @@ These run against the real Stone Soup platform and mounting classes.
   wrapping at ±π
 - platform and sensor path retrieval
 - the towed array's forward axis and baffle gains
-- the deprecated `TowedArrayPlatform` reproducing `SonarPlatform` + `TowedArray` exactly, and the
-  simulators' deprecated `platform=` argument
+- the removed `TowedArrayPlatform` and simulator `platform=` argument raising an error that names
+  their replacement
 
 `tests/test_bowarray.py`, `tests/test_flankarray.py`, `tests/test_sonobuoy.py`
 

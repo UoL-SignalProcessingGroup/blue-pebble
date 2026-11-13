@@ -1,7 +1,6 @@
 """Base simulator hierarchy and shared utilities for passive and active sonar simulations."""
 
 import copy
-import warnings
 from abc import abstractmethod
 from collections.abc import Iterable, Iterator, Sequence
 from datetime import datetime
@@ -13,7 +12,6 @@ from stonesoup.base import Property
 from stonesoup.simulator.base import SensorSimulator
 
 from ..models.propagation import AcousticPropagationModel
-from ..platform import TowedArrayPlatform
 from ..signal.random import RandomSignal
 from ..sigproc.base import Beamformer
 from ..sigproc.steering import SteeringCalculator
@@ -300,13 +298,9 @@ class PassiveSonarArraySimulatorBase(SonarArraySimulatorBase):
     propagation_model: AcousticPropagationModel = Property(
         doc="Acoustic propagation model",
     )
-    platform: TowedArrayPlatform | None = Property(
-        default=None,
-        doc="Deprecated: pass the mounted TowedArray as ``array`` instead.",
-    )
 
     def __init__(self, *args: object, **kwargs: object) -> None:
-        """Initialise simulator state, mapping the deprecated ``platform`` to ``array``.
+        """Initialise, pointing callers of the removed ``platform`` at ``array``.
 
         Parameters
         ----------
@@ -315,18 +309,20 @@ class PassiveSonarArraySimulatorBase(SonarArraySimulatorBase):
         **kwargs : object
             Keyword arguments forwarded to ``SonarArraySimulatorBase``.
 
+        Raises
+        ------
+        TypeError
+            If the removed ``platform`` argument is passed.
+
         """
-        super().__init__(*args, **kwargs)
-        if self.platform is not None:
-            warnings.warn(
-                "The simulator's platform argument is deprecated; mount a "
-                "bluepebble.arrays.TowedArray on a SonarPlatform and pass it as array=.",
-                DeprecationWarning,
-                stacklevel=2,
+        # Caught before Stone Soup's Base, whose "unexpected keyword argument" names the mistake
+        # but not its replacement.
+        if "platform" in kwargs:
+            raise TypeError(
+                f"{type(self).__name__}(platform=...) was removed in v0.8.0. Mount a "
+                "bluepebble.arrays.TowedArray on a SonarPlatform and pass the array as array=."
             )
-            if self.array is None:
-                # Older code passes the combined TowedArrayPlatform; simulate its array.
-                self.array = getattr(self.platform, "towed_array", self.platform)
+        super().__init__(*args, **kwargs)
 
     def _band_labels(self) -> list[str] | None:
         """Return the configured beamformer's band labels.

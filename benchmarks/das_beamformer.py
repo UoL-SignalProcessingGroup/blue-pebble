@@ -29,8 +29,9 @@ from stonesoup.models.transition.linear import (
 )
 from stonesoup.types.groundtruth import GroundTruthState
 
+from bluepebble.arrays import TowedArray
 from bluepebble.models.environment import Constant
-from bluepebble.platform import TowedArrayPlatform
+from bluepebble.platform import SonarPlatform
 from bluepebble.sigproc import DelayAndSumBeamformer, SteeringCalculator
 
 SAMPLING_RATE_HZ = 500.0
@@ -42,7 +43,7 @@ CHECK_RTOL = 1e-6
 def _steering_delays(num_sensors, num_beams):
     """Return steering delays for a stationary array, steered over the half-plane east of it."""
     start = datetime(2026, 1, 1)
-    platform = TowedArrayPlatform(
+    platform = SonarPlatform(
         states=[GroundTruthState(np.array([0.0, 0.0, 0.0, 0.01, -5.0, 0.0]), timestamp=start)],
         position_mapping=[0, 2, 4],
         velocity_mapping=[1, 3, 5],
@@ -50,18 +51,21 @@ def _steering_delays(num_sensors, num_beams):
             CombinedLinearGaussianTransitionModel([ConstantVelocity(0.0) for _ in range(3)])
         ],
         transition_times=[timedelta(seconds=1)],
+    )
+    array = TowedArray(
         num_sensors=num_sensors,
         cable_length_m=400.0,
         sensor_spacing_m=SENSOR_SPACING_M,
         array_depth_m=-50.0,
     )
+    platform.add_sensor(array)
     calculator = SteeringCalculator(
         ssp=Constant(speed=1500.0),
         steering_sector_rad=(-np.pi / 2, np.pi / 2),
         num_beams=num_beams,
         frame="world",
     )
-    return calculator.calculate(platform.get_platform_state_at(start))
+    return calculator.calculate(array.get_platform_state_at(start))
 
 
 def _sensor_signals(num_sensors, num_samples, seed=0):
