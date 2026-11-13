@@ -130,6 +130,10 @@ pytest --collect-only -q
 - discrete simulator source-signal resolution and timestep validation
 - continuous STFT and fractional-delay simulator interpolation, fading and reconstruction branches
 
+`tests/test_simulator_mixed_sources.py`
+
+- real and complex sources in one STFT run, checked by superposition against each source's own run
+
 `tests/test_simulator_active.py`
 
 - active echoes at the monostatic round-trip delay and the bistatic range sum, including a
