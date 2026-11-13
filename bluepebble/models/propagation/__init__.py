@@ -1,5 +1,6 @@
 """Propagation models public API."""
 
+from .absorption import thorp_db_per_km
 from .acoustic import (
     AcousticPropagationModel,
     CylindricalAcousticPropagationModel,
@@ -17,4 +18,5 @@ __all__ = [
     "SpectrumPropagationModel",
     "rtrsAcousticPropagationModel",
     "SphericalAcousticPropagationModel",
+    "thorp_db_per_km",
 ]

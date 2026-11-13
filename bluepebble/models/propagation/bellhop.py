@@ -10,13 +10,14 @@ import tempfile
 from dataclasses import dataclass
 from pathlib import Path
 from shutil import which
-from typing import TYPE_CHECKING, Any, TypeAlias
+from typing import TYPE_CHECKING, Any, Literal, TypeAlias
 
 import numpy as np
 from numpy.typing import ArrayLike, NDArray
 from stonesoup.base import Property
 
 from ..environment import Bathymetry
+from .absorption import thorp_db_per_km
 from .acoustic import (
     AcousticPropagationModel,
     PropagationLoss,
@@ -36,6 +37,9 @@ FloatArray: TypeAlias = NDArray[np.float64]
 ComplexArray: TypeAlias = NDArray[np.complexfloating[Any, Any]]
 
 _RECEIVER_GEOMETRIES = ("reference", "per_sensor")
+_VOLUME_ATTENUATIONS = ("none", "thorp")
+# The dB/km in one Np/m, as bellhopcxx rounds it, so its imaginary delays invert exactly.
+_DB_PER_KM_PER_NP_PER_M = 8685.8896
 
 
 @dataclass(frozen=True)
@@ -50,6 +54,7 @@ class Eigenray:
     ----------
     amplitude : float
         Linear pressure amplitude (not dB), relative to the pressure 1 m from the source.
+        It is geometric: spreading and boundary losses, without seawater absorption.
     phase_rad : float
         Phase of the arrival in radians, as Bellhop reports it: for example, pi for a path
         with one reflection off the pressure-release surface.
@@ -63,6 +68,9 @@ class Eigenray:
         Number of surface reflections along the path.
     n_bottom_bounces : int
         Number of bottom reflections along the path.
+    path_length_m : float or None
+        Length of the path in metres, or None if the model ran with
+        ``volume_attenuation="none"``, when Bellhop does not report it.
 
     """
 
@@ -73,8 +81,7 @@ class Eigenray:
     rcv_angle_deg: float
     n_surface_bounces: int
     n_bottom_bounces: int
-
-
+    path_length_m: float | None = None
 
 
 class BellhopAcousticPropagationModel(AcousticPropagationModel, SpectrumPropagationModel):
@@ -91,17 +98,27 @@ class BellhopAcousticPropagationModel(AcousticPropagationModel, SpectrumPropagat
     model can be the ``propagation_model`` of any simulator that accepts a
     :class:`~bluepebble.models.propagation.SpectrumPropagationModel`, in place of
     :class:`~bluepebble.models.propagation.rtrsAcousticPropagationModel`. For sensor
-    :math:`n` with arrivals :math:`k` of amplitude :math:`a_k`, phase :math:`\phi_k` and delay
-    :math:`\tau_k`,
+    :math:`n` with arrivals :math:`k` of amplitude :math:`a_k`, phase :math:`\phi_k`, delay
+    :math:`\tau_k` and path length :math:`L_k`,
 
     .. math::
 
-        H_n(f) = \sum_k a_k \, e^{i \phi_k} \, e^{-i 2 \pi f \tau_k}, \qquad f > 0
+        H_n(f) = \sum_k a_k \, 10^{-\alpha(f) L_k / 20} \, e^{i \phi_k} \,
+            e^{-i 2 \pi f \tau_k}, \qquad f > 0
 
     and :math:`H_n(-f) = H_n(f)^*` (a real channel). This is Blue Pebble's convention, in which
     a delay :math:`\tau` is :math:`e^{-i 2 \pi f \tau}`, and it is also the convention of
     Bellhop's reported phases: a bottom reflection's phase equals the phase of the Rayleigh
-    reflection coefficient in it.
+    reflection coefficient in it. The seawater absorption :math:`\alpha`, in dB/km with
+    :math:`L_k` in km, is zero with ``volume_attenuation="none"``, and
+    :func:`~bluepebble.models.propagation.thorp_db_per_km` with ``"thorp"``.
+
+    Absorption is applied here, to each arrival at each frequency, and not by Bellhop. Bellhop
+    evaluates its own volume attenuation (a fourth letter of the top option, ``'T'`` for
+    Thorp) at the run frequency :math:`f_0` only. In arrivals mode it leaves the amplitudes
+    alone and reports the absorption as an imaginary part of each delay,
+    :math:`2 \pi f_0 \operatorname{Im} \tau_k = -\alpha(f_0) L_k` with :math:`\alpha` in Np/m.
+    With ``"thorp"`` the model runs Bellhop with that option only to read :math:`L_k` from it.
 
     Parameters
     ----------
@@ -136,6 +153,11 @@ class BellhopAcousticPropagationModel(AcousticPropagationModel, SpectrumPropagat
         where Bellhop's own choice was within 2%.
     memory : str, optional
         Memory ``bellhopcxx`` allocates per run (its ``--memory`` option).
+    volume_attenuation : str, optional
+        Seawater absorption: ``"none"`` or ``"thorp"``. Thorp only: ``bellhopcxx``'s
+        Francois–Garrison (``'F'``) computes the boric-acid relaxation frequency with
+        ``pow(1.0, ...)`` instead of ``10 ** (...)``, so it is wrong at every frequency (×0.5
+        to ×1.3 over 0.5–10 kHz) and cannot serve as a reference.
 
     Assumptions
     -----------
@@ -150,7 +172,13 @@ class BellhopAcousticPropagationModel(AcousticPropagationModel, SpectrumPropagat
       reflection coefficient and no roughness.
     - In :meth:`propagate_spectrum`, Bellhop runs once at the centre of the requested band, so
       each arrival's amplitude and phase (spreading and bottom loss) are taken as constant
-      across the band; only the delay phase varies with frequency.
+      across the band; only the delay phase and the absorption vary with frequency.
+    - With ``"thorp"``, absorption depends on frequency only, so it is the same all along a
+      path whatever the temperature, salinity, depth or pH.
+    - With ``"thorp"``, Bellhop also adds the Thorp term to the sediment half-space's
+      attenuation at the run frequency. At 10 km range in 4 km of isovelocity water over the
+      default bottom, at 0.5 to 10 kHz, that changed bottom-reflected amplitudes by less than
+      1e-6 of their value and their phases by less than 0.002 degrees.
 
     """
 
@@ -195,9 +223,17 @@ class BellhopAcousticPropagationModel(AcousticPropagationModel, SpectrumPropagat
         doc="Memory bellhopcxx allocates per run (its --memory option, e.g. '256MiB'). Its "
         "own default, 4GiB, makes each run spend most of its time allocating.",
     )
+    volume_attenuation: Literal["none", "thorp"] = Property(
+        default="none",
+        doc='Seawater absorption: "none" or "thorp" (thorp_db_per_km, applied to each arrival '
+        "at each frequency). Thorp only: bellhopcxx's Francois-Garrison ('F') computes the "
+        "boric-acid relaxation frequency with pow(1.0, ...) instead of 10 ** (...), so it is "
+        "wrong at every frequency (x0.5 to x1.3 over 0.5-10 kHz) and cannot serve as a "
+        "reference.",
+    )
 
     def __init__(self, *args: object, **kwargs: object) -> None:
-        """Initialise the model and check ``receiver_geometry``.
+        """Initialise the model and check ``receiver_geometry`` and ``volume_attenuation``.
 
         Parameters
         ----------
@@ -209,7 +245,8 @@ class BellhopAcousticPropagationModel(AcousticPropagationModel, SpectrumPropagat
         Raises
         ------
         ValueError
-            If ``receiver_geometry`` is not ``"reference"`` or ``"per_sensor"``.
+            If ``receiver_geometry`` is not ``"reference"`` or ``"per_sensor"``, or
+            ``volume_attenuation`` is not ``"none"`` or ``"thorp"``.
 
         """
         super().__init__(*args, **kwargs)
@@ -217,6 +254,11 @@ class BellhopAcousticPropagationModel(AcousticPropagationModel, SpectrumPropagat
             raise ValueError(
                 f"receiver_geometry ({self.receiver_geometry!r}) must be one of "
                 f"{_RECEIVER_GEOMETRIES}."
+            )
+        if self.volume_attenuation not in _VOLUME_ATTENUATIONS:
+            raise ValueError(
+                f"volume_attenuation ({self.volume_attenuation!r}) must be one of "
+                f"{_VOLUME_ATTENUATIONS}."
             )
 
     def compute_eigenrays(
@@ -226,6 +268,10 @@ class BellhopAcousticPropagationModel(AcousticPropagationModel, SpectrumPropagat
         frequency_hz: float,
     ) -> list[Eigenray]:
         """Run Bellhop for one source and receiver and return every arrival.
+
+        The amplitudes are geometric whatever ``volume_attenuation`` is: absorption is applied
+        only in :meth:`propagate_spectrum` and :meth:`propagate`. With ``"thorp"`` each arrival
+        also carries its ``path_length_m``.
 
         Parameters
         ----------
@@ -289,7 +335,7 @@ class BellhopAcousticPropagationModel(AcousticPropagationModel, SpectrumPropagat
         band_centre_hz = float((magnitudes.min() + magnitudes.max()) / 2)
         arrivals = self._sensor_arrivals(platform, source, band_centre_hz)
         transfer_functions = np.stack(
-            [_transfer_function(rays, frequencies) for rays in arrivals]
+            [self._absorbed_transfer_function(rays, frequencies) for rays in arrivals]
         )
         delays_s = np.array(
             [min((r.delay_s for r in rays), default=np.nan) for rays in arrivals], dtype=float
@@ -333,7 +379,7 @@ class BellhopAcousticPropagationModel(AcousticPropagationModel, SpectrumPropagat
             rays = self._run_arrivals(
                 source_position, reference, reference[:2, 0], float(frequency_hz)
             )[0]
-            magnitude = abs(_transfer_function(rays, np.array([frequency_hz]))[0])
+            magnitude = abs(self._absorbed_transfer_function(rays, np.array([frequency_hz]))[0])
             losses_db.append(999.0 if magnitude < 1e-12 else float(-20 * np.log10(magnitude)))
             if np.isnan(travel_time_s):
                 travel_time_s = min((r.delay_s for r in rays), default=np.nan)
@@ -341,6 +387,67 @@ class BellhopAcousticPropagationModel(AcousticPropagationModel, SpectrumPropagat
             np.asarray(losses_db, dtype=np.float64) if self.use_all_frequencies else losses_db[0]
         )
         return loss, float(travel_time_s)
+
+    def _arrival_absorption(self, rays: list[Eigenray], frequencies_hz: ArrayLike) -> FloatArray:
+        r"""Return the factor absorption scales each arrival's amplitude by at each frequency.
+
+        The factor is :math:`10^{-\alpha(|f|) L_k / 20}`, with :math:`\alpha` in dB/km from
+        :func:`~bluepebble.models.propagation.thorp_db_per_km` and :math:`L_k` the arrival's
+        ``path_length_m`` in km.
+
+        Parameters
+        ----------
+        rays : list[Eigenray]
+            Arrivals from a run of this model.
+        frequencies_hz : ArrayLike
+            Frequencies in Hz.
+
+        Returns
+        -------
+        FloatArray
+            Shape ``(num_arrivals, num_frequencies)``; all ones with
+            ``volume_attenuation="none"``.
+
+        Raises
+        ------
+        ValueError
+            If absorption is on and an arrival has no ``path_length_m``, so it came from a
+            run without it.
+
+        """
+        frequencies = np.asarray(frequencies_hz, dtype=float).reshape(-1)
+        if self.volume_attenuation == "none":
+            return np.ones((len(rays), frequencies.size))
+        if any(r.path_length_m is None for r in rays):
+            raise ValueError(
+                "An arrival has no path_length_m: it came from a run with "
+                'volume_attenuation="none".'
+            )
+        lengths_km = np.array([r.path_length_m for r in rays], dtype=float) / 1000.0
+        return 10.0 ** (-np.outer(lengths_km, thorp_db_per_km(frequencies)) / 20.0)
+
+    def _absorbed_transfer_function(
+        self, rays: list[Eigenray], frequencies_hz: FloatArray
+    ) -> ComplexArray:
+        """Sum ``rays`` into a transfer function, with absorption per ``volume_attenuation``."""
+        if self.volume_attenuation == "none":
+            return _transfer_function(rays, frequencies_hz)
+        return _transfer_function(
+            rays, frequencies_hz, absorption=self._arrival_absorption(rays, frequencies_hz)
+        )
+
+    def _imag_delay_to_path_length_mps(self, frequency_hz: float) -> float | None:
+        r"""Return the ratio of an arrival's path length to its imaginary delay, in m/s.
+
+        Bellhop integrates the delay along the path with a complex sound speed, so
+        :math:`2 \pi f_0 \operatorname{Im} \tau = -\alpha(f_0) L` with :math:`\alpha` in Np/m
+        at the run frequency :math:`f_0`. None with ``volume_attenuation="none"``, when the
+        delay is real.
+        """
+        if self.volume_attenuation == "none":
+            return None
+        alpha_np_per_m = float(thorp_db_per_km(frequency_hz)) / _DB_PER_KM_PER_NP_PER_M
+        return -2 * np.pi * frequency_hz / alpha_np_per_m
 
     def _sensor_arrivals(
         self, platform: "PlatformState", source: "State", frequency_hz: float
@@ -423,7 +530,10 @@ class BellhopAcousticPropagationModel(AcousticPropagationModel, SpectrumPropagat
             )
             self._write_bty(stem, bathy_range_km, bottom_depth_m)
             self._run_bellhopcxx(exe, stem, self.memory)
-            blocks = self._parse_arr(stem.with_suffix(".arr"))
+            blocks = self._parse_arr(
+                stem.with_suffix(".arr"),
+                imag_delay_to_path_length_mps=self._imag_delay_to_path_length_mps(frequency_hz),
+            )
         # Blocks run over depths, with range varying fastest.
         return [
             blocks[d * grid_ranges_km.size + r]
@@ -482,12 +592,15 @@ class BellhopAcousticPropagationModel(AcousticPropagationModel, SpectrumPropagat
         receiver_depths = np.atleast_1d(receiver_depths_m)
         ranges_km = np.atleast_1d(receiver_ranges_m) / 1000.0
         low_angle, high_angle = self.beam_angle_limits_deg
+        # Spline SSP, vacuum above the surface, attenuation in dB/wavelength, then Thorp
+        # volume attenuation if asked for.
+        top_option = "SVWT" if self.volume_attenuation == "thorp" else "SVW"
         env = "\n".join(
             [
                 "'BellhopArrivals'",
                 f"{frequency_hz:.4f}",
                 "1",  # number of media
-                "'SVW'",  # spline SSP, vacuum above the surface, attenuation in dB/wavelength
+                f"'{top_option}'",
                 f"0 0.0 {water_depth_m:.2f}",
                 ssp_lines,
                 "'A~' 0.0",  # acousto-elastic half-space below a .bty bathymetry, no roughness
@@ -528,7 +641,9 @@ class BellhopAcousticPropagationModel(AcousticPropagationModel, SpectrumPropagat
             ) from e
 
     @staticmethod
-    def _parse_arr(arr_path: Path) -> list[list[Eigenray]]:
+    def _parse_arr(
+        arr_path: Path, *, imag_delay_to_path_length_mps: float | None = None
+    ) -> list[list[Eigenray]]:
         """Parse a 2D ASCII arrivals file for a rectilinear receiver grid.
 
         The file holds a header (``'2D'``, the frequency, the source depths, receiver depths
@@ -537,6 +652,13 @@ class BellhopAcousticPropagationModel(AcousticPropagationModel, SpectrumPropagat
         line per arrival::
 
             amplitude  phase_deg  delay_s  delay_imag_s  src_angle  rcv_angle  n_top  n_bottom
+
+        Parameters
+        ----------
+        arr_path : Path
+            The arrivals file.
+        imag_delay_to_path_length_mps : float, optional
+            If given, each arrival's ``path_length_m`` is this times its imaginary delay.
 
         Returns
         -------
@@ -565,17 +687,25 @@ class BellhopAcousticPropagationModel(AcousticPropagationModel, SpectrumPropagat
                             rcv_angle_deg=float(parts[5]),
                             n_surface_bounces=int(parts[6]),
                             n_bottom_bounces=int(parts[7]),
+                            path_length_m=(
+                                None
+                                if imag_delay_to_path_length_mps is None
+                                else imag_delay_to_path_length_mps * float(parts[3])
+                            ),
                         )
                     )
                 receivers.append(arrivals)
         return receivers
 
 
-def _transfer_function(rays: list[Eigenray], frequencies_hz: FloatArray) -> ComplexArray:
+def _transfer_function(
+    rays: list[Eigenray], frequencies_hz: FloatArray, *, absorption: FloatArray | None = None
+) -> ComplexArray:
     r"""Sum arrivals into a transfer function over ``frequencies_hz``.
 
     The channel is real, so negative frequencies get the complex conjugate of the positive
-    ones, :math:`H(-f) = H(f)^*`, and :math:`H(0)` is real.
+    ones, :math:`H(-f) = H(f)^*`, and :math:`H(0)` is real. ``absorption``, of shape
+    ``(num_arrivals, num_frequencies)``, scales each arrival's amplitude at each frequency.
     """
     if not rays:
         return np.zeros(frequencies_hz.size, dtype=np.complex128)
@@ -590,4 +720,9 @@ def _transfer_function(rays: list[Eigenray], frequencies_hz: FloatArray) -> Comp
         np.exp(1j * sign[None, :] * phases_rad[:, None]),
     )
     delay_terms = np.exp(-2j * np.pi * delays_s[:, None] * frequencies_hz[None, :])
-    return np.asarray(amplitudes @ (arrival_terms * delay_terms), dtype=np.complex128)
+    if absorption is None:
+        return np.asarray(amplitudes @ (arrival_terms * delay_terms), dtype=np.complex128)
+    return np.asarray(
+        np.sum(amplitudes[:, None] * absorption * arrival_terms * delay_terms, axis=0),
+        dtype=np.complex128,
+    )

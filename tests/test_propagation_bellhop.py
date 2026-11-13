@@ -7,6 +7,7 @@ PATH (as in CI); ``needs_rtrs`` also needs the rtrs package.
 
 from __future__ import annotations
 
+import dataclasses
 import stat
 from pathlib import Path
 from shutil import which
@@ -39,7 +40,11 @@ MATCHED_BOTTOM = dict(
 
 
 def _arr_text(blocks, depths=(100.0,), ranges_m=(1000.0,)):
-    """Return a 2D ASCII arrivals file: one block of arrival rows per grid point."""
+    """Return a 2D ASCII arrivals file: one block of arrival rows per grid point.
+
+    A row is ``(amplitude, phase_deg, delay_s, n_top, n_bottom)``, with an optional sixth
+    entry for the imaginary delay Bellhop reports when it applies volume attenuation.
+    """
     lines = [
         "'2D'",
         "   1000.0",
@@ -51,10 +56,20 @@ def _arr_text(blocks, depths=(100.0,), ranges_m=(1000.0,)):
     for block in blocks:
         lines.append(f"   {len(block)}")
         lines += [
-            f"   {amp} {phase_deg} {delay} 0.0 0.1 -0.1 {top} {bot}"
-            for amp, phase_deg, delay, top, bot in block
+            f"   {amp} {phase_deg} {delay} {imag_delay[0] if imag_delay else 0.0} 0.1 -0.1 "
+            f"{top} {bot}"
+            for amp, phase_deg, delay, top, bot, *imag_delay in block
         ]
     return "\n".join(lines) + "\n"
+
+
+def _imag_delay_s(path_length_m, alpha_db_per_km, frequency_hz):
+    """Return the imaginary delay Bellhop reports for a path absorbed at ``alpha_db_per_km``.
+
+    Bellhop integrates the delay with a complex sound speed, which gives
+    2 pi f Im(tau) = -alpha L with alpha in Np/m (1 Np/m = 8685.8896 dB/km).
+    """
+    return -alpha_db_per_km / 8685.8896 * path_length_m / (2 * np.pi * frequency_hz)
 
 
 # One receiver, 3 arrivals: direct, surface-reflected, and a two-surface one-bottom path.
@@ -71,13 +86,15 @@ ONE_RECEIVER = [
 def bp():
     """Import the real model, environment and simulator classes without leaking caching."""
     snapshot = isolate_real_bluepebble_imports()
-    from bluepebble.models.environment import Constant, FlatBathymetry
+    from bluepebble.models.environment import Constant, FlatBathymetry, Linear
     from bluepebble.models.propagation import (
         AcousticPropagationModel,
         BellhopAcousticPropagationModel,
         Eigenray,
         SpectrumPropagationModel,
+        bellhop,
         rtrsAcousticPropagationModel,
+        thorp_db_per_km,
     )
     from bluepebble.simulator import DiscretePassiveSonarArraySimulator
 
@@ -89,7 +106,10 @@ def bp():
         DiscretePassiveSonarArraySimulator=DiscretePassiveSonarArraySimulator,
         Eigenray=Eigenray,
         Constant=Constant,
+        Linear=Linear,
         FlatBathymetry=FlatBathymetry,
+        thorp_db_per_km=thorp_db_per_km,
+        transfer_function=bellhop._transfer_function,
     )
     restore_real_bluepebble_imports(snapshot)
 
@@ -212,6 +232,32 @@ def test_env_and_bty_files_describe_the_geometry(bp, tmp_path) -> None:
         "0.000000 4000.00",
         "2.000000 3900.00",
     ]
+
+
+def test_thorp_adds_bellhops_volume_attenuation_letter_to_the_top_option(bp, tmp_path) -> None:
+    """With "thorp" the top option gains 'T', so Bellhop reports each path's absorption."""
+    stem = tmp_path / "bp"
+    _model(bp, volume_attenuation="thorp")._write_env(
+        stem, 100.0, np.array([50.0]), np.array([2000.0]), 4000.0, 1500.0
+    )
+
+    assert stem.with_suffix(".env").read_text().splitlines()[3] == "'SVWT'"
+
+
+def test_parse_arr_turns_the_imaginary_delay_into_a_path_length_only_when_asked(
+    bp, tmp_path
+) -> None:
+    """The path length is the imaginary delay times the given ratio, and None without one."""
+    arr = tmp_path / "x.arr"
+    arr.write_text(_arr_text([[(1e-4, 0.0, 6.7, 0, 0, -2.0e-5)]]))
+
+    ((plain,),) = bp.BellhopAcousticPropagationModel._parse_arr(arr)
+    ((measured,),) = bp.BellhopAcousticPropagationModel._parse_arr(
+        arr, imag_delay_to_path_length_mps=-5.0e8
+    )
+
+    assert plain.path_length_m is None
+    assert measured.path_length_m == pytest.approx(10_000.0)
 
 
 def test_bathymetry_profile_runs_from_the_source_along_the_plane(bp) -> None:
@@ -345,6 +391,129 @@ def test_invalid_receiver_geometry_raises(bp) -> None:
 
 
 # ---------------------------------------------------------------------------
+# Seawater absorption
+# ---------------------------------------------------------------------------
+
+# Thorp's absorption (Jensen et al. Eq. 1.34) worked by hand, in dB/km.
+THORP_400_HZ = 0.0202374
+THORP_3200_HZ = 0.2162044
+FFT_GRID_HZ = np.fft.fftfreq(64, 1 / 12800.0)  # Bellhop runs at its centre, 3200 Hz
+
+
+def test_invalid_volume_attenuation_raises(bp) -> None:
+    """Only "none" and "thorp" are accepted."""
+    with pytest.raises(ValueError, match="volume_attenuation"):
+        _model(bp, volume_attenuation="francois-garrison")
+
+
+def test_default_results_are_those_of_v0_8_0(bp, tmp_path) -> None:
+    """Without absorption, the transfer function and loss are unchanged from v0.8.0.
+
+    The values were saved from the v0.8.0 code. They are compared to rounding and not bit
+    for bit, since the order BLAS sums the arrivals in can differ between platforms.
+    """
+    exe = _stub_writing(tmp_path, _arr_text(ONE_RECEIVER))
+    platform = _platform([[1000.0], [0.0], [-100.0]])
+    source = _source([0.0, 0.0, -100.0], frequencies_hz=(200.0, 400.0), amplitudes_upa=(1.0, 5.0))
+
+    H, delays = _model(bp, exe_path=exe).propagate_spectrum(platform, source, FFT_GRID_HZ)
+    loss_db, time_s = _model(bp, exe_path=exe).propagate(platform, source)
+    losses_db, _ = _model(bp, exe_path=exe, use_all_frequencies=True).propagate(platform, source)
+
+    np.testing.assert_allclose(
+        H[0, [0, 1, 16, 31, 32, 33, 63]],
+        [
+            3.172719529952874e-05 + 0j,
+            -0.000745883535737235 - 0.0005211413327306173j,
+            0.00031048702949672795 - 0.0006317033853083173j,
+            -0.000439378603821695 - 0.00012125989088183757j,
+            -0.0007534379011726957 - 0.000608047601094006j,
+            -0.000439378603821695 + 0.00012125989088183757j,
+            -0.000745883535737235 + 0.0005211413327306173j,
+        ],
+        rtol=1e-13,
+    )
+    assert delays[0] == 0.666658 and time_s == 0.666658
+    assert loss_db == pytest.approx(62.566225654384546, rel=1e-13)
+    np.testing.assert_allclose(losses_db, [60.82006098502632, 62.566225654384546], rtol=1e-13)
+
+
+def test_thorp_absorbs_each_frequency_bin_by_its_own_amount(bp, tmp_path) -> None:
+    """|H| falls by alpha(|f|) R at every bin, whatever frequency Bellhop ran at.
+
+    One direct arrival over R = 41 km, on the full complex FFT grid a simulator passes. The
+    stub reports the path as Bellhop does, as the imaginary delay at the 3200 Hz run frequency.
+    """
+    R, amplitude = 41_000.0, 1 / 41_000.0
+    row = (amplitude, 0.0, R / C, 0, 0, _imag_delay_s(R, THORP_3200_HZ, 3200.0))
+    exe = _stub_writing(tmp_path, _arr_text([[row]]))
+    platform, source = _platform([[R], [0.0], [-100.0]]), _source([0.0, 0.0, -100.0])
+
+    H_without, _ = _model(bp, exe_path=exe).propagate_spectrum(platform, source, FFT_GRID_HZ)
+    H_with, delays = _model(bp, exe_path=exe, volume_attenuation="thorp").propagate_spectrum(
+        platform, source, FFT_GRID_HZ
+    )
+
+    np.testing.assert_allclose(np.abs(H_without[0]), amplitude)
+    alpha_db_per_km = bp.thorp_db_per_km(FFT_GRID_HZ)
+    np.testing.assert_allclose(
+        -20 * np.log10(np.abs(H_with[0]) / np.abs(H_without[0])),
+        alpha_db_per_km * R / 1000,
+        rtol=1e-6,
+    )
+    # 17.6 dB at 5400 Hz against 8.9 dB at the run frequency: not one absorption for all bins.
+    assert -20 * np.log10(np.abs(H_with[0, 27]) * R) == pytest.approx(0.4291274 * 41, rel=1e-6)
+    np.testing.assert_allclose(np.angle(H_with[0]), np.angle(H_without[0]), atol=1e-12)
+    positive, negative = FFT_GRID_HZ[1:32], FFT_GRID_HZ[:32:-1]
+    np.testing.assert_array_equal(positive, -negative)
+    np.testing.assert_allclose(H_with[0, :32:-1], np.conj(H_with[0, 1:32]))
+    assert H_with[0, 0].imag == 0
+    assert delays[0] == pytest.approx(R / C)
+
+
+def test_thorp_raises_the_propagate_loss_by_the_absorption_at_each_tonal(bp, tmp_path) -> None:
+    """propagate() adds alpha(f) L to the geometric loss, at the tonal Bellhop ran at."""
+    L = 20_000.0
+    row = (1 / L, 0.0, L / C, 0, 0, _imag_delay_s(L, THORP_400_HZ, 400.0))
+    exe = _stub_writing(tmp_path, _arr_text([[row]]))
+    platform = _platform([[L], [0.0], [-100.0]])
+    source = _source([0.0, 0.0, -100.0], frequencies_hz=(400.0,))
+
+    loss_db, _ = _model(bp, exe_path=exe, volume_attenuation="thorp").propagate(platform, source)
+
+    assert loss_db == pytest.approx(20 * np.log10(L) + THORP_400_HZ * 20, abs=1e-5)
+
+
+def test_arrival_absorption_is_one_without_absorption_and_needs_path_lengths_with_it(bp) -> None:
+    """The helper returns ones for "none", and rejects arrivals that carry no path length."""
+    rays = [bp.Eigenray(1e-3, 0.0, 1.0, 0.0, 0.0, 0, 0)] * 2
+    f = np.array([-500.0, 0.0, 500.0])
+
+    np.testing.assert_array_equal(_model(bp)._arrival_absorption(rays, f), np.ones((2, 3)))
+    with pytest.raises(ValueError, match="path_length_m"):
+        _model(bp, volume_attenuation="thorp")._arrival_absorption(rays, f)
+
+
+def test_transfer_function_takes_absorption_by_keyword_only(bp) -> None:
+    """The two-argument call downstream code uses still works; absorption scales arrivals."""
+    rays = [
+        bp.Eigenray(2e-3, 0.0, 1.0, 0.0, 0.0, 0, 0),
+        bp.Eigenray(1e-3, np.pi, 1.5, 0.0, 0.0, 1, 0),
+    ]
+    f = np.array([250.0, 500.0])
+
+    plain = bp.transfer_function(rays, f)
+    first_only = bp.transfer_function(rays, f, absorption=np.array([[1.0, 0.5], [0.0, 0.0]]))
+
+    np.testing.assert_allclose(
+        plain, 2e-3 * np.exp(-2j * np.pi * f) - 1e-3 * np.exp(-3j * np.pi * f)
+    )
+    np.testing.assert_allclose(first_only, [2e-3, 1e-3] * np.exp(-2j * np.pi * f))
+    with pytest.raises(TypeError):
+        bp.transfer_function(rays, f, np.ones((2, 2)))
+
+
+# ---------------------------------------------------------------------------
 # Errors
 # ---------------------------------------------------------------------------
 
@@ -397,6 +566,12 @@ def _weighted_delay_s(rays):
     """
     amplitudes = np.array([r.amplitude for r in rays])
     return float(np.dot(amplitudes, [r.delay_s for r in rays]) / amplitudes.sum())
+
+
+def _weighted_path_length_m(rays):
+    """Amplitude-weighted mean path length of the arrivals making up one geometric path."""
+    amplitudes = np.array([r.amplitude for r in rays])
+    return float(np.dot(amplitudes, [r.path_length_m for r in rays]) / amplitudes.sum())
 
 
 @needs_bellhop
@@ -494,6 +669,89 @@ def test_reference_and_per_sensor_geometry_agree_over_a_flat_bottom(bp) -> None:
 
     np.testing.assert_allclose(H_ref, H_per, rtol=0, atol=1e-12 * np.abs(H_per).max())
     np.testing.assert_allclose(d_ref, d_per)
+
+
+@needs_bellhop
+@pytest.mark.parametrize("frequency_hz", [500.0, 1000.0, 5400.0, 10000.0])
+def test_bellhops_thorp_absorption_is_thorp_db_per_km(bp, frequency_hz) -> None:
+    """In isovelocity water each path's length is its straight-line (or image) distance.
+
+    The path length is Bellhop's own absorption, read from its imaginary delay, divided by
+    ``thorp_db_per_km``, so it equals the geometric distance only if the two formulas agree.
+    """
+    rays = _model(bp, volume_attenuation="thorp").compute_eigenrays(
+        [0.0, 0.0, -100.0], [10_000.0, 0.0, -150.0], frequency_hz
+    )
+    direct, surface = _paths(rays, 0, 0), _paths(rays, 1, 0)
+
+    assert direct and surface
+    # Bellhop stores delays in single precision: both came out 3e-7 short.
+    assert _weighted_path_length_m(direct) == pytest.approx(np.hypot(10_000.0, 50.0), rel=1e-5)
+    assert _weighted_path_length_m(surface) == pytest.approx(np.hypot(10_000.0, 250.0), rel=1e-5)
+
+
+@needs_bellhop
+def test_thorp_leaves_bellhops_arrivals_geometric(bp) -> None:
+    """Asking Bellhop for absorption changes only what it adds to the seabed's attenuation.
+
+    Paths that miss the bottom keep their amplitude, phase and delay exactly. Bellhop adds the
+    Thorp term to the half-space too, which moved the bottom-reflected amplitudes by under
+    1e-6 of their value and their phases by under 0.002 degrees.
+    """
+    source, receiver = [0.0, 0.0, -100.0], [10_000.0, 0.0, -150.0]
+
+    def sorted_arrivals(**kwargs):
+        rays = _model(bp, **kwargs).compute_eigenrays(source, receiver, 5400.0)
+        # bellhopcxx writes arrivals in a different order from run to run.
+        return sorted(
+            rays, key=lambda r: (r.n_surface_bounces, r.n_bottom_bounces, r.src_angle_deg)
+        )
+
+    plain, absorbed = sorted_arrivals(), sorted_arrivals(volume_attenuation="thorp")
+
+    assert len(plain) == len(absorbed) and any(r.n_bottom_bounces for r in plain)
+    for before, after in zip(plain, absorbed, strict=True):
+        assert before.path_length_m is None and after.path_length_m > 10_000.0
+        if before.n_bottom_bounces == 0:
+            assert dataclasses.replace(after, path_length_m=None) == before
+        else:
+            assert after.amplitude == pytest.approx(before.amplitude, rel=1e-5)
+            assert after.phase_rad == pytest.approx(before.phase_rad, abs=np.radians(0.01))
+            assert after.delay_s == before.delay_s
+
+
+@needs_bellhop
+@pytest.mark.parametrize("range_m", [10e3, 25e3, 50e3, 60e3])
+def test_refracted_path_is_absorbed_over_its_arc_length(bp, range_m) -> None:
+    """In a linear profile the direct ray is a circular arc, whose length is analytic.
+
+    With c = c0 + g z, a ray between two points at the same depth, a range r apart, leaves at
+    tan(theta) = r g / (2 c_s) on a circle of radius c_s / (g cos(theta)), so its length is
+    2 theta c_s / (g cos(theta)): 61.1 km at 60 km. Bellhop's path length came out within 6e-6
+    of it, where the depth-mean sound speed times the travel time was up to 3% out.
+    """
+    c0, gradient, depth_m = 1500.0, 0.017, 100.0
+    model = bp.BellhopAcousticPropagationModel(
+        ssp=bp.Linear(surface_speed=c0, gradient=gradient),
+        bathymetry=bp.FlatBathymetry(depth=-6000.0),
+        volume_attenuation="thorp",
+    )
+    c_source = c0 + gradient * depth_m
+    launch_rad = np.arctan(range_m * gradient / (2 * c_source))
+    arc_m = 2 * launch_rad * c_source / (gradient * np.cos(launch_rad))
+
+    direct = _paths(
+        model.compute_eigenrays([0.0, 0.0, -depth_m], [range_m, 0.0, -depth_m], 5400.0), 0, 0
+    )
+
+    assert direct
+    assert _weighted_path_length_m(direct) == pytest.approx(arc_m, rel=5e-5)
+    amplitudes = np.array([r.amplitude for r in direct])
+    absorbed = amplitudes @ model._arrival_absorption(direct, [5400.0])[:, 0]
+    # 0.4291274 dB/km is Thorp's formula at 5.4 kHz, worked by hand.
+    assert -20 * np.log10(absorbed / amplitudes.sum()) == pytest.approx(
+        0.4291274 * arc_m / 1000, abs=0.005
+    )
 
 
 @needs_bellhop
