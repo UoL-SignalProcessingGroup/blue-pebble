@@ -30,8 +30,9 @@ pytest --collect-only -q
 `tests/test_signal_utils.py`, `tests/test_signal_base.py`, `tests/test_signal_models.py`, `tests/test_signal_anthropogenic.py`, `tests/test_signal_biological.py`, `tests/test_signal_active.py`
 
 - STFT utilities, inverse-STFT round-trip behaviour and fade helpers
-- `Signal.generate` validation and attenuation/delay application branches
-- ambient-noise and effects helpers
+- source waveform padding, truncation and shape checks, and the deprecated
+  `BiologicalSignal.generate`'s validation and attenuation/delay branches
+- ambient-noise helpers and the deprecated effects
 - anthropogenic source synthesis from each source's metadata, and the deprecated constructor arguments
 - biological signal generation, call template construction and snapping shrimp models
 - active pulses: CW tone, level and phase; LFM sweep, edge taper and configuration checks
@@ -44,6 +45,7 @@ pytest --collect-only -q
 - reproducibility of independent RNG streams spawned from a global seed
 - per-instance seed override and non-deterministic default behaviour
 - cross-signal-type reproducibility from a single `set_seed` call
+- biological source waveforms following the global seed and an explicit per-instance seed
 
 ### Beamforming and array resolution
 
@@ -133,6 +135,13 @@ pytest --collect-only -q
 `tests/test_simulator_mixed_sources.py`
 
 - real and complex sources in one STFT run, checked by superposition against each source's own run
+
+`tests/test_simulator_biological.py`
+
+- a biological source through the STFT, fractional-delay and discrete simulators: beamformed peak
+  at its true bearing, spherical spreading with range, and arrival order across the array
+- the shared source lifecycle (`compute_stft`, `reset`), and the deprecation warnings of
+  `BiologicalSignal.generate` and the effects
 
 `tests/test_simulator_active.py`
 

@@ -1,26 +1,22 @@
 """Anthropogenic signal models for sensor arrays."""
 
 import warnings
-from abc import ABC, abstractmethod
+from abc import ABC
 from fractions import Fraction
 from pathlib import Path
-from typing import TYPE_CHECKING, Any, TypeAlias, cast
+from typing import TYPE_CHECKING, Any, cast
 
 import numpy as np
-from numpy.typing import ArrayLike, NDArray
+from numpy.typing import ArrayLike
 from scipy import signal as scipy_signal
 from scipy.io import wavfile
 from stonesoup.base import Property
 
 from .._seed import _spawn_rng
-from .base import ComplexArray, Signal, _get_source_metadata
-from .utils import WindowType, compute_stft
+from .base import ComplexArray, FloatArray, SourceSignal, _get_source_metadata
 
 if TYPE_CHECKING:
     from stonesoup.types.state import State
-
-FloatArray: TypeAlias = NDArray[np.float64]
-CachedStftResult: TypeAlias = tuple[NDArray[np.complex64], FloatArray, int, FloatArray]
 
 
 def _extract_tonal_metadata(
@@ -83,216 +79,11 @@ def _extract_tonal_metadata(
 _SOURCE_METADATA_KEYS = ("tonal_bandwidth_hz", "noise_amplitude_upa", "noise_spectral_exponent")
 
 
-class AnthropogenicSignal(Signal, ABC):
-    """Base class for STFT-first anthropogenic signal models.
+class AnthropogenicSignal(SourceSignal, ABC):
+    """Base class for anthropogenic (man-made) source models, such as ships.
 
-    Lifecycle
-    ---------
-    These models generate their full-duration source waveform once and cache it
-    as an STFT matrix for frequency-domain propagation by
-    :class:`~bluepebble.simulator.continuous.ContinuousPassiveSonarArraySimulator`.
-
-    The expected call sequence for a single simulation run is:
-
-    1. Call :meth:`compute_stft` once with the source state to build and cache
-       the STFT.
-    2. Pass the model to the simulator, which reads the cached STFT via
-       :meth:`get_stft` for each frame.
-
-    To reuse the same model instance across multiple simulation runs (e.g. with
-    a different source state or after changing signal parameters), call
-    :meth:`reset` before the next :meth:`compute_stft` call.  Calling
-    :meth:`compute_stft` a second time without resetting raises
-    :exc:`RuntimeError`.
+    The waveform and STFT lifecycle is :class:`~bluepebble.signal.base.SourceSignal`'s.
     """
-
-    frame_len: int = Property(default=1024, doc="STFT frame length in samples")
-    hop_factor: int = Property(
-        default=4,
-        doc="Hop factor (hop = frame_len // hop_factor)",
-    )
-    window_type: WindowType = Property(default="hann", doc="Window type for STFT")
-
-    def __init__(self, *args: object, **kwargs: object) -> None:
-        """Initialise shared STFT caches."""
-        super().__init__(*args, **kwargs)
-        self._stft_cache: NDArray[np.complex64] | None = None
-        self._frequencies: FloatArray | None = None
-        self._hop: int | None = None
-        self._window: FloatArray | None = None
-        self._source_signal: ComplexArray | None = None
-        self._cached_source: "State | None" = None  # noqa: UP037
-
-    @abstractmethod
-    def _generate_base_signal(self, source: "State") -> ComplexArray:
-        """Generate full-duration source waveform for STFT processing."""
-
-    def compute_stft(self, source: "State") -> CachedStftResult:
-        """Compute and cache STFT outputs for the source signal.
-
-        This method may only be called once per simulation run.  If the cache
-        is already populated, :exc:`RuntimeError` is raised — call
-        :meth:`reset` first to clear it before recomputing.
-
-        Parameters
-        ----------
-        source : State
-            Source state used by concrete implementations to build the waveform.
-
-        Returns
-        -------
-        CachedStftResult
-            Cached STFT tuple ``(stft, frequencies_hz, hop_samples, window)``.
-
-        Raises
-        ------
-        RuntimeError
-            If :meth:`compute_stft` has already been called on this instance.
-            Call :meth:`reset` to clear the cache before recomputing.
-
-        """
-        if self._stft_cache is not None:
-            msg = (
-                f"{type(self).__name__}.compute_stft() has already been called. "
-                "Call reset() first to clear the cache before recomputing."
-            )
-            raise RuntimeError(msg)
-
-        self._source_signal = self._generate_base_signal(source)
-
-        stft, freq_normalized, hop, window = compute_stft(
-            self._source_signal, self.frame_len, self.hop_factor, self.window_type
-        )
-        stft = np.asarray(stft, dtype=np.complex64)
-        frequencies = cast(FloatArray, freq_normalized * self.sampling_rate_hz)
-        window_float = np.asarray(window, dtype=np.float64)
-
-        self._stft_cache = stft
-        self._frequencies = frequencies
-        self._hop = hop
-        self._window = window_float
-        self._cached_source = source
-
-        return stft, frequencies, hop, window_float
-
-    def get_stft(self) -> CachedStftResult:
-        """Return cached STFT data.
-
-        Returns
-        -------
-        CachedStftResult
-            Cached STFT tuple ``(stft, frequencies_hz, hop_samples, window)``.
-
-        Raises
-        ------
-        RuntimeError
-            If :meth:`compute_stft` has not been called yet.
-
-        """
-        if self._stft_cache is None:
-            msg = "STFT not computed yet. Call compute_stft() first."
-            raise RuntimeError(msg)
-
-        return (
-            self._stft_cache,
-            cast(FloatArray, self._frequencies),
-            cast(int, self._hop),
-            cast(FloatArray, self._window),
-        )
-
-    def get_source_signal(self) -> ComplexArray:
-        """Return the cached full-duration source signal.
-
-        Returns
-        -------
-        ComplexArray
-            Cached source waveform.
-
-        Raises
-        ------
-        RuntimeError
-            If :meth:`compute_stft` has not been called yet.
-
-        """
-        if self._source_signal is None:
-            msg = "Source signal not generated yet. Call compute_stft() first."
-            raise RuntimeError(msg)
-
-        return self._source_signal
-
-    def get_source_waveform(self, source: "State") -> ComplexArray:
-        """Return the cached source waveform, computing it on first call.
-
-        If the cache is already populated but ``source`` is not the same object
-        that was passed to :meth:`compute_stft`, a :exc:`UserWarning` is raised.
-        This guards against stale-cache bugs in multi-source simulations where
-        the same model instance is accidentally reused across different targets.
-        Call :meth:`reset` then :meth:`compute_stft` to update the cache.
-
-        Parameters
-        ----------
-        source : State
-            Source state used to generate the waveform if not yet cached.
-
-        Returns
-        -------
-        ComplexArray
-            Full-duration source waveform.
-
-        """
-        if self._source_signal is None:
-            self.compute_stft(source)
-        elif source is not self._cached_source:
-            warnings.warn(
-                f"{type(self).__name__}.get_source_waveform() was called with a different "
-                "source state than the one used to build the cached STFT. "
-                "The cached result will be returned unchanged. "
-                "Call reset() then compute_stft() to recompute for the new source.",
-                UserWarning,
-                stacklevel=2,
-            )
-        return cast(ComplexArray, self._source_signal)
-
-    def stft_geometry(self) -> tuple[int, FloatArray, int, FloatArray, int]:
-        """Return STFT geometry derived purely from signal model properties.
-
-        Returns
-        -------
-        tuple of (int, FloatArray, int, FloatArray, int)
-            ``(num_freq_bins, frequencies_hz, hop, window, num_frames)``.
-            No source State is required.
-
-        """
-        stft, freq_normalized, hop, window = compute_stft(
-            np.zeros(self.num_samples, dtype=np.complex64),
-            self.frame_len,
-            self.hop_factor,
-            self.window_type,
-        )
-        num_frames, num_freq_bins = stft.shape
-        freqs = np.asarray(freq_normalized * self.sampling_rate_hz, dtype=np.float64)
-        return num_freq_bins, freqs, int(hop), np.asarray(window, dtype=np.float64), num_frames
-
-    def reset(self) -> None:
-        """Clear the cached STFT and source-signal state.
-
-        Call this before reusing a signal model instance across multiple
-        simulation runs, or after changing signal parameters, so that the next
-        call to :meth:`compute_stft` generates a fresh waveform and STFT.
-
-        This method is safe to call even if :meth:`compute_stft` has never been
-        called — it is a no-op in that case.
-
-        Subclasses that maintain additional caches (e.g. noise realisations in
-        :class:`SyntheticSignal`) override this method and call ``super().reset()``
-        to ensure all state is cleared.
-        """
-        self._stft_cache = None
-        self._frequencies = None
-        self._hop = None
-        self._window = None
-        self._source_signal = None
-        self._cached_source = None
 
 
 class SyntheticAnthropogenicSignal(AnthropogenicSignal):

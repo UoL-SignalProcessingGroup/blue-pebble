@@ -8,7 +8,7 @@ from numpy.typing import NDArray
 from stonesoup.base import Property
 
 from ..models.propagation import SpectrumPropagationModel
-from ..signal.biological import BiologicalSignal
+from ..signal.base import SourceSignal
 from .base import PassiveSonarArraySimulatorBase, SensorBatch
 
 if TYPE_CHECKING:
@@ -45,6 +45,8 @@ class DiscretePassiveSonarArraySimulator(PassiveSonarArraySimulatorBase):
     - No overlap-add or continuity smoothing is applied between emitted chunks.
     - Timestamp boundaries that produce zero-length chunks are clamped to a
       minimum one-sample snapshot to keep FFT processing valid.
+    - ``get_source_waveform`` caches each source's waveform, so a second run repeats the
+      first run's waveforms unless each model's ``reset()`` is called first.
     - **No Doppler is modelled**: chunks are rendered independently with no cross-timestep
       continuity. Use
       :class:`~bluepebble.simulator.continuous.ContinuousFractionalDelayPassiveSonarArraySimulator`
@@ -57,11 +59,12 @@ class DiscretePassiveSonarArraySimulator(PassiveSonarArraySimulatorBase):
 
     """
 
-    signal_models: list[BiologicalSignal] = Property(
-        doc="List of broadband signal models (one per target, or single-element list for all)",
+    signal_models: list[SourceSignal] = Property(
+        doc="Source signal models (one per target, or a single-element list for all); any "
+        ":class:`~bluepebble.signal.SourceSignal`, anthropogenic or biological",
     )
 
-    def _resolve_signal_models(self, num_targets: int) -> list[BiologicalSignal]:
+    def _resolve_signal_models(self, num_targets: int) -> list[SourceSignal]:
         """Resolve one signal model per target.
 
         Parameters
@@ -71,7 +74,7 @@ class DiscretePassiveSonarArraySimulator(PassiveSonarArraySimulatorBase):
 
         Returns
         -------
-        list of Signal
+        list of SourceSignal
             Resolved signal-model list where each target has one model.
 
         """
@@ -99,14 +102,14 @@ class DiscretePassiveSonarArraySimulator(PassiveSonarArraySimulatorBase):
 
     @staticmethod
     def _get_broadband_source_signal(
-        signal_model: BiologicalSignal,
+        signal_model: SourceSignal,
         first_state: "State | None",
     ) -> Complex128Array:
         """Get a source waveform from supported signal-model interfaces.
 
         Parameters
         ----------
-        signal_model : Signal
+        signal_model : SourceSignal
             Signal model whose ``get_source_waveform`` returns the full-duration
             source waveform.
         first_state : State or None

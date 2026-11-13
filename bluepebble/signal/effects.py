@@ -8,8 +8,13 @@ Current implementations:
 
 - :class:`Reverb` — convolutional reverb via a synthetic exponentially-decaying
   impulse response, controlled by ``duration_s`` and ``wet_dry_mix``.
+
+.. deprecated:: 0.7.0
+    Effects are only applied by the deprecated ``BiologicalSignal.generate``, which no
+    simulator calls, and are removed with it. Reverberation belongs to the propagation model.
 """
 
+import warnings
 from abc import ABC, abstractmethod
 
 import numpy as np
@@ -20,7 +25,22 @@ from .base import ComplexArray
 
 
 class Effect(Base, ABC):
-    """A base class for all signal post-processing effects."""
+    """A base class for all signal post-processing effects.
+
+    .. deprecated:: 0.7.0
+        Removed together with ``BiologicalSignal.generate``, the only caller.
+    """
+
+    def __init__(self, *args: object, **kwargs: object) -> None:
+        """Warn that effects are deprecated."""
+        warnings.warn(
+            f"{type(self).__name__} is deprecated; signal effects are removed together with "
+            "BiologicalSignal.generate(), and reverberation belongs to the propagation model.",
+            DeprecationWarning,
+            # Past the ``__init__`` Stone Soup generates for a subclass, to the caller.
+            stacklevel=3,
+        )
+        super().__init__(*args, **kwargs)
 
     @abstractmethod
     def apply(self, signals: ComplexArray, sampling_rate_hz: int) -> ComplexArray:
@@ -29,7 +49,11 @@ class Effect(Base, ABC):
 
 
 class Reverb(Effect):
-    """Applies a simple convolutional reverb effect to the signal."""
+    """Applies a simple convolutional reverb effect to the signal.
+
+    .. deprecated:: 0.7.0
+        See :class:`Effect`.
+    """
 
     duration_s: float = Property(default=1.0, doc="The decay time of the reverb tail in seconds.")
     wet_dry_mix: float = Property(
