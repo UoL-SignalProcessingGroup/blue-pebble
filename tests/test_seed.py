@@ -430,10 +430,16 @@ def _whale(**kwargs):
 
 
 def _shrimp(**kwargs):
-    from bluepebble.signal.biological import PointSourceSnappingShrimpSignal  # noqa: PLC0415
+    from bluepebble.signal import SnappingShrimpColonySignal  # noqa: PLC0415
 
-    return PointSourceSnappingShrimpSignal(
-        temperature_celsius=25.0, duration_s=0.2, sampling_rate_hz=48_000, **kwargs
+    return SnappingShrimpColonySignal(
+        duration_s=4.0,
+        sampling_rate_hz=8000,
+        snap_rate_hz=50.0,
+        median_source_level_db=120.0,
+        band_hz=(1000.0, 3000.0),
+        calibration_window_s=1.0,
+        **kwargs,
     )
 
 
