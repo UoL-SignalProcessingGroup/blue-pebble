@@ -2,7 +2,7 @@
 
 import warnings
 from abc import ABC, abstractmethod
-from typing import TYPE_CHECKING, TypeAlias, TypedDict
+from typing import TYPE_CHECKING, TypedDict
 
 import numpy as np
 from numpy.typing import ArrayLike, NDArray
@@ -10,14 +10,13 @@ from scipy import interpolate, signal
 from scipy.stats import levy_stable
 from stonesoup.base import Property
 
+from .._seed import _spawn_rng
 from ..models.environment.sound_speed_profile import SoundSpeedProfile
-from .base import ComplexArray, Signal, _get_source_metadata
+from .base import ComplexArray, FloatArray, SourceSignal, _get_source_metadata
 from .effects import Effect
 
 if TYPE_CHECKING:
     from stonesoup.types.state import State
-
-FloatArray: TypeAlias = NDArray[np.float64]
 
 
 class CallEvent(TypedDict):
@@ -96,16 +95,28 @@ def _get_snap_rate_from_temp(temperature_celsius: float, slope: float, intercept
     return max(0, (slope * temperature_celsius) + intercept) / 60.0
 
 
-class BiologicalSignal(Signal, ABC):
+class BiologicalSignal(SourceSignal, ABC):
     """Abstract base class for biological marine acoustic signals.
 
-    Provides the per-timestep generation interface used by
-    :class:`~bluepebble.simulator.discrete.DiscretePassiveSonarArraySimulator`.
-    Subclasses implement :meth:`_generate_base_signal` to produce a raw source
-    waveform; :meth:`generate` handles padding / truncation and
-    frequency-domain propagation automatically.
+    Subclasses implement :meth:`_generate_base_signal` to produce the source waveform, which
+    is padded or truncated to ``num_samples``. The waveform and STFT (Short-Time Fourier
+    Transform) lifecycle is :class:`~bluepebble.signal.base.SourceSignal`'s, so biological
+    sources run in the passive simulators alongside anthropogenic ones.
 
+    Subclasses take their random draws from ``self._rng``.
     """
+
+    seed: int | None = Property(
+        default=None,
+        doc="Seed for the random number generator. ``None`` defers to the global seed set by "
+        "``bluepebble.set_seed()`` if called, otherwise gives non-deterministic output; "
+        "an explicit integer always produces a reproducible independent stream.",
+    )
+
+    def __init__(self, *args: object, **kwargs: object) -> None:
+        """Initialise the source caches and this model's random generator."""
+        super().__init__(*args, **kwargs)
+        self._rng = _spawn_rng(self.seed)
 
     @abstractmethod
     def _generate_base_signal(self, source: "State") -> ComplexArray:
@@ -124,25 +135,6 @@ class BiologicalSignal(Signal, ABC):
             as required.
 
         """
-
-    def get_source_waveform(self, source: "State") -> ComplexArray:
-        """Return the full-duration source waveform for this signal model.
-
-        Delegates to :meth:`_prepare_waveform`.
-
-        Parameters
-        ----------
-        source : State
-            Source state passed to the underlying waveform generator.
-
-        Returns
-        -------
-        ComplexArray
-            Full-duration source waveform as ``complex128``, padded or truncated
-            to exactly :attr:`num_samples`.
-
-        """
-        return self._prepare_waveform(source)
 
     def _prepare_waveform(self, source: "State") -> ComplexArray:
         """Obtain, validate, and normalise the raw base signal to ``num_samples``.
@@ -191,7 +183,7 @@ class BiologicalSignal(Signal, ABC):
 
         return base_signal
 
-    def _apply_propagation(
+    def _propagate(
         self,
         base_signal: ComplexArray,
         sensor_delays_s: NDArray[np.float64],
@@ -245,6 +237,30 @@ class BiologicalSignal(Signal, ABC):
         signals_fft: ComplexArray = signal_fft[np.newaxis, :] * phase_shifts
         return np.fft.ifft(signals_fft, axis=1).astype(np.complex128)
 
+    def _apply_propagation(
+        self,
+        base_signal: ComplexArray,
+        sensor_delays_s: NDArray[np.float64],
+        tloss_db: ArrayLike | float,
+        propagation_time_s: float,
+    ) -> ComplexArray:
+        """Apply transmission loss and per-sensor phase delays to a base signal.
+
+        .. deprecated:: 0.7.0
+            The simulators propagate :meth:`get_source_waveform` themselves; pass the model
+            to a simulator's ``signal_models`` instead.
+
+        Parameters and return value are those of :meth:`generate`, with ``base_signal`` the
+        1-D source waveform in place of ``source``.
+        """
+        warnings.warn(
+            f"{type(self).__name__}._apply_propagation() is deprecated; pass the model to a "
+            "simulator's signal_models instead, which propagates get_source_waveform().",
+            DeprecationWarning,
+            stacklevel=2,
+        )
+        return self._propagate(base_signal, sensor_delays_s, tloss_db, propagation_time_s)
+
     def generate(
         self,
         source: "State",
@@ -252,7 +268,11 @@ class BiologicalSignal(Signal, ABC):
         tloss_db: ArrayLike | float,
         propagation_time_s: float,
     ) -> ComplexArray:
-        """Generate the signal, apply attenuation, and propagate it to a sensor array.
+        """Generate the signal, propagate it to a sensor array, and apply any effects.
+
+        .. deprecated:: 0.7.0
+            No simulator calls this. Pass the model to a simulator's ``signal_models``
+            instead, which propagates :meth:`get_source_waveform`.
 
         Parameters
         ----------
@@ -271,13 +291,24 @@ class BiologicalSignal(Signal, ABC):
             Complex signal matrix with shape ``(num_sensors, num_samples)``.
 
         """
+        warnings.warn(
+            f"{type(self).__name__}.generate() is deprecated; pass the model to a simulator's "
+            "signal_models instead, which propagates get_source_waveform().",
+            DeprecationWarning,
+            stacklevel=2,
+        )
         sensor_delays = np.asarray(sensor_delays_s, dtype=float)
         if sensor_delays.ndim != 1:
             msg = "sensor_delays_s must be one-dimensional"
             raise ValueError(msg)
 
         base_signal = self._prepare_waveform(source)
-        return self._apply_propagation(base_signal, sensor_delays, tloss_db, propagation_time_s)
+        signals = self._propagate(base_signal, sensor_delays, tloss_db, propagation_time_s)
+        # Subclasses that still take the deprecated ``effects`` declare it themselves.
+        for effect in getattr(self, "effects", None) or []:
+            if isinstance(effect, Effect):
+                signals = effect.apply(signals, self.sampling_rate_hz)
+        return signals.astype(np.complex128)
 
 
 class PointSourceSnappingShrimpSignal(BiologicalSignal):
@@ -328,7 +359,8 @@ class PointSourceSnappingShrimpSignal(BiologicalSignal):
 
     # --- Post-processing Effects ---
     effects: list[Effect] | None = Property(
-        default=None, doc="List of effects to apply to the signal."
+        default=None,
+        doc="Deprecated: effects applied by the deprecated ``generate``; removed with it.",
     )
 
     def _create_snap_template(self) -> FloatArray:
@@ -351,7 +383,7 @@ class PointSourceSnappingShrimpSignal(BiologicalSignal):
         onset_wave = onset_sine * np.linspace(0, 1, onset_samps) * self.onset_level
 
         t_snap = np.linspace(0, self.snap_duration, snap_samps, endpoint=False)
-        snap_noise = np.random.uniform(-1, 1, len(t_snap))
+        snap_noise = self._rng.uniform(-1, 1, len(t_snap))
         snap_envelope = np.exp(-self.snap_decay * t_snap)
         snap_impulse = snap_noise * snap_envelope
 
@@ -424,14 +456,14 @@ class PointSourceSnappingShrimpSignal(BiologicalSignal):
         if num_candidates == 0:
             return signal_buffer
 
-        intervals = np.random.exponential(1.0 / lambda_max, num_candidates)
+        intervals = self._rng.exponential(1.0 / lambda_max, num_candidates)
         candidate_times = start_time_s + np.cumsum(intervals)
         candidate_times = candidate_times[candidate_times < start_time_s + self.duration_s]
         if len(candidate_times) == 0:
             return signal_buffer
 
         actual_rates = self._rate_function(candidate_times, base_lambda_rate)
-        accepted_mask = np.random.uniform(0, 1, len(candidate_times)) < (actual_rates / lambda_max)
+        accepted_mask = self._rng.uniform(0, 1, len(candidate_times)) < (actual_rates / lambda_max)
         snap_times = candidate_times[accepted_mask]
         if len(snap_times) == 0:
             return signal_buffer
@@ -455,7 +487,9 @@ class PointSourceSnappingShrimpSignal(BiologicalSignal):
         # 3. Generate amplitudes only for valid snaps
         scale_upa = _get_source_amplitude_upa(source)
         amplitudes = np.asarray(
-            levy_stable.rvs(self.alpha, 0, scale=scale_upa, size=num_snaps),
+            levy_stable.rvs(
+                self.alpha, 0, scale=scale_upa, size=num_snaps, random_state=self._rng
+            ),
             dtype=np.float64,
         )
 
@@ -471,47 +505,6 @@ class PointSourceSnappingShrimpSignal(BiologicalSignal):
         np.add.at(signal_buffer, snap_indices, scaled_snaps)
 
         return signal_buffer
-
-    def generate(
-        self,
-        source: "State",
-        sensor_delays_s: ArrayLike,
-        tloss_db: ArrayLike | float,
-        propagation_time_s: float,
-    ) -> ComplexArray:
-        """Generate shrimp snaps, propagate them, and apply effects.
-
-        The point-source model generates a base 1-D signal, applies transmission loss and
-        per-sensor phase shifts via FFT-based propagation (handled by the base `Signal.generate`
-        implementation), and then applies any post-processing effects.
-
-        Parameters
-        ----------
-        source : State
-            The source state object used to read metadata.
-        sensor_delays_s : ArrayLike
-            1-D array of per-sensor delays in seconds.
-        tloss_db : ArrayLike | float
-            Transmission loss to the array origin (dB).
-        propagation_time_s : float
-            Propagation time from source to origin (s).
-
-        Returns
-        -------
-        ComplexArray
-            Complex signal matrix with shape ``(num_sensors, num_samples)``.
-
-        """
-        # Call the base class generate method to handle propagation
-        signals = super().generate(source, sensor_delays_s, tloss_db, propagation_time_s)
-        # Apply post-processing effects if any are specified. Validate that
-        # each item in `effects` is an `Effect` instance before applying.
-        if self.effects:
-            for effect in self.effects:
-                if isinstance(effect, Effect):
-                    signals = effect.apply(signals, self.sampling_rate_hz)
-
-        return signals.astype(np.complex128)
 
 
 class DiffuseSnappingShrimpSignal(BiologicalSignal):
@@ -564,7 +557,8 @@ class DiffuseSnappingShrimpSignal(BiologicalSignal):
     high_cutoff_hz: float = Property(default=15000, doc="Bandpass filter high cutoff in Hz.")
     ssp: SoundSpeedProfile = Property(doc="Sound speed profile object.")
     effects: list[Effect] | None = Property(
-        default=None, doc="List of effects to apply to the signal."
+        default=None,
+        doc="Deprecated: effects applied by the deprecated ``generate``; removed with it.",
     )
 
     def _create_snap_template(self) -> FloatArray:
@@ -577,7 +571,7 @@ class DiffuseSnappingShrimpSignal(BiologicalSignal):
         onset_sine = np.sin(2 * np.pi * self.onset_freq * t_onset)
         onset_wave = onset_sine * np.linspace(0, 1, onset_samps) * self.onset_level
         t_snap = np.linspace(0, self.snap_duration, snap_samps, endpoint=False)
-        snap_noise = np.random.uniform(-1, 1, len(t_snap))
+        snap_noise = self._rng.uniform(-1, 1, len(t_snap))
         snap_envelope = np.exp(-self.snap_decay * t_snap)
         snap_impulse = snap_noise * snap_envelope
         raw_waveform = np.concatenate([delay, onset_wave, snap_impulse])
@@ -650,13 +644,13 @@ class DiffuseSnappingShrimpSignal(BiologicalSignal):
         num_candidates = int(self.duration_s * lambda_max * 1.5) + 1  # Ensure at least 1
         if num_candidates == 0:
             return signal_buffer
-        intervals = np.random.exponential(1.0 / lambda_max, num_candidates)
+        intervals = self._rng.exponential(1.0 / lambda_max, num_candidates)
         candidate_times = start_time_s + np.cumsum(intervals)
         candidate_times = candidate_times[candidate_times < start_time_s + self.duration_s]
         if len(candidate_times) == 0:
             return signal_buffer
         actual_rates = self._rate_function(candidate_times, sparse_lambda_rate)
-        accepted_mask = np.random.uniform(0, 1, len(candidate_times)) < (actual_rates / lambda_max)
+        accepted_mask = self._rng.uniform(0, 1, len(candidate_times)) < (actual_rates / lambda_max)
         snap_times = candidate_times[accepted_mask]
         if len(snap_times) == 0:
             return signal_buffer
@@ -671,7 +665,9 @@ class DiffuseSnappingShrimpSignal(BiologicalSignal):
 
         scale_upa = _get_source_amplitude_upa(source)
         amplitudes = np.asarray(
-            levy_stable.rvs(self.alpha, 0, scale=scale_upa, size=num_snaps),
+            levy_stable.rvs(
+                self.alpha, 0, scale=scale_upa, size=num_snaps, random_state=self._rng
+            ),
             dtype=np.float64,
         )
 
@@ -688,6 +684,9 @@ class DiffuseSnappingShrimpSignal(BiologicalSignal):
         propagation_time_s: float,
     ) -> ComplexArray:
         """Generate a diffuse field by summing many incoherent point sources.
+
+        .. deprecated:: 0.7.0
+            See :meth:`BiologicalSignal.generate`.
 
         Parameters
         ----------
@@ -707,6 +706,12 @@ class DiffuseSnappingShrimpSignal(BiologicalSignal):
             `(num_sensors, num_samples)` and dtype `np.complex128`.
 
         """
+        warnings.warn(
+            f"{type(self).__name__}.generate() is deprecated; pass the model to a simulator's "
+            "signal_models instead, which propagates get_source_waveform().",
+            DeprecationWarning,
+            stacklevel=2,
+        )
         sensor_delays = np.asarray(sensor_delays_s, dtype=float)
         final_signals = np.zeros((len(sensor_delays), self.num_samples), dtype=np.complex128)
 
@@ -722,12 +727,12 @@ class DiffuseSnappingShrimpSignal(BiologicalSignal):
             # 2. Randomly perturb the propagation time to simulate a different
             # location inside the colony. Sample uniformly inside a circle to
             # avoid clustering at the center.
-            r = self.colony_radius_m * np.sqrt(np.random.uniform(0.0, 1.0))
+            r = self.colony_radius_m * np.sqrt(self._rng.uniform(0.0, 1.0))
             time_perturbation_s = r / speed_of_sound_mps
             perturbed_prop_time_s = propagation_time_s + time_perturbation_s
 
             # 3. Propagate this individual signal and add to the final field
-            final_signals += self._apply_propagation(
+            final_signals += self._propagate(
                 base_signal, sensor_delays, tloss_db, perturbed_prop_time_s
             )
 
@@ -848,7 +853,7 @@ class WhaleCallSignal(BiologicalSignal):
     # --- Post Processing Parameters ---
     effects: list[Effect] | None = Property(
         default=None,
-        doc="List of audio effects to apply post-generation.",
+        doc="Deprecated: effects applied by the deprecated ``generate``; removed with it.",
     )
 
     # --- Song Structure Parameters ---
@@ -921,7 +926,7 @@ class WhaleCallSignal(BiologicalSignal):
 
         # --- 3. Generate and add harmonics ---
         # Add harmonic variability
-        actual_num_harmonics = np.random.randint(self.min_harmonics, self.max_harmonics + 1)
+        actual_num_harmonics = self._rng.integers(self.min_harmonics, self.max_harmonics + 1)
 
         # Loop through the fundamental (i=1) and all its harmonics
         for i in range(1, actual_num_harmonics + 1):
@@ -953,7 +958,7 @@ class WhaleCallSignal(BiologicalSignal):
         # --- 4. Add Biphonation (a second, independent voice) ---
         if self.add_biphonation:
             # Determine the frequency for the biphonic voice for this specific call
-            jitter = np.random.uniform(-self.biphonic_jitter_ratio, self.biphonic_jitter_ratio)
+            jitter = self._rng.uniform(-self.biphonic_jitter_ratio, self.biphonic_jitter_ratio)
             actual_ratio = self.biphonic_freq_ratio + jitter
 
             biphonic_contour = [freq * actual_ratio for freq in contour_freqs]
@@ -976,7 +981,7 @@ class WhaleCallSignal(BiologicalSignal):
         # --- 5. Add Breathy Noise for a more realistic timbre ---
         if self.add_breathy_noise and self.breathy_noise_amount > 0:
             # Generate white noise
-            noise = np.random.randn(len(call_template))
+            noise = self._rng.standard_normal(len(call_template))
 
             # Create a low-pass filter for the noise to make it 'breathy'
             b_noise, a_noise = _design_butterworth_filter(
@@ -1030,11 +1035,11 @@ class WhaleCallSignal(BiologicalSignal):
 
         """
         potential_events = []
-        current_time_s = np.random.uniform(0, self.mean_call_interval_s)
+        current_time_s = self._rng.uniform(0, self.mean_call_interval_s)
 
         # 1. Generate all potential call events
         while current_time_s < self.duration_s:
-            duration = self.call_duration_s + np.random.uniform(
+            duration = self.call_duration_s + self._rng.uniform(
                 -self.duration_jitter_s, self.duration_jitter_s
             )
 
@@ -1044,7 +1049,7 @@ class WhaleCallSignal(BiologicalSignal):
             num_points = max(2, self.num_contour_points)
             contour_freqs = [
                 self.start_freq_hz
-                + np.random.uniform(-self.start_freq_jitter_hz, self.start_freq_jitter_hz)
+                + self._rng.uniform(-self.start_freq_jitter_hz, self.start_freq_jitter_hz)
             ]
             for _ in range(num_points - 1):
                 next_freq = contour_freqs[-1]
@@ -1059,7 +1064,7 @@ class WhaleCallSignal(BiologicalSignal):
                 }
             )
 
-            interval = self.mean_call_interval_s + np.random.uniform(
+            interval = self.mean_call_interval_s + self._rng.uniform(
                 -self.interval_jitter_s, self.interval_jitter_s
             )
             current_time_s += max(0.1, interval)
@@ -1085,7 +1090,7 @@ class WhaleCallSignal(BiologicalSignal):
             return []
 
         potential_events = []
-        current_time_s = np.random.uniform(0, self.mean_call_interval_s)
+        current_time_s = self._rng.uniform(0, self.mean_call_interval_s)
 
         mean_amp = _get_source_amplitude_upa(source)
 
@@ -1096,19 +1101,19 @@ class WhaleCallSignal(BiologicalSignal):
 
                 # --- Generate contour from the theme ---
                 theme_offsets = self.song_themes[theme_index]
-                base_freq = self.theme_base_freq_hz + np.random.uniform(
+                base_freq = self.theme_base_freq_hz + self._rng.uniform(
                     -self.start_freq_jitter_hz, self.start_freq_jitter_hz
                 )
                 contour_freqs = [base_freq]
                 for offset in theme_offsets:
-                    jitter = np.random.uniform(
+                    jitter = self._rng.uniform(
                         -self.theme_freq_jitter_hz, self.theme_freq_jitter_hz
                     )
                     next_freq = contour_freqs[-1] + offset + jitter
                     contour_freqs.append(max(self.low_cutoff_hz, next_freq))
 
                 # --- Set duration and amplitude ---
-                duration = self.theme_duration_s + np.random.uniform(
+                duration = self.theme_duration_s + self._rng.uniform(
                     -self.duration_jitter_s, self.duration_jitter_s
                 )
                 amplitude = mean_amp
@@ -1123,7 +1128,7 @@ class WhaleCallSignal(BiologicalSignal):
                 )
 
                 # --- Update time for the next call ---
-                interval = self.mean_call_interval_s + np.random.uniform(
+                interval = self.mean_call_interval_s + self._rng.uniform(
                     -self.interval_jitter_s, self.interval_jitter_s
                 )
                 current_time_s += max(0.1, interval)
@@ -1206,41 +1211,3 @@ class WhaleCallSignal(BiologicalSignal):
             if end_sample < self.num_samples:
                 base_signal[start_sample:end_sample] += call_template * event["amplitude"]
         return base_signal
-
-    def generate(
-        self,
-        source: "State",
-        sensor_delays_s: ArrayLike,
-        tloss_db: ArrayLike | float,
-        propagation_time_s: float,
-    ) -> ComplexArray:
-        """Generate whale calls, propagate them, and apply effects.
-
-        Parameters
-        ----------
-        source
-            The source state object used to read metadata.
-        sensor_delays_s : ArrayLike
-            1-D array of per-sensor delays in seconds.
-        tloss_db : ArrayLike | float
-            Transmission loss to the array origin (dB).
-        propagation_time_s : float
-            Propagation time from source to origin (s).
-
-        Returns
-        -------
-        ComplexArray
-            Complex signal for each sensor with shape
-            `(num_sensors, num_samples)` and dtype `np.complex128`.
-
-        """
-        # Call the base class generate method to handle propagation
-        signals = super().generate(source, sensor_delays_s, tloss_db, propagation_time_s)
-
-        # Apply post-processing effects if any are specified
-        if self.effects:
-            for effect in self.effects:
-                if isinstance(effect, Effect):
-                    signals = effect.apply(signals, self.sampling_rate_hz)
-
-        return np.asarray(signals, dtype=np.complex128)

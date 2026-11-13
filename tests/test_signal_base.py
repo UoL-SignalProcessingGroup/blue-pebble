@@ -12,8 +12,12 @@ from .support import (
     FakeBase,
     install_fake_stonesoup,
     install_repo_package,
-    load_module_from_repo,
     load_package_module_from_repo,
+)
+
+# These tests exercise the deprecated ``generate`` on purpose; they go when it does.
+pytestmark = pytest.mark.filterwarnings(
+    "ignore:.*generate\\(\\) is deprecated:DeprecationWarning"
 )
 
 # ---------------------------------------------------------------------------
@@ -24,7 +28,10 @@ from .support import (
 def _load_signal_base(monkeypatch):
     """Load ``bluepebble.signal.base`` with lightweight Stone Soup stubs."""
     install_fake_stonesoup(monkeypatch)
-    return load_module_from_repo("bluepebble/signal/base.py", "bluepebble.signal.base")
+    install_repo_package(monkeypatch, "bluepebble", "bluepebble")
+    install_repo_package(monkeypatch, "bluepebble.signal", "bluepebble/signal")
+    load_package_module_from_repo("bluepebble/signal/utils.py", "bluepebble.signal.utils")
+    return load_package_module_from_repo("bluepebble/signal/base.py", "bluepebble.signal.base")
 
 
 def _install_ssp_stub(monkeypatch) -> type:
@@ -55,6 +62,7 @@ def _load_biological(monkeypatch):
     install_repo_package(monkeypatch, "bluepebble", "bluepebble")
     install_repo_package(monkeypatch, "bluepebble.signal", "bluepebble/signal")
     _install_ssp_stub(monkeypatch)
+    load_package_module_from_repo("bluepebble/signal/utils.py", "bluepebble.signal.utils")
     load_package_module_from_repo("bluepebble/signal/base.py", "bluepebble.signal.base")
     load_package_module_from_repo("bluepebble/signal/effects.py", "bluepebble.signal.effects")
     return load_package_module_from_repo(
@@ -98,7 +106,7 @@ def test_generate_rejects_non_1d_sensor_delays(monkeypatch) -> None:
         )
 
 
-def test_generate_rejects_non_1d_base_signal(monkeypatch) -> None:
+def test_source_waveform_rejects_non_1d_base_signal(monkeypatch) -> None:
     """Generated base signals must be one-dimensional arrays."""
     bio = _load_biological(monkeypatch)
 
@@ -109,15 +117,10 @@ def test_generate_rejects_non_1d_base_signal(monkeypatch) -> None:
     model = MatrixSignal(duration_s=1.0, sampling_rate_hz=8)
 
     with pytest.raises(ValueError, match="must return a one-dimensional array"):
-        model.generate(
-            source=None,
-            sensor_delays_s=np.array([0.0]),
-            tloss_db=0.0,
-            propagation_time_s=0.0,
-        )
+        model.get_source_waveform(source=None)
 
 
-def test_generate_pads_short_base_signal(monkeypatch) -> None:
+def test_source_waveform_pads_short_base_signal(monkeypatch) -> None:
     """Short base signals should be zero-padded to ``num_samples``."""
     bio = _load_biological(monkeypatch)
 
@@ -125,26 +128,21 @@ def test_generate_pads_short_base_signal(monkeypatch) -> None:
         def _generate_base_signal(self, source):
             return np.array([1.0 + 1.0j, 2.0 + 2.0j], dtype=np.complex128)
 
-    model = ShortSignal(duration_s=0.5, sampling_rate_hz=8)
+    model = ShortSignal(duration_s=0.5, sampling_rate_hz=8, frame_len=4)
 
     with pytest.warns(UserWarning, match="zero-padding"):
-        output = model.generate(
-            source=None,
-            sensor_delays_s=np.array([0.0]),
-            tloss_db=0.0,
-            propagation_time_s=0.0,
-        )
+        output = model.get_source_waveform(source=None)
 
-    assert output.shape == (1, 4)
+    assert output.shape == (4,)
     np.testing.assert_allclose(
-        output[0],
+        output,
         np.array([1.0 + 1.0j, 2.0 + 2.0j, 0.0 + 0.0j, 0.0 + 0.0j], dtype=np.complex128),
         rtol=1e-12,
         atol=1e-12,
     )
 
 
-def test_generate_truncates_long_base_signal(monkeypatch) -> None:
+def test_source_waveform_truncates_long_base_signal(monkeypatch) -> None:
     """Long base signals should be truncated to ``num_samples``."""
     bio = _load_biological(monkeypatch)
 
@@ -155,19 +153,14 @@ def test_generate_truncates_long_base_signal(monkeypatch) -> None:
                 dtype=np.complex128,
             )
 
-    model = LongSignal(duration_s=0.5, sampling_rate_hz=8)
+    model = LongSignal(duration_s=0.5, sampling_rate_hz=8, frame_len=4)
 
     with pytest.warns(UserWarning, match="truncating"):
-        output = model.generate(
-            source=None,
-            sensor_delays_s=np.array([0.0]),
-            tloss_db=0.0,
-            propagation_time_s=0.0,
-        )
+        output = model.get_source_waveform(source=None)
 
-    assert output.shape == (1, 4)
+    assert output.shape == (4,)
     np.testing.assert_allclose(
-        output[0],
+        output,
         np.array([1.0 + 0.0j, 2.0 + 0.0j, 3.0 + 0.0j, 4.0 + 0.0j], dtype=np.complex128),
         rtol=1e-12,
         atol=1e-12,
@@ -242,10 +235,12 @@ def test_generate_rejects_multidimensional_tloss(monkeypatch) -> None:
 # ---------------------------------------------------------------------------
 
 
-def test_hierarchy_biological_is_subclass_of_signal(monkeypatch) -> None:
-    """``Biological`` must be a subtype of ``Signal``."""
+def test_hierarchy_biological_is_a_source_signal(monkeypatch) -> None:
+    """``BiologicalSignal`` shares the source lifecycle, and so the ``Signal`` root."""
     bio = _load_biological(monkeypatch)
-    assert issubclass(bio.BiologicalSignal, bio.Signal)
+    signal_base = sys.modules["bluepebble.signal.base"]
+    assert issubclass(bio.BiologicalSignal, signal_base.SourceSignal)
+    assert issubclass(signal_base.SourceSignal, signal_base.Signal)
 
 
 def test_hierarchy_signal_root_has_no_generate(monkeypatch) -> None:

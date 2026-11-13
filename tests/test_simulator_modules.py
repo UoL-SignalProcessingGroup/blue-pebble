@@ -40,6 +40,7 @@ def _install_fake_simulator_dependencies(monkeypatch) -> None:
 
     signal_base_module = ModuleType("bluepebble.signal.base")
     signal_base_module.Signal = type("Signal", (), {})
+    signal_base_module.SourceSignal = type("SourceSignal", (), {})
     signal_base_module.DiscreteTimestepSignal = type("DiscreteTimestepSignal", (), {})
     signal_base_module.ContinuousTimestepSignal = type("ContinuousTimestepSignal", (), {})
 

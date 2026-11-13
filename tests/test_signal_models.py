@@ -16,6 +16,12 @@ from .support import (
     load_package_module_from_repo,
 )
 
+# These tests exercise the deprecated ``generate`` and effects on purpose; they go when those do.
+pytestmark = [
+    pytest.mark.filterwarnings("ignore:.*generate\\(\\) is deprecated:DeprecationWarning"),
+    pytest.mark.filterwarnings("ignore:.*signal effects are removed:DeprecationWarning"),
+]
+
 
 def _load_biological(monkeypatch):
     """Load ``bluepebble.signal.biological`` with lightweight stubs."""
@@ -33,6 +39,7 @@ def _load_biological(monkeypatch):
     monkeypatch.setitem(sys.modules, "bluepebble.models", models_mod)
     monkeypatch.setitem(sys.modules, "bluepebble.models.environment", env_mod)
     monkeypatch.setitem(sys.modules, "bluepebble.models.environment.sound_speed_profile", ssp_mod)
+    load_package_module_from_repo("bluepebble/signal/utils.py", "bluepebble.signal.utils")
     load_package_module_from_repo("bluepebble/signal/base.py", "bluepebble.signal.base")
     load_package_module_from_repo("bluepebble/signal/effects.py", "bluepebble.signal.effects")
     return load_package_module_from_repo(

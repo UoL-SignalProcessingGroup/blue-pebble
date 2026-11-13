@@ -7,6 +7,9 @@ import bluepebble
 import bluepebble._seed as _seed_module
 from bluepebble._seed import _spawn_rng, get_rng, set_seed
 
+# The Reverb tests exercise the deprecated effects on purpose; they go when the effects do.
+pytestmark = pytest.mark.filterwarnings("ignore:.*signal effects are removed:DeprecationWarning")
+
 
 @pytest.fixture(autouse=True)
 def reset_global_seed():
@@ -406,3 +409,74 @@ def test_mixed_signal_types_all_reproducible_from_single_set_seed():
     np.testing.assert_array_equal(run_a[1], run_b[1])
     assert run_a[2] == run_b[2]
     np.testing.assert_array_equal(run_a[3], run_b[3])
+
+
+# ---------------------------------------------------------------------------
+# Biological signal integration
+# ---------------------------------------------------------------------------
+
+
+def _whale(**kwargs):
+    from bluepebble.signal.biological import WhaleCallSignal  # noqa: PLC0415
+
+    return WhaleCallSignal(
+        duration_s=4.0,
+        sampling_rate_hz=8000,
+        mean_call_interval_s=0.5,
+        interval_jitter_s=0.2,
+        call_duration_s=0.3,
+        **kwargs,
+    )
+
+
+def _shrimp(**kwargs):
+    from bluepebble.signal.biological import PointSourceSnappingShrimpSignal  # noqa: PLC0415
+
+    return PointSourceSnappingShrimpSignal(
+        temperature_celsius=25.0, duration_s=0.2, sampling_rate_hz=48_000, **kwargs
+    )
+
+
+def _biological_waveform(build, global_seed=None, **kwargs):
+    """Return a fresh model's source waveform, built after resetting the global seed."""
+    from stonesoup.types.groundtruth import GroundTruthState  # noqa: PLC0415
+
+    _seed_module._seed_sequence = None
+    _seed_module._global_rng = None
+    if global_seed is not None:
+        set_seed(global_seed)
+    source = GroundTruthState([0.0], metadata={"amplitude_upa": 1.0})
+    return build(**kwargs).get_source_waveform(source)
+
+
+@pytest.mark.parametrize("build", [_whale, _shrimp])
+def test_biological_waveform_follows_the_global_seed(build):
+    """set_seed() fixes a biological waveform; a different global seed changes it."""
+    waveform = _biological_waveform(build, global_seed=42)
+
+    assert np.any(waveform != 0)
+    np.testing.assert_array_equal(_biological_waveform(build, global_seed=42), waveform)
+    assert not np.array_equal(_biological_waveform(build, global_seed=43), waveform)
+
+
+@pytest.mark.parametrize("build", [_whale, _shrimp])
+def test_biological_explicit_seed_overrides_the_global_seed(build):
+    """An explicit seed gives the same waveform whatever the global seed is."""
+    waveform = _biological_waveform(build, global_seed=1, seed=7)
+
+    np.testing.assert_array_equal(_biological_waveform(build, global_seed=2, seed=7), waveform)
+    assert not np.array_equal(_biological_waveform(build, global_seed=1, seed=8), waveform)
+
+
+@pytest.mark.parametrize("build", [_whale, _shrimp])
+def test_two_biological_instances_draw_independent_waveforms(build):
+    """Two models spawned from one global seed do not repeat each other."""
+    from stonesoup.types.groundtruth import GroundTruthState  # noqa: PLC0415
+
+    set_seed(42)
+    source = GroundTruthState([0.0], metadata={"amplitude_upa": 1.0})
+    first, second = build(), build()
+
+    assert not np.array_equal(
+        first.get_source_waveform(source), second.get_source_waveform(source)
+    )

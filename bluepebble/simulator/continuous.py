@@ -12,7 +12,7 @@ from stonesoup.base import Property
 from tqdm import tqdm
 
 from ..models.propagation import SpectrumPropagationModel
-from ..signal.anthropogenic import AnthropogenicSignal
+from ..signal.base import SourceSignal
 from ..signal.utils import apply_fade_in, apply_fade_out
 from .base import PassiveSonarArraySimulatorBase, SensorBatch
 
@@ -373,8 +373,9 @@ class ContinuousSTFTPassiveSonarArraySimulator(PassiveSonarArraySimulatorBase):
     ``doppler_cpa`` gallery example.
     """
 
-    signal_models: list[AnthropogenicSignal] = Property(
-        doc="List of broadband signal models (one per target, or single-element list for all)",
+    signal_models: list[SourceSignal] = Property(
+        doc="Source signal models (one per target, or a single-element list for all); any "
+        ":class:`~bluepebble.signal.SourceSignal`, anthropogenic or biological",
     )
     mode: str = Property(
         default="stft_interp",
@@ -491,7 +492,7 @@ class ContinuousSTFTPassiveSonarArraySimulator(PassiveSonarArraySimulatorBase):
     def _build_common_context(
         self,
         all_timestamps: list[datetime],
-        signal_models_list: "list[AnthropogenicSignal]",
+        signal_models_list: "list[SourceSignal]",
     ) -> _STFTCommonContext:
         """Build shared STFT metadata for synthesis.
 
@@ -538,7 +539,7 @@ class ContinuousSTFTPassiveSonarArraySimulator(PassiveSonarArraySimulatorBase):
     def _source_stfts(
         ctx: _STFTCommonContext,
         ground_truth_paths: "Sequence[Iterable[State]]",
-        signal_models_list: "list[AnthropogenicSignal]",
+        signal_models_list: "list[SourceSignal]",
     ) -> list[Complex64Array]:
         """Compute every target's source STFT on one shared frequency grid.
 
@@ -612,7 +613,7 @@ class ContinuousSTFTPassiveSonarArraySimulator(PassiveSonarArraySimulatorBase):
         self,
         ctx: _STFTCommonContext,
         ground_truth_paths: "Sequence[Iterable[State]]",
-        signal_models_list: "list[AnthropogenicSignal]",
+        signal_models_list: "list[SourceSignal]",
         progress_bar: bool = False,
     ) -> list[_STFTTargetHistory]:
         """Build per-target source and channel histories at knot times.
@@ -1204,6 +1205,9 @@ class ContinuousFractionalDelayPassiveSonarArraySimulator(PassiveSonarArraySimul
 
     (A knot is a tie point between simulation steps)
 
+    Each source's waveform comes from ``get_source_waveform``, which caches it, so a second
+    run repeats the first run's waveforms unless each model's ``reset()`` is called first.
+
     Tradeoffs
     ---------
     - Strong arrival-time fidelity under fast geometry changes.
@@ -1215,8 +1219,9 @@ class ContinuousFractionalDelayPassiveSonarArraySimulator(PassiveSonarArraySimul
       transmission loss and multipath colour in ``H(f)`` are not reproduced.
     """
 
-    signal_models: list[AnthropogenicSignal] = Property(
-        doc="List of broadband signal models (one per target, or single-element list for all)",
+    signal_models: list[SourceSignal] = Property(
+        doc="Source signal models (one per target, or a single-element list for all); any "
+        ":class:`~bluepebble.signal.SourceSignal`, anthropogenic or biological",
     )
     fade_in_ms: float = Property(default=100.0, doc="Fade-in duration at arrival (ms)")
     fade_out_ms: float = Property(default=100.0, doc="Fade-out duration at end (ms)")

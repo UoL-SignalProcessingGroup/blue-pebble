@@ -32,7 +32,6 @@ from bluepebble.signal.anthropogenic import (
     SyntheticAnthropogenicSignal,
 )
 from bluepebble.signal.biological import PointSourceSnappingShrimpSignal, WhaleCallSignal
-from bluepebble.signal.effects import Reverb
 from bluepebble.signal.random import WhiteNoiseSignal
 
 # %%
@@ -103,7 +102,7 @@ if measured_wav_path is None:
 # This section simulates a structured humpback-style vocalisation.
 #
 # - The call is built from reusable themes and phrases.
-# - Harmonics, vibrato, breathy noise, and reverb shape the timbre.
+# - Harmonics, vibrato and breathy noise shape the timbre.
 # - The result is a comparatively rich mid-frequency biological source.
 #
 # # The whale-call spectrogram shows a sequence of repeated vocalisations with clear harmonic
@@ -130,8 +129,6 @@ phrase_a = [0, 1]
 phrase_b = [2, 1]
 phrase_c = [3]
 song_phrases = [phrase_c, phrase_a, phrase_b]
-
-reverb_effect = Reverb(duration_s=0.4, wet_dry_mix=0.8)
 
 whale_signal_model = WhaleCallSignal(
     duration_s=signal_duration_s,
@@ -165,16 +162,13 @@ whale_signal_model = WhaleCallSignal(
     low_cutoff_hz=200,
     high_cutoff_hz=5000,
     envelope_taper_ratio=0.8,
-    effects=[reverb_effect],
 )
 
-whale_calls_complex = whale_signal_model.generate(
-    source=whale_source,
-    sensor_delays_s=np.array([0.0]),
-    tloss_db=90.0,
-    propagation_time_s=0.0,
+# A simulator would propagate the source waveform; here a flat 90 dB transmission loss stands
+# in for the propagation model.
+whale_calls_real = np.real(whale_signal_model.get_source_waveform(whale_source)) * 10 ** (
+    -90.0 / 20
 )
-whale_calls_real = np.real(whale_calls_complex[0, :])
 component_signals["whale_call"] = whale_calls_real
 
 fig_whale = plot_spectrogram(
@@ -248,13 +242,10 @@ shrimp_signal_model = PointSourceSnappingShrimpSignal(
     high_cutoff_hz=10000,
 )
 
-shrimp_signal = shrimp_signal_model.generate(
-    source=shrimp_source,
-    sensor_delays_s=np.array([0.0]),
-    tloss_db=80.0,
-    propagation_time_s=10.0,
+# As for the whale, with a flat 80 dB transmission loss.
+shrimp_signal_real = np.real(shrimp_signal_model.get_source_waveform(shrimp_source)) * 10 ** (
+    -80.0 / 20
 )
-shrimp_signal_real = np.real(shrimp_signal[0, :])
 component_signals["snapping_shrimp"] = shrimp_signal_real
 
 fig_shrimp = plot_spectrogram(
@@ -307,6 +298,8 @@ commercial_vessel_state = GroundTruthState(
         "frequencies_hz": np.array([50.0, 75.0, 125.0, 82.0]),
         "amplitudes_upa": 10 ** (np.array([175.0, 168.0, 162.0, 160.0]) / 20),
         "phases_rad": rng.uniform(0, 2 * np.pi, 4),
+        "tonal_bandwidth_hz": 2.0,
+        "noise_amplitude_upa": 0.0,
         "position_mapping": [0, 2, 4],
     },
 )

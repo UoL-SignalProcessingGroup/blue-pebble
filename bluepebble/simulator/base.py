@@ -187,7 +187,7 @@ class SonarArraySimulatorBase(SensorSimulator):
             return [resolved[0]]
 
         if len(resolved) == 1:
-            # Anthropogenic models cache one source's waveform and STFT, so a shared instance
+            # Source models cache one source's waveform and STFT, so a shared instance
             # would hand the first target's signal to every target. Shallow copies keep that
             # state per target while sharing the random generator, so targets draw independent
             # noise that stays reproducible under a seed.

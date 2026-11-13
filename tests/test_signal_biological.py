@@ -16,6 +16,12 @@ from .support import (
     load_package_module_from_repo,
 )
 
+# These tests exercise the deprecated ``generate`` and effects on purpose; they go when those do.
+pytestmark = [
+    pytest.mark.filterwarnings("ignore:.*generate\\(\\) is deprecated:DeprecationWarning"),
+    pytest.mark.filterwarnings("ignore:.*signal effects are removed:DeprecationWarning"),
+]
+
 # Sampling rates that satisfy each model's bandpass filter requirements.
 FS_SHRIMP = 48_000  # needs > 30 kHz for 2–15 kHz bandpass
 FS_WHALE = 8_000  # sufficient for 50–1500 Hz bandpass
@@ -49,6 +55,7 @@ def _load_biological(monkeypatch):
     install_repo_package(monkeypatch, "bluepebble", "bluepebble")
     install_repo_package(monkeypatch, "bluepebble.signal", "bluepebble/signal")
     ssp_class = _install_ssp_stub(monkeypatch)
+    load_package_module_from_repo("bluepebble/signal/utils.py", "bluepebble.signal.utils")
     load_package_module_from_repo("bluepebble/signal/base.py", "bluepebble.signal.base")
     load_package_module_from_repo("bluepebble/signal/effects.py", "bluepebble.signal.effects")
     bio = load_package_module_from_repo(
@@ -385,11 +392,9 @@ def test_create_call_template_four_point_contour_uses_cubic(monkeypatch) -> None
 def test_create_call_template_vibrato_changes_output(monkeypatch) -> None:
     """Enabling vibrato modifies the output relative to no vibrato."""
     bio, _ = _load_biological(monkeypatch)
-    m_plain = _whale(bio, vibrato_rate_hz=0.0, vibrato_depth_hz=0.0)
-    m_vib = _whale(bio, vibrato_rate_hz=3.0, vibrato_depth_hz=20.0)
-    np.random.seed(0)
+    m_plain = _whale(bio, vibrato_rate_hz=0.0, vibrato_depth_hz=0.0, seed=0)
+    m_vib = _whale(bio, vibrato_rate_hz=3.0, vibrato_depth_hz=20.0, seed=0)
     t1 = m_plain._create_call_template(0.5, [200.0, 500.0])
-    np.random.seed(0)
     t2 = m_vib._create_call_template(0.5, [200.0, 500.0])
     assert not np.allclose(t1, t2)
 
@@ -397,11 +402,9 @@ def test_create_call_template_vibrato_changes_output(monkeypatch) -> None:
 def test_create_call_template_biphonation_changes_output(monkeypatch) -> None:
     """Biphonation adds a second voice; output must differ from the pure tonal."""
     bio, _ = _load_biological(monkeypatch)
-    m_plain = _whale(bio, add_biphonation=False)
-    m_bi = _whale(bio, add_biphonation=True, biphonic_amplitude_ratio=0.5)
-    np.random.seed(42)
+    m_plain = _whale(bio, add_biphonation=False, seed=42)
+    m_bi = _whale(bio, add_biphonation=True, biphonic_amplitude_ratio=0.5, seed=42)
     t1 = m_plain._create_call_template(0.5, [200.0, 500.0])
-    np.random.seed(42)
     t2 = m_bi._create_call_template(0.5, [200.0, 500.0])
     assert not np.allclose(t1, t2)
 
@@ -409,11 +412,9 @@ def test_create_call_template_biphonation_changes_output(monkeypatch) -> None:
 def test_create_call_template_breathy_noise_changes_output(monkeypatch) -> None:
     """Adding breathy noise must change the template relative to the clean tonal."""
     bio, _ = _load_biological(monkeypatch)
-    m_plain = _whale(bio, add_breathy_noise=False)
-    m_breathy = _whale(bio, add_breathy_noise=True, breathy_noise_amount=0.3)
-    np.random.seed(7)
+    m_plain = _whale(bio, add_breathy_noise=False, seed=7)
+    m_breathy = _whale(bio, add_breathy_noise=True, breathy_noise_amount=0.3, seed=7)
     t1 = m_plain._create_call_template(0.5, [200.0, 500.0])
-    np.random.seed(7)
     t2 = m_breathy._create_call_template(0.5, [200.0, 500.0])
     assert not np.allclose(t1, t2)
 
@@ -433,11 +434,9 @@ def test_create_call_template_energy_within_bandpass(monkeypatch) -> None:
 def test_create_call_template_sub_harmonics_change_output(monkeypatch) -> None:
     """Sub-harmonics add extra energy and should alter the waveform."""
     bio, _ = _load_biological(monkeypatch)
-    m_plain = _whale(bio, sub_harmonic_ratios=None)
-    m_sub = _whale(bio, sub_harmonic_ratios=[0.5], sub_harmonic_amplitude_ratio=0.5)
-    np.random.seed(1)
+    m_plain = _whale(bio, sub_harmonic_ratios=None, seed=1)
+    m_sub = _whale(bio, sub_harmonic_ratios=[0.5], sub_harmonic_amplitude_ratio=0.5, seed=1)
     t1 = m_plain._create_call_template(0.5, [400.0, 600.0])
-    np.random.seed(1)
     t2 = m_sub._create_call_template(0.5, [400.0, 600.0])
     assert not np.allclose(t1, t2)
 
