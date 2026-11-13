@@ -28,11 +28,12 @@ RANGE_RESOLUTION_M = C / (2 * BANDWIDTH_HZ)
 def bp():
     """Import the real classes without leaking caching into other tests."""
     snapshot = isolate_real_bluepebble_imports()
-    from bluepebble.arrays import RigidArray, SingleSensorArray
+    from bluepebble.arrays import BowArray, RigidArray, SingleSensorArray
     from bluepebble.detector import (
         ActiveSonarDetector,
         CACFARDetector,
         NoiseCalibrator,
+        matched_filter_power,
         matched_filter_scans_from_sensor_data,
     )
     from bluepebble.models import ConstantTargetStrength
@@ -55,6 +56,7 @@ def bp():
     yield SimpleNamespace(
         ActiveSonarDetector=ActiveSonarDetector,
         ActiveSonarSimulator=ActiveSonarSimulator,
+        BowArray=BowArray,
         CACFARDetector=CACFARDetector,
         Constant=Constant,
         ConstantTargetStrength=ConstantTargetStrength,
@@ -67,6 +69,7 @@ def bp():
         SphericalAcousticPropagationModel=SphericalAcousticPropagationModel,
         SteeringCalculator=SteeringCalculator,
         WhiteNoiseSignal=WhiteNoiseSignal,
+        matched_filter_power=matched_filter_power,
         matched_filter_scans_from_sensor_data=matched_filter_scans_from_sensor_data,
     )
     restore_real_bluepebble_imports(snapshot)
@@ -193,6 +196,49 @@ def test_beamformed_detection_has_bearing_and_range(bp) -> None:
     # the beam width is about lambda / aperture = 1.5 m / 8 m.
     assert abs(float(bearing)) == pytest.approx(true_bearing, abs=0.2)
     assert float(range_m) == pytest.approx(1000.0, abs=RANGE_RESOLUTION_M + 4.0)
+
+
+@pytest.mark.parametrize("true_bearing_deg", [20.0, -20.0])
+def test_cylindrical_bow_sector_puts_an_echo_at_its_bearing_and_range(
+    bp, true_bearing_deg
+) -> None:
+    """A cylindrical sector's beams peak at the target's bearing, to one beam, and its range.
+
+    The peak is read off the matched-filter power, not the detections: each beam's CFAR ratio
+    is taken against that beam's own range cells, so it does not rank the beams.
+    """
+    # 11 staves of 2 sensors: a 0.59 m chord and a 0.5 m row pitch, within lambda/2 at 1.2 kHz.
+    array = _mounted(
+        _platform(bp),
+        bp.BowArray(
+            dome_radius_m=3.0,
+            azimuth_extent_rad=np.radians(120.0),
+            sensor_spacing_m=0.6,
+            sensor_size_m=0.3,
+            freq_max_hz=1200.0,
+            shape="cylindrical",
+            height_m=1.0,
+        ),
+    )
+    assert array.num_sensors == 22
+    beam_spacing_rad = np.radians(1.0)
+    steering = bp.SteeringCalculator(
+        ssp=bp.Constant(speed=C), steering_sector_rad=(-np.pi / 3, np.pi / 3), num_beams=121
+    )
+    beamformer = bp.DelayAndSumBeamformer(domain="frequency", sampling_rate_hz=FS)
+    true_bearing = np.radians(true_bearing_deg)
+    target = _target(1000.0 * np.cos(true_bearing), 1000.0 * np.sin(true_bearing))
+
+    ((_, (sensor_data,)),) = _sensor_data(
+        bp, array, [target], beamformer=beamformer, steering_calculator=steering
+    )
+
+    power = bp.matched_filter_power(sensor_data)
+    beam, sample = np.unravel_index(np.argmax(power), power.shape)
+    assert sensor_data.steering_bearings_rad[beam] == pytest.approx(
+        true_bearing, abs=beam_spacing_rad
+    )
+    assert C / 2 * sample / FS == pytest.approx(1000.0, abs=RANGE_RESOLUTION_M)
 
 
 def test_bistatic_detection_reports_the_range_sum(bp) -> None:

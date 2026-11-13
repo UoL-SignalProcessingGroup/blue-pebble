@@ -40,6 +40,22 @@ ship.arrays  # (TowedArray, BowArray, FlankArray, FlankArray)
 
 Mount a towed array before the flank panels so their footprint is checked against its tow point.
 
+## Bow array shapes
+
+`BowArray` lays its sensors on a spherical dome (the default, above) or on a cylinder of vertical
+staves, each facing outwards. A cylinder takes `height_m` in place of `elevation_extent_rad`, and
+an `azimuth_extent_rad` of 2π gives a full ring. See
+{ref}`sphx_glr_auto_examples_comparing_bow_array_shapes.py` for both layouts.
+
+```python
+import numpy as np
+
+# 40 staves of 11 sensors; azimuth_extent_rad=np.radians(120.0) keeps the 13 staves facing ahead.
+ship.add_sensor(BowArray(shape="cylindrical", dome_radius_m=0.82, azimuth_extent_rad=2 * np.pi,
+                         height_m=1.44, sensor_spacing_m=0.131, sensor_size_m=0.1,
+                         freq_max_hz=5000.0, mounting_offset=StateVector([0.0, 0.0, -3.0])))
+```
+
 ```{eval-rst}
 .. automodule:: bluepebble.arrays
    :members:

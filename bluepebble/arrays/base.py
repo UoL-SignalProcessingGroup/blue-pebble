@@ -178,8 +178,13 @@ class PlatformState:
         return StateVector(self.host.state.state_vector[list(self.host.position_mapping)])
 
 
-def _check_sensor_spacing(spacing_m: float, size_m: float, freq_max_hz: float) -> None:
+def _check_sensor_spacing(
+    spacing_m: float, size_m: float, freq_max_hz: float, name: str = "sensor_spacing_m"
+) -> None:
     """Check that sensors do not touch and are spaced within the grating-lobe limit.
+
+    ``name`` is what the error messages call ``spacing_m``, for a caller checking a pitch its
+    layout derived instead of the property itself.
 
     Raises
     ------
@@ -190,13 +195,13 @@ def _check_sensor_spacing(spacing_m: float, size_m: float, freq_max_hz: float) -
     """
     if spacing_m <= size_m:
         raise ValueError(
-            f"sensor_spacing_m ({spacing_m}m) must be strictly greater than sensor_size_m "
+            f"{name} ({spacing_m}m) must be strictly greater than sensor_size_m "
             f"({size_m}m) so sensors do not touch."
         )
     max_spacing_m = NOMINAL_SOUND_SPEED_MPS / (2 * freq_max_hz)
     if spacing_m > max_spacing_m:
         raise ValueError(
-            f"sensor_spacing_m ({spacing_m}m) exceeds the grating-lobe limit of lambda/2 "
+            f"{name} ({spacing_m}m) exceeds the grating-lobe limit of lambda/2 "
             f"({max_spacing_m}m) at freq_max_hz ({freq_max_hz}Hz) for a nominal "
             f"{NOMINAL_SOUND_SPEED_MPS}m/s sound speed."
         )

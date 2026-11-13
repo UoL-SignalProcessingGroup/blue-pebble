@@ -103,10 +103,11 @@ sphinx_gallery_conf = {
     # whole examples gallery silently built empty.
     "examples_dirs": ["../examples", "../tutorials"],
     "gallery_dirs": ["auto_examples", "auto_tutorials"],
-    # Execute only the tutorials. Running every example as well takes about sixteen minutes,
-    # beyond Read the Docs' fifteen-minute build limit, so the examples render with their code
-    # and text but no output. Set this back to r"\.py" to execute them too.
-    "filename_pattern": r"[\\/]tutorials[\\/]",
+    # Execute only the tutorials and the bow array shapes example, which only plots geometry
+    # and runs in about a second. Running every example as well takes about sixteen minutes,
+    # beyond Read the Docs' fifteen-minute build limit, so the other examples render with their
+    # code and text but no output. Set this back to r"\.py" to execute them too.
+    "filename_pattern": r"[\\/]tutorials[\\/]|comparing_bow_array_shapes\.py",
     # Exclude scripts that require external data not bundled with the repository.
     # These examples have hand-written RST pages under docs/source/examples/.
     "ignore_pattern": (
