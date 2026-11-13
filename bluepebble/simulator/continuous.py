@@ -92,6 +92,16 @@ def _hold_last_finite_delays(delay_history_s: FloatArray) -> FloatArray:
     return np.where(finite, delays, np.where(has_source, held, 0.0))
 
 
+def _two_sided_stft(stft: Complex64Array, frame_len: int) -> Complex64Array:
+    """Extend the one-sided STFT of a real signal to all ``frame_len`` bins.
+
+    A real frame's spectrum is Hermitian, ``X[frame_len - k] = conj(X[k])``, so the negative
+    frequency bins are the conjugates of the positive ones in reverse order.
+    """
+    negative_bins = np.conj(stft[:, (frame_len - 1) // 2 : 0 : -1])
+    return np.concatenate([stft, negative_bins], axis=1)
+
+
 def _bulk_delay_hops(
     target: _STFTTargetHistory,
     step_idx: IntArray,
@@ -315,6 +325,14 @@ class ContinuousSTFTPassiveSonarArraySimulator(PassiveSonarArraySimulatorBase):
     and ``wola_interp`` methods are recommended. The ``cola`` method can produce
     interference artefacts, but is good as a fast baseline.
 
+    Real and complex sources
+    ------------------------
+    A real source waveform has a one-sided STFT (``frame_len // 2 + 1`` bins) and a complex
+    one a two-sided STFT (``frame_len`` bins). A run may hold both: the real sources are then
+    extended to two-sided, which is exact because a real frame's spectrum is Hermitian,
+    ``X[frame_len - k] = conj(X[k])``. Each extended source's channel history covers all
+    ``frame_len`` bins, about twice the memory it needs in a run of real sources only.
+
     Propagation delay
     -----------------
     A frame spectrum's phase can only shift its content circularly within the frame, so each
@@ -516,6 +534,80 @@ class ContinuousSTFTPassiveSonarArraySimulator(PassiveSonarArraySimulatorBase):
             window=np.asarray(window),
         )
 
+    @staticmethod
+    def _source_stfts(
+        ctx: _STFTCommonContext,
+        ground_truth_paths: "Sequence[Iterable[State]]",
+        signal_models_list: "list[AnthropogenicSignal]",
+    ) -> list[Complex64Array]:
+        """Compute every target's source STFT on one shared frequency grid.
+
+        ``stft_geometry()`` cannot know whether a source is real (one-sided STFT) or complex
+        (two-sided), so ``ctx``'s bin count and frequencies are set here from the STFTs
+        themselves. If any source is complex, the real sources are extended to two-sided so
+        that all targets share the complex sources' grid.
+
+        Parameters
+        ----------
+        ctx : _STFTCommonContext
+            Shared STFT context; its ``num_frames``, ``num_freq_bins`` and ``frequencies`` are
+            updated in place.
+        ground_truth_paths : Sequence of Iterable of State
+            Target trajectories.
+        signal_models_list : list
+            Resolved signal-model list aligned with targets.
+
+        Returns
+        -------
+        list of numpy.ndarray
+            One source STFT per target, each of shape ``(num_frames, num_freq_bins)``.
+
+        Raises
+        ------
+        ValueError
+            If a target path has no states.
+        RuntimeError
+            If the targets' STFTs differ in shape for any reason other than being one-sided
+            or two-sided.
+
+        """
+        source_stfts: list[Complex64Array] = []
+        frequency_grids: list[FloatArray] = []
+        for target_idx, target_path in enumerate(ground_truth_paths):
+            try:
+                target_first_state = next(iter(target_path))
+            except StopIteration:
+                msg = f"ground_truth_paths[{target_idx}] has no states"
+                raise ValueError(msg) from None
+            source_stft, freqs_hz, _, _ = signal_models_list[target_idx].compute_stft(
+                target_first_state
+            )
+            source_stfts.append(source_stft)
+            frequency_grids.append(np.asarray(freqs_hz, dtype=np.float64))
+
+        two_sided = [stft.shape[1] == ctx.frame_len for stft in source_stfts]
+        # A complex source's grid when there is one, so the result does not depend on the
+        # order of the targets.
+        reference_idx = two_sided.index(True) if any(two_sided) else 0
+        if any(two_sided):
+            source_stfts = [
+                stft if is_two_sided else _two_sided_stft(stft, ctx.frame_len)
+                for stft, is_two_sided in zip(source_stfts, two_sided, strict=True)
+            ]
+
+        ctx.num_frames, ctx.num_freq_bins = source_stfts[reference_idx].shape
+        ctx.frequencies = frequency_grids[reference_idx]
+        for source_stft in source_stfts:
+            if source_stft.shape != (ctx.num_frames, ctx.num_freq_bins):
+                msg = (
+                    "All target source STFTs must share the same shape. "
+                    f"Expected {(ctx.num_frames, ctx.num_freq_bins)}, "
+                    f"got {source_stft.shape}."
+                )
+                raise RuntimeError(msg)
+
+        return source_stfts
+
     def _build_target_histories(
         self,
         ctx: _STFTCommonContext,
@@ -566,36 +658,16 @@ class ContinuousSTFTPassiveSonarArraySimulator(PassiveSonarArraySimulatorBase):
             raise TypeError(msg)
         spectrum_propagation_model = cast(SpectrumPropagationModel, self.propagation_model)
 
+        source_stfts = self._source_stfts(ctx, ground_truth_paths, signal_models_list)
+
         with tqdm(
             total=len(ground_truth_paths) * len(ctx.all_timestamps),
             disable=not progress_bar,
             desc="Propagating signals",
         ) as bar:
-            for target_idx, target_path in enumerate(ground_truth_paths):
-                try:
-                    target_first_state = next(iter(target_path))
-                except StopIteration:
-                    msg = f"ground_truth_paths[{target_idx}] has no states"
-                    raise ValueError(msg) from None
-                target_signal_model = signal_models_list[target_idx]
-                target_source_stft, target_freqs_hz, _, _ = target_signal_model.compute_stft(
-                    target_first_state
-                )
-
-                if target_idx == 0:
-                    # Reconcile ctx geometry with the actual STFT shape and frequencies.
-                    # stft_geometry() cannot know whether the source is real or complex
-                    # (which determines rfft vs. fft bin count), so we correct here.
-                    ctx.num_frames, ctx.num_freq_bins = target_source_stft.shape
-                    ctx.frequencies = np.asarray(target_freqs_hz, dtype=np.float64)
-                elif target_source_stft.shape != (ctx.num_frames, ctx.num_freq_bins):
-                    msg = (
-                        "All target source STFTs must share the same shape. "
-                        f"Expected {(ctx.num_frames, ctx.num_freq_bins)}, "
-                        f"got {target_source_stft.shape}."
-                    )
-                    raise RuntimeError(msg)
-
+            for target_path, target_source_stft in zip(
+                ground_truth_paths, source_stfts, strict=True
+            ):
                 H_hist = np.zeros(
                     (ctx.n_steps, ctx.num_sensors, ctx.num_freq_bins), dtype=np.complex64
                 )
