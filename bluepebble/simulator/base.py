@@ -1,6 +1,7 @@
 """Base simulator hierarchy and shared utilities for passive and active sonar simulations."""
 
 import copy
+import math
 from abc import abstractmethod
 from collections.abc import Iterable, Iterator, Sequence
 from datetime import datetime
@@ -8,6 +9,7 @@ from typing import TYPE_CHECKING, Any, TypeAlias, TypeVar
 
 import numpy as np
 from numpy.typing import NDArray
+from scipy.fft import fftfreq
 from stonesoup.base import Property
 from stonesoup.simulator.base import SensorSimulator
 
@@ -237,6 +239,63 @@ class SonarArraySimulatorBase(SensorSimulator):
             )
 
         return noise
+
+    def _demodulation_frequency_hz(self) -> float:
+        """Return the physical frequency of 0 Hz in the simulated data.
+
+        Zero means passband data. A simulator that produces complex baseband data overrides
+        this with the carrier the data is demodulated by.
+        """
+        return 0.0
+
+    def _physical_frequencies(self, num_fft: int, sampling_rate_hz: float) -> FloatArray:
+        """Return the physical frequency of each bin of a ``num_fft``-point FFT of the data.
+
+        This is the FFT's bin frequencies plus :meth:`_demodulation_frequency_hz`, and is
+        what a propagation or scattering model must be evaluated at. Anything that builds a
+        spectrum to add to the data, such as a directional noise source, needs the same
+        frequencies.
+
+        Parameters
+        ----------
+        num_fft : int
+            FFT length.
+        sampling_rate_hz : float
+            Sampling rate of the data, in Hz.
+
+        Returns
+        -------
+        FloatArray
+            Frequencies in Hz, shape ``(num_fft,)``, in FFT order.
+
+        """
+        frequencies_hz = np.asarray(fftfreq(num_fft, 1.0 / sampling_rate_hz), dtype=np.float64)
+        demodulation_hz = self._demodulation_frequency_hz()
+        # Passband output must not change, so nothing is added to it, not even zero.
+        return frequencies_hz + demodulation_hz if demodulation_hz else frequencies_hz
+
+    def _check_beamformer_carrier(self) -> None:
+        """Raise unless the beamformer's carrier is the one the data is demodulated by.
+
+        Only beamformers with an ``f0`` are checked. A mismatch steers to the wrong bearings
+        without any other sign of a problem.
+
+        Raises
+        ------
+        ValueError
+            If the beamformer's ``f0`` is not :meth:`_demodulation_frequency_hz`.
+
+        """
+        f0 = getattr(self.beamformer, "f0", None)
+        if f0 is None:
+            return
+        demodulation_hz = self._demodulation_frequency_hz()
+        if not math.isclose(f0, demodulation_hz, rel_tol=1e-9, abs_tol=1e-9):
+            kind = "baseband" if demodulation_hz else "passband"
+            raise ValueError(
+                f"The beamformer's f0 ({f0}Hz) must be {demodulation_hz}Hz to steer this "
+                f"simulator's {kind} data: f0 is the frequency the data is demodulated by."
+            )
 
     def _beamform_if_configured(
         self,

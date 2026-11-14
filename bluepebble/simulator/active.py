@@ -6,7 +6,7 @@ from typing import TYPE_CHECKING, TypeAlias
 
 import numpy as np
 from numpy.typing import ArrayLike
-from scipy.fft import fft, fftfreq, ifft, next_fast_len
+from scipy.fft import fft, ifft, next_fast_len
 from stonesoup.base import Property
 from stonesoup.types.array import StateVector
 from stonesoup.types.groundtruth import GroundTruthState
@@ -53,6 +53,34 @@ class ActiveSonarSimulator(SonarArraySimulatorBase):
     absolute travel times, so the inverse FFT puts each echo at its round-trip delay.
     Sample 0 of ``received_waveform`` is the transmit instant.
 
+    Baseband
+    --------
+    A ``signal`` with ``baseband`` set is the pulse's complex envelope about its carrier
+    :math:`f_c`, and the simulation runs at the signal's lower sampling rate. Bin :math:`f`
+    of the envelope's spectrum :math:`P_\text{bb}` is the physical frequency
+    :math:`f_c + f`, so that is where the transfer functions and the scattering are
+    evaluated:
+
+    .. math::
+
+        R_{\text{bb},i}(f) = \sum_{\text{targets}} g_\text{tx}\, g_i\, P_\text{bb}(f)\,
+                 H_\text{out}(f_c + f)\, S(f_c + f)\, H_{\text{in},i}(f_c + f).
+
+    ``received_waveform`` is then the received complex envelope: what the passband waveform
+    gives when multiplied by :math:`e^{-j 2 \pi f_c t}`, with :math:`t = 0` at the transmit
+    instant, and low-pass filtered to the lower rate. Each echo therefore carries the carrier
+    phase :math:`e^{-j 2 \pi f_c \tau}` of its delay :math:`\tau`. The sensor data records
+    :math:`f_c` as ``demodulation_frequency_hz``, and a beamformer must be given it as its
+    ``f0``.
+
+    The sampling rate :math:`f_s` must exceed the pulse's bandwidth :math:`B`, but a matched
+    filter then samples its output peak coarsely. An echo whose delay falls half way between
+    samples peaks lower, by about :math:`-20 \log_{10} \operatorname{sinc}(B / 2 f_s)` dB
+    for an LFM (linear frequency modulated) pulse with sharp edges: 2.4 dB at
+    :math:`f_s = 1.25 B` and 0.9 dB at :math:`f_s = 2 B`, against 0.01 dB at
+    :math:`f_s = 20 B`. A taper narrows the pulse's spectrum and so lowers the loss, to 2.2
+    and 0.8 dB when each edge's taper is 5% of the pulse.
+
     With no ``transmitter`` the sonar is monostatic. A transmitter on another platform makes
     it bistatic, e.g. a hull array pinging for a sonobuoy field.
 
@@ -67,6 +95,8 @@ class ActiveSonarSimulator(SonarArraySimulatorBase):
     - Baffle gains use the straight-line direction to the target, not the ray angles.
     - Echoes later than the FFT length, twice the listen window plus the pulse, would wrap;
       everything earlier is placed exactly.
+    - At baseband, noise from ``noise_model`` is taken as already at baseband and at the
+      signal's sampling rate.
     """
 
     propagation_model: SpectrumPropagationModel = Property(
@@ -110,7 +140,9 @@ class ActiveSonarSimulator(SonarArraySimulatorBase):
         TypeError
             If ``propagation_model`` is not a ``SpectrumPropagationModel``.
         ValueError
-            If ``listen_duration_s`` or ``band_threshold_db`` is not positive.
+            If ``listen_duration_s`` or ``band_threshold_db`` is not positive, or the
+            beamformer has an ``f0`` that is not the frequency the signal is demodulated by:
+            its carrier at baseband, 0 at passband.
 
         """
         super().__init__(*args, **kwargs)
@@ -125,6 +157,7 @@ class ActiveSonarSimulator(SonarArraySimulatorBase):
             raise ValueError(f"listen_duration_s ({self.listen_duration_s}) must be positive.")
         if not self.band_threshold_db > 0:
             raise ValueError(f"band_threshold_db ({self.band_threshold_db}) must be positive.")
+        self._check_beamformer_carrier()
 
     def sensor_data_gen(self) -> Iterator[ActiveSensorBatch]:
         """Yield the received waveform for each ping.
@@ -148,7 +181,7 @@ class ActiveSonarSimulator(SonarArraySimulatorBase):
         num_fft = next_fast_len(2 * (num_samples + pulse.size))
         pulse_spectrum = fft(pulse, num_fft)
         band = _band_mask(pulse_spectrum, self.band_threshold_db)
-        band_frequencies_hz = fftfreq(num_fft, 1.0 / fs)[band]
+        band_frequencies_hz = self._physical_frequencies(num_fft, fs)[band]
         band_pulse_spectrum = pulse_spectrum[band]
 
         paths = list(self.ground_truth_paths)
@@ -199,8 +232,13 @@ class ActiveSonarSimulator(SonarArraySimulatorBase):
                 steering_bearings_rad=bearings,
                 transmitter_position=transmitter_position,
                 receiver_reference_position=receiver_position,
+                demodulation_frequency_hz=self._demodulation_frequency_hz(),
             )
             yield timestamp, {sensor_data}
+
+    def _demodulation_frequency_hz(self) -> float:
+        """Return the pulse's carrier when it is generated at baseband, else 0."""
+        return self.signal.demodulation_frequency_hz
 
     def _transmitter_state_at(self, timestamp: datetime, receiver: PlatformState) -> PlatformState:
         """Return the transmitter's state at ``timestamp``; the receiver's when monostatic."""

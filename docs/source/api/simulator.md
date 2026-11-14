@@ -7,7 +7,7 @@ Current primary simulator entrypoints are:
 - `ContinuousSTFTPassiveSonarArraySimulator` for broadband STFT-domain propagation and reconstruction.
 - `DiscretePassiveSonarArraySimulator` for discrete timestep broadband workflows.
 - `ContinuousFractionalDelayPassiveSonarArraySimulator` for continuous fractional-delay synthesis.
-- `ActiveSonarSimulator` for active sonar pings, monostatic or bistatic, with any spectrum propagation model.
+- `ActiveSonarSimulator` for active sonar pings, monostatic or bistatic, with any spectrum propagation model. A signal with `baseband=True` is simulated as its complex envelope at a sampling rate that only has to cover the pulse's bandwidth.
 
 `PassiveSonarSensorData` and `ActiveSonarSensorData` live in `bluepebble.types` and are documented with the types API surface.
 

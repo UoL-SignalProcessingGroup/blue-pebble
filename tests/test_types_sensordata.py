@@ -229,3 +229,23 @@ def test_active_sonar_sensor_data_rejects_wrong_shapes(
             transmit_pulse=np.ones(pulse_shape, dtype=np.complex128),
             timestamp=datetime(2026, 1, 1),
         )
+
+
+def test_sensor_data_is_at_passband_unless_given_a_demodulation_frequency(monkeypatch):
+    """Both payloads default to passband (0 Hz) and keep a carrier they are given."""
+    sensordata_module, _ = _load_types_modules(monkeypatch)
+    timestamp = datetime(2026, 1, 1)
+    passive = dict(raw_signals=np.zeros((1, 4), dtype=np.complex64), timestamp=timestamp)
+    active = dict(
+        received_waveform=np.zeros((1, 100), dtype=np.complex128),
+        transmit_pulse=np.ones(20, dtype=np.complex128),
+        timestamp=timestamp,
+    )
+
+    for payload_cls, fields in (
+        (sensordata_module.PassiveSonarSensorData, passive),
+        (sensordata_module.ActiveSonarSensorData, active),
+    ):
+        assert payload_cls(**fields).demodulation_frequency_hz == 0.0
+        with_carrier = payload_cls(**fields, demodulation_frequency_hz=5400.0)
+        assert with_carrier.demodulation_frequency_hz == 5400.0

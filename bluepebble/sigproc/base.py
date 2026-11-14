@@ -287,7 +287,11 @@ class _STFTBeamformer(Beamformer):
     )
     nfft: int = Property(default=500, doc="STFT window size (samples)")
     overlap: int = Property(default=250, doc="STFT overlap (samples)")
-    f0: float = Property(default=0.0, doc="Carrier frequency for baseband data (Hz)")
+    f0: float = Property(
+        default=0.0,
+        doc="Carrier frequency that baseband data was demodulated by, in Hz; 0 for passband "
+        "data. Each bin is steered at f0 plus its baseband frequency.",
+    )
     fmin: float | None = Property(default=None, doc="Minimum frequency to integrate (Hz)")
     fmax: float | None = Property(default=None, doc="Maximum frequency to integrate (Hz)")
     bands: list[FrequencyBand] | None = Property(

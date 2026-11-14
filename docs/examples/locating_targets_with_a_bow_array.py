@@ -229,6 +229,40 @@ def simulator(ground_truth_paths, seed, ping_times=PING_TIMES):
 pings = [next(iter(data)) for _, data in simulator(list(targets.values()), 1).sensor_data_gen()]
 
 # %%
+# Simulating at baseband
+# ----------------------
+#
+# The 8 kHz sampling rate above is set by the pulse's highest frequency, 2.5 kHz, although the
+# pulse is only 1 kHz wide. With ``baseband=True`` the pulse is generated as its complex
+# envelope about the sweep centre, and the sampling rate only has to exceed the bandwidth. The
+# samples, memory and time per ping fall in proportion. This example stays at passband. At
+# baseband, at 2 kHz, the settings above would change as follows:
+#
+# .. code-block:: python
+#
+#     BASEBAND_RATE_HZ = 2000
+#     pulse = LFMSignal(..., sampling_rate_hz=BASEBAND_RATE_HZ, baseband=True)
+#     beamformer = DelayAndSumBeamformer(
+#         domain="frequency",
+#         sampling_rate_hz=BASEBAND_RATE_HZ,
+#         f0=pulse.carrier_frequency_hz,
+#     )
+#     noise_model = WhiteNoiseSignal(
+#         amplitude_upa=10 ** (NOISE_LEVEL_DB / 20) * np.sqrt(BASEBAND_RATE_HZ / SAMPLING_RATE_HZ),
+#         sampling_rate_hz=BASEBAND_RATE_HZ,
+#         ...
+#     )
+#
+# - **Beamformer**: its ``f0`` must be the pulse's carrier, since the carrier's phase is what
+#   steers baseband data. The simulator raises an error if the two differ.
+# - **Noise**: white noise spreads its power over the sampling rate, so its amplitude is scaled
+#   to keep the same level in the pulse's band.
+# - **Downstream**: the detector takes the lower sampling rate, and windows given in samples,
+#   such as the CFAR guard and training cells below, shrink with it.
+# - **Cost**: an echo that falls between samples loses up to 0.8 dB of matched-filter peak at
+#   twice the bandwidth (see :class:`~bluepebble.simulator.ActiveSonarSimulator`).
+
+# %%
 # Detection
 # ---------
 #

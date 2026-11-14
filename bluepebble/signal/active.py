@@ -14,10 +14,19 @@ FloatArray: TypeAlias = NDArray[np.float64]
 
 
 class ActiveSignal(Signal, ABC):
-    """Abstract base class for active sonar transmit pulses.
+    r"""Abstract base class for active sonar transmit pulses.
 
     A pulse is generated once, as a complex analytic time series at the carrier frequency, and
     a simulator delays and scales copies of it along each propagation path.
+
+    With ``baseband`` set, the pulse is generated as its complex envelope about the carrier
+    frequency :math:`f_c` instead,
+
+    .. math::
+
+        s_\text{bb}(t) = s(t) \, e^{-j 2 \pi f_c t},
+
+    so the sampling rate only has to cover the pulse's bandwidth, not its highest frequency.
 
     Parameters
     ----------
@@ -26,6 +35,9 @@ class ActiveSignal(Signal, ABC):
         :math:`A = 10^{SL/20}` µPa.
     phase_rad : float, optional
         Carrier phase offset in radians.
+    baseband : bool, optional
+        Generate the complex envelope about ``carrier_frequency_hz`` rather than the pulse at
+        its carrier.
     duration_s : float
         Pulse duration in seconds.
     sampling_rate_hz : int
@@ -34,13 +46,20 @@ class ActiveSignal(Signal, ABC):
     Raises
     ------
     ValueError
-        If ``duration_s`` is not positive, or the sampling rate does not exceed the highest
-        frequency in the pulse.
+        If ``duration_s`` is not positive. At passband, if the sampling rate does not exceed
+        the highest frequency in the pulse. At baseband, if the sampling rate does not exceed
+        twice the pulse's largest offset from the carrier, or half of it is not below the
+        carrier.
 
     """
 
     source_level_db: float = Property(doc="Source level in dB re 1 µPa at 1 m")
     phase_rad: float = Property(default=0.0, doc="Carrier phase offset in radians")
+    baseband: bool = Property(
+        default=False,
+        doc="Generate the complex envelope about the carrier frequency, not the pulse at its "
+        "carrier",
+    )
 
     def __init__(self, *args: object, **kwargs: object) -> None:
         """Initialise the pulse and check it can be sampled.
@@ -56,11 +75,33 @@ class ActiveSignal(Signal, ABC):
         super().__init__(*args, **kwargs)
         if self.duration_s <= 0:
             raise ValueError(f"duration_s ({self.duration_s}s) must be positive.")
-        if self.sampling_rate_hz <= self.highest_frequency_hz:
+        if self.baseband:
+            self._check_baseband_sampling()
+        elif self.sampling_rate_hz <= self.highest_frequency_hz:
             # A complex analytic signal needs fs > f_max, not 2 f_max, to avoid aliasing.
             raise ValueError(
                 f"sampling_rate_hz ({self.sampling_rate_hz}Hz) must exceed the pulse's highest "
                 f"frequency ({self.highest_frequency_hz}Hz)."
+            )
+
+    def _check_baseband_sampling(self) -> None:
+        """Raise unless the sampling rate holds the envelope and maps to positive frequencies."""
+        carrier_hz = self.carrier_frequency_hz
+        largest_offset_hz = max(
+            self.highest_frequency_hz - carrier_hz, carrier_hz - self.lowest_frequency_hz
+        )
+        if self.sampling_rate_hz <= 2 * largest_offset_hz:
+            raise ValueError(
+                f"sampling_rate_hz ({self.sampling_rate_hz}Hz) must exceed twice the pulse's "
+                f"largest offset from its carrier ({largest_offset_hz}Hz) at baseband."
+            )
+        if self.sampling_rate_hz / 2 >= carrier_hz:
+            # Bin k of the envelope's spectrum is the physical frequency f_c + f_k, which a
+            # propagation model needs to be positive.
+            raise ValueError(
+                f"Half of sampling_rate_hz ({self.sampling_rate_hz}Hz) must be below the "
+                f"carrier ({carrier_hz}Hz) at baseband, so that every frequency bin is a "
+                "positive physical frequency."
             )
 
     @property
@@ -71,16 +112,26 @@ class ActiveSignal(Signal, ABC):
     @property
     @abstractmethod
     def carrier_frequency_hz(self) -> float:
-        """Centre frequency, used for fractional time-delay phase shifts."""
+        """Centre frequency, which a baseband pulse is the complex envelope about."""
 
     @property
     @abstractmethod
     def highest_frequency_hz(self) -> float:
-        """Highest frequency in the pulse, which the sampling rate must exceed."""
+        """Highest frequency in the pulse, which a passband sampling rate must exceed."""
+
+    @property
+    @abstractmethod
+    def lowest_frequency_hz(self) -> float:
+        """Lowest frequency in the pulse."""
+
+    @property
+    def demodulation_frequency_hz(self) -> float:
+        """Physical frequency of 0 Hz in the generated pulse: the carrier at baseband, else 0."""
+        return float(self.carrier_frequency_hz) if self.baseband else 0.0
 
     @abstractmethod
     def generate(self) -> ComplexArray:
-        """Generate the transmit pulse as a complex analytic signal.
+        """Generate the transmit pulse: the analytic signal, or its envelope at baseband.
 
         Returns
         -------
@@ -97,6 +148,8 @@ class CWSignal(ActiveSignal):
 
         s(t) = A \, e^{j (2 \pi f t + \phi)}, \qquad 0 \le t < T
 
+    At baseband the envelope is the constant :math:`A \, e^{j \phi}`.
+
     Parameters
     ----------
     frequency_hz : float
@@ -105,6 +158,8 @@ class CWSignal(ActiveSignal):
         Source level in dB re 1 µPa at 1 m.
     phase_rad : float, optional
         Carrier phase offset in radians.
+    baseband : bool, optional
+        Generate the complex envelope about ``frequency_hz``.
     duration_s : float
         Pulse duration in seconds.
     sampling_rate_hz : int
@@ -129,15 +184,26 @@ class CWSignal(ActiveSignal):
         """The carrier frequency."""
         return self.frequency_hz
 
+    @property
+    def lowest_frequency_hz(self) -> float:
+        """The carrier frequency."""
+        return self.frequency_hz
+
     def generate(self) -> ComplexArray:
         """Generate the CW pulse.
 
         Returns
         -------
         ComplexArray
-            Complex sinusoid of shape ``(num_samples,)``.
+            Complex sinusoid of shape ``(num_samples,)``, or a constant at baseband.
 
         """
+        if self.baseband:
+            return np.full(
+                self.num_samples,
+                self.amplitude * np.exp(1j * self.phase_rad),
+                dtype=np.complex128,
+            )
         t = np.arange(self.num_samples) / self.sampling_rate_hz
         return np.asarray(
             self.amplitude * np.exp(2j * np.pi * self.frequency_hz * t + 1j * self.phase_rad),
@@ -160,6 +226,13 @@ class LFMSignal(ActiveSignal):
     where :math:`w(t) = \sin(\pi t / 2r)` for :math:`t \le r`,
     :math:`w(t) = \sin(\pi (T - t) / 2r)` for :math:`t > T - r`, and 1 in between.
 
+    At baseband the carrier is the sweep centre :math:`f_c = (f_0 + f_1) / 2`, so the envelope
+    is the same chirp with :math:`f_0` replaced by :math:`f_0 - f_c = -(f_1 - f_0) / 2`. The
+    taper's spectral skirts reach beyond the sweep, and the part of them beyond half the
+    sampling rate aliases. For a 50 ms, 400 Hz sweep with 5 ms tapers sampled at 1 kHz, the
+    aliased part is 0.9% of the pulse's RMS (root-mean-square) amplitude; it falls with a
+    longer taper, a longer pulse or a higher sampling rate.
+
     Parameters
     ----------
     freq_min_hz : float
@@ -172,6 +245,8 @@ class LFMSignal(ActiveSignal):
         Source level in dB re 1 µPa at 1 m, at the plateau.
     phase_rad : float, optional
         Carrier phase offset in radians.
+    baseband : bool, optional
+        Generate the complex envelope about the sweep centre.
     duration_s : float
         Pulse duration in seconds.
     sampling_rate_hz : int
@@ -222,6 +297,11 @@ class LFMSignal(ActiveSignal):
         """The end of the sweep."""
         return self.freq_max_hz
 
+    @property
+    def lowest_frequency_hz(self) -> float:
+        """The start of the sweep."""
+        return self.freq_min_hz
+
     def _envelope(self, t: FloatArray) -> FloatArray:
         """Compute the quarter-sine rise and fall envelope, in ``[0, 1]``."""
         d = self.duration_s
@@ -243,6 +323,7 @@ class LFMSignal(ActiveSignal):
         """
         t = np.arange(self.num_samples) / self.sampling_rate_hz
         sweep_rate = (self.freq_max_hz - self.freq_min_hz) / self.duration_s
-        phase = 2 * np.pi * (self.freq_min_hz * t + 0.5 * sweep_rate * t**2)
+        start_frequency_hz = self.freq_min_hz - self.demodulation_frequency_hz
+        phase = 2 * np.pi * (start_frequency_hz * t + 0.5 * sweep_rate * t**2)
         chirp = np.exp(1j * (phase + self.phase_rad))
         return np.asarray(self.amplitude * self._envelope(t) * chirp, dtype=np.complex128)

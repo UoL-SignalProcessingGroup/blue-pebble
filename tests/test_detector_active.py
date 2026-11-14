@@ -104,18 +104,21 @@ def _target(x, y=0.0, z=-50.0):
     )
 
 
-def _sensor_data(bp, array, targets, noise_upa=1.0, seed=1, **kwargs):
+def _sensor_data(
+    bp, array, targets, noise_upa=1.0, seed=1, sampling_rate_hz=FS, baseband=False, **kwargs
+):
     """Return the simulator's sensor data: an LFM ping, spherical spreading, white noise."""
     signal = bp.LFMSignal(
         freq_min_hz=1000.0 - BANDWIDTH_HZ / 2,
         freq_max_hz=1000.0 + BANDWIDTH_HZ / 2,
         rise_time_s=0.005,
         duration_s=0.05,
-        sampling_rate_hz=FS,
+        sampling_rate_hz=sampling_rate_hz,
         source_level_db=200.0,
+        baseband=baseband,
     )
     noise = bp.WhiteNoiseSignal(
-        amplitude_upa=noise_upa, seed=seed, duration_s=1.0, sampling_rate_hz=FS
+        amplitude_upa=noise_upa, seed=seed, duration_s=1.0, sampling_rate_hz=sampling_rate_hz
     )
     return bp.ActiveSonarSimulator(
         array=array,
@@ -145,10 +148,10 @@ def _cfar(bp, **kwargs):
 
 
 def _detections(bp, sensor_data, detector=None, **kwargs):
+    kwargs.setdefault("sampling_rate_hz", FS)
     reader = bp.ActiveSonarDetector(
         detector=detector or _cfar(bp),
         sensor_data_gen=sensor_data,
-        sampling_rate_hz=FS,
         sound_speed_ms=C,
         **kwargs,
     )
@@ -196,6 +199,70 @@ def test_beamformed_detection_has_bearing_and_range(bp) -> None:
     # the beam width is about lambda / aperture = 1.5 m / 8 m.
     assert abs(float(bearing)) == pytest.approx(true_bearing, abs=0.2)
     assert float(range_m) == pytest.approx(1000.0, abs=RANGE_RESOLUTION_M + 4.0)
+
+
+def test_baseband_ping_is_beamformed_and_detected_where_the_passband_ping_is(bp) -> None:
+    """A baseband ping, beamformed with f0 at the carrier, peaks at the passband's beam and range.
+
+    The baseband run samples eight times slower, so its CFAR window is eight times shorter in
+    cells and its white noise 9 dB lower in total, which keeps the in-band noise level. The
+    detector is told only the lower sampling rate.
+    """
+    decimation = 8
+    true_bearing = np.deg2rad(60.0)
+
+    def run(sampling_rate_hz, baseband):
+        cell_ratio = sampling_rate_hz / FS
+        pings = list(
+            _sensor_data(
+                bp,
+                _mounted(_platform(bp), bp.Line()),
+                [_target(1000.0 * np.cos(true_bearing), 1000.0 * np.sin(true_bearing))],
+                noise_upa=np.sqrt(cell_ratio),
+                sampling_rate_hz=sampling_rate_hz,
+                baseband=baseband,
+                beamformer=bp.DelayAndSumBeamformer(
+                    domain="frequency",
+                    sampling_rate_hz=sampling_rate_hz,
+                    f0=1000.0 if baseband else 0.0,
+                ),
+                steering_calculator=bp.SteeringCalculator(
+                    ssp=bp.Constant(speed=C), steering_sector_rad=(0.0, np.pi), num_beams=91
+                ),
+            )
+        )
+        ((_, (sensor_data,)),) = pings
+        power = bp.matched_filter_power(sensor_data)
+        beam, sample = np.unravel_index(np.argmax(power), power.shape)
+        detector = _cfar(
+            bp,
+            num_guard_cells=int(40 * cell_ratio),
+            num_training_cells=int(200 * cell_ratio),
+            peak_distance=int(200 * cell_ratio),
+        )
+        (detections,) = _detections(
+            bp, pings, detector=detector, sampling_rate_hz=sampling_rate_hz
+        )
+        beam_profile = power.max(axis=1)
+        return (
+            sensor_data.steering_bearings_rad[beam],
+            C / 2 * sample / sampling_rate_hz,
+            beam_profile / beam_profile.max(),
+            detections,
+        )
+
+    passband_bearing, passband_range_m, passband_profile, _ = run(FS, baseband=False)
+    bearing, range_m, profile, detections = run(FS // decimation, baseband=True)
+
+    assert passband_bearing == pytest.approx(true_bearing, abs=1e-9)
+    assert bearing == passband_bearing
+    assert range_m == pytest.approx(passband_range_m, abs=C / 2 / (FS // decimation))
+    np.testing.assert_allclose(profile, passband_profile, atol=0.05)
+    assert any(
+        float(d.state_vector[0, 0]) == pytest.approx(true_bearing, abs=1e-9)
+        and float(d.state_vector[1, 0]) == pytest.approx(1000.0, abs=RANGE_RESOLUTION_M)
+        for d in detections
+    )
 
 
 @pytest.mark.parametrize("true_bearing_deg", [20.0, -20.0])
