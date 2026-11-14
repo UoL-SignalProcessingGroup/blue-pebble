@@ -112,7 +112,8 @@ class MinimumVarianceDistortionlessResponseBeamformer(_STFTBeamformer):
         f0 : float, optional
             Carrier frequency for baseband data in Hz. Defaults to ``0.0``.
         fmin : float | None, optional
-            Minimum frequency to integrate in Hz. Defaults to ``None``.
+            Minimum frequency to integrate in Hz. ``None`` is 0 Hz for passband data
+            (``f0 == 0``) and the lowest bin for baseband data.
         fmax : float | None, optional
             Maximum frequency to integrate in Hz. Defaults to ``None``.
         overlap : int, optional
@@ -149,7 +150,7 @@ class MinimumVarianceDistortionlessResponseBeamformer(_STFTBeamformer):
 
         # frequency bins (full complex spectrum as signal is complex/baseband)
         f_bins = _stft_bin_frequencies(nfft_actual, fs, f0)
-        per_band_bins = self._band_bin_indices(f_bins, fmin, fmax)
+        per_band_bins = self._band_bin_indices(f_bins, f0, fmin, fmax)
         bins_to_bands = self._bins_to_bands(per_band_bins)
 
         # Output power accumulator: (n_bands, Ndir, n_frames)

@@ -49,6 +49,7 @@ def bp():
         SnappingShrimpColonySignal,
         SourceSignal,
         SyntheticAnthropogenicSignal,
+        analytic_signal,
     )
     from bluepebble.signal.effects import Effect, Reverb
     from bluepebble.sigproc import DelayAndSumBeamformer, SteeringCalculator
@@ -68,11 +69,12 @@ def bp():
             self._local_axis = np.array([1.0, 0.0, 0.0])
 
     class BandNoiseSource(BiologicalSignal):
-        """Seeded real noise in ``BAND_HZ``, standing in for a biological source."""
+        """Seeded noise in ``BAND_HZ``, one-sided, standing in for a biological source."""
 
         def _generate_base_signal(self, source):
             sos = sp_signal.butter(6, BAND_HZ, btype="bandpass", fs=FS, output="sos")
-            return sp_signal.sosfiltfilt(sos, self._rng.standard_normal(self.num_samples))
+            noise = sp_signal.sosfiltfilt(sos, self._rng.standard_normal(self.num_samples))
+            return analytic_signal(noise)
 
     yield SimpleNamespace(
         AnthropogenicSignal=AnthropogenicSignal,
@@ -320,12 +322,11 @@ def test_colony_peaks_at_its_bearing_at_its_level_less_the_spreading_loss(bp):
     assert median_level_db == pytest.approx(COLONY_LEVEL_DB - 20 * np.log10(range_m), abs=1.0)
 
 
-def test_colony_and_ship_share_a_run_and_each_peaks_at_its_own_bearing(bp):
-    """A real colony waveform and a complex ship waveform go through one STFT run together."""
-    colony_bearing_deg, ship_bearing_deg = 60.0, 120.0
-    ship_path = _stationary_path(
+def _ship_and_path(bp, bearing_deg, seed=3):
+    """Return a two-tonal ship at the colony's level and its path, 2 km away."""
+    path = _stationary_path(
         2000.0,
-        ship_bearing_deg,
+        bearing_deg,
         frequencies_hz=np.array([400.0, 550.0]),
         amplitudes_upa=np.full(2, 10 ** (COLONY_LEVEL_DB / 20)),
         phases_rad=np.zeros(2),
@@ -333,8 +334,15 @@ def test_colony_and_ship_share_a_run_and_each_peaks_at_its_own_bearing(bp):
         noise_amplitude_upa=0.0,
     )
     ship = bp.SyntheticAnthropogenicSignal(
-        duration_s=NUM_STEPS * STEP_S, sampling_rate_hz=FS, seed=3
+        duration_s=NUM_STEPS * STEP_S, sampling_rate_hz=FS, seed=seed
     )
+    return ship, path
+
+
+def test_colony_and_ship_share_a_run_and_each_peaks_at_its_own_bearing(bp):
+    """A colony and a ship go through one STFT run together."""
+    colony_bearing_deg, ship_bearing_deg = 60.0, 120.0
+    ship, ship_path = _ship_and_path(bp, ship_bearing_deg)
 
     scans = _run(
         bp,
@@ -350,3 +358,32 @@ def test_colony_and_ship_share_a_run_and_each_peaks_at_its_own_bearing(bp):
     assert sorted(bearings_deg[two_strongest]) == pytest.approx(
         [colony_bearing_deg, ship_bearing_deg], abs=2.0
     )
+
+
+def test_colony_and_ship_together_are_the_sum_of_each_alone(bp):
+    """The sensor signals add exactly, and the powers add up to the sources' correlation.
+
+    Both sources are one-sided and band-limited, so a sensor's power is its in-band power.
+    The sources are independent, which leaves a cross term: over eight ship seeds it was
+    within 0.1% of the summed power, so 2% is well clear of it.
+    """
+    colony_path = _stationary_path(2000.0, 60.0)
+
+    def steady(models, paths):
+        return _steady_signals(_run(bp, "stft", models, paths))
+
+    colony_alone = steady([_colony(bp)], [colony_path])
+    ship, ship_path = _ship_and_path(bp, 120.0)
+    ship_alone = steady([ship], [ship_path])
+    ship, ship_path = _ship_and_path(bp, 120.0)
+    together = steady([_colony(bp), ship], [colony_path, ship_path])
+
+    # Runs agree to complex64 rounding.
+    peak = np.max(np.abs(together))
+    np.testing.assert_allclose(together, colony_alone + ship_alone, atol=1e-5 * peak)
+
+    def power(signals):
+        return np.mean(np.abs(signals) ** 2)
+
+    assert power(colony_alone) > 0.1 * power(ship_alone)
+    assert power(together) == pytest.approx(power(colony_alone) + power(ship_alone), rel=0.02)

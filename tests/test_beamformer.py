@@ -630,6 +630,91 @@ def test_normalise_by_bandwidth_divides_each_band_by_its_bin_count(monkeypatch) 
         np.testing.assert_allclose(normalised[band_idx], raw[band_idx] / num_bins)
 
 
+_STFT_BEAMFORMERS = ["delay_and_sum", "mvdr"]
+
+
+def _band_power(beamformer, kind, signals, delays, **kwargs):
+    """Return an STFT beamformer's power map at 500 Hz with 64-sample frames."""
+    shared = dict(sampling_rate_hz=500.0, nfft=64, overlap=32, **kwargs)
+    if kind == "mvdr":
+        return beamformer.MinimumVarianceDistortionlessResponseBeamformer(**shared).beamform(
+            signals, delays
+        )
+    return beamformer.DelayAndSumBeamformer(domain="broadband_power", **shared).beamform(
+        signals, delays
+    )
+
+
+def _negative_frequency_noise(num_sensors: int = 4, num_samples: int = 1024):
+    """Return noise confined to -3fs/8 to -fs/8, so every frame's power is in negative bins."""
+    signals, _ = _multiband_test_inputs(num_sensors, num_samples)
+    spectrum = np.fft.fft(signals, axis=1)
+    frequencies = np.fft.fftfreq(num_samples)
+    spectrum[:, (frequencies > -0.125) | (frequencies < -0.375)] = 0.0
+    return np.fft.ifft(spectrum, axis=1)
+
+
+@pytest.mark.parametrize("kind", _STFT_BEAMFORMERS)
+def test_default_band_of_passband_data_starts_at_zero_hertz(monkeypatch, kind) -> None:
+    """With ``f0 == 0`` a lower edge of ``None`` selects the bins that ``fmin=0`` does."""
+    beamformer = _load_beamformer_module(monkeypatch)
+    signals, delays = _multiband_test_inputs(num_samples=1024)
+
+    default = _band_power(beamformer, kind, signals, delays)
+    from_zero = _band_power(beamformer, kind, signals, delays, fmin=0.0)
+
+    assert np.any(default > 0.0)
+    np.testing.assert_array_equal(default, from_zero)
+
+
+@pytest.mark.parametrize("kind", _STFT_BEAMFORMERS)
+def test_default_band_of_passband_data_leaves_out_negative_frequencies(monkeypatch, kind) -> None:
+    """Negative-frequency content is integrated only when a negative ``fmin`` asks for it.
+
+    The noise lies a quarter of the band from 0 Hz and from fs/2. The Hann window's leakage
+    into the non-negative bins was measured at 5e-8 of the power for both beamformers.
+    """
+    beamformer = _load_beamformer_module(monkeypatch)
+    signals = _negative_frequency_noise()
+    _, delays = _multiband_test_inputs()
+
+    default = _band_power(beamformer, kind, signals, delays)
+    whole_spectrum = _band_power(beamformer, kind, signals, delays, fmin=-250.0)
+
+    assert whole_spectrum.sum() > 0.0
+    assert default.sum() < 1e-6 * whole_spectrum.sum()
+
+
+@pytest.mark.parametrize("kind", _STFT_BEAMFORMERS)
+def test_default_band_of_baseband_data_is_every_bin(monkeypatch, kind) -> None:
+    """With a carrier, ``None`` edges still select the whole spectrum, as before v0.9.0."""
+    beamformer = _load_beamformer_module(monkeypatch)
+    signals, delays = _multiband_test_inputs(num_samples=1024)
+    f0 = 2000.0
+
+    default = _band_power(beamformer, kind, signals, delays, f0=f0)
+    every_bin = _band_power(
+        beamformer, kind, signals, delays, f0=f0, fmin=f0 - 250.0, fmax=f0 + 250.0
+    )
+    upper_half = _band_power(beamformer, kind, signals, delays, f0=f0, fmin=f0)
+
+    np.testing.assert_array_equal(default, every_bin)
+    assert np.all(upper_half < default)
+
+
+def test_default_band_divides_by_the_non_negative_bin_count(monkeypatch) -> None:
+    """Bandwidth normalisation counts bins 0 to nfft / 2 of passband data, not all nfft."""
+    beamformer = _load_beamformer_module(monkeypatch)
+    signals, delays = _multiband_test_inputs(num_samples=1024)
+
+    raw = _band_power(beamformer, "delay_and_sum", signals, delays)
+    normalised = _band_power(
+        beamformer, "delay_and_sum", signals, delays, normalise_by_bandwidth=True
+    )
+
+    np.testing.assert_allclose(normalised, raw / (64 // 2 + 1))
+
+
 def test_steering_calculator_returns_expected_horizontal_delays(monkeypatch) -> None:
     """Steering delays should match the 2D projected sensor offsets."""
     beamformer = _load_beamformer_module(monkeypatch)

@@ -33,6 +33,10 @@ class DelayAndSumBeamformer(_STFTBeamformer):
 
     In all modes, steering is controlled via per-direction per-sensor delay values.
 
+    Only ``'broadband_power'`` selects a band (``fmin``, ``fmax`` or ``bands``). The time and
+    frequency domains return the whole spectrum, so their output keeps whatever noise the data
+    holds in its negative-frequency bins.
+
     Baseband data
     -------------
     For complex baseband data, set ``f0`` to the carrier the data was demodulated by. Every
@@ -247,8 +251,9 @@ class DelayAndSumBeamformer(_STFTBeamformer):
         f0 : float, optional
             Carrier frequency offset in Hz for baseband data. Defaults to ``0.0``.
         fmin : float | None, optional
-            Minimum frequency (Hz) included in the power integration. If ``None``, the minimum
-            available STFT bin frequency is used.
+            Minimum frequency (Hz) included in the power integration. If ``None``, 0 Hz is
+            used for passband data (``f0 == 0``) and the minimum available STFT bin frequency
+            for baseband data.
         fmax : float | None, optional
             Maximum frequency (Hz) included in the power integration. If ``None``, the maximum
             available STFT bin frequency is used.
@@ -274,7 +279,7 @@ class DelayAndSumBeamformer(_STFTBeamformer):
         M, n_frames, nfft_actual = X.shape
 
         f_bins = _stft_bin_frequencies(nfft_actual, fs, f0)
-        per_band_bins = self._band_bin_indices(f_bins, fmin, fmax)
+        per_band_bins = self._band_bin_indices(f_bins, f0, fmin, fmax)
         bins_to_bands = self._bins_to_bands(per_band_bins)
 
         Ndir = sd.shape[0]

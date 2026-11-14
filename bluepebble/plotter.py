@@ -1591,7 +1591,11 @@ def plot_spectrogram(
     Parameters
     ----------
     signal : ArrayLike
-        1D array-like audio signal.
+        1D array-like audio signal. In PSD mode a signal with an imaginary part is taken to
+        be one-sided, as the passive sources and simulators produce: the density is computed
+        over both signs of frequency and shown at 0 Hz and above, where it equals the
+        one-sided density of the real pressure ``sqrt(2) * Re{signal}``. A real signal gets
+        its usual one-sided density.
     sr : int
         Sampling rate in Hz.
     n_fft : int
@@ -1698,17 +1702,20 @@ def plot_spectrogram(
         else:
             s_db = magnitude_db
     else:
-        # Keep PSD behaviour aligned with historical examples that use the
-        # real-valued waveform component for spectrogram generation.
-        signal_for_psd = np.real(signal)
+        one_sided_input = bool(np.iscomplexobj(signal) and np.any(np.imag(signal) != 0.0))
         freqs_hz, times, spec_power = scipy_signal.spectrogram(
-            signal_for_psd,
+            signal if one_sided_input else np.real(signal),
             fs=sr,
             nperseg=n_fft,
             noverlap=n_fft - hop_length,
             scaling="density",
             mode="psd",
+            return_onesided=not one_sided_input,
         )
+        if one_sided_input:
+            # The real part alone would read 3 dB low, since it is the pressure over sqrt(2).
+            non_negative = freqs_hz >= 0
+            freqs_hz, spec_power = freqs_hz[non_negative], spec_power[non_negative]
         amin = 1e-16
         psd_db = 10.0 * np.log10(spec_power + amin)
         if db_reference == "peak":
