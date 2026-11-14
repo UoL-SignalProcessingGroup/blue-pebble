@@ -139,6 +139,123 @@ def test_delay_and_sum_frequency_domain_matches_zero_delay_average(monkeypatch) 
     )
 
 
+# A 16-sensor line array at half-wavelength spacing for a 6 kHz carrier, hearing a plane wave
+# from 60 degrees whose envelope is a 40 Hz tone.
+_SOUND_SPEED = 1500.0
+_CARRIER_HZ = 6000.0
+_ENVELOPE_HZ = 40.0
+_SENSOR_X_M = np.arange(16) * 0.125
+_BEARING_GRID_RAD = np.deg2rad(np.arange(181.0))
+_SOURCE_BEAM = 60
+
+
+def _arrival_delays_s(bearings_rad):
+    """Return each sensor's plane-wave arrival delay, shape ``(num_bearings, num_sensors)``."""
+    return -np.outer(np.cos(np.atleast_1d(bearings_rad)), _SENSOR_X_M) / _SOUND_SPEED
+
+
+def _plane_wave(sampling_rate_hz, num_samples, baseband):
+    """Return the plane wave at each sensor, at passband or demodulated by the carrier."""
+    t = np.arange(num_samples) / sampling_rate_hz
+    delays = _arrival_delays_s(_BEARING_GRID_RAD[_SOURCE_BEAM])[0][:, np.newaxis]
+    passband = np.exp(2j * np.pi * (_CARRIER_HZ + _ENVELOPE_HZ) * (t - delays))
+    return passband * np.exp(-2j * np.pi * _CARRIER_HZ * t) if baseband else passband
+
+
+def _beam_pattern(beamformer, data, sampling_rate_hz, domain, f0=0.0):
+    """Return the mean output power of each beam of ``_BEARING_GRID_RAD``."""
+    output = beamformer.DelayAndSumBeamformer(
+        sampling_rate_hz=sampling_rate_hz, domain=domain, f0=f0
+    ).beamform(data, _arrival_delays_s(_BEARING_GRID_RAD))
+    return np.mean(np.abs(output) ** 2, axis=1)
+
+
+@pytest.mark.parametrize("domain", ["time", "frequency"])
+def test_delay_and_sum_steers_baseband_data_with_its_carrier(monkeypatch, domain) -> None:
+    """With f0 at the carrier, a baseband plane wave peaks at its bearing at full power."""
+    beamformer = _load_beamformer_module(monkeypatch)
+    data = _plane_wave(1000.0, 1000, baseband=True)
+
+    pattern = _beam_pattern(beamformer, data, 1000.0, domain, f0=_CARRIER_HZ)
+
+    assert int(np.argmax(pattern)) == _SOURCE_BEAM
+    # The time domain aligns the 40 Hz envelope only to the nearest 1 ms sample.
+    tolerance = 1e-12 if domain == "frequency" else 0.01
+    assert pattern[_SOURCE_BEAM] == pytest.approx(1.0, abs=tolerance)
+
+
+@pytest.mark.parametrize("domain", ["time", "frequency"])
+def test_delay_and_sum_misses_baseband_data_without_its_carrier(monkeypatch, domain) -> None:
+    """With f0 left at 0 the same wave is not found: the carrier phase is what steers it."""
+    beamformer = _load_beamformer_module(monkeypatch)
+    data = _plane_wave(1000.0, 1000, baseband=True)
+
+    pattern = _beam_pattern(beamformer, data, 1000.0, domain)
+
+    assert abs(int(np.argmax(pattern)) - _SOURCE_BEAM) > 30
+    assert pattern.max() < 1e-3
+
+
+def test_delay_and_sum_baseband_beam_pattern_is_the_passband_pattern(monkeypatch) -> None:
+    """Frequency-domain beams of baseband data match those of the same wave at passband.
+
+    The passband pattern peaking at the source's bearing also fixes the sign of the steering
+    phase: a flipped sign would put the peak at the mirror bearing, 120 degrees.
+    """
+    beamformer = _load_beamformer_module(monkeypatch)
+
+    passband = _beam_pattern(
+        beamformer, _plane_wave(16_000.0, 16_000, baseband=False), 16_000.0, "frequency"
+    )
+    baseband = _beam_pattern(
+        beamformer, _plane_wave(1000.0, 1000, baseband=True), 1000.0, "frequency", f0=_CARRIER_HZ
+    )
+
+    assert int(np.argmax(passband)) == _SOURCE_BEAM
+    np.testing.assert_allclose(baseband, passband, atol=1e-10)
+
+
+@pytest.mark.parametrize(
+    ("domain", "expected"),
+    [
+        (
+            "time",
+            [
+                0.3601909663076421 + 0.9676990002757425j,
+                -0.8065981415520554 + 0.6063287636772928j,
+                -0.3701822189142408 - 0.8977539328564543j,
+            ],
+        ),
+        (
+            "frequency",
+            [
+                0.4664855020187025 + 0.9226881041953516j,
+                -0.7028473461600652 + 0.7249329969871152j,
+                -0.5292586822354861 - 0.8135565133124373j,
+            ],
+        ),
+    ],
+)
+def test_delay_and_sum_passband_results_are_those_of_v0_8_0(monkeypatch, domain, expected) -> None:
+    """With f0 left at 0, both domains give what they gave before they used f0.
+
+    The values were saved from the code before the change (commit 0d00482). They are compared
+    to rounding and not bit for bit, since FFT results can differ between platforms.
+    """
+    beamformer = _load_beamformer_module(monkeypatch)
+    n = np.arange(256)
+    signals = np.array(
+        [(1 + 0.1 * j) * np.exp(1j * (0.37 * j + 0.011 * n + 2e-5 * n**2)) for j in range(6)]
+    )
+    delays = np.outer([-1.0, 0.5, 2.0], np.arange(6) * 1.3e-4)
+
+    output = beamformer.DelayAndSumBeamformer(domain=domain, sampling_rate_hz=8000.0).beamform(
+        signals, delays
+    )
+
+    np.testing.assert_allclose(output[[0, 1, 2], [10, 100, 200]], expected, rtol=1e-13)
+
+
 def test_delay_and_sum_normalises_explicit_shading(monkeypatch) -> None:
     """Explicit shading should be normalised before beamforming."""
     beamformer = _load_beamformer_module(monkeypatch)

@@ -33,6 +33,14 @@ class DelayAndSumBeamformer(_STFTBeamformer):
 
     In all modes, steering is controlled via per-direction per-sensor delay values.
 
+    Baseband data
+    -------------
+    For complex baseband data, set ``f0`` to the carrier the data was demodulated by. Every
+    mode then steers each bin at its physical frequency, ``f0`` plus the baseband frequency;
+    with ``f0`` left at 0 the carrier phase that steers narrowband data is missing and the
+    beams point wrongly. The time domain applies the carrier phase for the exact delay but
+    still aligns the envelope to the nearest sample (see :func:`_time_das`).
+
     Multiband processing
     --------------------
     Setting ``bands`` integrates several frequency bands from one pass over the data and
@@ -175,6 +183,7 @@ class DelayAndSumBeamformer(_STFTBeamformer):
                 steering_delays_array,
                 shading_weights,
                 self.sampling_rate_hz,
+                self.f0,
             )
         elif self.domain == "frequency":
             output = _frequency_das(
@@ -182,6 +191,7 @@ class DelayAndSumBeamformer(_STFTBeamformer):
                 steering_delays_array,
                 shading_weights,
                 self.sampling_rate_hz,
+                self.f0,
             )
         elif self.domain == "broadband_power":
             output = self.das_broadband_power(
@@ -321,6 +331,7 @@ class DelayAndSumBeamformer(_STFTBeamformer):
         types.Array(types.float64, 2, "C"),
         types.Array(types.float64, 1, "C"),
         types.float64,
+        types.float64,
     ),
     cache=True,
     parallel=True,
@@ -331,8 +342,20 @@ def _time_das(
     steering_delays_s: FloatArray,
     shading_weights: FloatArray,
     sampling_rate_hz: float,
+    carrier_frequency_hz: float,
 ) -> ComplexArray:
-    """Perform time-domain delay-and-sum beamforming.
+    r"""Perform time-domain delay-and-sum beamforming.
+
+    Beam :math:`i` advances sensor :math:`j` by its steering delay :math:`\tau_{ij}`, rounded
+    to :math:`d_{ij}` whole samples, and sums with the shading weights :math:`w_j`:
+
+    .. math::
+
+        y_i[n] = \sum_j w_j \, e^{j 2 \pi f_0 \tau_{ij}} \, x_j[n + d_{ij}], \qquad
+        d_{ij} = \operatorname{round}(\tau_{ij} f_s),
+
+    where :math:`f_0` is the carrier of baseband data. Its phase uses the exact delay, not the
+    rounded one.
 
     Parameters
     ----------
@@ -344,12 +367,20 @@ def _time_das(
         Sensor shading/weight vector with shape ``(num_sensors,)``.
     sampling_rate_hz : float
         Sampling frequency in Hz.
+    carrier_frequency_hz : float
+        Carrier the data was demodulated by, in Hz; 0 for passband data.
 
     Returns
     -------
     ComplexArray
         Complex beamformed signals with shape
         ``(num_directions, num_samples_or_cropped_samples)``.
+
+    Assumptions
+    -----------
+    - Each delay is a whole number of samples. The rounding error is at most half a sample,
+      which misaligns a frequency :math:`f` in the data by up to :math:`\pi f / f_s` radians:
+      the whole carrier at passband, only the offset from the carrier at baseband.
 
     """
     num_directions = steering_delays_s.shape[0]
@@ -362,7 +393,17 @@ def _time_das(
         for j in range(num_sensors):
             d = delays[i, j]
             # Apply negative delay to align signals (compensate for propagation delays)
-            beamformed_signals[i] += shading_weights[j] * np.roll(sensor_signals[j], -d)
+            if carrier_frequency_hz == 0.0:
+                beamformed_signals[i] += shading_weights[j] * np.roll(sensor_signals[j], -d)
+            else:
+                # The roll aligns the envelope; the carrier it was demodulated by still
+                # carries the delay as a phase.
+                carrier_phase = np.exp(
+                    2j * np.pi * carrier_frequency_hz * steering_delays_s[i, j]
+                )
+                beamformed_signals[i] += (shading_weights[j] * carrier_phase) * np.roll(
+                    sensor_signals[j], -d
+                )
 
     # Crop the signals to remove circular shift artifacts
     # Note: Numba does not support np.max/min on the entire 2D delays array in parallel
@@ -400,6 +441,7 @@ def _time_das(
         types.Array(types.float64, 2, "C"),
         types.Array(types.float64, 1, "C"),
         types.float64,
+        types.float64,
     ),
     cache=True,
     parallel=True,
@@ -410,8 +452,17 @@ def _frequency_das(
     steering_delays_s: FloatArray,
     shading_weights: FloatArray,
     sampling_rate_hz: float,
+    carrier_frequency_hz: float,
 ) -> ComplexArray:
-    """Perform frequency-domain delay-and-sum beamforming.
+    r"""Perform frequency-domain delay-and-sum beamforming.
+
+    Beam :math:`i` advances sensor :math:`j` by its steering delay :math:`\tau_{ij}` as a
+    phase at each FFT bin's physical frequency, the carrier :math:`f_0` of baseband data plus
+    the bin frequency :math:`f_k`, and sums with the shading weights :math:`w_j`:
+
+    .. math::
+
+        Y_i[k] = \sum_j w_j \, X_j[k] \, e^{j 2 \pi (f_0 + f_k) \tau_{ij}}.
 
     Parameters
     ----------
@@ -423,11 +474,18 @@ def _frequency_das(
         Sensor shading/weight vector with shape ``(num_sensors,)``.
     sampling_rate_hz : float
         Sampling frequency in Hz.
+    carrier_frequency_hz : float
+        Carrier the data was demodulated by, in Hz; 0 for passband data.
 
     Returns
     -------
     ComplexArray
         Complex beamformed signals with shape ``(num_directions, num_samples)``.
+
+    Assumptions
+    -----------
+    - The delays are circular over the block, so a signal advanced past its start wraps to
+      the end.
 
     """
     num_directions, num_sensors = steering_delays_s.shape
@@ -438,6 +496,8 @@ def _frequency_das(
 
     # 2. Compute frequency bins
     frequency_bins = np.fft.fftfreq(num_samples, d=1.0 / sampling_rate_hz)
+    if carrier_frequency_hz != 0.0:
+        frequency_bins = frequency_bins + carrier_frequency_hz
 
     # 3. Initialise beamformed signals in the frequency domain
     beamformed_f = np.zeros((num_directions, num_samples), dtype=np.complex128)

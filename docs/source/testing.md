@@ -39,6 +39,8 @@ pytest --collect-only -q
 - the snapping shrimp colony: median window level against the requested level, the
   unit-energy snap, band power, Poisson snap counts, the snap-rate fit and parameter checks
 - active pulses: CW tone, level and phase; LFM sweep, edge taper and configuration checks
+- baseband pulses against the passband pulse mixed down by its carrier, and the baseband
+  sampling-rate checks
 
 ### Seed management
 
@@ -56,6 +58,8 @@ pytest --collect-only -q
 
 - delay-and-sum domain validation, input-shape checks and zero-delay behaviour
 - shading normalisation and rejection of zero-sum shading
+- time- and frequency-domain steering of a baseband plane wave with `f0` at its carrier, the
+  baseband beam pattern against the passband one, and passband output pinned to v0.8.0
 - STFT short-input and overlap edge cases
 - MVDR validation, finite output on deterministic inputs, and multiband output matching separate single-band runs
 - steering delays and array-axis wrapping at ±π
@@ -89,8 +93,9 @@ pytest --collect-only -q
 - peak consolidation, including clusters that straddle the ±180° wrap
 - passive and multiband detector wiring from beamformed data to Stone Soup detections with `Bearing` state vectors
 - active detection on simulated pings: monostatic range within c/(2B), bearing and range from beams,
-  the bistatic range sum, a minimum range, held-out Pfa after calibrating on noise-only pings, and
-  rejection of wrapping CFAR, unbeamformed multi-channel data and resized beams
+  the bistatic range sum, a minimum range, held-out Pfa after calibrating on noise-only pings,
+  rejection of wrapping CFAR, unbeamformed multi-channel data and resized beams, and a baseband
+  ping detected at the passband ping's beam and range
 - timestep metrics, parameter sweeps and theoretical ROC helpers
 
 ### Plotting helpers
@@ -167,8 +172,11 @@ pytest --collect-only -q
 - an LFM matched-filter peak, per-sensor delays across a line array, no wrap-around of late
   echoes, and silence from targets that cannot be heard
 - default ping times, a missing transmitter state, seeded noise and settings validation
-- with `bellhopcxx` on `PATH`: the direct echo against spherical spreading, and a bistatic
-  sonobuoy echo
+- baseband runs against the passband run mixed down and decimated, an LFM's aliasing, the
+  echo's delay and carrier phase, the beamformer `f0` check, matched-filter straddle loss at
+  low sampling rates, and passband output pinned to v0.8.0
+- with `bellhopcxx` on `PATH`: the direct echo against spherical spreading, a bistatic
+  sonobuoy echo, and a baseband run against the passband run with and without absorption
 - with rtrs installed: the direct echo against spherical spreading
 
 ### Towed-array models
@@ -208,6 +216,7 @@ These run against the real Stone Soup platform and mounting classes.
 
 - `PassiveSonarSensorData` construction, defaults and multiband band-label validation
 - `ActiveSonarSensorData` construction and waveform shape validation
+- the `demodulation_frequency_hz` default and storage on both payloads
 - types package public API exports
 
 ## Current gaps

@@ -49,6 +49,11 @@ class PassiveSonarSensorData(SensorData):
         "order of the beam axis of 'beamformed_data': its first axis, or its second for "
         "three-dimensional multiband data.",
     )
+    demodulation_frequency_hz: float = Property(
+        default=0.0,
+        doc="Physical frequency of 0 Hz in ``raw_signals``, in Hz: the carrier for complex "
+        "baseband data, 0 for passband data. The passive simulators produce passband data.",
+    )
 
     def __init__(self, *args: object, **kwargs: object) -> None:
         """Initialise the sensor data and check band labels and bearings against its shape.
@@ -123,10 +128,12 @@ class ActiveSonarSensorData(SensorData):
 
     received_waveform: ComplexArray = Property(
         doc="Complex analytic received waveform, shape (num_sensors, num_samples): every "
-        "delayed, scaled copy of the transmit pulse returned from every target, plus noise."
+        "delayed, scaled copy of the transmit pulse returned from every target, plus noise. "
+        "Its complex envelope about ``demodulation_frequency_hz`` when that is non-zero."
     )
     transmit_pulse: ComplexArray = Property(
-        doc="Transmitted pulse, shape (num_pulse_samples,), kept for matched filtering."
+        doc="Transmitted pulse, shape (num_pulse_samples,), kept for matched filtering. At "
+        "baseband or passband, as ``received_waveform`` is."
     )
     timestamp: datetime = Property(doc="Time at which the ping was transmitted")
     beamformed_data: ComplexArray | None = Property(
@@ -145,6 +152,12 @@ class ActiveSonarSensorData(SensorData):
     receiver_reference_position: FloatArray | None = Property(
         default=None,
         doc="World-frame (x, y, z) of the receiving array's reference point at the ping",
+    )
+    demodulation_frequency_hz: float = Property(
+        default=0.0,
+        doc="Physical frequency of 0 Hz in the waveforms, in Hz: the carrier when they are "
+        "complex envelopes (baseband), 0 when they are at passband. A beamformer needs it as "
+        "its ``f0`` to steer baseband data.",
     )
 
     def __init__(self, *args: object, **kwargs: object) -> None:
