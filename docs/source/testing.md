@@ -27,17 +27,27 @@ pytest --collect-only -q
 
 ### Signal models and utilities
 
-`tests/test_signal_utils.py`, `tests/test_signal_base.py`, `tests/test_signal_models.py`, `tests/test_signal_anthropogenic.py`, `tests/test_signal_biological.py`, `tests/test_signal_shrimp_colony.py`, `tests/test_signal_active.py`
+`tests/test_signal_utils.py`, `tests/test_signal_base.py`, `tests/test_signal_models.py`, `tests/test_signal_anthropogenic.py`, `tests/test_signal_one_sided.py`, `tests/test_signal_biological.py`, `tests/test_signal_shrimp_colony.py`, `tests/test_signal_active.py`
 
 - STFT utilities, inverse-STFT round-trip behaviour and fade helpers
+- `analytic_signal`: no negative-frequency power for even and odd lengths, a cosine against its
+  complex exponential, the real part and RMS kept, and the documented loss at 0 Hz
 - source waveform padding, truncation and shape checks, and the deprecated
   `BiologicalSignal.generate`'s validation and attenuation/delay branches
 - ambient-noise helpers and the deprecated effects
 - anthropogenic source synthesis from each source's metadata, and the removed constructor arguments
   raising an error that points to metadata
-- biological signal generation, call template construction and the deprecated snapping shrimp models
+- the ship sources as one-sided waveforms: no negative-frequency power for even and odd
+  lengths, complex RMS at the stated tonal, noise and recording levels, the tonal's power
+  within its bandwidth against the Gaussian filter's closed form, noise slope and band edges,
+  tonal phase as a rotation of the complex envelope, the recorded ship's real part against
+  the recording, and tonals or noise ranges outside the sampled band rejected
+- biological signal generation, call template construction and the deprecated snapping shrimp
+  models, and the whale and deprecated shrimp base signals as one-sided waveforms with the RMS
+  of their real pressure
 - the snapping shrimp colony: median window level against the requested level, the
-  unit-energy snap, band power, Poisson snap counts, the snap-rate fit and parameter checks
+  unit-energy snap, a snap's real part against its Butterworth pulse, no negative-frequency
+  power, band power, Poisson snap counts, the snap-rate fit and parameter checks
 - active pulses: CW tone, level and phase; LFM sweep, edge taper and configuration checks
 - baseband pulses against the passband pulse mixed down by its carrier, and the baseband
   sampling-rate checks
@@ -62,6 +72,9 @@ pytest --collect-only -q
   baseband beam pattern against the passband one, and passband output pinned to v0.8.0
 - STFT short-input and overlap edge cases
 - MVDR validation, finite output on deterministic inputs, and multiband output matching separate single-band runs
+- the default band of the STFT beamformers: 0 Hz and up for passband data, negative
+  frequencies integrated only on request, every bin for baseband data, and the bin count that
+  bandwidth normalisation divides by
 - steering delays and array-axis wrapping at ±π
 - mainlobe width against the textbook beamwidth, and the CFAR windows derived from it
 - steering at an elevation: bit-identical horizontal delays at zero elevation, sin(e) and cos(e) scaling on vertical and horizontal lines, mirror pairing below the horizontal, and a broadband plane wave located in bearing and elevation by a crossed array
@@ -103,7 +116,8 @@ pytest --collect-only -q
 `tests/test_plotter.py`
 
 - axis-scaling and layout helper functions
-- spectrogram validation and figure construction
+- spectrogram validation and figure construction, and the PSD of a one-sided tone against
+  its power and against the real pressure it stands for
 - ROC/PR plotting and combined subplot behaviour
 - bearing-time records: wrapped bearings, overlays, legend grouping and the mathematical, true and relative bearing conventions
 - world plotting validation and stationary-platform rendering
@@ -152,7 +166,15 @@ pytest --collect-only -q
 
 `tests/test_simulator_mixed_sources.py`
 
-- real and complex sources in one STFT run, checked by superposition against each source's own run
+- a one-sided source beside another one-sided, real or two-sided source in one STFT run,
+  checked by superposition against each source's own run
+
+`tests/test_simulator_one_sided.py`
+
+- a one-sided ship through the STFT, fractional-delay and discrete simulators: the first
+  sensor's waveform against the source delayed and spread, power against the source's power
+  over range squared, no negative-frequency power at the sensors, and a beamformed peak at
+  its bearing over the default band with delay-and-sum and MVDR
 
 `tests/test_simulator_biological.py`
 
@@ -161,7 +183,8 @@ pytest --collect-only -q
 - the shared source lifecycle (`compute_stft`, `reset`), and the deprecation warnings of
   `BiologicalSignal.generate` and the effects
 - a snapping shrimp colony's bearing and median scan level against spherical spreading, and a
-  colony sharing an STFT run with a synthetic ship
+  colony sharing an STFT run with a synthetic ship: each at its own bearing, signals adding
+  exactly and powers adding to within the sources' correlation
 
 `tests/test_simulator_active.py`
 

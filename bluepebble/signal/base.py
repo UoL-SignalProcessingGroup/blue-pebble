@@ -9,7 +9,7 @@ import numpy as np
 from numpy.typing import NDArray
 from stonesoup.base import Base, Property
 
-from .utils import WindowType, compute_stft
+from .utils import WindowType, _stft_layout, _stft_window, compute_stft
 
 if TYPE_CHECKING:
     from stonesoup.types.state import State
@@ -91,6 +91,21 @@ class SourceSignal(Signal, ABC):
     with its STFT (Short-Time Fourier Transform). Subclasses implement
     :meth:`_generate_base_signal`.
 
+    Waveform
+    --------
+    A source waveform is one-sided (analytic): for a real pressure ``x`` it is
+
+    ``x_a = (x + i * H{x}) / sqrt(2)``
+
+    where ``H`` is the Hilbert transform. All of its power is at non-negative frequencies, its
+    complex RMS is the RMS of ``x``, and ``x = sqrt(2) * Re{x_a}``. A level stated for a source
+    is therefore the RMS of the waveform it returns, as for
+    :class:`~bluepebble.signal.active.ActiveSignal`.
+    :func:`~bluepebble.signal.utils.analytic_signal` converts a real waveform.
+
+    The sampling rate must still exceed twice the highest frequency in ``x``: the simulators
+    label bins with ``numpy.fft.fftfreq``, which calls anything above fs/2 negative.
+
     Lifecycle
     ---------
     The simulators fill the cache themselves, so pass them a model that has not been computed:
@@ -124,7 +139,15 @@ class SourceSignal(Signal, ABC):
 
     @abstractmethod
     def _generate_base_signal(self, source: "State") -> ComplexArray:
-        """Generate full-duration source waveform for STFT processing."""
+        """Generate the full-duration source waveform.
+
+        Returns
+        -------
+        ComplexArray
+            One-sided waveform (see Waveform in the class docstring) of ``num_samples``, whose
+            complex RMS is the source's RMS pressure.
+
+        """
 
     def _prepare_waveform(self, source: "State") -> ComplexArray:
         """Return the waveform that :meth:`compute_stft` caches.
@@ -149,7 +172,8 @@ class SourceSignal(Signal, ABC):
         Returns
         -------
         CachedStftResult
-            Cached STFT tuple ``(stft, frequencies_hz, hop_samples, window)``.
+            Cached STFT tuple ``(stft, frequencies_hz, hop_samples, window)``. The STFT has all
+            ``frame_len`` bins, in ``numpy.fft.fftfreq`` order, whatever the waveform.
 
         Raises
         ------
@@ -168,7 +192,7 @@ class SourceSignal(Signal, ABC):
         self._source_signal = self._prepare_waveform(source)
 
         stft, freq_normalized, hop, window = compute_stft(
-            self._source_signal, self.frame_len, self.hop_factor, self.window_type
+            self._source_signal, self.frame_len, self.hop_factor, self.window_type, two_sided=True
         )
         stft = np.asarray(stft, dtype=np.complex64)
         frequencies = cast(FloatArray, freq_normalized * self.sampling_rate_hz)
@@ -261,24 +285,21 @@ class SourceSignal(Signal, ABC):
         return cast(ComplexArray, self._source_signal)
 
     def stft_geometry(self) -> tuple[int, FloatArray, int, FloatArray, int]:
-        """Return STFT geometry derived purely from signal model properties.
+        """Return the geometry of the STFT that :meth:`compute_stft` returns.
 
         Returns
         -------
         tuple of (int, FloatArray, int, FloatArray, int)
-            ``(num_freq_bins, frequencies_hz, hop, window, num_frames)``.
-            No source State is required.
+            ``(num_freq_bins, frequencies_hz, hop, window, num_frames)``, for a waveform of
+            ``num_samples``. No source State is required.
 
         """
-        stft, freq_normalized, hop, window = compute_stft(
-            np.zeros(self.num_samples, dtype=np.complex64),
-            self.frame_len,
-            self.hop_factor,
-            self.window_type,
+        hop, num_frames = _stft_layout(self.num_samples, self.frame_len, self.hop_factor)
+        window = np.asarray(_stft_window(self.window_type, self.frame_len), dtype=np.float64)
+        freqs = np.asarray(
+            np.fft.fftfreq(self.frame_len, 1.0) * self.sampling_rate_hz, dtype=np.float64
         )
-        num_frames, num_freq_bins = stft.shape
-        freqs = np.asarray(freq_normalized * self.sampling_rate_hz, dtype=np.float64)
-        return num_freq_bins, freqs, int(hop), np.asarray(window, dtype=np.float64), num_frames
+        return self.frame_len, freqs, hop, window, num_frames
 
     def reset(self) -> None:
         """Clear the cached STFT and source-signal state.

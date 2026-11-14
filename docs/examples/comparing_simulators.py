@@ -262,8 +262,6 @@ freq_hi = sampling_rate_hz / 2
 source_signal_synthetic = synthetic_signal_model.get_source_waveform(target_states[0])
 source_signal_measured = measured_signal_model.get_source_waveform(target_states[0])
 
-synthetic_source_real = np.real(source_signal_synthetic)
-measured_source_real = np.real(source_signal_measured)
 
 fig_source_spec = make_subplots(
     rows=2,
@@ -273,7 +271,7 @@ fig_source_spec = make_subplots(
     subplot_titles=["Synthetic Source Signal", "Measured Source Signal"],
 )
 
-for row, src in enumerate((synthetic_source_real, measured_source_real), start=1):
+for row, src in enumerate((source_signal_synthetic, source_signal_measured), start=1):
     fig_source_spec = plot_spectrogram(
         signal=src,
         row=row,

@@ -91,11 +91,11 @@ for timestamp in timesteps[1:]:
 
 target_start_vector = np.array([-2000.0, 0.0, 10000.0, 0.0, -5.0, 0.0])
 target_metadata = {
-    "amplitudes_upa": [10 ** (120 / 20)],
+    "amplitudes_upa": [10 ** (117 / 20)],
     "frequencies_hz": [200.0],
     "phases_rad": [np.pi],
     "tonal_bandwidth_hz": 1.0,
-    "noise_amplitude_upa": 10 ** (90 / 20),
+    "noise_amplitude_upa": 10 ** (87 / 20),
     "noise_spectral_exponent": -1.0,
     "position_mapping": [0, 2, 4],
 }
@@ -410,7 +410,7 @@ fig_pfa.update_layout(
 # -------------------
 #
 # **With its defaults the analytic model is wrong by an order of magnitude.** Below a Pfa of
-# about 1% it predicts a Pd of roughly 0.01 to 0.06 where the measured Pd is about 0.66 to 0.83.
+# about 1% it predicts a Pd of roughly 0.02 to 0.09 where the measured Pd is about 0.84 to 0.95.
 # It also does not deliver the requested Pfa: its threshold produces essentially no false alarms
 # until the requested Pfa passes about 0.1, and then admits almost every cell by 0.55. The
 # beamformer integrates many correlated frequency bins, so the noise-only statistic is far
@@ -420,9 +420,9 @@ fig_pfa.update_layout(
 # **With the measured statistics the model is a reasonable but biased predictor.** The threshold
 # it sets delivers a Pfa within about 20% of the request across the whole range, though K was
 # estimated from these same noise cells, so that check is in-sample. The Rayleigh model
-# overpredicts Pd by up to about 7 points, mostly at or just above the upper edge of the 95%
+# overpredicts Pd by up to about 6 points, mostly at or just above the upper edge of the 95%
 # intervals. The non-fluctuating model, which one might have expected to suit a fixed tone,
-# overpredicts by up to about 13 points. The choice of fluctuation model therefore matters about
+# overpredicts by up to about 12 points. The choice of fluctuation model therefore matters about
 # as much as the error that remains, and this example does not establish why both overpredict.
 #
 # The target cell's lag-1 autocorrelation across scans is close to zero, so treating scans as

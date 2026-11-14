@@ -292,8 +292,20 @@ class _STFTBeamformer(Beamformer):
         doc="Carrier frequency that baseband data was demodulated by, in Hz; 0 for passband "
         "data. Each bin is steered at f0 plus its baseband frequency.",
     )
-    fmin: float | None = Property(default=None, doc="Minimum frequency to integrate (Hz)")
-    fmax: float | None = Property(default=None, doc="Maximum frequency to integrate (Hz)")
+    fmin: float | None = Property(
+        default=None,
+        doc="Minimum frequency to integrate (Hz). When None, integration starts at 0 Hz for "
+        "passband data (f0 == 0) and at the lowest bin for baseband data. Passband data from "
+        "the simulators is one-sided, so its negative bins hold noise and no signal. A real "
+        "signal's negative bins mirror its positive ones, so leaving them out lowers its "
+        "integrated power by 3 dB and leaves its signal-to-noise ratio as it was; set a "
+        "negative fmin to integrate them.",
+    )
+    fmax: float | None = Property(
+        default=None,
+        doc="Maximum frequency to integrate (Hz). When None, integration ends at the highest "
+        "bin. A negative fmax with fmin left at None selects no bin of passband data.",
+    )
     bands: list[FrequencyBand] | None = Property(
         default=None,
         doc="Frequency bands to integrate separately, producing one power map per band. "
@@ -334,6 +346,7 @@ class _STFTBeamformer(Beamformer):
     def _band_bin_indices(
         self,
         f_bins: FloatArray,
+        f0: float,
         fmin: float | None = None,
         fmax: float | None = None,
     ) -> list[IntArray]:
@@ -343,8 +356,11 @@ class _STFTBeamformer(Beamformer):
         ----------
         f_bins : FloatArray
             Bin frequencies in Hz, as returned by :func:`_stft_bin_frequencies`.
+        f0 : float
+            Carrier frequency ``f_bins`` was offset by, in Hz; 0 for passband data.
         fmin : float | None, optional
-            Lower band edge used only in single-band mode (when ``bands`` is None).
+            Lower band edge used only in single-band mode (when ``bands`` is None). ``None``
+            is 0 Hz for passband data and the lowest bin for baseband data.
         fmax : float | None, optional
             Upper band edge used only in single-band mode (when ``bands`` is None).
 
@@ -357,6 +373,9 @@ class _STFTBeamformer(Beamformer):
         """
         if self.bands is not None:
             return [_active_bin_indices(f_bins, band.fmin, band.fmax) for band in self.bands]
+        if fmin is None and f0 == 0:
+            # Passband data is one-sided, so its negative bins would add noise and no signal.
+            fmin = 0.0
         return [_active_bin_indices(f_bins, fmin, fmax)]
 
     @staticmethod

@@ -15,6 +15,7 @@ from .._seed import _spawn_rng
 from ..models.environment.sound_speed_profile import SoundSpeedProfile
 from .base import ComplexArray, FloatArray, SourceSignal, _get_source_metadata
 from .effects import Effect
+from .utils import analytic_signal
 
 if TYPE_CHECKING:
     from stonesoup.types.state import State
@@ -206,9 +207,10 @@ class BiologicalSignal(SourceSignal, ABC):
         Returns
         -------
         ComplexArray
-            1-D complex waveform array.  May be shorter or longer than
-            ``num_samples``; :meth:`_prepare_waveform` will pad or truncate
-            as required.
+            1-D one-sided waveform, as :class:`~bluepebble.signal.base.SourceSignal` requires;
+            pass a real waveform through :func:`~bluepebble.signal.utils.analytic_signal`.
+            :meth:`_prepare_waveform` pads or truncates a waveform that is not ``num_samples``
+            long, which leaves it only approximately one-sided, so return that length.
 
         """
 
@@ -403,6 +405,10 @@ class SnappingShrimpColonySignal(BiologicalSignal):
       µPa²·s at 1 m.
     - ``s`` is the scale that sets the level (see Calibration).
 
+    ``x`` is the real pressure. The waveform the model returns is its one-sided form
+    (:func:`~bluepebble.signal.utils.analytic_signal`), which keeps each snap's energy and
+    so the levels below.
+
     Snaps are placed on whole samples and the train is filtered once, so the model works at
     any sampling rate whose Nyquist frequency lies above the band. The source's position comes
     from the ground-truth path; nothing else is read from the source state.
@@ -560,7 +566,9 @@ class SnappingShrimpColonySignal(BiologicalSignal):
         Returns
         -------
         ComplexArray
-            Real waveform in µPa at 1 m, of length ``num_samples``, as ``complex128``.
+            One-sided waveform in µPa at 1 m, of length ``num_samples``. The snap train is
+            real; :func:`~bluepebble.signal.utils.analytic_signal` gives its one-sided form,
+            which keeps each snap's energy.
 
         """
         snap_train = np.zeros(self.num_samples)
@@ -574,7 +582,7 @@ class SnappingShrimpColonySignal(BiologicalSignal):
                 amplitudes = np.clip(amplitudes, -self.amplitude_cap, self.amplitude_cap)
             np.add.at(snap_train, snap_samples, self._amplitude_scale() * amplitudes)
         sos, pulse_gain = self._unit_energy_filter()
-        return (pulse_gain * signal.sosfiltfilt(sos, snap_train)).astype(np.complex128)
+        return analytic_signal(pulse_gain * signal.sosfiltfilt(sos, snap_train))
 
 
 class PointSourceSnappingShrimpSignal(BiologicalSignal):
@@ -702,7 +710,11 @@ class PointSourceSnappingShrimpSignal(BiologicalSignal):
         )
         return np.maximum(0, base_rate * (1 + diurnal_mod + tidal_mod))
 
-    def _generate_base_signal(self, source: "State") -> FloatArray:
+    def _generate_base_signal(self, source: "State") -> ComplexArray:
+        """Return the one-sided form of :meth:`_real_waveform`, with the same RMS."""
+        return analytic_signal(self._real_waveform(source))
+
+    def _real_waveform(self, source: "State") -> FloatArray:
         """Generate the base snapping shrimp signal for a single point source.
 
         This creates a 1-D time series of snapping events for the point colony. Event amplitudes
@@ -904,7 +916,11 @@ class DiffuseSnappingShrimpSignal(BiologicalSignal):
         )
         return np.maximum(0, base_rate * (1 + diurnal_mod + tidal_mod))
 
-    def _generate_base_signal(self, source: "State", lambda_rate_fraction: float) -> FloatArray:
+    def _generate_base_signal(self, source: "State", lambda_rate_fraction: float) -> ComplexArray:
+        """Return the one-sided form of :meth:`_real_waveform`, with the same RMS."""
+        return analytic_signal(self._real_waveform(source, lambda_rate_fraction))
+
+    def _real_waveform(self, source: "State", lambda_rate_fraction: float) -> FloatArray:
         """Generate a sparse base signal for a single sub-source.
 
         This is used by the diffuse-field model to simulate one incoherent contributor in the
@@ -1477,7 +1493,11 @@ class WhaleCallSignal(BiologicalSignal):
 
         return sequential_events
 
-    def _generate_base_signal(self, source: "State") -> FloatArray:
+    def _generate_base_signal(self, source: "State") -> ComplexArray:
+        """Return the one-sided form of :meth:`_real_waveform`, with the same RMS."""
+        return analytic_signal(self._real_waveform(source))
+
+    def _real_waveform(self, source: "State") -> FloatArray:
         """Generate the base 1D time-domain signal for the whale calls.
 
         Parameters

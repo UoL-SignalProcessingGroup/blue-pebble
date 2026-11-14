@@ -12,11 +12,61 @@ StftResult: TypeAlias = tuple[ComplexArray, FloatArray, int, FloatArray]
 SignalArray: TypeAlias = ComplexArray | FloatArray
 
 
+def _stft_layout(num_samples: int, frame_len: int, hop_factor: int) -> tuple[int, int]:
+    """Return ``(hop, num_frames)`` for a signal of ``num_samples``.
+
+    The signal is zero-padded at its end to a whole number of frames, so
+    ``num_frames = ceil((num_samples - frame_len) / hop) + 1``.
+
+    Raises
+    ------
+    ValueError
+        If the signal is shorter than a frame, or ``hop_factor`` gives no positive hop.
+
+    """
+    if num_samples < frame_len:
+        msg = (
+            f"Signal length ({num_samples}) is shorter than frame_len ({frame_len}). "
+            "Increase duration_s, increase sampling_rate_hz, or reduce frame_len so that "
+            "num_samples >= frame_len."
+        )
+        raise ValueError(msg)
+
+    if hop_factor < 1:
+        msg = f"hop_factor must be a positive integer, got {hop_factor}"
+        raise ValueError(msg)
+
+    hop = frame_len // hop_factor
+    if hop < 1:
+        msg = (
+            f"hop_factor ({hop_factor}) is larger than frame_len ({frame_len}), "
+            "which produces a hop of zero samples. "
+            "Use a hop_factor <= frame_len."
+        )
+        raise ValueError(msg)
+
+    return hop, int(np.ceil((num_samples - frame_len) / hop)) + 1
+
+
+def _stft_window(window: WindowType, frame_len: int) -> FloatArray:
+    """Return the named analysis window of ``frame_len`` samples."""
+    if window == "hann":
+        return np.hanning(frame_len)
+    if window == "hamming":
+        return np.hamming(frame_len)
+    if window == "blackman":
+        return np.blackman(frame_len)
+    msg = f"Unknown window type: {window}"
+    raise ValueError(msg)
+
+
 def compute_stft(
     signal: ArrayLike,
     frame_len: int,
     hop_factor: int = 4,
     window: WindowType = "hann",
+    *,
+    two_sided: bool = False,
 ) -> StftResult:
     """Compute Short-Time Fourier Transform of a signal.
 
@@ -32,6 +82,10 @@ def compute_stft(
         Hop size = frame_len // hop_factor (4 gives 75% overlap).
     window : WindowType, optional
         Window type ('hann', 'hamming', 'blackman').
+    two_sided : bool, optional
+        Return all ``frame_len`` bins in ``numpy.fft.fftfreq`` order whatever the signal.
+        Otherwise a signal with no imaginary part gets the ``frame_len // 2 + 1`` bins of a
+        real transform, in ``numpy.fft.rfftfreq`` order.
 
     Returns
     -------
@@ -52,53 +106,25 @@ def compute_stft(
         msg = "Input signal must be 1D"
         raise ValueError(msg)
 
-    if len(signal_array) < frame_len:
-        msg = (
-            f"Signal length ({len(signal_array)}) is shorter than frame_len ({frame_len}). "
-            "Increase duration_s, increase sampling_rate_hz, or reduce frame_len so that "
-            "num_samples >= frame_len."
-        )
-        raise ValueError(msg)
+    hop, num_frames = _stft_layout(len(signal_array), frame_len, hop_factor)
 
-    if hop_factor < 1:
-        msg = f"hop_factor must be a positive integer, got {hop_factor}"
-        raise ValueError(msg)
+    full_fft = two_sided or bool(
+        np.iscomplexobj(signal_array) and np.any(np.abs(np.imag(signal_array)) > 0.0)
+    )
 
-    hop = frame_len // hop_factor
-    if hop < 1:
-        msg = (
-            f"hop_factor ({hop_factor}) is larger than frame_len ({frame_len}), "
-            "which produces a hop of zero samples. "
-            "Use a hop_factor <= frame_len."
-        )
-        raise ValueError(msg)
+    w = _stft_window(window, frame_len)
 
-    has_imag = np.iscomplexobj(signal_array) and np.any(np.abs(np.imag(signal_array)) > 0.0)
-
-    # Get window
-    if window == "hann":
-        w = np.hanning(frame_len)
-    elif window == "hamming":
-        w = np.hamming(frame_len)
-    elif window == "blackman":
-        w = np.blackman(frame_len)
-    else:
-        msg = f"Unknown window type: {window}"
-        raise ValueError(msg)
-
-    # Calculate number of frames and pad signal
-    num_frames = int(np.ceil((len(signal_array) - frame_len) / hop)) + 1
     pad_amount = (num_frames - 1) * hop + frame_len - len(signal_array)
     signal_padded = np.concatenate([signal_array, np.zeros(pad_amount, dtype=signal_array.dtype)])
 
     # Compute STFT
-    stft_bins = frame_len if has_imag else (frame_len // 2 + 1)
+    stft_bins = frame_len if full_fft else (frame_len // 2 + 1)
     stft = np.zeros((num_frames, stft_bins), dtype=np.complex64)
 
     for i in range(num_frames):
         start = i * hop
         frame = signal_padded[start : start + frame_len]
-        if has_imag:
+        if full_fft:
             frame_complex = np.asarray(frame * w, dtype=np.complex64)
             stft[i, :] = np.fft.fft(frame_complex)
         else:
@@ -106,7 +132,7 @@ def compute_stft(
             stft[i, :] = np.fft.rfft(frame_real)
 
     # Generate frequency array (assuming sampling rate of 1.0, caller must scale)
-    frequencies = np.fft.fftfreq(frame_len, 1.0) if has_imag else np.fft.rfftfreq(frame_len, 1.0)
+    frequencies = np.fft.fftfreq(frame_len, 1.0) if full_fft else np.fft.rfftfreq(frame_len, 1.0)
 
     return stft, frequencies, hop, w
 
@@ -189,6 +215,60 @@ def inverse_stft(
         reconstructed = reconstructed[trim_start:-trim_end]
 
     return reconstructed
+
+
+def analytic_signal(signal: ArrayLike) -> NDArray[np.complex128]:
+    r"""Return the one-sided (analytic) form of a real waveform, keeping its RMS.
+
+    .. math::
+
+        x_a = \frac{x + i\,\mathcal{H}\{x\}}{\sqrt{2}}
+
+    where :math:`\mathcal{H}` is the Hilbert transform. It is applied in the frequency domain:
+    the positive-frequency bins of ``x`` are scaled by :math:`\sqrt{2}`, the 0 Hz bin by
+    :math:`1/\sqrt{2}`, and the negative-frequency bins are set to zero. For an even length the
+    fs/2 bin is set to zero as well, because ``numpy.fft.fftfreq`` labels it negative.
+
+    The real pressure is recovered as :math:`\sqrt{2}\,\mathrm{Re}\{x_a\}`.
+
+    Assumptions
+    -----------
+    - ``x`` has no power at fs/2. Any there is discarded, and the real part of the result then
+      differs from :math:`x/\sqrt{2}` by that component.
+    - ``x`` has no power at 0 Hz. Half of any there is lost, so the RMS of the result falls
+      short of the RMS of ``x`` by that amount.
+    - ``x`` is one period of a periodic waveform, as for any transform taken over the whole
+      record. A waveform cut from a longer one gains small tails at its ends.
+
+    Parameters
+    ----------
+    signal : ArrayLike
+        Real waveform, one-dimensional.
+
+    Returns
+    -------
+    NDArray[np.complex128]
+        One-sided waveform of the same length, with the RMS of ``signal``.
+
+    Raises
+    ------
+    ValueError
+        If ``signal`` is complex or not one-dimensional.
+
+    """
+    signal_array = np.asarray(signal)
+    if np.iscomplexobj(signal_array):
+        raise ValueError("analytic_signal takes a real waveform, got a complex one")
+    if signal_array.ndim != 1:
+        raise ValueError("Input signal must be 1D")
+
+    num_samples = len(signal_array)
+    gain = np.zeros(num_samples)
+    if num_samples:
+        gain[0] = 1.0 / np.sqrt(2.0)
+        # Bins 1 to ceil(N / 2) - 1 are the positive frequencies below fs/2.
+        gain[1 : (num_samples + 1) // 2] = np.sqrt(2.0)
+    return np.fft.ifft(np.fft.fft(signal_array.astype(np.float64)) * gain)
 
 
 def apply_fade_in(signal: ArrayLike, fade_samples: int) -> SignalArray:

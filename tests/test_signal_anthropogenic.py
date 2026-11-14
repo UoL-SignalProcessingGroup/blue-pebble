@@ -69,7 +69,7 @@ def test_anthropogenic_base_caches_and_resets(monkeypatch) -> None:
     stft, frequencies, hop, window = model.compute_stft(source)
 
     assert model.calls == 1
-    assert stft.shape[1] == 5  # frame_len // 2 + 1 frequency bins
+    assert stft.shape[1] == 8  # every frame_len bin, though this waveform is real
     assert hop == 4
 
     with pytest.raises(RuntimeError, match="reset\\(\\)"):
@@ -192,7 +192,9 @@ def test_synthetic_signal_rejects_invalid_noise_variance_after_init(monkeypatch)
     _, anthropogenic_models, _ = _load_anthropogenic_modules(monkeypatch)
 
     source = _source(noise_amplitude_upa=1.0)
-    model = _synthetic_model(anthropogenic_models, noise_variance=1.0)
+    model = _synthetic_model(
+        anthropogenic_models, noise_variance=1.0, noise_freq_range_hz=(1.0, 8.0)
+    )
     model.noise_variance = -1.0
 
     with pytest.raises(ValueError, match="noise_variance must be finite and >= 0"):

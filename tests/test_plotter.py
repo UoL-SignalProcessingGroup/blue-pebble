@@ -265,6 +265,53 @@ def test_plot_spectrogram_supports_psd_absolute_and_colourbar_controls(monkeypat
     assert fig.data[0].showscale is False
 
 
+def _psd_heatmap(plotter, signal, sr):
+    """Return the frequencies and the absolute PSD, in linear units, that the plot shows."""
+    fig = plotter.plot_spectrogram(
+        signal=signal,
+        sr=sr,
+        n_fft=256,
+        hop_length=64,
+        yaxis_format="Hz",
+        analysis_mode="psd",
+        db_reference="absolute",
+    )
+    return np.asarray(fig.data[0].y), 10 ** (np.asarray(fig.data[0].z) / 10)
+
+
+def test_plot_spectrogram_psd_of_a_one_sided_tone_integrates_to_its_power(monkeypatch) -> None:
+    """A one-sided tone of RMS 3 has a density that integrates to 9 over 0 Hz and above.
+
+    Its real part alone, the pressure over ``sqrt(2)``, would integrate to 4.5.
+    """
+    plotter = _load_plotter(monkeypatch)
+    sr = 8000
+    tone = 3.0 * np.exp(2j * np.pi * 2000.0 * np.arange(4096) / sr)
+
+    frequencies_hz, density = _psd_heatmap(plotter, tone, sr)
+
+    assert frequencies_hz.min() == 0.0
+    bin_width_hz = frequencies_hz[1] - frequencies_hz[0]
+    np.testing.assert_allclose(density.sum(axis=0) * bin_width_hz, 9.0, rtol=1e-6)
+
+
+def test_plot_spectrogram_psd_of_a_one_sided_tone_matches_its_real_pressure(monkeypatch) -> None:
+    """A one-sided tone and the real pressure it stands for show the same density."""
+    plotter = _load_plotter(monkeypatch)
+    sr = 8000
+    angle = 2.0 * np.pi * 2000.0 * np.arange(4096) / sr
+    one_sided = 3.0 * np.exp(1j * angle)
+    pressure = np.sqrt(2.0) * one_sided.real
+
+    frequencies_hz, density = _psd_heatmap(plotter, one_sided, sr)
+    pressure_frequencies_hz, pressure_density = _psd_heatmap(plotter, pressure, sr)
+
+    # The real pressure's plot has one more row, at fs/2.
+    np.testing.assert_array_equal(frequencies_hz, pressure_frequencies_hz[:-1])
+    peak = pressure_density.max()
+    np.testing.assert_allclose(density, pressure_density[:-1], atol=1e-6 * peak)
+
+
 def test_plot_roc_and_pr_include_auc_in_trace_names(monkeypatch) -> None:
     """ROC and PR plots should label traces with their corresponding AUC values."""
     plotter = _load_plotter(monkeypatch)

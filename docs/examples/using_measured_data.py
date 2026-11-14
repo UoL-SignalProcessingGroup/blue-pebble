@@ -231,11 +231,11 @@ target_ground_truths = []
 bearing_truths = []
 
 for target_start_vector in target_start_vectors:
-    target_amplitudes_upa = 10 ** (rng.uniform(90, 102, 4) / 20)
+    target_amplitudes_upa = 10 ** (rng.uniform(87, 99, 4) / 20)
     target_frequencies_hz = rng.uniform(120.0, 250.0, 4)
     target_phases_rad = rng.uniform(0, 2 * np.pi, 4)
     target_tonal_bandwidth_hz = rng.uniform(0.5, 2.0)
-    target_noise_amplitude_upa = 10 ** (rng.uniform(75, 85) / 20)
+    target_noise_amplitude_upa = 10 ** (rng.uniform(72, 82) / 20)
 
     target_states = [
         GroundTruthState(

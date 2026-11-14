@@ -92,16 +92,6 @@ def _hold_last_finite_delays(delay_history_s: FloatArray) -> FloatArray:
     return np.where(finite, delays, np.where(has_source, held, 0.0))
 
 
-def _two_sided_stft(stft: Complex64Array, frame_len: int) -> Complex64Array:
-    """Extend the one-sided STFT of a real signal to all ``frame_len`` bins.
-
-    A real frame's spectrum is Hermitian, ``X[frame_len - k] = conj(X[k])``, so the negative
-    frequency bins are the conjugates of the positive ones in reverse order.
-    """
-    negative_bins = np.conj(stft[:, (frame_len - 1) // 2 : 0 : -1])
-    return np.concatenate([stft, negative_bins], axis=1)
-
-
 def _bulk_delay_hops(
     target: _STFTTargetHistory,
     step_idx: IntArray,
@@ -149,13 +139,13 @@ def _stft_interp_synthesis(
 
     Shapes: ``source_stft`` (targets, frames, bins), ``H_hist`` (targets, steps, sensors, bins),
     ``tau_hist`` (targets, steps, sensors), ``bulk_hops`` (targets, frames), ``out`` (sensors,
-    samples). ``trim`` samples are dropped from each end of the overlap-added signal, as
+    samples). There must be as many bins as the window has samples; the caller checks, since
+    nothing here does. ``trim`` samples are dropped from each end of the overlap-added signal, as
     ``inverse_stft`` does.
     """
     n_targets, n_steps, n_sensors, n_bins = H_hist.shape
     n_frames = source_stft.shape[1]
     frame_len = window.shape[0]
-    two_sided = n_bins == frame_len
     two_pi = 2 * np.pi
 
     for s in prange(n_sensors):
@@ -203,16 +193,10 @@ def _stft_interp_synthesis(
         window_sum = np.zeros(signal.shape[0], np.float32)
         for i in range(n_frames):
             start = i * hop
-            if two_sided:
-                frame = np.fft.ifft(total[i])
-                for n in range(frame_len):
-                    signal[start + n] += frame[n] * window[n]
-                    window_sum[start + n] += window[n] ** 2
-            else:
-                real_frame = np.fft.irfft(total[i], frame_len)
-                for n in range(frame_len):
-                    signal[start + n] += real_frame[n] * window[n]
-                    window_sum[start + n] += window[n] ** 2
+            frame = np.fft.ifft(total[i])
+            for n in range(frame_len):
+                signal[start + n] += frame[n] * window[n]
+                window_sum[start + n] += window[n] ** 2
         for n in range(signal.shape[0]):
             if window_sum[n] > 1e-10:
                 signal[n] /= window_sum[n]
@@ -247,8 +231,7 @@ def _stft_interp_receiver(
     Raises
     ------
     ValueError
-        If ``ctx.num_freq_bins`` is neither a one-sided nor a two-sided spectrum of
-        ``ctx.frame_len``.
+        If ``ctx.num_freq_bins`` is not ``ctx.frame_len``.
 
     Notes
     -----
@@ -267,11 +250,11 @@ def _stft_interp_receiver(
     if not targets_data:
         return receiver
 
-    onesided_bins = ctx.frame_len // 2 + 1
-    if ctx.num_freq_bins not in (ctx.frame_len, onesided_bins):
+    # The kernel reads frame_len samples from each inverse transform without a bounds check.
+    if ctx.num_freq_bins != ctx.frame_len:
         raise ValueError(
             f"Invalid STFT shape ({ctx.num_frames}, {ctx.num_freq_bins}). Expected "
-            f"num_freq_bins to be {onesided_bins} (rFFT) or {ctx.frame_len} (FFT)."
+            f"num_freq_bins to be frame_len ({ctx.frame_len})."
         )
 
     _stft_interp_synthesis(
@@ -324,14 +307,6 @@ class ContinuousSTFTPassiveSonarArraySimulator(PassiveSonarArraySimulatorBase):
     In practice, each method produces largely similar results. The default ``stft_interp``
     and ``wola_interp`` methods are recommended. The ``cola`` method can produce
     interference artefacts, but is good as a fast baseline.
-
-    Real and complex sources
-    ------------------------
-    A real source waveform has a one-sided STFT (``frame_len // 2 + 1`` bins) and a complex
-    one a two-sided STFT (``frame_len`` bins). A run may hold both: the real sources are then
-    extended to two-sided, which is exact because a real frame's spectrum is Hermitian,
-    ``X[frame_len - k] = conj(X[k])``. Each extended source's channel history covers all
-    ``frame_len`` bins, about twice the memory it needs in a run of real sources only.
 
     Propagation delay
     -----------------
@@ -449,11 +424,7 @@ class ContinuousSTFTPassiveSonarArraySimulator(PassiveSonarArraySimulatorBase):
         return idx, alpha
 
     @staticmethod
-    def _ifft_frame(
-        frame_spec: ComplexArray,
-        frame_len: int,
-        num_freq_bins: int,
-    ) -> ComplexArray | NDArray[np.floating[Any]]:
+    def _ifft_frame(frame_spec: ComplexArray, frame_len: int, num_freq_bins: int) -> ComplexArray:
         """Inverse-transform one STFT frame.
 
         Parameters
@@ -473,21 +444,12 @@ class ContinuousSTFTPassiveSonarArraySimulator(PassiveSonarArraySimulatorBase):
         Raises
         ------
         ValueError
-            If ``num_freq_bins`` does not match valid one-sided or two-sided
-            STFT conventions for ``frame_len``.
+            If ``num_freq_bins`` is not ``frame_len``.
 
         """
-        if num_freq_bins == frame_len:
-            return np.fft.ifft(frame_spec, n=frame_len)
-
-        if num_freq_bins == frame_len // 2 + 1:
-            return np.fft.irfft(frame_spec, n=frame_len)
-
-        msg = (
-            f"Invalid STFT bin count: {num_freq_bins}. Expected {frame_len} "
-            f"(two-sided) or {frame_len // 2 + 1} (one-sided)."
-        )
-        raise ValueError(msg)
+        if num_freq_bins != frame_len:
+            raise ValueError(f"Invalid STFT bin count: {num_freq_bins}. Expected {frame_len}.")
+        return np.fft.ifft(frame_spec, n=frame_len)
 
     def _build_common_context(
         self,
@@ -541,18 +503,12 @@ class ContinuousSTFTPassiveSonarArraySimulator(PassiveSonarArraySimulatorBase):
         ground_truth_paths: "Sequence[Iterable[State]]",
         signal_models_list: "list[SourceSignal]",
     ) -> list[Complex64Array]:
-        """Compute every target's source STFT on one shared frequency grid.
-
-        ``stft_geometry()`` cannot know whether a source is real (one-sided STFT) or complex
-        (two-sided), so ``ctx``'s bin count and frequencies are set here from the STFTs
-        themselves. If any source is complex, the real sources are extended to two-sided so
-        that all targets share the complex sources' grid.
+        """Compute every target's source STFT.
 
         Parameters
         ----------
         ctx : _STFTCommonContext
-            Shared STFT context; its ``num_frames``, ``num_freq_bins`` and ``frequencies`` are
-            updated in place.
+            Shared STFT context.
         ground_truth_paths : Sequence of Iterable of State
             Target trajectories.
         signal_models_list : list
@@ -568,37 +524,18 @@ class ContinuousSTFTPassiveSonarArraySimulator(PassiveSonarArraySimulatorBase):
         ValueError
             If a target path has no states.
         RuntimeError
-            If the targets' STFTs differ in shape for any reason other than being one-sided
-            or two-sided.
+            If a target's STFT does not have the shape ``ctx`` took from the first model's
+            :meth:`~bluepebble.signal.SourceSignal.stft_geometry`.
 
         """
         source_stfts: list[Complex64Array] = []
-        frequency_grids: list[FloatArray] = []
         for target_idx, target_path in enumerate(ground_truth_paths):
             try:
                 target_first_state = next(iter(target_path))
             except StopIteration:
                 msg = f"ground_truth_paths[{target_idx}] has no states"
                 raise ValueError(msg) from None
-            source_stft, freqs_hz, _, _ = signal_models_list[target_idx].compute_stft(
-                target_first_state
-            )
-            source_stfts.append(source_stft)
-            frequency_grids.append(np.asarray(freqs_hz, dtype=np.float64))
-
-        two_sided = [stft.shape[1] == ctx.frame_len for stft in source_stfts]
-        # A complex source's grid when there is one, so the result does not depend on the
-        # order of the targets.
-        reference_idx = two_sided.index(True) if any(two_sided) else 0
-        if any(two_sided):
-            source_stfts = [
-                stft if is_two_sided else _two_sided_stft(stft, ctx.frame_len)
-                for stft, is_two_sided in zip(source_stfts, two_sided, strict=True)
-            ]
-
-        ctx.num_frames, ctx.num_freq_bins = source_stfts[reference_idx].shape
-        ctx.frequencies = frequency_grids[reference_idx]
-        for source_stft in source_stfts:
+            source_stft, _, _, _ = signal_models_list[target_idx].compute_stft(target_first_state)
             if source_stft.shape != (ctx.num_frames, ctx.num_freq_bins):
                 msg = (
                     "All target source STFTs must share the same shape. "
@@ -606,6 +543,7 @@ class ContinuousSTFTPassiveSonarArraySimulator(PassiveSonarArraySimulatorBase):
                     f"got {source_stft.shape}."
                 )
                 raise RuntimeError(msg)
+            source_stfts.append(source_stft)
 
         return source_stfts
 
@@ -1256,13 +1194,8 @@ class ContinuousFractionalDelayPassiveSonarArraySimulator(PassiveSonarArraySimul
         )
         src_n = np.arange(len(source), dtype=np.float64)
 
-        if np.iscomplexobj(source):
-            y_real = np.interp(src_idx, src_n, np.real(source), left=0.0, right=0.0)
-            y_imag = np.interp(src_idx, src_n, np.imag(source), left=0.0, right=0.0)
-            return (y_real + 1j * y_imag).astype(np.complex64)
-
-        y = np.interp(src_idx, src_n, source.astype(np.float64), left=0.0, right=0.0)
-        return y.astype(np.complex64)
+        delayed = np.interp(src_idx, src_n, source.astype(np.complex128), left=0.0, right=0.0)
+        return delayed.astype(np.complex64)
 
     def sensor_data_gen(self, progress_bar: bool = False) -> Iterator[SensorBatch]:
         """Yield broadband sensor snapshots via fractional-delay rendering.

@@ -123,6 +123,8 @@ def test_synthetic_signal_seed_gives_reproducible_output(monkeypatch) -> None:
             sampling_rate_hz=32,
             frame_len=16,
             hop_factor=4,
+            # Inside this rate's 16 Hz Nyquist; the default band lies wholly above it.
+            noise_freq_range_hz=(2.0, 16.0),
             seed=seed,
         )
 

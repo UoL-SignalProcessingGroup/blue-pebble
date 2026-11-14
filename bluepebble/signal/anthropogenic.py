@@ -13,6 +13,7 @@ from stonesoup.base import Property
 
 from .._seed import _spawn_rng
 from .base import ComplexArray, FloatArray, SourceSignal, _get_source_metadata
+from .utils import analytic_signal
 
 if TYPE_CHECKING:
     from stonesoup.types.state import State
@@ -103,6 +104,24 @@ class SyntheticAnthropogenicSignal(AnthropogenicSignal):
     The propagation model also reads ``position_mapping`` from the metadata, to locate the
     source.
 
+    Waveform
+    --------
+    The waveform is one-sided, as :class:`~bluepebble.signal.base.SourceSignal` requires:
+
+    ``x_a(t) = sum_k A_k * exp(i * phi_k) * u_k(t) + N * n(t)``
+
+    - ``u_k`` is complex white noise through a Gaussian band-pass centred on tonal ``k``'s
+      frequency, scaled to unit RMS. ``tonal_bandwidth_hz`` is the filter's full width at half
+      amplitude, where the power is 6 dB down; the -3 dB width is
+      ``tonal_bandwidth_hz / sqrt(2)``.
+    - ``A_k`` is the tonal's RMS amplitude and ``phi_k`` its phase.
+    - ``n`` is noise of unit RMS whose power spectrum follows
+      ``f ** noise_spectral_exponent`` inside ``noise_freq_range_hz`` and is zero outside it,
+      and ``N`` is ``noise_amplitude_upa``. Below 1 Hz the shape is held at its 1 Hz value.
+
+    Every term is zero at negative frequencies and at fs/2, whatever the filters would pass
+    there. The 0 Hz bin is kept where a tonal's filter or the noise range reaches it.
+
     Parameters
     ----------
     frame_len : int, optional
@@ -112,8 +131,9 @@ class SyntheticAnthropogenicSignal(AnthropogenicSignal):
     window_type : {'hann', 'hamming', 'blackman'}, optional
         Window type for STFT. Default is 'hann'.
     noise_freq_range_hz : tuple, optional
-        Tuple of (min_freq, max_freq) for noise generation. Default is (20.0, 200.0), covering
-        typical machinery noise ranges.
+        Tuple of (min_freq, max_freq) for noise generation, with
+        ``0 <= min_freq < max_freq <= fs/2``. Default is (20.0, 200.0), covering typical
+        machinery noise ranges.
     noise_variance : float, optional
         Variance multiplier applied to all generated white noise before any bandlimiting or
         normalisation (default 1.0). This controls the base random field variance.
@@ -130,6 +150,12 @@ class SyntheticAnthropogenicSignal(AnthropogenicSignal):
         Seed for the random number generator. When ``None`` (default), defers to the global seed
         set by ``bluepebble.set_seed()`` if called, otherwise non-deterministic. Provide an
         integer for a reproducible independent stream.
+
+    Raises
+    ------
+    ValueError
+        When a waveform is generated, if a tonal frequency is not inside ``(0, fs/2)``, or
+        there is broadband noise and ``noise_freq_range_hz`` is not inside ``[0, fs/2]``.
 
     Examples
     --------
@@ -159,7 +185,7 @@ class SyntheticAnthropogenicSignal(AnthropogenicSignal):
     """
 
     noise_freq_range_hz: tuple[float, float] = Property(
-        default=(20.0, 200.0), doc="Frequency range for noise (Hz)"
+        default=(20.0, 200.0), doc="Frequency range for noise (Hz), within [0, fs/2]"
     )
     noise_variance: float = Property(
         default=1.0,
@@ -265,15 +291,19 @@ class SyntheticAnthropogenicSignal(AnthropogenicSignal):
     def _generate_band_limited_tonal(self, freq_hz: float, bandwidth_hz: float) -> ComplexArray:
         """Generate a unit-RMS band-limited noise component centred on ``freq_hz``.
 
-        Generates complex white noise, applies a symmetric Gaussian bandpass filter
-        in the frequency domain, and normalises the result to unit RMS.
+        Complex white noise is multiplied in the frequency domain by the Gaussian
+
+        ``G(f) = exp(-(f - freq_hz)^2 / (2 * sigma^2))``, ``sigma = bandwidth_hz / 2.355``
+
+        at ``0 <= f < fs/2`` and by zero elsewhere, then scaled to unit RMS.
 
         Parameters
         ----------
         freq_hz : float
             Centre frequency of the tonal in Hz.
         bandwidth_hz : float
-            -3 dB bandwidth of the Gaussian bandpass filter in Hz.
+            Full width of ``G`` at half amplitude, in Hz. The tonal's power is 6 dB down at
+            ``freq_hz ± bandwidth_hz / 2``.
 
         Returns
         -------
@@ -287,11 +317,12 @@ class SyntheticAnthropogenicSignal(AnthropogenicSignal):
         freq_bins = np.fft.fftfreq(self.num_samples, 1 / self.sampling_rate_hz)
         bandwidth = self._validate_tonal_bandwidth(bandwidth_hz)
 
-        # Symmetric Gaussian bandpass (positive and negative frequencies).
         # sigma = bandwidth / (2 * sqrt(2 * ln(2))) ≈ bandwidth / 2.355
         sigma_hz = bandwidth / 2.355
         bandpass_filter = np.exp(-((freq_bins - freq_hz) ** 2) / (2 * sigma_hz**2))
-        bandpass_filter += np.exp(-((freq_bins + freq_hz) ** 2) / (2 * sigma_hz**2))
+        # fftfreq labels the fs/2 bin negative, so this clears it along with the tail that a
+        # low tonal's filter would leave below 0 Hz.
+        bandpass_filter[freq_bins < 0] = 0.0
 
         filtered = np.fft.ifft(np.fft.fft(noise) * bandpass_filter)
         rms = np.sqrt(np.mean(np.abs(filtered) ** 2))
@@ -313,7 +344,8 @@ class SyntheticAnthropogenicSignal(AnthropogenicSignal):
         amplitudes_upa : FloatArray
             Amplitude of each tonal in µPa.
         phases_rad : FloatArray
-            Phase offset of each tonal in radians.
+            Phase of each tonal in radians. The waveform is one-sided, so this rotates the
+            tonal's complex envelope and shifts the phase of its real pressure by the same angle.
         bandwidth_hz : float
             Bandwidth of each tonal in Hz.
 
@@ -359,6 +391,9 @@ class SyntheticAnthropogenicSignal(AnthropogenicSignal):
         stochastic white noise with it.  The result is RMS-normalised and
         scaled.  The realisation is cached when ``noise_is_constant=True``.
 
+        The mask passes ``noise_freq_range_hz`` on the non-negative bins only, so the noise is
+        one-sided and the fs/2 bin, which ``fftfreq`` labels negative, is empty.
+
         Parameters
         ----------
         amplitude_upa : float
@@ -371,17 +406,27 @@ class SyntheticAnthropogenicSignal(AnthropogenicSignal):
         ComplexArray
             Coloured noise of length ``num_samples``.
 
+        Raises
+        ------
+        ValueError
+            If ``noise_freq_range_hz`` does not satisfy ``0 <= low < high <= fs/2``.
+
         """
         if self.noise_is_constant and self._noise_realization is not None:
             return self._noise_realization
 
-        freq_bins = np.fft.fftfreq(self.num_samples, 1 / self.sampling_rate_hz)
-        freq_abs = np.abs(freq_bins)
-        freq_abs[freq_abs < 1.0] = 1.0  # avoid division by zero at DC
-
-        spectral_shape = freq_abs ** (spectral_exponent / 2.0)
         freq_min, freq_max = self.noise_freq_range_hz
-        bandpass = np.where((freq_abs >= freq_min) & (freq_abs <= freq_max), 1.0, 0.0)
+        nyquist_hz = self.sampling_rate_hz / 2
+        if not 0 <= freq_min < freq_max <= nyquist_hz:
+            raise ValueError(
+                f"noise_freq_range_hz must satisfy 0 <= low < high <= Nyquist ({nyquist_hz} Hz), "
+                f"got {self.noise_freq_range_hz}"
+            )
+
+        freq_bins = np.fft.fftfreq(self.num_samples, 1 / self.sampling_rate_hz)
+        # Held at 1 Hz below that, which avoids division by zero at DC.
+        spectral_shape = np.maximum(np.abs(freq_bins), 1.0) ** (spectral_exponent / 2.0)
+        bandpass = (freq_bins >= freq_min) & (freq_bins <= freq_max)
         noise_filter = spectral_shape * bandpass
 
         if self.use_powerlaw_noise:
@@ -415,10 +460,21 @@ class SyntheticAnthropogenicSignal(AnthropogenicSignal):
         Returns
         -------
         ComplexArray
-            Complex source signal with shape ``(num_samples,)``.
+            One-sided source signal with shape ``(num_samples,)``.
+
+        Raises
+        ------
+        ValueError
+            If a tonal frequency is not inside ``(0, fs/2)``.
 
         """
         amplitudes_upa, frequencies_hz, phases_rad = _extract_tonal_metadata(source)
+        nyquist_hz = self.sampling_rate_hz / 2
+        if np.any((frequencies_hz <= 0) | (frequencies_hz >= nyquist_hz)):
+            raise ValueError(
+                f"frequencies_hz must lie inside (0, Nyquist) ({nyquist_hz} Hz), "
+                f"got {frequencies_hz.tolist()}"
+            )
         bandwidth_hz, noise_amplitude_upa, noise_exponent = self._source_characteristics(source)
         signal = self._generate_tonal_signal(
             frequencies_hz, amplitudes_upa, phases_rad, bandwidth_hz
@@ -445,9 +501,14 @@ class RecordedAnthropogenicSignal(AnthropogenicSignal):
     """Generates broadband source signals from measured WAV recordings.
 
     This signal model loads a measured waveform from disk, resamples it to the
-    simulator sampling rate, matches the requested simulation duration, scales to
+    simulator sampling rate, matches the requested simulation duration, takes its
+    one-sided form (:func:`~bluepebble.signal.utils.analytic_signal`), scales that to
     a target RMS level in dB re 1 µPa, and then computes/caches an STFT for
     frequency-domain propagation.
+
+    The level is the RMS of the one-sided waveform. A recording's 0 Hz offset loses half
+    its power in the conversion, so the real pressure, ``sqrt(2)`` times the real part, has
+    exactly the target RMS only for a zero-mean recording.
 
     Parameters
     ----------
@@ -595,22 +656,22 @@ class RecordedAnthropogenicSignal(AnthropogenicSignal):
         )
         raise ValueError(msg)
 
-    def _apply_level(self, signal: FloatArray) -> FloatArray:
+    def _apply_level(self, signal: ComplexArray) -> ComplexArray:
         """Scale waveform to target RMS level in dB re 1 µPa.
 
         Parameters
         ----------
-        signal : FloatArray
-            Input mono waveform.
+        signal : ComplexArray
+            Input mono waveform, one-sided.
 
         Returns
         -------
-        FloatArray
+        ComplexArray
             Level-adjusted mono waveform.
 
         """
         target_rms_upa = 10 ** (self.level_db_re_1upa / 20.0)
-        current_rms = np.sqrt(np.mean(signal**2))
+        current_rms = np.sqrt(np.mean(np.abs(signal) ** 2))
         if current_rms <= 0:
             return signal
         return signal * (target_rms_upa / current_rms)
@@ -626,7 +687,7 @@ class RecordedAnthropogenicSignal(AnthropogenicSignal):
         Returns
         -------
         ComplexArray
-            Complex source signal with shape ``(num_samples,)``.
+            One-sided source signal with shape ``(num_samples,)``.
 
         Raises
         ------
@@ -658,6 +719,4 @@ class RecordedAnthropogenicSignal(AnthropogenicSignal):
 
         waveform = self._resample_to_sim_rate(waveform, fs_hz)
         waveform = self._match_duration(waveform)
-        waveform = self._apply_level(waveform)
-
-        return np.asarray(waveform, dtype=np.complex128)
+        return self._apply_level(analytic_signal(waveform))

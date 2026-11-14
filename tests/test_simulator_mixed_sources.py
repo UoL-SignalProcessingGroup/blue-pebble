@@ -1,8 +1,9 @@
-"""Tests that the STFT simulator takes real and complex sources in the same run.
+"""Tests that the STFT simulator adds its sources linearly, whatever their spectra.
 
-A real source waveform has a one-sided STFT and a complex one a two-sided STFT. The simulator
-is linear in its sources, so superposition is the oracle: what a real source adds to a run
-with a complex source must equal what it produces on its own.
+A source should be one-sided, but every source STFT holds all ``frame_len`` bins, so a subclass
+that returns a real waveform, or one with independent positive and negative halves, still runs.
+The simulator is linear in its sources, so superposition is the oracle: what one source adds
+to a run with another must equal what it produces on its own.
 """
 
 from __future__ import annotations
@@ -43,7 +44,7 @@ def bp():
     from bluepebble.models.environment import Constant
     from bluepebble.models.propagation import SphericalAcousticPropagationModel
     from bluepebble.platform import SonarPlatform
-    from bluepebble.signal import AnthropogenicSignal
+    from bluepebble.signal import AnthropogenicSignal, analytic_signal
     from bluepebble.simulator import ContinuousSTFTPassiveSonarArraySimulator
 
     class Line(RigidArray):
@@ -59,14 +60,16 @@ def bp():
 
         # The types are arguments, not annotations: this module's annotations are strings
         # (``from __future__ import annotations``), which Stone Soup cannot read on Python 3.14.
-        complex_valued = Property(bool, default=False, doc="Add an independent imaginary part")
+        spectrum = Property(str, default="one_sided", doc="one_sided, real or two_sided")
         noise_seed = Property(int, default=0, doc="Seed of this source's waveform")
 
         def _generate_base_signal(self, source):
             rng = np.random.default_rng(self.noise_seed)
             sos = sp_signal.butter(6, BAND_HZ, btype="bandpass", fs=FS, output="sos")
             waveform = sp_signal.sosfiltfilt(sos, rng.standard_normal(self.num_samples))
-            if self.complex_valued:
+            if self.spectrum == "one_sided":
+                return analytic_signal(waveform)
+            if self.spectrum == "two_sided":
                 imaginary = sp_signal.sosfiltfilt(sos, rng.standard_normal(self.num_samples))
                 return (waveform + 1j * imaginary).astype(np.complex128)
             return waveform.astype(np.complex128)
@@ -82,8 +85,10 @@ def bp():
     restore_real_bluepebble_imports(snapshot)
 
 
-REAL = {"complex_valued": False, "noise_seed": 1, "bearing_deg": 60.0}
-COMPLEX = {"complex_valued": True, "noise_seed": 2, "bearing_deg": 120.0}
+ONE_SIDED = {"spectrum": "one_sided", "noise_seed": 1, "bearing_deg": 60.0}
+OTHER_ONE_SIDED = {"spectrum": "one_sided", "noise_seed": 2, "bearing_deg": 120.0}
+REAL = {"spectrum": "real", "noise_seed": 2, "bearing_deg": 120.0}
+TWO_SIDED = {"spectrum": "two_sided", "noise_seed": 2, "bearing_deg": 120.0}
 
 
 def _timestamps():
@@ -129,7 +134,7 @@ def _received(bp, sources, mode="stft_interp", frame_len=256):
                 duration_s=NUM_STEPS * STEP_S,
                 sampling_rate_hz=FS,
                 frame_len=frame_len,
-                complex_valued=source["complex_valued"],
+                spectrum=source["spectrum"],
                 noise_seed=source["noise_seed"],
             )
             for source in sources
@@ -144,21 +149,22 @@ def _received(bp, sources, mode="stft_interp", frame_len=256):
 
 @pytest.mark.parametrize("mode", ["stft_interp", "wola_interp", "cola"])
 @pytest.mark.parametrize("frame_len", [256, 255])
-def test_real_source_adds_the_same_signal_beside_a_complex_source(bp, mode, frame_len):
-    """Superposition: (real + complex) - complex equals the real source's own run."""
-    real_alone = _received(bp, [REAL], mode, frame_len)
-    complex_alone = _received(bp, [COMPLEX], mode, frame_len)
-    together = _received(bp, [REAL, COMPLEX], mode, frame_len)
+@pytest.mark.parametrize("other", [OTHER_ONE_SIDED, REAL, TWO_SIDED], ids=lambda s: s["spectrum"])
+def test_a_source_adds_the_same_signal_beside_another(bp, mode, frame_len, other):
+    """Superposition: (one + other) - other equals the first source's own run."""
+    alone = _received(bp, [ONE_SIDED], mode, frame_len)
+    other_alone = _received(bp, [other], mode, frame_len)
+    together = _received(bp, [ONE_SIDED, other], mode, frame_len)
 
-    peak = np.max(np.abs(real_alone))
+    peak = np.max(np.abs(alone))
     assert peak > 0
-    np.testing.assert_allclose(together - complex_alone, real_alone, atol=ROUNDING * peak)
+    np.testing.assert_allclose(together - other_alone, alone, atol=ROUNDING * peak)
 
 
 def test_source_order_does_not_change_the_sum(bp):
     """Superposition is symmetric, so which source comes first cannot matter."""
-    real_first = _received(bp, [REAL, COMPLEX])
-    complex_first = _received(bp, [COMPLEX, REAL])
+    one_sided_first = _received(bp, [ONE_SIDED, TWO_SIDED])
+    two_sided_first = _received(bp, [TWO_SIDED, ONE_SIDED])
 
-    peak = np.max(np.abs(real_first))
-    np.testing.assert_allclose(complex_first, real_first, atol=ROUNDING * peak)
+    peak = np.max(np.abs(one_sided_first))
+    np.testing.assert_allclose(two_sided_first, one_sided_first, atol=ROUNDING * peak)

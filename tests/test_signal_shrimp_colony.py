@@ -65,8 +65,14 @@ def _colony(bp, **kwargs):
 def _median_window_level_db(waveform):
     """Return the band level of the median ``WINDOW_S`` window, in dB re 1 µPa²."""
     samples = int(WINDOW_S * FS)
-    windows = np.real(waveform)[: waveform.size // samples * samples].reshape(-1, samples)
-    return 10 * np.log10(np.median(np.mean(windows**2, axis=1)))
+    windows = waveform[: waveform.size // samples * samples].reshape(-1, samples)
+    return 10 * np.log10(np.median(np.mean(np.abs(windows) ** 2, axis=1)))
+
+
+def _negative_bin_fraction(waveform):
+    """Return the share of a waveform's power in the bins ``fftfreq`` labels negative."""
+    power = np.abs(np.fft.fft(waveform)) ** 2
+    return power[np.fft.fftfreq(waveform.size) < 0].sum() / power.sum()
 
 
 def test_snap_rate_fit_gives_34_snaps_per_second_at_20_degrees(bp):
@@ -125,6 +131,40 @@ def test_one_snap_carries_the_energy_the_calibration_gives_it(bp):
     assert snap_energy == pytest.approx(10 ** (LEVEL_DB / 10) * WINDOW_S / 50, rel=0.01)
 
 
+def test_real_part_is_the_snap_pressure_over_root_two(bp):
+    """The real part of one snap is its zero-phase Butterworth pulse over ``sqrt(2)``.
+
+    The pulse is built here from the band alone and scaled to the snap's energy, so the
+    comparison covers the shape and the ``1 / sqrt(2)`` together. The snap's sign is random.
+    """
+
+    class OneSnap(bp.SnappingShrimpColonySignal):
+        def _snap_samples(self):
+            return np.array([self.num_samples // 2])
+
+    model = OneSnap(
+        duration_s=4.0,
+        sampling_rate_hz=FS,
+        snap_rate_hz=100.0,
+        median_source_level_db=LEVEL_DB,
+        band_hz=BAND_HZ,
+        calibration_window_s=WINDOW_S,
+        amplitude_cap=1e-9,
+    )
+    waveform = model.get_source_waveform(SOURCE)
+
+    impulse = np.zeros(model.num_samples)
+    impulse[model.num_samples // 2] = 1.0
+    sos = sp_signal.butter(8, BAND_HZ, btype="bandpass", fs=FS, output="sos")
+    pulse = sp_signal.sosfiltfilt(sos, impulse)
+    pressure = pulse * np.sqrt(np.sum(np.abs(waveform) ** 2) / np.sum(pulse**2))
+    sign = np.sign(waveform.real[np.argmax(np.abs(pulse))] * pulse[np.argmax(np.abs(pulse))])
+
+    np.testing.assert_allclose(
+        waveform.real, sign * pressure / np.sqrt(2.0), atol=1e-9 * np.abs(pressure).max()
+    )
+
+
 def test_power_lies_in_the_pass_band(bp):
     """At least 99% of the waveform's power is inside ``band_hz``."""
     waveform = np.real(_colony(bp, duration_s=120.0).get_source_waveform(SOURCE))
@@ -147,16 +187,18 @@ def test_snap_count_is_poisson_about_rate_times_duration(bp):
     assert snap_samples.max() < model.num_samples
 
 
-def test_output_is_a_real_waveform_of_the_run_length(bp):
-    """The waveform is real, finite and ``num_samples`` long, stored as complex128."""
-    model = _colony(bp)
+@pytest.mark.parametrize("duration_s", [60.0, 60.0005])
+def test_output_is_a_one_sided_waveform_of_the_run_length(bp, duration_s):
+    """The waveform is finite, ``num_samples`` long (even and odd) and has no negative bins."""
+    model = _colony(bp, duration_s=duration_s)
 
     waveform = model.get_source_waveform(SOURCE)
 
     assert waveform.shape == (model.num_samples,)
+    assert model.num_samples % 2 == (duration_s != 60.0)
     assert waveform.dtype == np.complex128
     assert np.all(np.isfinite(waveform))
-    assert np.all(waveform.imag == 0)
+    assert _negative_bin_fraction(waveform) < 1e-12
 
 
 def test_a_colony_that_never_snaps_is_silent(bp):

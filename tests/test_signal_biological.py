@@ -245,12 +245,53 @@ def test_generate_base_signal_correct_length(monkeypatch) -> None:
     assert len(m._generate_base_signal(_source())) == m.num_samples
 
 
-def test_generate_base_signal_real_1d(monkeypatch) -> None:
-    """_generate_base_signal must return a real-valued 1-D array."""
+def test_real_waveform_is_real_1d(monkeypatch) -> None:
+    """The pressure waveform, before its one-sided form is taken, is a real 1-D array."""
     bio, _ = _load_biological(monkeypatch)
-    result = _point_shrimp(bio, duration_s=0.1)._generate_base_signal(_source())
+    result = _point_shrimp(bio, duration_s=0.1)._real_waveform(_source())
     assert result.ndim == 1
     assert np.isrealobj(result)
+
+
+def _real_and_one_sided(monkeypatch, kind):
+    """Return one model's real pressure and its twin's base signal, from the same seed."""
+    bio, ssp_class = _load_biological(monkeypatch)
+    if kind == "point shrimp":
+        models = [
+            _point_shrimp(bio, temperature_celsius=30.0, duration_s=1.0, seed=5) for _ in range(2)
+        ]
+        args = (_source(),)
+    elif kind == "diffuse shrimp":
+        models = [
+            _diffuse_shrimp(bio, ssp_class, temperature_celsius=30.0, duration_s=1.0, seed=5)
+            for _ in range(2)
+        ]
+        args = (_source(), 1.0)
+    else:
+        models = [_whale(bio, duration_s=20.0, seed=5) for _ in range(2)]
+        args = (_source(),)
+    return models[0]._real_waveform(*args), models[1]._generate_base_signal(*args)
+
+
+@pytest.mark.parametrize("kind", ["point shrimp", "diffuse shrimp", "whale"])
+def test_base_signal_is_one_sided_with_the_rms_of_the_real_pressure(monkeypatch, kind) -> None:
+    """The base signal has no negative-frequency power and the real waveform's RMS.
+
+    These sources state no RMS level (``amplitude_upa`` scales a template), so the level
+    convention is checked against the real pressure. The one-sided form drops what the
+    pressure holds at fs/2 and half of what it holds at 0 Hz. The shrimp templates leave a
+    little at both: measured relative to the RMS, the real part differed by 8e-6 and the RMS
+    by 1e-7. The whale's differences were below 1e-11.
+    """
+    real, one_sided = _real_and_one_sided(monkeypatch, kind)
+    rms = _rms(real)
+    assert rms > 0.0
+
+    spectrum_power = np.abs(np.fft.fft(one_sided)) ** 2
+    negative = spectrum_power[np.fft.fftfreq(len(one_sided)) < 0].sum()
+    assert negative < 1e-12 * spectrum_power.sum()
+    assert _rms(one_sided) == pytest.approx(rms, rel=1e-5)
+    np.testing.assert_allclose(one_sided.real, real / np.sqrt(2.0), atol=1e-4 * rms)
 
 
 def test_generate_base_signal_nonzero_at_high_rate(monkeypatch) -> None:
@@ -351,8 +392,8 @@ def test_diffuse_lambda_fraction_reduces_snap_density(monkeypatch) -> None:
     m = _diffuse_shrimp(bio, ssp_class, temperature_celsius=30.0, duration_s=2.0)
     src = _source()
     wins = sum(
-        np.count_nonzero(m._generate_base_signal(src, 1.0))
-        >= np.count_nonzero(m._generate_base_signal(src, 0.5))
+        np.count_nonzero(m._real_waveform(src, 1.0))
+        >= np.count_nonzero(m._real_waveform(src, 0.5))
         for _ in range(20)
     )
     assert wins >= 12  # strongly expected: full rate ≥ half rate on average

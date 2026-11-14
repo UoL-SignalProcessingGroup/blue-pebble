@@ -755,26 +755,17 @@ def test_continuous_build_target_histories_and_modes_cover_wola_and_cola(monkeyp
 
         def compute_stft(self, state):
             _ = state
-            stft = np.array(
-                [[1.0 + 0.0j, 0.5 + 0.0j, 0.2 + 0.0j], [1.0 + 0.0j, 0.5 + 0.0j, 0.2 + 0.0j]],
-                dtype=np.complex64,
-            )
-            return stft, np.array([0.0, 0.5, 1.0]), 2, np.ones(4, dtype=np.float32)
+            stft = np.tile(np.array([1.0, 0.5, 0.2, 0.1], dtype=np.complex64), (2, 1))
+            return stft, np.fft.fftfreq(4, 0.5), 2, np.ones(4, dtype=np.float32)
 
         def stft_geometry(self):
-            return (
-                3,
-                np.array([0.0, 0.5, 1.0], dtype=np.float64),
-                2,
-                np.ones(4, dtype=np.float64),
-                2,
-            )
+            return 4, np.fft.fftfreq(4, 0.5), 2, np.ones(4, dtype=np.float64), 2
 
     class BadShapeModel(GoodModel):
         def compute_stft(self, state):
             _ = state
-            stft = np.array([[1.0 + 0.0j, 0.5 + 0.0j, 0.2 + 0.0j]], dtype=np.complex64)
-            return stft, np.array([0.0, 0.5, 1.0]), 2, np.ones(4, dtype=np.float32)
+            stft = np.array([[1.0, 0.5, 0.2, 0.1]], dtype=np.complex64)
+            return stft, np.fft.fftfreq(4, 0.5), 2, np.ones(4, dtype=np.float32)
 
     path_a = _FakePath(states=[_FakeState(t0), _FakeState(t1)])
     path_b = _FakePath(states=[_FakeState(t0), _FakeState(t1)])
@@ -817,18 +808,13 @@ def test_continuous_build_target_histories_and_modes_cover_wola_and_cola(monkeyp
         assert [ts for ts, _ in generated] == [t0, t1]
         assert all(len(next(iter(payload)).raw_signals.shape) == 2 for _, payload in generated)
 
-    two_sided = continuous.ContinuousSTFTPassiveSonarArraySimulator._ifft_frame(
+    frame = continuous.ContinuousSTFTPassiveSonarArraySimulator._ifft_frame(
         frame_spec=np.array([1.0 + 0.0j, 0.0 + 0.0j, 0.0 + 0.0j, 0.0 + 0.0j], dtype=np.complex64),
         frame_len=4,
         num_freq_bins=4,
     )
-    one_sided = continuous.ContinuousSTFTPassiveSonarArraySimulator._ifft_frame(
-        frame_spec=np.array([1.0 + 0.0j, 0.0 + 0.0j, 0.0 + 0.0j], dtype=np.complex64),
-        frame_len=4,
-        num_freq_bins=3,
-    )
-    assert two_sided.shape == (4,)
-    assert one_sided.shape == (4,)
+    # A spectrum with only its 0 Hz bin set is a constant frame.
+    np.testing.assert_allclose(frame, np.full(4, 0.25))
 
 
 def test_fractional_delay_simulator_covers_errors_fallback_and_outputs(monkeypatch) -> None:
@@ -954,13 +940,11 @@ def test_fractional_delay_simulator_covers_errors_fallback_and_outputs(monkeypat
     assert all(np.isfinite(next(iter(payload)).raw_signals).all() for _, payload in generated)
 
 
-def _stft_interp_inputs(continuous, two_sided: bool):
+def _stft_interp_inputs(continuous):
     """Build a small, valid STFT context and two targets with drifting delays and phases."""
     rng = np.random.default_rng(20260927)
     frame_len, hop, n_frames, n_steps, n_sensors, fs = 16, 8, 12, 5, 3, 100.0
-    frequencies = (
-        np.fft.fftfreq(frame_len, 1 / fs) if two_sided else np.fft.rfftfreq(frame_len, 1 / fs)
-    )
+    frequencies = np.fft.fftfreq(frame_len, 1 / fs)
     duration_s = ((n_frames - 1) * hop + frame_len) / fs
     ctx = continuous._STFTCommonContext(
         all_timestamps=[datetime(2026, 1, 1, 12, 0, s) for s in range(n_steps)],
@@ -990,14 +974,13 @@ def _stft_interp_inputs(continuous, two_sided: bool):
     return ctx, targets
 
 
-@pytest.mark.parametrize("two_sided", [True, False])
-def test_stft_interp_receiver_matches_vectorised_reference(monkeypatch, two_sided) -> None:
+def test_stft_interp_receiver_matches_vectorised_reference(monkeypatch) -> None:
     """The fused kernel must reproduce the vectorised synthesis to single-precision rounding."""
     _base, _discrete, continuous = _load_simulator_modules(monkeypatch)
     simulator = continuous.ContinuousSTFTPassiveSonarArraySimulator(
         fade_in_ms=0.0, fade_out_ms=0.0
     )
-    ctx, targets = _stft_interp_inputs(continuous, two_sided)
+    ctx, targets = _stft_interp_inputs(continuous)
     step_idx, alpha = simulator._frame_interp_indices(ctx)
     real_utils = load_package_module_from_repo(
         "bluepebble/signal/utils.py", "tests_reference_signal_utils"
@@ -1013,14 +996,13 @@ def test_stft_interp_receiver_matches_vectorised_reference(monkeypatch, two_side
     np.testing.assert_allclose(receiver, expected, rtol=0, atol=1e-6 * np.abs(expected).max())
 
 
-@pytest.mark.parametrize("two_sided", [True, False])
-def test_stft_interp_receiver_unchanged_without_a_bulk_delay(monkeypatch, two_sided) -> None:
+def test_stft_interp_receiver_unchanged_without_a_bulk_delay(monkeypatch) -> None:
     """With every delay under half a hop there is no frame shift, so the output is as before."""
     _base, _discrete, continuous = _load_simulator_modules(monkeypatch)
     simulator = continuous.ContinuousSTFTPassiveSonarArraySimulator(
         fade_in_ms=0.0, fade_out_ms=0.0
     )
-    ctx, targets = _stft_interp_inputs(continuous, two_sided)
+    ctx, targets = _stft_interp_inputs(continuous)
     half_hop_s = 0.5 * ctx.hop / ctx.fs
     for target in targets:
         target.tau_hist = (target.tau_hist - 0.5) % (0.9 * half_hop_s)
@@ -1040,7 +1022,7 @@ def test_stft_interp_receiver_unchanged_without_a_bulk_delay(monkeypatch, two_si
 def test_stft_interp_receiver_is_zero_without_targets(monkeypatch) -> None:
     """With no targets the receiver is silent, with the length a reconstruction would have."""
     _base, _discrete, continuous = _load_simulator_modules(monkeypatch)
-    ctx, _targets = _stft_interp_inputs(continuous, two_sided=True)
+    ctx, _targets = _stft_interp_inputs(continuous)
     step_idx = np.zeros(ctx.num_frames, dtype=np.int32)
     alpha = np.zeros(ctx.num_frames)
 
@@ -1051,10 +1033,10 @@ def test_stft_interp_receiver_is_zero_without_targets(monkeypatch) -> None:
 
 
 def test_stft_interp_receiver_rejects_an_invalid_bin_count(monkeypatch) -> None:
-    """A spectrum that is neither one-sided nor two-sided for the frame length is rejected."""
+    """A spectrum without ``frame_len`` bins is rejected, a real transform's bin count included."""
     _base, _discrete, continuous = _load_simulator_modules(monkeypatch)
-    ctx, targets = _stft_interp_inputs(continuous, two_sided=True)
-    ctx.num_freq_bins = 5
+    ctx, targets = _stft_interp_inputs(continuous)
+    ctx.num_freq_bins = ctx.frame_len // 2 + 1
     step_idx = np.zeros(ctx.num_frames, dtype=np.int32)
 
     with pytest.raises(ValueError, match="Invalid STFT shape"):
@@ -1260,11 +1242,11 @@ class _NoArrivalModel:
     def compute_stft(self, state):
         """Return a flat source spectrum over three frames."""
         _ = state
-        return np.ones((3, 3), dtype=np.complex64), np.array([0.0, 0.5, 1.0]), 2, np.ones(4)
+        return np.ones((3, 4), dtype=np.complex64), np.fft.fftfreq(4, 0.5), 2, np.ones(4)
 
     def stft_geometry(self):
         """Return STFT geometry matching ``compute_stft``."""
-        return 3, np.array([0.0, 0.5, 1.0], dtype=np.float64), 2, np.ones(4), 3
+        return 4, np.fft.fftfreq(4, 0.5), 2, np.ones(4), 3
 
     def get_source_waveform(self, state):
         """Return a flat source waveform."""
