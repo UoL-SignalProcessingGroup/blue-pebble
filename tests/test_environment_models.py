@@ -145,6 +145,62 @@ def test_seamount_bathymetry_interpolates_inside_radius(monkeypatch) -> None:
     assert model.get_depth(2000.0, 0.0) == pytest.approx(-500.0)
 
 
+def test_gaussian_seamount_is_rounded_and_meets_the_plateau_smoothly(monkeypatch) -> None:
+    """The Gaussian shape peaks at the summit, falls by e^-1/2 at R/3 and nears the plateau by R.
+
+    It's smooth: flat at the summit and slope-free far out, with no point or crease.
+    """
+    install_fake_stonesoup(monkeypatch)
+    bathymetry = load_module_from_repo(
+        "bluepebble/models/environment/bathymetry.py", "bluepebble_bathymetry_seamount_test"
+    )
+
+    model = bathymetry.SeamountBathymetry(
+        summit_position=(0.0, 0.0, -100.0), radius=900.0, plateau_depth=-500.0, shape="gaussian"
+    )
+
+    height = 400.0
+    assert model.get_depth(0.0, 0.0) == pytest.approx(-100.0)
+    assert model.get_depth(300.0, 0.0) == pytest.approx(-500.0 + height * np.exp(-0.5))
+    assert model.get_depth(0.0, -900.0) == pytest.approx(-500.0, abs=0.012 * height)
+    assert model.get_depth(5000.0, 0.0) == pytest.approx(-500.0)
+    # Smooth at the summit: a step either side changes the depth equally, by very little.
+    assert model.get_depth(1.0, 0.0) == pytest.approx(model.get_depth(-1.0, 0.0))
+    assert model.get_depth(1.0, 0.0) - model.get_depth(0.0, 0.0) == pytest.approx(0.0, abs=0.01)
+
+
+@pytest.mark.parametrize("shape", ["cone", "gaussian"])
+def test_seamount_grid_matches_point_depths(monkeypatch, shape) -> None:
+    """The gridded seamount gives the same depths as get_depth at every grid point."""
+    install_fake_stonesoup(monkeypatch)
+    bathymetry = load_module_from_repo(
+        "bluepebble/models/environment/bathymetry.py", "bluepebble_bathymetry_seamount_test"
+    )
+    model = bathymetry.SeamountBathymetry(
+        summit_position=(100.0, -50.0, -100.0),
+        radius=900.0,
+        plateau_depth=-500.0,
+        shape=shape,
+        resolution=250.0,
+    )
+
+    x, y, z = model.get_grid((-1000.0, 1000.0), (-1000.0, 1000.0))
+
+    expected = [[model.get_depth(xi, yj) for yj in y] for xi in x]
+    np.testing.assert_allclose(z, expected)
+
+
+def test_seamount_rejects_an_unknown_shape(monkeypatch) -> None:
+    """A shape other than cone or gaussian raises a ValueError."""
+    install_fake_stonesoup(monkeypatch)
+    bathymetry = load_module_from_repo(
+        "bluepebble/models/environment/bathymetry.py", "bluepebble_bathymetry_seamount_test"
+    )
+
+    with pytest.raises(ValueError, match="shape"):
+        bathymetry.SeamountBathymetry(shape="dome")
+
+
 @pytest.mark.parametrize("radius", [0.0, -10.0])
 def test_seamount_bathymetry_rejects_non_positive_radius(monkeypatch, radius) -> None:
     """Seamount bathymetry should reject a non-positive radius."""

@@ -51,3 +51,6 @@ docs/examples/measured_data
 # refresh them. The interactive HTML versions are ~165 MB and stay out.
 docs/source/_static/*_figs/*.html
 docs/source/_static/*_figs/*.json
+
+# Figures saved by the docs examples when run as scripts
+docs/examples/*_figures/

@@ -195,8 +195,9 @@ def test_env_and_bty_files_describe_the_geometry(bp, tmp_path) -> None:
     env = stem.with_suffix(".env").read_text().splitlines()
     assert env[1] == "1500.0000"
     assert env[3] == "'SVW'"
-    assert env[5:10] == [f"  {d:.2f}  1500.0000  /" for d in np.linspace(0, 4000, 5)]
-    assert env[11] == "4000.00  1650.0  0.0  1.8  0.8  /"
+    assert env[4] == "0 0.0 4000.000000"
+    assert env[5:10] == [f"  {d:.6f}  1500.0000  /" for d in np.linspace(0, 4000, 5)]
+    assert env[11] == "4000.000000  1650.0  0.0  1.8  0.8  /"
     assert env[12:18] == [
         "1",
         "100.0000 /",
@@ -207,11 +208,19 @@ def test_env_and_bty_files_describe_the_geometry(bp, tmp_path) -> None:
     ]
     assert env[18:21] == ["'AG'", "500", "-60.0 60.0 /"]
     assert stem.with_suffix(".bty").read_text().splitlines() == [
-        "'L'",
+        "'C'",
         "2",
-        "0.000000 4000.00",
-        "2.000000 3900.00",
+        "0.000000 4000.000000",
+        "2.000000 3900.000000",
     ]
+    model._write_bty(stem, np.array([0.0, 2.0]), np.array([4000.0, 3900.0]), "L")
+    assert stem.with_suffix(".bty").read_text().splitlines()[0] == "'L'"
+
+
+def test_unknown_bathymetry_interpolation_is_rejected(bp) -> None:
+    """bathymetry_interpolation must be curvilinear or linear."""
+    with pytest.raises(ValueError, match="bathymetry_interpolation"):
+        _model(bp, bathymetry_interpolation="spline")
 
 
 def test_bathymetry_profile_runs_from_the_source_along_the_plane(bp) -> None:
@@ -276,6 +285,61 @@ def test_transfer_function_sums_arrivals_with_phase_and_delay(bp, tmp_path) -> N
     assert delays[0] == pytest.approx(0.666658)
 
 
+def test_transfer_function_on_an_fft_grid_matches_the_direct_sum(bp, tmp_path) -> None:
+    """On an evenly spaced grid the factored sum equals the direct one, at both signs and 0 Hz.
+
+    Simulators pass FFT grids, where the transfer function is summed by factoring each
+    frequency index into blocks; that must give the same numbers as summing every arrival at
+    every frequency.
+    """
+    model = _model(bp, exe_path=_stub_writing(tmp_path, _arr_text(ONE_RECEIVER)))
+    f = np.fft.fftfreq(4000, 1 / 8000.0)
+
+    H, _ = model.propagate_spectrum(
+        _platform([[1000.0], [0.0], [-100.0]]), _source([0.0, 0.0, -100.0]), f
+    )
+
+    amp, phase_deg, delay = (np.array([row[k] for row in ONE_RECEIVER[0]]) for k in range(3))
+    sign = np.sign(f)
+    expected = np.sum(
+        amp[:, None]
+        * np.where(
+            sign[None, :] == 0,
+            np.cos(np.radians(phase_deg))[:, None],
+            np.exp(1j * sign[None, :] * np.radians(phase_deg)[:, None]),
+        )
+        * np.exp(-2j * np.pi * delay[:, None] * f[None, :]),
+        axis=0,
+    )
+    np.testing.assert_allclose(H[0], expected, rtol=0, atol=1e-9 * np.abs(expected).max())
+
+
+def test_transfer_function_on_an_fft_grid_with_gaps_matches_the_direct_sum(bp, tmp_path) -> None:
+    """An FFT grid with bins left out, as a band threshold leaves it, matches the direct sum."""
+    model = _model(bp, exe_path=_stub_writing(tmp_path, _arr_text(ONE_RECEIVER)))
+    f = np.fft.fftfreq(4000, 1 / 8000.0)
+    f = f[(f > 500) & (f < 3500) & ~((f > 1200) & (f < 1300)) & ~((f > 2000) & (f < 2010))]
+
+    H, _ = model.propagate_spectrum(
+        _platform([[1000.0], [0.0], [-100.0]]), _source([0.0, 0.0, -100.0]), f
+    )
+
+    amp, phase_deg, delay = (np.array([row[k] for row in ONE_RECEIVER[0]]) for k in range(3))
+    expected = np.sum(
+        amp[:, None]
+        * np.exp(1j * np.radians(phase_deg)[:, None])
+        * np.exp(-2j * np.pi * delay[:, None] * f[None, :]),
+        axis=0,
+    )
+    np.testing.assert_allclose(H[0], expected, rtol=0, atol=1e-9 * np.abs(expected).max())
+
+
+def test_max_workers_below_one_is_rejected(bp) -> None:
+    """max_workers must be at least 1, or None."""
+    with pytest.raises(ValueError, match="max_workers"):
+        _model(bp, separate_planes=True, max_workers=0)
+
+
 def test_receivers_are_mapped_to_their_grid_points(bp, tmp_path) -> None:
     """Sensors in any order get the arrivals at their own (depth, range) grid point."""
     # Grid: depths (50, 80) x ranges (1000, 2000); each block's delay names its grid point.
@@ -308,21 +372,115 @@ def test_sensor_with_no_arrivals_gets_zero_and_nan_delay(bp, tmp_path) -> None:
     assert np.isnan(delays[0])
 
 
-@pytest.mark.parametrize(("geometry", "runs"), [("reference", 1), ("per_sensor", 3)])
-def test_receiver_geometry_sets_the_number_of_runs(bp, tmp_path, geometry, runs) -> None:
-    """One Bellhop run for the whole array with "reference", one per sensor otherwise."""
-    if geometry == "reference":
-        arr = _arr_text([ONE_RECEIVER[0]] * 3, ranges_m=(1000.0, 1001.0, 1002.0))
+@pytest.mark.parametrize(
+    ("settings", "runs"),
+    [
+        ({}, 1),
+        ({"separate_planes": True}, 3),
+        ({"far_field": True}, 1),
+    ],
+)
+def test_settings_set_the_number_of_runs(bp, tmp_path, settings, runs) -> None:
+    """One Bellhop run for the whole array, except separate_planes=True, one per plane.
+
+    The sensors are on three bearings from the source, so each has its own plane.
+    """
+    if settings == {}:
+        arr = _arr_text([ONE_RECEIVER[0]] * 3, ranges_m=(1000.0, 1000.5, 1002.0))
     else:
         arr = _arr_text(ONE_RECEIVER)
-    model = _model(
-        bp, receiver_geometry=geometry, exe_path=_stub_writing(tmp_path, arr, log_runs=True)
-    )
-    sensors = [[1000.0, 1001.0, 1002.0], [0.0, 0.0, 0.0], [-100.0, -100.0, -100.0]]
+    model = _model(bp, **settings, exe_path=_stub_writing(tmp_path, arr, log_runs=True))
+    sensors = [[1000.0, 1000.0, 1002.0], [0.0, 30.0, -60.0], [-100.0, -100.0, -100.0]]
 
     model.propagate_spectrum(_platform(sensors), _source([0.0, 0.0, -100.0]), np.array([100.0]))
 
     assert (tmp_path / "runs.log").read_text().count("run") == runs
+
+
+def test_separate_planes_shares_a_run_between_sensors_in_the_same_plane(bp) -> None:
+    """Sensors on the same bearing from the source, at any range or depth, share one run."""
+    model = _model(bp, separate_planes=True)
+    sensors = np.array(
+        [[1000.0, 1000.0, 2000.0, 1000.0], [0.0, 0.0, 0.0, 30.0], [-100.0, -50.0, -100.0, -100.0]]
+    )
+
+    groups = model._plane_groups(np.array([0.0, 0.0, -10.0]), sensors)
+
+    assert sorted(sorted(group.tolist()) for group, _ in groups) == [[0, 1, 2], [3]]
+
+
+def test_plane_tolerance_shares_runs_between_nearby_planes(bp) -> None:
+    """A tolerance groups planes within it, splitting groups that span more than it."""
+    bearings_deg = np.array([0.0, 0.004, 0.008, 0.02, 0.05])
+    sensors = np.stack(
+        [
+            1000 * np.cos(np.radians(bearings_deg)),
+            1000 * np.sin(np.radians(bearings_deg)),
+            np.full(5, -100.0),
+        ]
+    )
+    source = np.array([0.0, 0.0, -10.0])
+
+    groups = {
+        tolerance: sorted(
+            sorted(group.tolist())
+            for group, _ in _model(
+                bp, separate_planes=True, plane_tolerance_deg=tolerance
+            )._plane_groups(source, sensors)
+        )
+        for tolerance in (0.0, 0.01, 1.0)
+    }
+
+    assert groups[0.0] == [[0], [1], [2], [3], [4]]
+    assert groups[0.01] == [[0, 1, 2], [3], [4]]
+    assert groups[1.0] == [[0, 1, 2, 3, 4]]
+
+
+def test_plane_groups_do_not_straddle_the_bearing_wrap(bp) -> None:
+    """Planes either side of 180 degrees from the source group together."""
+    model = _model(bp, separate_planes=True, plane_tolerance_deg=0.1)
+    sensors = np.array([[-1000.0, -1000.0], [0.5, -0.5], [-100.0, -100.0]])
+
+    groups = model._plane_groups(np.array([0.0, 0.0, -10.0]), sensors)
+
+    assert len(groups) == 1
+
+
+def test_negative_plane_tolerance_is_rejected(bp) -> None:
+    """A negative plane_tolerance_deg raises a ValueError."""
+    with pytest.raises(ValueError, match="plane_tolerance_deg"):
+        _model(bp, separate_planes=True, plane_tolerance_deg=-0.1)
+
+
+def test_far_field_shifts_the_reference_arrivals_by_plane_wave_delays(bp, tmp_path) -> None:
+    """Each sensor gets the reference point's arrivals, delayed by -(r_n - r_ref) . u / c."""
+    model = _model(
+        bp,
+        far_field=True,
+        exe_path=_stub_writing(tmp_path, _arr_text(ONE_RECEIVER)),
+    )
+    reference = np.array([1000.0, 0.0, -100.0])
+    sensors = reference[:, None] + np.array([[-3.0, 0.0, 2.0], [1.0, 0.0, -4.0], [0.5, 0.0, 1.0]])
+    source = np.array([0.0, 0.0, -40.0])
+    f = np.array([-300.0, 300.0, 700.0])
+
+    H, delays = model.propagate_spectrum(_platform(sensors, reference), _source(source), f)
+
+    u = (source - reference) / np.linalg.norm(source - reference)
+    offsets_s = -((sensors - reference[:, None]).T @ u) / C
+    H_ref, d_ref = _model(
+        bp, exe_path=_stub_writing(tmp_path, _arr_text(ONE_RECEIVER))
+    ).propagate_spectrum(_platform(reference[:, None]), _source(source), f)
+    np.testing.assert_allclose(delays, d_ref[0] + offsets_s)
+    np.testing.assert_allclose(H, H_ref * np.exp(-2j * np.pi * offsets_s[:, None] * f[None]))
+    assert delays[0] < d_ref[0] < delays[2]  # sensor 0 is displaced towards the source
+
+
+def test_far_field_rejects_a_source_at_the_reference_point(bp, tmp_path) -> None:
+    """The plane-wave direction is undefined when the source sits on the reference point."""
+    model = _model(bp, far_field=True)
+    with pytest.raises(ValueError, match="reference point"):
+        model._plane_wave_offsets_s(np.zeros(3), np.zeros((3, 2)), np.zeros(3))
 
 
 def test_propagate_reports_loss_and_earliest_arrival(bp, tmp_path) -> None:
@@ -338,10 +496,47 @@ def test_propagate_reports_loss_and_earliest_arrival(bp, tmp_path) -> None:
     assert time_s == pytest.approx(0.666658)
 
 
-def test_invalid_receiver_geometry_raises(bp) -> None:
-    """Only the two documented receiver geometries are accepted."""
-    with pytest.raises(ValueError, match="receiver_geometry"):
-        _model(bp, receiver_geometry="nearest")
+def test_defaults_trace_every_sensor_in_one_shared_plane(bp) -> None:
+    """With neither setting given, one run in the reference plane traces to every sensor."""
+    model = _model(bp)
+    assert (model.far_field, model.separate_planes) == (False, False)
+
+
+@pytest.mark.parametrize(
+    ("settings", "match"),
+    [
+        ({"receiver_geometry": "nearest"}, "receiver_geometry"),
+        ({"receiver_geometry": "per_sensor", "far_field": True}, "not both"),
+    ],
+)
+def test_invalid_settings_raise(bp, settings, match) -> None:
+    """An unknown receiver_geometry, or one mixed with the new settings, is rejected."""
+    with pytest.raises(ValueError, match=match):
+        _model(bp, **settings)
+
+
+def test_separate_planes_with_far_field_falls_back(bp) -> None:
+    """Far field has one receiver, so one plane: separate_planes is dropped, with a warning."""
+    with pytest.warns(UserWarning, match="ignoring separate_planes=True"):
+        model = _model(bp, separate_planes=True, far_field=True)
+    assert (model.far_field, model.separate_planes) == (True, False)
+
+
+@pytest.mark.parametrize(
+    ("geometry", "far_field", "separate_planes", "replacement"),
+    [
+        ("reference", False, False, "the defaults"),
+        ("per_sensor", False, True, "separate_planes=True"),
+        ("far_field", True, False, "far_field=True"),
+    ],
+)
+def test_deprecated_receiver_geometry_maps_to_the_flags(
+    bp, geometry, far_field, separate_planes, replacement
+) -> None:
+    """receiver_geometry still works, with a DeprecationWarning naming its replacement."""
+    with pytest.warns(DeprecationWarning, match=f"use {replacement} instead"):
+        model = _model(bp, receiver_geometry=geometry)
+    assert (model.far_field, model.separate_planes) == (far_field, separate_planes)
 
 
 # ---------------------------------------------------------------------------
@@ -397,6 +592,96 @@ def _weighted_delay_s(rays):
     """
     amplitudes = np.array([r.amplitude for r in rays])
     return float(np.dot(amplitudes, [r.delay_s for r in rays]) / amplitudes.sum())
+
+
+@needs_bellhop
+def test_arrivals_over_a_slope_converge_as_bathymetry_points_are_added(bp) -> None:
+    """Over a plane slope, doubling the bathymetry points leaves the transfer function unchanged.
+
+    A plane is exact at any number of points, so the answer shouldn't move. When depths were
+    rounded to the centimetre, every point kinked the slope, and the bottom-reflected arrivals
+    changed by -6 to -15 dB as points were added instead of converging.
+    """
+    from bluepebble.models.environment import WedgeBathymetry
+
+    slope = WedgeBathymetry(depth_at_origin=-300.0, x_gradient=0.0, y_gradient=-0.08)
+    source, receiver = np.array([2165.0, -1250.0, -80.0]), np.array([[0.0], [0.0], [-11.0]])
+    f = np.linspace(1000.0, 3000.0, 201)
+    transfer = {
+        n: bp.BellhopAcousticPropagationModel(
+            ssp=bp.Constant(speed=C),
+            bathymetry=slope,
+            bottom_attenuation_db_per_wavelength=0.0,
+            n_bathy_samples=n,
+        ).propagate_spectrum(_platform(receiver), _source(source), f)[0]
+        for n in (200, 400)
+    }
+
+    difference = np.sum(np.abs(transfer[200] - transfer[400]) ** 2)
+    assert 10 * np.log10(difference / np.sum(np.abs(transfer[400]) ** 2)) < -40.0
+
+
+@needs_bellhop
+def test_arrivals_over_a_rounded_seamount_converge_with_curvilinear_bathymetry(bp) -> None:
+    """Over a curved seabed, curvilinear bathymetry converges with a few hundred points.
+
+    The path runs right over the summit, the hardest case. Straight segments act as flat
+    mirrors, so with linear bathymetry the arrivals were still changing by as much as the
+    answer itself from 400 to 800 points; curvilinear converges to about -35 dB there.
+    """
+    from bluepebble.models.environment import Munk, SeamountBathymetry
+
+    seamount = SeamountBathymetry(
+        summit_position=(1200.0, 700.0, -150.0),
+        radius=1500.0,
+        plateau_depth=-300.0,
+        shape="gaussian",
+    )
+    source, receiver = np.array([1732.0, 1000.0, -80.0]), np.array([[3.9], [0.3], [-11.0]])
+    f = np.linspace(1000.0, 3000.0, 201)
+    transfer = {
+        n: bp.BellhopAcousticPropagationModel(
+            ssp=Munk(),
+            bathymetry=seamount,
+            bottom_attenuation_db_per_wavelength=0.0,
+            n_bathy_samples=n,
+        ).propagate_spectrum(_platform(receiver), _source(source), f)[0]
+        for n in (400, 800)
+    }
+
+    difference = np.sum(np.abs(transfer[400] - transfer[800]) ** 2)
+    assert 10 * np.log10(difference / np.sum(np.abs(transfer[800]) ** 2)) < -30.0
+
+
+@needs_bellhop
+def test_parallel_separate_planes_match_runs_one_at_a_time(bp) -> None:
+    """Running the planes at once gives each sensor the same arrivals as one at a time.
+
+    Multithreaded ``bellhopcxx`` lists a receiver's arrivals in a varying order, even run by
+    run, so they are compared as sets.
+    """
+    bearings_rad = np.radians([0.0, 5.0, 10.0, 15.0, 20.0])
+    sensors = np.stack(
+        [
+            np.concatenate([1000 * np.cos(bearings_rad), 1500 * np.cos(bearings_rad)]),
+            np.concatenate([1000 * np.sin(bearings_rad), 1500 * np.sin(bearings_rad)]),
+            np.full(10, -100.0),
+        ]
+    )
+    platform, source = _platform(sensors), _source([0.0, 0.0, -50.0])
+
+    one_at_a_time = _model(bp, separate_planes=True, max_workers=1)._sensor_arrivals(
+        platform, source, 1000.0
+    )
+    in_parallel = _model(bp, separate_planes=True, max_workers=4)._sensor_arrivals(
+        platform, source, 1000.0
+    )
+
+    def by_delay(arrivals):
+        return [sorted(rays, key=lambda r: (r.delay_s, r.amplitude)) for rays in arrivals]
+
+    assert by_delay(in_parallel) == by_delay(one_at_a_time)
+    assert all(rays for rays in in_parallel)
 
 
 @needs_bellhop
@@ -488,12 +773,33 @@ def test_reference_and_per_sensor_geometry_agree_over_a_flat_bottom(bp) -> None:
     f = np.linspace(200.0, 1000.0, 41)
 
     H_ref, d_ref = _model(bp, depth=-200.0).propagate_spectrum(_platform(sensors), source, f)
-    H_per, d_per = _model(bp, depth=-200.0, receiver_geometry="per_sensor").propagate_spectrum(
+    H_per, d_per = _model(bp, depth=-200.0, separate_planes=True).propagate_spectrum(
         _platform(sensors), source, f
     )
 
     np.testing.assert_allclose(H_ref, H_per, rtol=0, atol=1e-12 * np.abs(H_per).max())
     np.testing.assert_allclose(d_ref, d_per)
+
+
+@needs_bellhop
+def test_far_field_approaches_reference_geometry_for_a_distant_source(bp) -> None:
+    """For a small array far from the source, plane-wave delays match per-sensor ray tracing."""
+    rng = np.random.default_rng(2)
+    reference = np.array([5000.0, 0.0, -100.0])
+    sensors = reference[:, None] + rng.uniform(-2.0, 2.0, (3, 8))
+    source = _source([0.0, 0.0, -100.0])
+    f = np.linspace(400.0, 600.0, 21)
+
+    _, d_ref = _model(bp, depth=-4000.0).propagate_spectrum(
+        _platform(sensors, reference), source, f
+    )
+    _, d_far = _model(bp, depth=-4000.0, far_field=True).propagate_spectrum(
+        _platform(sensors, reference), source, f
+    )
+
+    # Differences across the array, which is what beamforming sees, agree to well under a
+    # sample at 48 kHz; curvature over a 4 m aperture at 5 km is about 1 mm.
+    np.testing.assert_allclose(d_far - d_far.mean(), d_ref - d_ref.mean(), atol=2e-6)
 
 
 @needs_bellhop

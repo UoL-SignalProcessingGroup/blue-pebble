@@ -1243,3 +1243,137 @@ def test_delay_and_sum_locates_a_plane_wave_in_bearing_and_elevation(monkeypatch
     assert fine_elevations_rad[np.argmax(elevation_cut)] == pytest.approx(
         true_elevation_rad, abs=1e-9
     )
+
+
+def _line_array_delays(bearings_deg, num_sensors=8, spacing_m=0.25, speed_mps=1500.0):
+    """Plane-wave delays (s) on a uniform line array, shape ``(num_bearings, num_sensors)``."""
+    positions = np.arange(num_sensors) * spacing_m
+    sines = np.sin(np.radians(np.atleast_1d(bearings_deg)))
+    return np.outer(sines, positions) / speed_mps
+
+
+def _band_limited_plane_waves(delays, amplitudes, fs, num_samples, band_hz, seed):
+    """Sum independent band-limited complex noise sources, each delayed across the array."""
+    rng = np.random.default_rng(seed)
+    f = np.fft.fftfreq(num_samples, 1 / fs)
+    in_band = (f >= band_hz[0]) & (f <= band_hz[1])
+    sources, received = [], np.zeros((delays.shape[1], num_samples), dtype=np.complex128)
+    for source_delays, amplitude in zip(delays, amplitudes, strict=True):
+        spectrum = (rng.normal(size=num_samples) + 1j * rng.normal(size=num_samples)) * in_band
+        spectrum *= num_samples / np.sqrt(np.sum(np.abs(spectrum) ** 2))  # unit RMS in time
+        sources.append(amplitude * np.fft.ifft(spectrum))
+        phase = np.exp(-2j * np.pi * f * source_delays[:, None])
+        received += amplitude * np.fft.ifft(spectrum * phase, axis=1)
+    return np.array(sources), received
+
+
+def test_mvdr_frequency_domain_passes_a_single_sensor_unchanged(monkeypatch) -> None:
+    """One sensor's MVDR weight is 1 in every bin, so the output equals the input."""
+    beamformer = _load_beamformer_module(monkeypatch)
+    rng = np.random.default_rng(3)
+    signal = rng.normal(size=(1, 1001)) + 1j * rng.normal(size=(1, 1001))
+    model = beamformer.MinimumVarianceDistortionlessResponseBeamformer(
+        sampling_rate_hz=8000.0, nfft=64, overlap=32, domain="frequency"
+    )
+
+    output = model.beamform(signal, np.zeros((1, 1)))
+
+    assert output.shape == signal.shape
+    np.testing.assert_allclose(output, signal, atol=1e-10)
+
+
+def test_mvdr_frequency_domain_tends_to_delay_and_sum_under_heavy_loading(monkeypatch) -> None:
+    """Heavy diagonal loading makes R proportional to I, so MVDR weights become DAS weights."""
+    beamformer = _load_beamformer_module(monkeypatch)
+    fs, num_samples = 8000.0, 4096
+    delays = _line_array_delays([20.0])
+    _, received = _band_limited_plane_waves(delays, [1.0], fs, num_samples, (1500, 2500), 5)
+    steering = _line_array_delays(np.linspace(-60.0, 60.0, 13))
+
+    mvdr = beamformer.MinimumVarianceDistortionlessResponseBeamformer(
+        sampling_rate_hz=fs, nfft=256, overlap=128, domain="frequency", diagonal_loading=1e9
+    ).beamform(received, steering)
+    das = beamformer.DelayAndSumBeamformer(sampling_rate_hz=fs, domain="frequency").beamform(
+        received, steering
+    )
+
+    assert mvdr.shape == das.shape == (13, num_samples)
+    np.testing.assert_allclose(mvdr, das, atol=1e-6 * np.max(np.abs(das)))
+
+
+def test_mvdr_frequency_domain_passes_the_look_direction_and_nulls_an_interferer(
+    monkeypatch,
+) -> None:
+    """MVDR keeps the steered source undistorted and suppresses a loud off-axis one.
+
+    The weak source is at broadside and a source 30 dB louder is at 35 deg. Steered at
+    broadside, MVDR's output matches the weak source; delay-and-sum's is swamped by the
+    interferer leaking through its sidelobes.
+    """
+    beamformer = _load_beamformer_module(monkeypatch)
+    fs, num_samples = 8000.0, 16384
+    delays = _line_array_delays([0.0, 35.0])
+    sources, received = _band_limited_plane_waves(
+        delays, [1.0, 10 ** (30 / 20)], fs, num_samples, (1500, 2500), 11
+    )
+    rng = np.random.default_rng(12)
+    received += 0.01 * (rng.normal(size=received.shape) + 1j * rng.normal(size=received.shape))
+    look = _line_array_delays([0.0])
+    shared = {"sampling_rate_hz": fs, "fmin": 1500.0, "fmax": 2500.0}
+
+    mvdr = beamformer.MinimumVarianceDistortionlessResponseBeamformer(
+        nfft=256, overlap=128, domain="frequency", **shared
+    ).beamform(received, look)[0]
+    das = beamformer.DelayAndSumBeamformer(domain="frequency", **shared).beamform(received, look)[
+        0
+    ]
+
+    interior = slice(512, -512)
+    target = sources[0][interior]
+
+    def error_db(output):
+        residual = output[interior] - target
+        return 10 * np.log10(np.mean(np.abs(residual) ** 2) / np.mean(np.abs(target) ** 2))
+
+    assert error_db(mvdr) < -15.0
+    assert error_db(das) > error_db(mvdr) + 15.0
+
+
+@pytest.mark.parametrize(
+    ("kwargs", "match"),
+    [
+        ({"domain": "time"}, "Invalid MVDR domain"),
+        ({"domain": "frequency", "bands": "BANDS"}, "bands requires"),
+        ({"diagonal_loading": -1.0}, "diagonal_loading"),
+        ({"diagonal_loading": np.inf}, "diagonal_loading"),
+    ],
+)
+def test_mvdr_rejects_invalid_configuration(monkeypatch, kwargs, match) -> None:
+    """MVDR validates its domain, its bands and its diagonal loading."""
+    beamformer = _load_beamformer_module(monkeypatch)
+    if kwargs.get("bands") == "BANDS":
+        kwargs = {**kwargs, "bands": [beamformer.FrequencyBand(label="a", fmin=1.0, fmax=2.0)]}
+
+    with pytest.raises(ValueError, match=match):
+        beamformer.MinimumVarianceDistortionlessResponseBeamformer(sampling_rate_hz=8.0, **kwargs)
+
+
+def test_mvdr_frequency_domain_mirror_plan_expands_to_the_full_grid(monkeypatch) -> None:
+    """A half-plane time-series output expands like any other beamformer output."""
+    beamformer = _load_beamformer_module(monkeypatch)
+    plan = beamformer.MirrorPlan(
+        primary_mask=np.array([True, True, False, False]),
+        mirror_idx=np.array([3, 2, 1, 0]),
+        roll_shift=0,
+    )
+    rng = np.random.default_rng(8)
+    signals = rng.normal(size=(4, 512)) + 1j * rng.normal(size=(4, 512))
+    model = beamformer.MinimumVarianceDistortionlessResponseBeamformer(
+        sampling_rate_hz=8000.0, nfft=64, overlap=32, domain="frequency"
+    )
+
+    output = model.beamform(signals, _line_array_delays([-30.0, -10.0], 4), mirror_plan=plan)
+
+    assert output.shape == (4, 512)
+    np.testing.assert_array_equal(output[2], output[1])
+    np.testing.assert_array_equal(output[3], output[0])

@@ -53,6 +53,7 @@ Assumptions
 # -------
 
 from datetime import datetime, timedelta
+from pathlib import Path
 
 import numpy as np
 import plotly.graph_objects as go
@@ -96,6 +97,23 @@ from bluepebble.simulator import ActiveSonarSimulator
 # %%
 # Configuration
 # -------------
+
+# Set to "plotly" to save interactive HTML figures, or "pdf" to save static PDF figures. Either
+# way, figures are written to a folder named after this script.
+PLOTTING_MODE = "plotly"
+FIGURE_DIR = Path(__file__).with_name(f"{Path(__file__).stem}_figures")
+
+
+def save_figure(figure: go.Figure, name: str) -> None:
+    """Write ``figure`` to ``FIGURE_DIR`` in the format set by ``PLOTTING_MODE``."""
+    FIGURE_DIR.mkdir(exist_ok=True)
+    if PLOTTING_MODE == "plotly":
+        figure.write_html(FIGURE_DIR / f"{name}.html", include_plotlyjs="directory")
+    elif PLOTTING_MODE == "pdf":
+        figure.write_image(FIGURE_DIR / f"{name}.pdf")
+    else:
+        raise ValueError(f'PLOTTING_MODE must be "plotly" or "pdf", not {PLOTTING_MODE!r}')
+
 
 set_seed(7)
 
@@ -202,7 +220,8 @@ figure.update_layout(
     xaxis_title="x (m)",
     yaxis_title="y (m)",
     yaxis_scaleanchor="x",
-).show()
+)
+save_figure(figure, "array_layout")
 
 # %%
 # Targets
@@ -371,7 +390,8 @@ for row, (name, array) in enumerate(arrays.items(), start=1):
 figure.update_xaxes(title_text="Path length (m)", row=len(arrays), col=1)
 figure.update_layout(
     template="plotly_white", title="Matched-Filter Output (First Ping)", height=900
-).show()
+)
+save_figure(figure, "matched_filter_output")
 
 # %%
 # Detection
@@ -803,4 +823,5 @@ for column, target in enumerate(targets, start=1):
     centre = xy.mean(axis=0)
     figure.update_xaxes(range=[centre[0] - 80, centre[0] + 80], row=2, col=column)
     figure.update_yaxes(range=[centre[1] - 80, centre[1] + 80], row=2, col=column)
-figure.update_layout(template="plotly_white", title="Detections and Tracks", height=950).show()
+figure.update_layout(template="plotly_white", title="Detections and Tracks", height=950)
+save_figure(figure, "detections_and_tracks")

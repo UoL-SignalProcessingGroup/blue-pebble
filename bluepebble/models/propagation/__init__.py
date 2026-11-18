@@ -8,13 +8,19 @@ from .acoustic import (
     rtrsAcousticPropagationModel,
 )
 from .bellhop import BellhopAcousticPropagationModel, Eigenray
+from .bellhop3d import Bellhop3DAcousticPropagationModel
+from .convergence import ConvergenceResult, ConvergenceStep, converge_settings
 
 __all__ = [
     "AcousticPropagationModel",
+    "Bellhop3DAcousticPropagationModel",
     "BellhopAcousticPropagationModel",
+    "ConvergenceResult",
+    "ConvergenceStep",
     "CylindricalAcousticPropagationModel",
     "Eigenray",
     "SpectrumPropagationModel",
-    "rtrsAcousticPropagationModel",
     "SphericalAcousticPropagationModel",
+    "converge_settings",
+    "rtrsAcousticPropagationModel",
 ]

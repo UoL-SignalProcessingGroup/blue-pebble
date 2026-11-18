@@ -228,7 +228,24 @@ class WedgeBathymetry(Bathymetry):
 
 
 class SeamountBathymetry(Bathymetry):
-    """A bathymetry model with an idealized seamount feature.
+    r"""A bathymetry model with an idealized seamount feature.
+
+    Two shapes rise from a flat plateau to the summit, with :math:`r` the horizontal distance
+    from the summit, :math:`R` the radius, and :math:`z_s`, :math:`z_p` the summit and plateau
+    depths:
+
+    - ``"cone"`` (the default): depth rises linearly, :math:`z = z_s + (z_p - z_s) r / R`, to
+      the plateau at :math:`r = R`. Its sides have a constant slope, with a sharp point at the
+      summit and a crease where they meet the plateau.
+    - ``"gaussian"``: a rounded seamount, :math:`z = z_p + (z_s - z_p) e^{-r^2 / 2\sigma^2}`
+      with :math:`\sigma = R / 3`, smooth everywhere. At :math:`r = R` it is within about 1%
+      of its height of the plateau. Its steepest slope, at :math:`r = \sigma`, is
+      :math:`(z_s - z_p) e^{-1/2} / \sigma`, about 1.8 times the cone's.
+
+    Ray models reflect off the seabed's slope, and at the cone's point and crease that slope
+    jumps. There ray theory has no single answer, and rays traced over it change with how
+    finely the seabed is sampled rather than converging. Prefer ``"gaussian"`` for
+    propagation studies.
 
     Attributes
     ----------
@@ -239,6 +256,8 @@ class SeamountBathymetry(Bathymetry):
         Radius of the seamount in meters. Defaults to 15000.0 m.
     plateau_depth : float
         Depth at the surrounding plateau in meters. Defaults to -5000.0 m.
+    shape : str
+        ``"cone"`` (default) or ``"gaussian"``.
 
     Raises
     ------
@@ -246,6 +265,7 @@ class SeamountBathymetry(Bathymetry):
         If ``radius`` is non-positive.
         If ``plateau_depth`` is non-negative.
         If summit (``summit_position[2]``) is above the surface or not above ``plateau_depth``.
+        If ``shape`` is not ``"cone"`` or ``"gaussian"``.
 
     """
 
@@ -257,10 +277,19 @@ class SeamountBathymetry(Bathymetry):
     plateau_depth: float = Property(
         default=-5000.0, doc="Depth at the surrounding plateau in meters"
     )
+    shape: str = Property(
+        default="cone",
+        doc='"cone" (straight sides, a sharp summit) or "gaussian" (rounded, smooth everywhere)',
+    )
+
+    #: The Gaussian shape's standard deviation as a fraction of ``radius``.
+    _GAUSSIAN_WIDTH = 1.0 / 3.0
 
     def __init__(self, *args: object, **kwargs: object) -> None:
         """Initialise SeamountBathymetry with the given parameters."""
         super().__init__(*args, **kwargs)
+        if self.shape not in ("cone", "gaussian"):
+            raise ValueError(f'shape ({self.shape!r}) must be "cone" or "gaussian".')
         if self.radius <= 0:
             raise ValueError("Radius must be positive.")
         if self.plateau_depth >= 0:
@@ -287,15 +316,24 @@ class SeamountBathymetry(Bathymetry):
             Depth in meters at (x, y).
 
         """
-        summit_x, summit_y, summit_z = self.summit_position
+        summit_x, summit_y, _ = self.summit_position
         r = np.sqrt((x - summit_x) ** 2 + (y - summit_y) ** 2)
+        return float(min(0.0, self._depth_at(r)))
 
-        if r <= self.radius:
-            depth = summit_z + (self.plateau_depth - summit_z) * (r / self.radius)
-        else:
-            depth = self.plateau_depth
-
-        return min(0.0, depth)
+    def _depth_at(self, r: ArrayLike) -> NDArray[np.float64]:
+        """Return the depth at horizontal distance ``r`` from the summit, for either shape."""
+        r = np.asarray(r, dtype=float)
+        summit_z = self.summit_position[2]
+        if self.shape == "gaussian":
+            sigma = self._GAUSSIAN_WIDTH * self.radius
+            return self.plateau_depth + (summit_z - self.plateau_depth) * np.exp(
+                -0.5 * (r / sigma) ** 2
+            )
+        return np.where(
+            r <= self.radius,
+            summit_z + (self.plateau_depth - summit_z) * (r / self.radius),
+            self.plateau_depth,
+        )
 
     def get_grid(self, x_range: Range1D, y_range: Range1D) -> GridResult:
         """Get a gridded representation of the seamount bathymetry.
@@ -328,16 +366,9 @@ class SeamountBathymetry(Bathymetry):
         # Create meshgrid and calculate depths
         X, Y = np.meshgrid(x_grid, y_grid, indexing="ij")
 
-        summit_x, summit_y, summit_z = self.summit_position
+        summit_x, summit_y, _ = self.summit_position
         r = np.sqrt((X - summit_x) ** 2 + (Y - summit_y) ** 2)
-
-        z_grid = np.where(
-            r <= self.radius,
-            summit_z + (self.plateau_depth - summit_z) * (r / self.radius),
-            self.plateau_depth,
-        )
-
-        z_grid = np.minimum(z_grid, 0.0)
+        z_grid = np.minimum(self._depth_at(r), 0.0)
 
         return x_grid, y_grid, z_grid
 

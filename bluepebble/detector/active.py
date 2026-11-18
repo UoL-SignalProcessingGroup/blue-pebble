@@ -193,8 +193,8 @@ def matched_filter_power(
             raise ValueError(
                 f"beamformed_data has shape {channels.shape}, but it must keep the received "
                 f"waveform's {received.shape[1]} samples so that sample k is still delay k/fs; "
-                "use a time-preserving beamformer such as DelayAndSumBeamformer with "
-                "domain='frequency'."
+                "use a time-preserving beamformer: DelayAndSumBeamformer or "
+                "MinimumVarianceDistortionlessResponseBeamformer with domain='frequency'."
             )
     elif received.shape[0] == 1:
         channels = received

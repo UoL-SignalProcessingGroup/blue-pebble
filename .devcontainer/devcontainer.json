@@ -19,8 +19,9 @@
     // Forward the Jupyter port
     "forwardPorts": [8888],
 
-    // Run commands after the container is created
-    "postCreateCommand": "pip install --no-cache-dir -e '.[dev,docs,examples]'",
+    // Run commands after the container is created. plotly_get_chrome downloads the Chrome that
+    // kaleido uses for static figure export; its system libraries are in the Dockerfile.
+    "postCreateCommand": "pip install --no-cache-dir -e '.[dev,docs,examples]' && plotly_get_chrome -y",
 
     // Start a Jupyter server automatically
     "postStartCommand": "jupyter lab --ip=0.0.0.0 --port=8888 --no-browser --allow-root --NotebookApp.token='' --NotebookApp.password='' --NotebookApp.disable_check_xsrf=True",
