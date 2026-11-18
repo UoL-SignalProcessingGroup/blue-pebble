@@ -1136,3 +1136,34 @@ def test_unconsolidated_detect_reports_every_cell_above_the_threshold(monkeypatc
     np.testing.assert_array_equal(np.diff(raw_indices), np.ones(len(raw_indices) - 1))
     assert raw_indices.min() >= 18 and raw_indices.max() <= 22
     assert merged_indices[0] in raw_indices
+
+
+@pytest.mark.parametrize(("num_guard_cells", "num_training_cells"), [(0, 1), (2, 3), (40, 200)])
+@pytest.mark.parametrize("integer_valued", [False, True])
+def test_os_cfar_noise_floor_matches_sorting_every_window(
+    monkeypatch, num_guard_cells, num_training_cells, integer_valued
+) -> None:
+    """The sliding order statistic equals sorting each CUT's training cells, ties included."""
+    algorithms = _load_detector_algorithms(monkeypatch)
+    rng = np.random.default_rng(4)
+    power = (
+        rng.integers(0, 4, size=600).astype(float) if integer_valued else rng.exponential(size=600)
+    )
+    one_sided = num_guard_cells + num_training_cells
+    padded = np.pad(power, one_sided, mode="edge")
+    windows = np.lib.stride_tricks.sliding_window_view(padded, 2 * one_sided + 1)
+    training = np.sort(
+        np.concatenate(
+            (windows[:, :num_training_cells], windows[:, -num_training_cells:]), axis=1
+        ),
+        axis=1,
+    )
+    for rank in sorted({1, num_training_cells, 2 * num_training_cells}):
+        detector = algorithms.OSCFARDetector(
+            num_guard_cells=num_guard_cells,
+            num_training_cells=num_training_cells,
+            rank=rank,
+            threshold_factor=2.0,
+            circular=False,
+        )
+        np.testing.assert_array_equal(detector._local_noise_floor(power), training[:, rank - 1])

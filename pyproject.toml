@@ -79,6 +79,7 @@ examples = [
     "ipykernel",
     "ipywidgets",
     "jupyterlab",
+    "optuna",
 ]
 
 [tool.setuptools_scm]

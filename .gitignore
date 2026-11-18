@@ -53,4 +53,4 @@ docs/source/_static/*_figs/*.html
 docs/source/_static/*_figs/*.json
 
 # Figures saved by the docs examples when run as scripts
-docs/examples/*_figures/
+docs/examples/**/*_figures/

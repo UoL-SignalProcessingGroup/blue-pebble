@@ -10,7 +10,7 @@ from abc import ABC, abstractmethod
 from typing import Any, Literal, TypeAlias, cast
 
 import numpy as np
-from numpy.lib.stride_tricks import sliding_window_view
+from numba import njit
 from numpy.typing import ArrayLike, NDArray
 from scipy.signal import find_peaks, peak_prominences
 from stonesoup.base import Base, Property
@@ -22,6 +22,64 @@ DetectionArray: TypeAlias = NDArray[np.float64]
 
 # Shared floor to keep log10/division finite at zero power without biasing real signals.
 _EPS = np.finfo(np.float64).eps
+
+
+@njit(cache=True)
+def _swap_sorted(values: np.ndarray, old: float, new: float) -> None:
+    """Replace one occurrence of ``old`` in the sorted array ``values`` with ``new``, in place.
+
+    The array stays sorted: ``old`` is found by binary search and the elements between its
+    position and ``new``'s are shifted by one.
+    """
+    n = values.size
+    lo, hi = 0, n
+    while lo < hi:  # leftmost index with values[index] >= old
+        mid = (lo + hi) // 2
+        if values[mid] < old:
+            lo = mid + 1
+        else:
+            hi = mid
+    index = lo
+    if new > old:
+        while index + 1 < n and values[index + 1] < new:
+            values[index] = values[index + 1]
+            index += 1
+    else:
+        while index > 0 and values[index - 1] > new:
+            values[index] = values[index - 1]
+            index -= 1
+    values[index] = new
+
+
+@njit(cache=True)
+def _sliding_order_statistic(
+    padded: np.ndarray, num_guard_cells: int, num_training_cells: int, rank_index: int
+) -> np.ndarray:
+    """Return the ``rank_index``-th smallest training cell (0-indexed) around every CUT.
+
+    ``padded`` is the input padded by ``num_guard_cells + num_training_cells`` on each side. For
+    CUT ``i`` (at ``padded[i + one_sided]``) the training cells are the ``num_training_cells``
+    before its leading guard cells and the ``num_training_cells`` after its lagging ones. The
+    training cells are kept sorted as the window slides, so each step replaces the two cells
+    that leave with the two that enter instead of sorting the window again.
+    """
+    one_sided = num_guard_cells + num_training_cells
+    num_cuts = padded.size - 2 * one_sided
+    lag_offset = one_sided + num_guard_cells + 1  # first lagging training cell, from CUT start
+    out = np.empty(num_cuts)
+    if num_cuts <= 0:
+        return out
+    window = np.empty(2 * num_training_cells)
+    window[:num_training_cells] = padded[:num_training_cells]
+    window[num_training_cells:] = padded[lag_offset : lag_offset + num_training_cells]
+    window.sort()
+    out[0] = window[rank_index]
+    for i in range(1, num_cuts):
+        _swap_sorted(window, padded[i - 1], padded[i - 1 + num_training_cells])
+        start = i - 1 + lag_offset
+        _swap_sorted(window, padded[start], padded[start + num_training_cells])
+        out[i] = window[rank_index]
+    return out
 
 
 def _stack_detections(indices: IntArray, data: ArrayLike) -> DetectionArray:
@@ -741,18 +799,14 @@ class OSCFARDetector(_CFARDetectorBase):
         # largest training cell instead of raising.
         self._check_rank()
         one_sided_window = self.num_guard_cells + self.num_training_cells
-        window_size = 2 * one_sided_window + 1
 
         padded_power = np.pad(directional_power, pad_width=one_sided_window, mode=self._pad_mode)
-        # Each row of `windows` is one CUT's full window: [training][guard] CUT [guard][training].
-        windows = sliding_window_view(padded_power, window_size)
-
-        # Guard cells (nearest the CUT on each side) are excluded from the noise estimate.
-        # Only take the outer num_training_cells columns on each side.
-        leading_cells = windows[:, : self.num_training_cells]
-        lagging_cells = windows[:, -self.num_training_cells :]
-        training_cells = np.concatenate((leading_cells, lagging_cells), axis=1)
-        training_cells.sort(axis=1)
-
-        # rank is 1-indexed (rank=1 -> minimum training-cell value).
-        return training_cells[:, self.rank - 1]
+        # Guard cells (nearest the CUT on each side) are excluded from the noise estimate; the
+        # training cells are the outer num_training_cells on each side. rank is 1-indexed
+        # (rank=1 -> minimum training-cell value).
+        return _sliding_order_statistic(
+            np.ascontiguousarray(padded_power, dtype=np.float64),
+            self.num_guard_cells,
+            self.num_training_cells,
+            self.rank - 1,
+        )

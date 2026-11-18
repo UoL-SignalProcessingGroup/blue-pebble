@@ -37,10 +37,6 @@ each other.
     receivers have to be a full grid of bearings, ranges and depths, so it traces far more
     points than there are elements.
 
-- **RTRS** (:class:`~bluepebble.models.propagation.rtrsAcousticPropagationModel`), a separate 3D
-  ray tracer, is set up below as an independent check on 3D all but left out for now: over the
-  seamount its answer kept changing as its settings were refined.
-
 A ray that reflects off a seabed sloping across its path is turned out of its vertical plane, so
 only 3D can follow it. The water has a realistic, refracting sound-speed profile (Munk), so the
 rays curve and there is no exact answer to score against. Every configuration is instead
@@ -84,6 +80,7 @@ Assumptions
 # Imports
 # -------
 
+import json
 import textwrap
 import threading
 import time
@@ -118,7 +115,6 @@ from bluepebble.models.environment import (
 from bluepebble.models.propagation import (
     Bellhop3DAcousticPropagationModel,
     BellhopAcousticPropagationModel,
-    rtrsAcousticPropagationModel,  # noqa: F401  # for RTRS, left out for now (see MODES)
 )
 from bluepebble.platform import SonarPlatform
 from bluepebble.signal import LFMSignal
@@ -295,8 +291,7 @@ SLOPED_SEABEDS = {
     # same size would have a sharp summit and a crease at its base, where the slope jumps and
     # ray models don't converge. Its summit sits between the paths to T1 and T2, so their
     # bottom echoes bounce off sides that slope in different directions, while T3 is mostly
-    # over the plateau. The finer grid is for RTRS, which takes the seabed as a grid; at the
-    # default 1 km it would barely see the seamount.
+    # over the plateau.
     "Seamount": SeamountBathymetry(
         summit_position=(1200.0, 700.0, -150.0),
         radius=1500.0,
@@ -311,26 +306,6 @@ BOTTOM = dict(
     bottom_density_g_cm3=1.5,
     bottom_attenuation_db_per_wavelength=0.0,
 )
-# RTRS takes the same lossless bottom in its own form. Its defaults are set for long ranges: here
-# its azimuth search spans 6 degrees in 0.1 degree steps, so it catches bottom echoes turned
-# sideways by the slope; its elevations are 0.25 degrees apart; and its sound-speed table has a
-# sample every 5 m of depth, to follow the Munk profile.
-RTRS = dict(
-    bottom_model={
-        "model": "acoustic",
-        "compressional_speed_m_s": 1700.0,
-        "density_g_cm3": 1.5,
-        "compressional_attenuation_db_per_wavelength": 0.0,
-    },
-    water_density_g_cm3=1.0,
-    ssp_resolution=(5000.0, 5000.0, 5.0),
-    azimuth_search_width=6.0,
-    azimuth_resolution=0.1,
-    elevation_range=(-70.0, 70.0),
-    elevation_resolution=0.25,
-    step_m=5.0,
-    integration_method="rk2",
-)
 MODES = {
     "2D all": (BellhopAcousticPropagationModel, {}),
     "2D separate planes": (BellhopAcousticPropagationModel, {"separate_planes": True}),
@@ -338,7 +313,6 @@ MODES = {
     "3D all": (Bellhop3DAcousticPropagationModel, {}),
     "3D far field": (Bellhop3DAcousticPropagationModel, {"far_field": True}),
     "Nx2D": (Bellhop3DAcousticPropagationModel, {"nx2d": True}),
-    # "RTRS": (rtrsAcousticPropagationModel, RTRS),  # left out for now: not converged here
 }
 OTHER_MODES = [mode for mode in MODES if mode != REFERENCE_MODE]
 
@@ -742,11 +716,7 @@ def add_timer(propagation_model, method, times, key):
 
 
 def timed(propagation_model, key):
-    """Return ``propagation_model``, timing its whole calls and its Bellhop runs within them.
-
-    RTRS has no separate ray-tracing step to time: it traces and builds its transfer functions
-    in one call.
-    """
+    """Return ``propagation_model``, timing its whole calls and its Bellhop runs within them."""
     add_timer(propagation_model, "propagate_spectrum", propagation_s, key)
     if hasattr(propagation_model, "_run_arrivals"):
         add_timer(propagation_model, "_run_arrivals", bellhop_s, key)
@@ -1048,8 +1018,7 @@ report(
     "Each line is one simulated ping: the propagation model out to the targets and back, echo "
     f"synthesis on all {bow.num_sensors} elements, and beamforming. Bellhop runs and Transfer "
     "functions are the propagation model's two parts, Model their sum, and Ping the whole "
-    "ping; the rest of the ping is the same work for every configuration. RTRS does both "
-    "parts in one call, so only its Model time is given.",
+    "ping; the rest of the ping is the same work for every configuration.",
 )
 print(
     f"\n{'Seabed':>6} {'Configuration':>18} {'Bellhop runs (s)':>17}"
@@ -1394,6 +1363,106 @@ figure = configuration_figure(
 save_figure(figure, "detection_difference_from_3d_all")
 
 # %%
+# Selected configurations
+# -----------------------
+#
+# Every configuration goes on to the rest of the processing chain, so that the tracks it gives
+# can be compared with 3D all's. They are listed 3D all first, then the others ranked by how
+# close their detections come to 3D all's over the sloped seabed, where the configurations
+# differ (over the flat seabed they should all agree). The ranking is first by the echoes a
+# configuration detects differently from 3D all, missed or extra, since those are what change a
+# tracker's input most, and then by the RMS position difference of the echoes both detect.
+# Model time breaks a tie.
+#
+# Every configuration's converged settings over both seabeds are saved to a JSON file next to
+# this script, so that a later script can rebuild any of them without repeating the
+# convergence check: the model class, its options (``separate_planes``, ``far_field``,
+# ``nx2d``), the refinement levels and the settings they give, whether the levels converged,
+# and the model time. The environment, the bottom and the band are saved with them, because
+# the settings are only converged for those.
+
+SETTINGS_PATH = Path(__file__).with_name(f"{Path(__file__).stem}_settings.json")
+
+
+def finite_or_none(value):
+    """Return ``value`` as a float, or None if it is NaN (which JSON can't hold)."""
+    return None if value is None or not np.isfinite(value) else float(value)
+
+
+def selection_key(mode):
+    """Rank a configuration: echoes found differently from 3D all, then position, then time."""
+    d = detection_differences[SLOPED, mode]
+    position = d["position_m"] if np.isfinite(d["position_m"]) else np.inf
+    return (d["only_mine"] + d["only_reference"], position, model_s[SLOPED, mode])
+
+
+ranking = sorted(OTHER_MODES, key=selection_key)
+SELECTED_MODES = [REFERENCE_MODE, *ranking]
+
+settings_record = {
+    "script": Path(__file__).name,
+    "created": datetime.now().isoformat(timespec="seconds"),
+    "environment": {
+        "ssp": type(ssp).__name__,
+        "seabeds": {seabed: type(bathymetry).__name__ for seabed, bathymetry in seabeds.items()},
+        "sloped": SLOPED,
+        "bottom": BOTTOM,
+        "freq_min_hz": FREQ_MIN_HZ,
+        "freq_max_hz": FREQ_MAX_HZ,
+    },
+    "convergence": {
+        "range_m": CONVERGED_RANGE_M,
+        "bearing_deg": CONVERGED_BEARING_DEG,
+        "max_level": MAX_LEVEL,
+    },
+    "reference": REFERENCE_MODE,
+    "selected": SELECTED_MODES,
+    "ranking": {
+        "seabed": SLOPED,
+        "order": [
+            {
+                "configuration": mode,
+                "range_m": finite_or_none(detection_differences[SLOPED, mode]["range_m"]),
+                "bearing_deg": finite_or_none(detection_differences[SLOPED, mode]["bearing_deg"]),
+                "position_m": finite_or_none(detection_differences[SLOPED, mode]["position_m"]),
+                "echoes_both": detection_differences[SLOPED, mode]["both"],
+                "echoes_only_it": detection_differences[SLOPED, mode]["only_mine"],
+                "echoes_only_reference": detection_differences[SLOPED, mode]["only_reference"],
+                "model_s": float(model_s[SLOPED, mode]),
+            }
+            for mode in ranking
+        ],
+    },
+    "configurations": {
+        seabed: {
+            mode: {
+                "model_class": MODES[mode][0].__name__,
+                "options": MODES[mode][1],
+                "levels": LEVELS[seabed, mode],
+                "settings": settings_at(MODES[mode][0], LEVELS[seabed, mode]),
+                "converged": converged[seabed, mode],
+                "model_s": float(model_s[seabed, mode]),
+            }
+            for mode in MODES
+        }
+        for seabed in seabeds
+    },
+}
+SETTINGS_PATH.write_text(json.dumps(settings_record, indent=2))
+
+report(
+    "Selected configurations",
+    f"Ranked over the {SLOPED.lower()} seabed by the echoes each configuration detects "
+    "differently from 3D all (missed plus extra), then by the RMS position difference of the "
+    "echoes both detect. Every configuration is carried forward, in this order after 3D all, "
+    f"and its converged settings over both seabeds are saved to {SETTINGS_PATH.name}.",
+)
+print(f"\n{'Rank':>4} {'Configuration':>18} {'Echoes different':>17} {'Position (m)':>13}")
+for rank, mode in enumerate(ranking, start=1):
+    differs, position, _ = selection_key(mode)
+    print(f"{rank:>4} {mode:>18} {differs:>17} {position:>13.2f}")
+
+# %%
 # Beamformer output and detections
 # --------------------------------
 #
@@ -1600,8 +1669,7 @@ save_figure(figure, "beam_response")
 report(
     "Compute time",
     "Seconds per configuration on this machine: for each seabed's ping, the Bellhop runs, the "
-    "whole propagation model and the whole ping. A dash means the configuration has no "
-    "separate Bellhop step (RTRS).",
+    "whole propagation model and the whole ping.",
 )
 print(
     f"\n{'Configuration':>18}",

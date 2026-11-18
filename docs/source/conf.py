@@ -113,6 +113,8 @@ sphinx_gallery_conf = {
         r"using_measured_data\.py"
         r"|modelling_acoustic_sources\.py"
         r"|comparing_simulators\.py"
+        # Shared settings for the active sonar paper's scripts, not an example of its own.
+        r"|paper_scenario\.py"
     ),
     "abort_on_example_error": False,
     "image_scrapers": ("matplotlib", _plotly_scraper),
