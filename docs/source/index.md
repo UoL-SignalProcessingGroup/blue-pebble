@@ -1,12 +1,12 @@
 # Blue Pebble
 
-**Blue Pebble** is a research-oriented simulation framework for underwater acoustic sensing, currently focused on passive sonar signal processing, acoustic propagation modelling, beamforming, detection, and multi-target tracking.
+**Blue Pebble** is a research-oriented simulation framework for underwater acoustic sensing, covering passive and active sonar: acoustic propagation modelling, beamforming, matched filtering, detection, and multi-target tracking.
 
 Designed as a plugin for [Stone Soup](https://stonesoup.rtfd.io/), Blue Pebble supports research in:
 
 - Underwater acoustics
-- Passive sonar signal processing
-- Towed array modelling
+- Passive and active sonar signal processing
+- Towed, hull-mounted and sonobuoy array modelling
 - Acoustic propagation modelling
 - Beamforming and detection theory
 - Target tracking and data association
@@ -25,8 +25,6 @@ Blue Pebble is intended for controlled, simulation-based studies, including:
 - End-to-end sonar performance analysis  
 - Synthetic dataset generation for validation  
 - Sensitivity analysis of propagation effects on detection and estimation  
-
-Although current functionality centres on passive sonar, the architecture supports extension to additional modalities (e.g., active or multistatic configurations).
 
 ---
 
@@ -50,11 +48,13 @@ This separation enables systematic experimentation across modelling assumptions 
 Implemented capabilities include:
 
 - Multi-body kinematic modelling for flexible towed arrays
-- Acoustic propagation, from analytical spreading laws to ray tracing with rtrs
+- Bow, flank and single-sensor arrays mounted on a platform, and sonobuoys
+- Acoustic propagation, from analytical spreading laws to ray tracing with rtrs or Bellhop, with Thorp seawater absorption in Bellhop
 - Environments built from analytical profiles or measured bathymetry and sound-speed data
 - Source and noise synthesis, including biological, anthropogenic and ownship noise
-- Delay-and-sum and MVDR (Minimum Variance Distortionless Response) beamforming, single-band or multiband
-- CFAR (Constant False Alarm Rate) detection, calibrated from noise or with a fixed threshold, with performance metrics
+- Delay-and-sum and MVDR (Minimum Variance Distortionless Response) beamforming, single-band or multiband, steered in bearing and elevation
+- Active sonar: CW and LFM pulses, target scattering, monostatic and bistatic echoes at passband or complex baseband, and matched filtering
+- CFAR (Constant False Alarm Rate) detection in bearing for passive sonar and in range for active sonar, calibrated from noise or with a fixed threshold, with performance metrics
 - Detections that feed straight into Stone Soup trackers
 - Plotting utilities for bearing-time records, world geometry and detector performance
 - Gallery-based tutorials and worked examples
