@@ -95,6 +95,12 @@ pytest --collect-only -q
 - gridded sound-speed profile generation
 - flat, wedge and seamount bathymetry
 
+`tests/test_sound_speed_equations.py`
+
+- the Mackenzie, Coppens, UNESCO, Del Grosso and NPL equations against published check values
+- depth-to-pressure conversion, regional corrections and valid-range warnings
+- Copernicus data evaluated with each equation, including the potential-to-in-situ temperature conversion
+
 ### Detection
 
 `tests/test_detector_algorithms.py`, `tests/test_detector_algorithms_validation.py`, `tests/test_detector_cfar_correctness.py`, `tests/test_detector_noise_calibration.py`, `tests/test_detector_passive.py`, `tests/test_detector_multiband.py`, `tests/test_detector_metrics.py`, `tests/test_detector_active.py`
@@ -232,6 +238,12 @@ These run against the real Stone Soup platform and mounting classes.
 - sensor spacing checks (touching sensors, grating-lobe limit)
 - `RigidArray`'s reference point matching Stone Soup's own mounted position, and the heading of a
   fixed platform
+
+### Benchmarks
+
+`tests/test_benchmarks.py`
+
+- the delay-and-sum benchmark script running at minimal sizes and saving its outputs
 
 ### Types
 

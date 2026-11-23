@@ -5,13 +5,14 @@ Planned and potential extensions include:
 ## Environmental modelling
 
 - Coherent ambient noise modelling for wind, rain, and wave-induced noise
-- Improved acoustic volume attenuation and boundary loss modelling
+- Seawater absorption in the rtrs model, and frequency-dependent absorption in the analytical models (Bellhop already applies Thorp's formula)
+- Surface and bottom roughness loss
 - Systematic environmental uncertainty modelling for sound speed and sensor-position errors
 
 ## Signal and source modelling
 
 - Expanded source directivity modelling
-- Additional sensing geometries, including hull-mounted arrays, sonobuoys, and distributed arrays
+- Distributed arrays
 
 ## Detection and performance analysis
 
@@ -20,6 +21,5 @@ Planned and potential extensions include:
 
 ## Extended sensing modalities
 
-- Active sonar modelling
-- Multistatic and bistatic configurations
+- Multistatic configurations with more than one transmitter
 - Explicit hydrophone modelling

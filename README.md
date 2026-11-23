@@ -5,7 +5,7 @@
 [![Documentation](https://readthedocs.org/projects/blue-pebble/badge/?version=latest)](https://blue-pebble.readthedocs.io/en/latest/)
 [![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](https://github.com/UoL-SignalProcessingGroup/blue-pebble/blob/main/LICENSE)
 
-**Blue Pebble** is a research-oriented simulation framework for underwater acoustic sensing, built as a plugin for [Stone Soup](https://stonesoup.rtfd.io/). It currently focuses on passive sonar: acoustic propagation modelling, beamforming, detection and multi-target tracking.
+**Blue Pebble** is a research-oriented simulation framework for underwater acoustic sensing, built as a plugin for [Stone Soup](https://stonesoup.rtfd.io/). It covers passive and active sonar: acoustic propagation modelling, beamforming, matched filtering, detection and multi-target tracking.
 
 ## Installation
 
@@ -22,10 +22,12 @@ Start with the [Getting Started tutorial](https://blue-pebble.readthedocs.io/en/
 ## Features
 
 - Towed-array kinematics for the ownship, targets and array elements
-- Acoustic propagation, from analytical spreading laws to ray tracing with [rtrs](https://pypi.org/project/rtrs/)
+- Bow, flank and single-sensor arrays mounted on a platform, and sonobuoys
+- Acoustic propagation, from analytical spreading laws to ray tracing with [rtrs](https://pypi.org/project/rtrs/) or Bellhop
 - Environments built from analytical profiles or measured bathymetry and sound-speed data
 - Source and noise synthesis, including biological, anthropogenic and ownship noise
 - Delay-and-sum and MVDR (Minimum Variance Distortionless Response) beamforming
+- Active sonar: CW and LFM pulses, target scattering, monostatic and bistatic echoes, and matched filtering
 - CFAR (Constant False Alarm Rate) detection, calibrated from noise or with a fixed threshold
 - Detections that feed straight into Stone Soup trackers
 
