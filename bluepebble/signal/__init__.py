@@ -3,7 +3,9 @@
 from .active import ActiveSignal, CWSignal, LFMSignal
 from .anthropogenic import (
     AnthropogenicSignal,
+    ContinuousWaveSignal,
     RecordedAnthropogenicSignal,
+    SpectrumLevelSignal,
     SyntheticAnthropogenicSignal,
 )
 from .base import Signal, SourceSignal
@@ -30,6 +32,8 @@ __all__ = [
     "AnthropogenicSignal",
     "SyntheticAnthropogenicSignal",
     "RecordedAnthropogenicSignal",
+    "SpectrumLevelSignal",
+    "ContinuousWaveSignal",
     "analytic_signal",
     "compute_stft",
     "inverse_stft",
