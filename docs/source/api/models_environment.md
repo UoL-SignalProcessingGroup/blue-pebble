@@ -1,6 +1,6 @@
 # `bluepebble.models.environment`
 
-Environment models for bathymetry and sound-speed profile definition.
+Environment models for bathymetry, sound-speed profile and layered seabed definition.
 
 ```{eval-rst}
 .. automodule:: bluepebble.models.environment

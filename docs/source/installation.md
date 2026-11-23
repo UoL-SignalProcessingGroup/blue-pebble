@@ -28,6 +28,21 @@ ln -s "$PWD/bin/bellhopcxx" ~/.local/bin/bellhopcxx  # or anywhere on your PATH
 Alternatively, pass the executable's full path to the model as `exe_path`. The tests that run
 Bellhop are skipped when `bellhopcxx` is not on `PATH`.
 
+## Acoustics Toolbox (optional)
+
+{class}`~bluepebble.models.propagation.KrakenModalPropagationModel` runs the Acoustics Toolbox
+programs `krakenc` (or `kraken`) and `field` as external programs. They are not installed by pip.
+Build the toolbox from [its source](http://oalib.hlsresearch.com/AcousticsToolbox/) with
+gfortran (`make` in the toolbox root), then either put the programs on your `PATH` or point
+`BLUEPEBBLE_AT_BIN` at the toolbox root:
+
+```bash
+export BLUEPEBBLE_AT_BIN=/path/to/at  # finds Kraken/krakenc.exe and KrakenField/field.exe
+```
+
+`BLUEPEBBLE_AT_BIN` can also list directories that hold the programs, separated by `:`. The
+tests that run the toolbox are skipped when it is not found.
+
 ## Development install
 
 For local development, install the project in editable mode with the development dependencies:

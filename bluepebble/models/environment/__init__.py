@@ -7,6 +7,7 @@ from .bathymetry import (
     SeamountBathymetry,
     WedgeBathymetry,
 )
+from .seabed import LayeredSeabed, SeabedLayer
 from .sound_speed_profile import (
     NPL,
     UNESCO,
@@ -21,6 +22,7 @@ from .sound_speed_profile import (
     Munk,
     SoundSpeedProfile,
     SoundSpeedRangeWarning,
+    TabulatedSoundSpeedProfile,
 )
 
 __all__ = [
@@ -35,12 +37,15 @@ __all__ = [
     "EmpiricalSoundSpeedProfile",
     "FlatBathymetry",
     "GEBCOBathymetry",
+    "LayeredSeabed",
     "Linear",
     "Mackenzie",
     "Munk",
+    "SeabedLayer",
     "SeamountBathymetry",
     "SoundSpeedProfile",
     "SoundSpeedRangeWarning",
+    "TabulatedSoundSpeedProfile",
     "WedgeBathymetry",
 ]
 
