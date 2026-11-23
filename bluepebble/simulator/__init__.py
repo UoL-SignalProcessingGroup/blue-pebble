@@ -3,12 +3,15 @@
 from .active import ActiveSonarSimulator
 from .base import PassiveSonarArraySimulatorBase, SonarArraySimulatorBase
 from .continuous import (
+    ChannelHistory,
+    ContinuousChannelFilterPassiveSonarArraySimulator,
     ContinuousFractionalDelayPassiveSonarArraySimulator,
     ContinuousSTFTPassiveSonarArraySimulator,
 )
 from .discrete import (
     DiscretePassiveSonarArraySimulator,
 )
+from .modal import ContinuousModalPassiveSonarArraySimulator, ModalKnots
 
 __all__ = [
     "ActiveSonarSimulator",
@@ -17,4 +20,8 @@ __all__ = [
     "ContinuousSTFTPassiveSonarArraySimulator",
     "DiscretePassiveSonarArraySimulator",
     "ContinuousFractionalDelayPassiveSonarArraySimulator",
+    "ContinuousChannelFilterPassiveSonarArraySimulator",
+    "ChannelHistory",
+    "ContinuousModalPassiveSonarArraySimulator",
+    "ModalKnots",
 ]

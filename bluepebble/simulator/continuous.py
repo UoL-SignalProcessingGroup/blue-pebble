@@ -1,13 +1,14 @@
 """Continuous acoustic sensor simulators module."""
 
-from collections.abc import Iterable, Iterator, Sequence
+from collections.abc import Callable, Iterable, Iterator, Sequence
 from dataclasses import dataclass
-from datetime import datetime
+from datetime import datetime, timedelta
 from typing import TYPE_CHECKING, Any, TypeAlias, cast
 
 import numpy as np
 from numba import njit, prange
 from numpy.typing import ArrayLike, NDArray
+from scipy import fft as scipy_fft
 from stonesoup.base import Property
 from tqdm import tqdm
 
@@ -1379,3 +1380,463 @@ class ContinuousFractionalDelayPassiveSonarArraySimulator(PassiveSonarArraySimul
                 steering_bearings_rad=steering_bearings_rad,
             )
             yield timestamp, {sensor_data}
+
+
+def _lagrange_cubic(samples: ComplexArray, positions: FloatArray) -> ComplexArray:
+    """Read ``samples`` at fractional ``positions`` by four-point Lagrange interpolation.
+
+    Positions outside the samples read as zero, as ``np.interp(..., left=0, right=0)`` does.
+    """
+    padded = np.concatenate(([0.0], samples, [0.0, 0.0])).astype(np.complex128)
+    inside = (positions >= 0.0) & (positions <= samples.size - 1)
+    clipped = np.clip(positions, 0.0, samples.size - 1)
+    index = np.floor(clipped).astype(np.int64)
+    u = clipped - index
+    # Points index-1 .. index+2 sit at padded index .. index+3.
+    um1, up1, um2 = u - 1.0, u + 1.0, u - 2.0
+    out = padded[index] * (-u * um1 * um2 / 6.0)
+    out += padded[index + 1] * (up1 * um1 * um2 / 2.0)
+    out += padded[index + 2] * (-up1 * u * um2 / 2.0)
+    out += padded[index + 3] * (up1 * u * um1 / 6.0)
+    out[~inside] = 0.0
+    return out
+
+
+@dataclass
+class ChannelHistory:
+    """One source's propagation channel, sampled at its own knot times.
+
+    Attributes
+    ----------
+    knot_times_s : numpy.ndarray
+        Knot times, shape ``(num_knots,)``, in seconds from the simulation start.
+    transfer : numpy.ndarray
+        Complex transfer functions, shape ``(num_knots, num_sensors, num_frequencies)``.
+    delays_s : numpy.ndarray
+        Per-sensor arrival delays, shape ``(num_knots, num_sensors)``, in seconds.
+
+    """
+
+    knot_times_s: FloatArray
+    transfer: Complex64Array
+    delays_s: FloatArray
+
+
+class ContinuousChannelFilterPassiveSonarArraySimulator(PassiveSonarArraySimulatorBase):
+    """Broadband simulator combining a true bulk delay with per-sensor channel filters.
+
+    Each source is rendered in two stages::
+
+        x_ref(t) = x(t - tau_ref(t))
+        y_s(t)   = crossfade over knots of (h_s,k * x_ref)(t)
+
+    ``tau_ref`` is one delay per source, the median of its sensors' arrivals at each
+    knot, applied in the time domain from an oversampled waveform. ``h_s,k`` is a short
+    filter holding what remains of the channel once that delay is removed: the small
+    differences between sensors and the multipath structure of ``H(f)``.
+
+    Compared with the other continuous simulators
+    ---------------------------------------------
+    :class:`ContinuousSTFTPassiveSonarArraySimulator` keeps the full ``H(f)`` but applies
+    the delay per frame, so its Doppler is right only below ``fs / (2 * hop)``.
+    :class:`ContinuousFractionalDelayPassiveSonarArraySimulator` delays in the time domain
+    but reduces ``H(f)`` to one broadband gain, which removes multipath colour. Separating
+    the bulk delay from the channel filter keeps both: Doppler with no frame-rate limit and
+    a frequency-dependent channel.
+
+    Knots
+    -----
+    Each source's knots are the states of its ground-truth path, so a slow source needs
+    few and a fast one many. The source is silent outside its path, fading over one knot
+    interval at each end. Space knots closely enough that the channel changes little
+    between them. It is the source's movement that matters: a shallow-water channel can
+    decorrelate within about 10 m.
+
+    Timing
+    ------
+    Output sample 0 is at ``start_time``. Signal models must cover
+    ``duration_s + source_preroll_s``, because sound arriving at the start of the run
+    left the source earlier, so ``source_preroll_s`` must exceed the longest delay.
+
+    Output is one-sided (analytic), like the source waveforms and the other simulators'
+    output: the real pressure is ``sqrt(2) * Re{y}``.
+
+    Assumptions
+    -----------
+    - The channel is evaluated only inside ``frequency_band_hz``, with a raised-cosine taper
+      at its edges; there is no output outside the band.
+    - Every arrival at a knot lies within half a filter length of that knot's bulk delay.
+    """
+
+    signal_models: list[SourceSignal] = Property(
+        doc="One source signal model per ground-truth path, or one shared by all paths",
+    )
+    start_time: datetime = Property(doc="Absolute time of the first output sample")
+    duration_s: float = Property(doc="Length of the rendered output, in seconds")
+    source_preroll_s: float = Property(
+        default=10.0,
+        doc="Length of waveform before start_time; must exceed the longest propagation delay",
+    )
+    snapshot_duration_s: float = Property(
+        default=2.0,
+        doc="Length of each snapshot yielded by sensor_data_gen, in seconds",
+    )
+    frequency_band_hz: tuple[float, float] = Property(
+        default=(800.0, 1700.0),
+        doc="Band the channel is computed over, in Hz; there is no output outside it",
+    )
+    band_taper_hz: float = Property(
+        default=50.0,
+        doc="Width of the raised-cosine taper inside each band edge, in Hz",
+    )
+    filter_length: int = Property(
+        default=2048,
+        doc="Channel filter length in samples; also sets the channel frequency spacing "
+        "to sampling rate / filter_length",
+    )
+    oversampling: int = Property(
+        default=4,
+        doc="Oversampling of the source waveform for the bulk delay's interpolation",
+    )
+    delay_interpolation: str = Property(
+        default="linear",
+        doc="Interpolation reading the oversampled waveform at the bulk delay: 'linear', "
+        "or 'cubic' (four-point Lagrange). Linear loses up to 20 log10 cos(pi f / (fs * "
+        "oversampling)) dB, varying with the fractional delay; cubic is flat to about "
+        "0.01 dB below a quarter of the oversampled Nyquist",
+    )
+    sensor_gains: FloatArray | None = Property(
+        default=None,
+        doc="Per-sensor linear gains applied to source signals, not to noise",
+    )
+    channel_histories: list[ChannelHistory] | None = Property(
+        default=None,
+        doc="Precomputed channel per path, from compute_channel_history; computed if None",
+    )
+
+    @property
+    def _sample_rate_hz(self) -> float:
+        """Sampling rate shared by the signal models, in Hz."""
+        return float(self.signal_models[0].sampling_rate_hz)
+
+    @property
+    def channel_frequencies_hz(self) -> FloatArray:
+        """In-band frequencies the channel is evaluated at, in Hz."""
+        frequencies = np.fft.rfftfreq(int(self.filter_length), 1.0 / self._sample_rate_hz)
+        low, high = self.frequency_band_hz
+        return frequencies[(frequencies >= low) & (frequencies <= high)]
+
+    def _elapsed_s(self, timestamp: datetime) -> float:
+        """Convert an absolute time to seconds from ``start_time``."""
+        return (timestamp - self.start_time).total_seconds()
+
+    def compute_channel_history(self, path_index: int) -> ChannelHistory:
+        """Compute one source's channel at each state of its ground-truth path.
+
+        Parameters
+        ----------
+        path_index : int
+            Index into ``ground_truth_paths``.
+
+        Returns
+        -------
+        ChannelHistory
+            The channel at each of the path's knots. It can be cached and passed back
+            through ``channel_histories``, since ray tracing dominates the cost of a run.
+
+        Raises
+        ------
+        TypeError
+            If the propagation model cannot produce a transfer function.
+        ValueError
+            If the path has no states.
+
+        """
+        if not isinstance(self.propagation_model, SpectrumPropagationModel):
+            raise TypeError(
+                f"{type(self.propagation_model).__name__} does not implement propagate_spectrum"
+            )
+        states = list(self.ground_truth_paths[path_index])
+        if not states:
+            raise ValueError(f"ground_truth_paths[{path_index}] has no states")
+
+        frequencies = self.channel_frequencies_hz
+        num_sensors = int(self._array().num_sensors)
+        transfer = np.zeros((len(states), num_sensors, frequencies.size), dtype=np.complex64)
+        delays = np.full((len(states), num_sensors), np.nan, dtype=np.float64)
+        for knot, state in enumerate(states):
+            platform_state = self._platform_state_at(state.timestamp)
+            transfer[knot], delays[knot] = self.propagation_model.propagate_spectrum(
+                platform_state, state, frequencies
+            )
+        return ChannelHistory(
+            knot_times_s=np.array([self._elapsed_s(state.timestamp) for state in states]),
+            transfer=transfer,
+            delays_s=delays,
+        )
+
+    def _band_taper(self, frequencies_hz: FloatArray) -> FloatArray:
+        """Return the raised-cosine taper that keeps the channel filters short."""
+        low, high = self.frequency_band_hz
+        width = max(float(self.band_taper_hz), 1e-9)
+        ramp = np.clip(np.minimum(frequencies_hz - low, high - frequencies_hz) / width, 0.0, 1.0)
+        return 0.5 - 0.5 * np.cos(np.pi * ramp)
+
+    def _filter_spectra(
+        self,
+        transfer: ComplexArray,
+        reference_delay_s: FloatArray,
+    ) -> Complex64Array:
+        """Turn in-band transfer functions ``(K, S, F)`` into filter spectra, delay removed.
+
+        The spectra have all ``filter_length`` bins in ``numpy.fft.fftfreq`` order, zero at
+        negative frequencies, so the filters pass a one-sided waveform unchanged in form. They
+        are centred in their length so that they can be causal, and the renderer takes that
+        latency back off the bulk delay.
+        """
+        transfer = np.asarray(transfer)
+        reference_delay_s = np.asarray(reference_delay_s, dtype=np.float64).reshape(-1)
+        length = int(self.filter_length)
+        positive_frequencies = np.fft.rfftfreq(length, 1.0 / self._sample_rate_hz)
+        frequencies = self.channel_frequencies_hz
+        low_bin = int(np.searchsorted(positive_frequencies, frequencies[0]))
+        taper = self._band_taper(frequencies)
+        latency_s = 0.5 * length / self._sample_rate_hz
+
+        phase = np.exp(
+            2j * np.pi * frequencies[None, :] * (reference_delay_s[:, None] - latency_s)
+        ).astype(np.complex64)
+        spectra = np.zeros((transfer.shape[0], transfer.shape[1], length), dtype=np.complex64)
+        spectra[:, :, low_bin : low_bin + frequencies.size] = transfer * phase[:, None, :] * taper
+        return spectra
+
+    def _knot_filters(self, spectra: Complex64Array) -> ComplexArray:
+        """Return the impulse responses of filter spectra, along their last axis."""
+        return np.fft.ifft(spectra, n=int(self.filter_length), axis=-1)
+
+    def _render_source(
+        self, model: SourceSignal, path_index: int, history: ChannelHistory
+    ) -> ComplexArray:
+        """Render one source at every sensor, in the units of its waveform."""
+        reference_delay_s = self._reference_delays(history)
+        filters = self._knot_filters(self._filter_spectra(history.transfer, reference_delay_s))
+        return self._render_knots(
+            model, path_index, history.knot_times_s, reference_delay_s, filters.__getitem__
+        )
+
+    @staticmethod
+    def _reference_delays(history: ChannelHistory) -> FloatArray:
+        """One bulk delay per knot: the median of its sensors' finite arrivals."""
+        # A knot with no arrivals at all (a shadowed source) holds the nearest delay in time;
+        # its zero transfer function is what silences it.
+        arrivals = np.asarray(history.delays_s, dtype=np.float64)
+        counted = np.where(np.isfinite(arrivals), arrivals, np.nan)
+        any_arrival = np.any(np.isfinite(counted), axis=1)
+        reference_delay_s = np.full(counted.shape[0], np.nan)
+        reference_delay_s[any_arrival] = np.nanmedian(counted[any_arrival], axis=1)
+        return _hold_last_finite_delays(reference_delay_s[:, np.newaxis])[:, 0]
+
+    def _source_waveform(
+        self, model: SourceSignal, path_index: int
+    ) -> tuple[ComplexArray, int, int]:
+        """Return a source's waveform, the preroll and the output length, in samples."""
+        fs = self._sample_rate_hz
+        first_state = next(iter(self.ground_truth_paths[path_index]))
+        preroll = int(round(self.source_preroll_s * fs))
+        num_output = int(round(self.duration_s * fs))
+        waveform = np.asarray(model.get_source_waveform(first_state), dtype=np.complex128)
+        if waveform.size < num_output + preroll:
+            raise ValueError(
+                f"Signal model {path_index} provides {waveform.size} samples but the run needs "
+                f"{num_output + preroll}: duration_s plus source_preroll_s"
+            )
+        return waveform, preroll, num_output
+
+    @staticmethod
+    def _oversample(waveform: ComplexArray, factor: int) -> ComplexArray:
+        """Band-limited interpolation of ``waveform`` to ``factor`` times its rate."""
+        num_samples = waveform.size
+        spectrum = np.fft.fft(waveform)
+        half = (num_samples + 1) // 2
+        padded = np.zeros(num_samples * factor, dtype=np.complex128)
+        padded[:half] = spectrum[:half]
+        padded[num_samples * factor - (num_samples - half) :] = spectrum[half:]
+        return np.fft.ifft(padded) * factor
+
+    def _render_knots(
+        self,
+        model: SourceSignal,
+        path_index: int,
+        knots_s: FloatArray,
+        reference_delay_s: FloatArray,
+        filter_at: Callable[[int], ComplexArray],
+    ) -> ComplexArray:
+        """Apply the bulk delay, then crossfade the knots' filters over the output.
+
+        Parameters
+        ----------
+        model : SourceSignal
+            The source's signal model.
+        path_index : int
+            Source whose waveform is rendered.
+        knots_s : numpy.ndarray
+            Knot times from ``start_time``, increasing.
+        reference_delay_s : numpy.ndarray
+            Bulk delay at each knot.
+        filter_at : callable
+            Returns knot ``k``'s filters, shape ``(num_sensors, filter_length)``; called once
+            per knot, in order, so filters can be computed as they are needed.
+
+        Returns
+        -------
+        numpy.ndarray
+            The source at every sensor.
+
+        """
+        fs = self._sample_rate_hz
+        waveform, preroll, num_output = self._source_waveform(model, path_index)
+        knots_s = np.asarray(knots_s, dtype=np.float64)
+        reference_delay_s = np.asarray(reference_delay_s, dtype=np.float64)
+
+        length = int(self.filter_length)
+        latency_samples = 0.5 * length
+        if (float(np.max(reference_delay_s)) * fs - latency_samples) > preroll:
+            raise ValueError(
+                f"source_preroll_s {self.source_preroll_s:g} is shorter than the longest delay "
+                f"{float(np.max(reference_delay_s)):.3f} s of source {path_index}"
+            )
+
+        # Bulk delay: read the oversampled waveform at a time-varying position. Oversampling
+        # is what lets linear interpolation be used here: read directly at 10 kHz it would
+        # lose over 1 dB at 1650 Hz between samples, varying with the fractional delay.
+        factor = int(self.oversampling)
+        oversampled = self._oversample(waveform, factor)
+
+        # Read the waveform half a filter ahead, to take back the filters' centring latency.
+        # Output at t leaves the filters from input at t - latency, so that input must carry
+        # the bulk delay of time t, not of t - latency: evaluating it there would shift a
+        # moving source by its delay rate times the latency.
+        times_s = np.arange(num_output, dtype=np.float64) / fs
+        delay_s = np.interp(times_s + latency_samples / fs, knots_s, reference_delay_s)
+        positions = (np.arange(num_output) + preroll - delay_s * fs + latency_samples) * factor
+        if self.delay_interpolation == "cubic":
+            delayed = _lagrange_cubic(oversampled, positions)
+        elif self.delay_interpolation == "linear":
+            delayed = np.interp(
+                positions, np.arange(oversampled.size), oversampled, left=0.0, right=0.0
+            )
+        else:
+            raise ValueError(
+                "delay_interpolation must be 'linear' or 'cubic', got "
+                f"{self.delay_interpolation!r}"
+            )
+        del oversampled
+
+        # Crossfade: each knot's filter applies over a triangle reaching its neighbours,
+        # with the outer two extended by one knot interval so the source fades in and out.
+        num_knots = knots_s.size
+        interval_s = float(np.median(np.diff(knots_s))) if num_knots > 1 else 1.0
+        edges_s = np.concatenate(([knots_s[0] - interval_s], knots_s, [knots_s[-1] + interval_s]))
+        output = np.zeros((int(self._array().num_sensors), num_output), dtype=np.complex128)
+        for knot in range(num_knots):
+            first = max(int(np.ceil(edges_s[knot] * fs)), 0)
+            last = min(int(np.floor(edges_s[knot + 2] * fs)) + 1, num_output)
+            if last <= first:
+                continue
+            knot_filters = filter_at(knot)
+            # The filter reaches back length samples, so read that much more input. Before
+            # the start of the output the waveform is simply taken as zero; that region is
+            # discarded along with the rest of the filter's start-up.
+            lead = min(first, length)
+            block = delayed[first - lead : last]
+            size = scipy_fft.next_fast_len(block.size + length)
+            convolved = scipy_fft.ifft(
+                scipy_fft.fft(block, size) * scipy_fft.fft(knot_filters, size, axis=1),
+                size,
+                axis=1,
+            )[:, lead : lead + last - first]
+            segment_s = np.arange(first, last) / fs
+            weight = np.interp(
+                segment_s,
+                edges_s[knot : knot + 3],
+                [0.0, 1.0, 0.0],
+            )
+            output[:, first:last] += convolved * weight
+        return output
+
+    def _render_path(self, model: SourceSignal, path_index: int) -> ComplexArray:
+        """Render one source from its precomputed or freshly computed channel history."""
+        histories = self.channel_histories
+        history = (
+            histories[path_index]
+            if histories is not None
+            else self.compute_channel_history(path_index)
+        )
+        return self._render_source(model, path_index, history)
+
+    def render(self, include_noise: bool = True) -> ComplexArray:
+        """Render the whole run.
+
+        Parameters
+        ----------
+        include_noise : bool, optional
+            Whether to add the noise model's output.
+
+        Returns
+        -------
+        numpy.ndarray
+            One-sided sensor signals, shape ``(num_sensors, num_samples)``.
+
+        Raises
+        ------
+        ValueError
+            If the signal models or channel histories do not match the paths.
+
+        """
+        paths = self.ground_truth_paths or []
+        models = self._resolve_models(self.signal_models, len(paths), "signal_models")
+        histories = self.channel_histories
+        if histories is not None and len(histories) != len(paths):
+            raise ValueError(f"{len(histories)} channel histories for {len(paths)} paths")
+
+        fs = self._output_rate_hz()
+        num_output = int(round(self.duration_s * fs))
+        num_sensors = int(self._array().num_sensors)
+        output = np.zeros((num_sensors, num_output), dtype=np.complex128)
+        for index in range(len(paths)):
+            output += self._render_path(models[index], index)
+        if self.sensor_gains is not None:
+            output = output * np.asarray(self.sensor_gains, dtype=np.float64)[:, np.newaxis]
+
+        if include_noise:
+            noise = self._generate_noise(num_sensors, num_output)
+            if noise is not None:
+                output = output + noise
+        return output
+
+    def _output_rate_hz(self) -> float:
+        """Return the output sampling rate: the sources', or the noise model's without any."""
+        if self.ground_truth_paths or self.noise_model is None:
+            return self._sample_rate_hz
+        return float(self.noise_model.sampling_rate_hz)
+
+    def sensor_data_gen(self) -> Iterator[SensorBatch]:
+        """Yield contiguous snapshots of the rendered run, stamped at their centres.
+
+        Yields
+        ------
+        tuple of (datetime, set of PassiveSonarSensorData)
+            Timestamp and simulated sensor-data set for that snapshot.
+
+        """
+        signals = self.render()
+        size = int(round(self.snapshot_duration_s * self._output_rate_hz()))
+        for snapshot in range(signals.shape[1] // size):
+            offset_s = (snapshot + 0.5) * self.snapshot_duration_s
+            timestamp = self.start_time + timedelta(seconds=offset_s)
+            sensor_signals = signals[:, snapshot * size : (snapshot + 1) * size]
+            beamformed, bearings = self._beamform_if_configured(timestamp, sensor_signals)
+            yield (
+                timestamp,
+                {self._make_sensor_data(timestamp, sensor_signals, beamformed, bearings)},
+            )

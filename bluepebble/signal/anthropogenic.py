@@ -720,3 +720,122 @@ class RecordedAnthropogenicSignal(AnthropogenicSignal):
         waveform = self._resample_to_sim_rate(waveform, fs_hz)
         waveform = self._match_duration(waveform)
         return self._apply_level(analytic_signal(waveform))
+
+
+class _WaveformOnlySignal(AnthropogenicSignal, ABC):
+    """A source whose waveform the time-domain simulators use without its STFT."""
+
+    def get_source_waveform(self, source: "State") -> ComplexArray:
+        """Return the cached waveform, without the STFT a long run has no use for.
+
+        Parameters
+        ----------
+        source : State
+            Source state used to generate the waveform if not yet cached.
+
+        Returns
+        -------
+        ComplexArray
+            Full-duration one-sided source waveform.
+
+        """
+        if self._source_signal is None:
+            self._source_signal = self._prepare_waveform(source)
+            self._cached_source = source
+        return self._source_signal
+
+
+class SpectrumLevelSignal(_WaveformOnlySignal):
+    """Gaussian broadband noise specified by its source spectrum level.
+
+    Sets the one-sided power spectral density directly, in dB re 1 uPa^2/Hz at 1 m, rather
+    than a total RMS over a band as :class:`SyntheticAnthropogenicSignal` does, so a level
+    fitted to a recording can be used as it stands. The spectrum is a power law between
+    the band edges with nothing outside them:
+
+    ``S(f) = 10^(level_db / 10) * (f / reference_frequency_hz)^spectral_exponent``
+
+    Assumptions
+    -----------
+    - The band lies inside ``(0, fs/2)``.
+
+    Parameters
+    ----------
+    level_db : float
+        Spectrum level at ``reference_frequency_hz``, in dB re 1 uPa^2/Hz at 1 m.
+    spectral_exponent : float, optional
+        Exponent of the power spectral density, so -2 falls 6 dB per octave.
+    reference_frequency_hz : float, optional
+        Frequency ``level_db`` is quoted at.
+    band_hz : tuple of float, optional
+        Band edges in Hz.
+    seed : int or None, optional
+        Seed for this source's waveform. Give each source its own, or leave it ``None``
+        to draw an independent stream. Two sources with the same seed emit the same
+        waveform and so are coherent.
+
+    """
+
+    level_db: float = Property(doc="Spectrum level at the reference frequency (dB re 1 uPa^2/Hz)")
+    spectral_exponent: float = Property(default=0.0, doc="Exponent of the spectral density")
+    reference_frequency_hz: float = Property(default=1000.0, doc="Reference frequency (Hz)")
+    band_hz: tuple[float, float] = Property(default=(800.0, 1700.0), doc="Band edges (Hz)")
+    seed: int | None = Property(default=None, doc="Seed for this source's waveform")
+
+    def _generate_base_signal(self, source: "State") -> ComplexArray:
+        """Generate the source waveform; the source state plays no part in it."""
+        low, high = self.band_hz
+        if not 0.0 < low < high < self.sampling_rate_hz / 2:
+            raise ValueError(f"band_hz must lie inside (0, fs/2), got {self.band_hz}")
+        rng = _spawn_rng(self.seed)
+        num_samples = self.num_samples
+        frequencies = np.fft.rfftfreq(num_samples, 1.0 / self.sampling_rate_hz)
+        in_band = (frequencies >= low) & (frequencies <= high)
+
+        density = np.zeros(frequencies.size, dtype=np.float64)
+        density[in_band] = (
+            10.0 ** (self.level_db / 10.0)
+            * (frequencies[in_band] / self.reference_frequency_hz) ** self.spectral_exponent
+        )
+
+        white = (
+            rng.standard_normal(frequencies.size) + 1j * rng.standard_normal(frequencies.size)
+        ) / np.sqrt(2.0)
+        # For a real signal with one-sided density S, E|X_k|^2 = N fs S / 2.
+        spectrum = white * np.sqrt(density * num_samples * self.sampling_rate_hz / 2.0)
+        return analytic_signal(np.fft.irfft(spectrum, n=num_samples))
+
+
+class ContinuousWaveSignal(_WaveformOnlySignal):
+    """A projector's continuous-wave tones: sinusoids at constant, exact levels.
+
+    The tones come from the source state's tonal metadata, as for
+    :class:`SyntheticAnthropogenicSignal`: ``frequencies_hz``, ``amplitudes_upa`` (peak
+    amplitude, so a tone's RMS level is ``amplitude / sqrt(2)``) and ``phases_rad``. That
+    class builds each tonal as band-limited noise, as a ship's machinery lines are; a CW
+    projector instead holds its level, which is what a transmission-loss comparison against
+    a published source level needs. Each tone ``a cos(2 pi f t + phi)`` is returned in its
+    one-sided form, ``(a / sqrt(2)) exp(i (2 pi f t + phi))``.
+
+    This is a passive source, unlike the pulsed :class:`~bluepebble.signal.active.CWSignal`.
+
+    Assumptions
+    -----------
+    - Every tone lies inside ``(0, fs/2)``.
+    """
+
+    def _generate_base_signal(self, source: "State") -> ComplexArray:
+        """Sum the source's tones over the whole duration."""
+        amplitudes_upa, frequencies_hz, phases_rad = _extract_tonal_metadata(source)
+        nyquist_hz = self.sampling_rate_hz / 2
+        if np.any((frequencies_hz <= 0.0) | (frequencies_hz >= nyquist_hz)):
+            raise ValueError(f"Tone frequencies must lie inside (0, fs/2), got {frequencies_hz}")
+        times_s = np.arange(self.num_samples) / self.sampling_rate_hz
+        waveform = np.zeros(self.num_samples, dtype=np.complex128)
+        for amplitude, frequency, phase in zip(
+            amplitudes_upa, frequencies_hz, phases_rad, strict=True
+        ):
+            waveform += (
+                amplitude / np.sqrt(2.0) * np.exp(1j * (2.0 * np.pi * frequency * times_s + phase))
+            )
+        return waveform
