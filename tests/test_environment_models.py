@@ -192,3 +192,42 @@ def test_gebco_bathymetry_missing_file_fails_at_construction(monkeypatch, tmp_pa
 
     with pytest.raises(FileNotFoundError, match="GEBCO bathymetry file not found"):
         bathymetry.GEBCOBathymetry(file_path=str(tmp_path / "missing.nc"))
+
+
+def _load_sound_speed_profile(monkeypatch):
+    install_fake_stonesoup(monkeypatch)
+    return load_module_from_repo(
+        "bluepebble/models/environment/sound_speed_profile.py",
+        "bluepebble_sound_speed_profile_tabulated_test",
+    )
+
+
+def test_tabulated_profile_interpolates_and_holds_end_values(monkeypatch) -> None:
+    """Speed is linear between unsorted table points and held beyond the ends."""
+    ssp = _load_sound_speed_profile(monkeypatch)
+    profile = ssp.TabulatedSoundSpeedProfile(
+        depths_m=[50.0, 0.0, 100.0], speeds_m_s=[1495.0, 1500.0, 1490.0]
+    )
+
+    assert profile.calculate(25.0) == pytest.approx(1497.5)
+    assert profile.calculate(-75.0) == pytest.approx(1492.5)
+    np.testing.assert_allclose(profile.calculate(np.array([150.0, 0.0])), [1490.0, 1500.0])
+    assert profile.max_depth_m == pytest.approx(100.0)
+
+
+def test_tabulated_profile_rejects_mismatched_table(monkeypatch) -> None:
+    """Depths and speeds must pair up."""
+    ssp = _load_sound_speed_profile(monkeypatch)
+    with pytest.raises(ValueError, match="same length"):
+        ssp.TabulatedSoundSpeedProfile(depths_m=[0.0, 10.0], speeds_m_s=[1500.0])
+
+
+def test_tabulated_profile_reads_columns_and_skips_header(monkeypatch, tmp_path) -> None:
+    """A CTD table is read from its depth and speed columns, skipping non-numeric lines."""
+    ssp = _load_sound_speed_profile(monkeypatch)
+    table = tmp_path / "cast.prn"
+    table.write_text("depth temp sal speed\n0 15 33 1505\n20 12 33 1498\n")
+
+    profile = ssp.TabulatedSoundSpeedProfile.from_file(table)
+
+    assert profile.calculate(10.0) == pytest.approx(1501.5)

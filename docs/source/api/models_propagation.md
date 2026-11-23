@@ -1,6 +1,7 @@
 # `bluepebble.models.propagation`
 
-Propagation models for analytical, rtrs-backed and Bellhop eigenray acoustic simulation workflows.
+Propagation models for analytical, rtrs-backed, Bellhop eigenray and KRAKEN normal-mode acoustic
+simulation workflows.
 
 ## Choosing a ray model
 
@@ -18,6 +19,13 @@ Propagation models for analytical, rtrs-backed and Bellhop eigenray acoustic sim
   2000 beams put the transfer function within 0.3% of the analytic field. rtrs needed an
   elevation resolution of about 0.05 degrees (its default is 1 degree) to agree with it.
 
+## Normal modes
+
+{class}`~bluepebble.models.propagation.KrakenModalPropagationModel` computes the modes of a
+range-independent waveguide (a tabulated sound speed profile over a
+{class}`~bluepebble.models.environment.LayeredSeabed`) with the Acoustics Toolbox programs
+`krakenc` or `kraken`, which are run as external programs (see the installation page).
+
 ## Seawater absorption
 
 {class}`~bluepebble.models.propagation.BellhopAcousticPropagationModel` applies no seawater
@@ -30,4 +38,13 @@ trip at 5.4 kHz. The spreading models take a fixed `attenuation_factor` in dB/km
 ```{eval-rst}
 .. automodule:: bluepebble.models.propagation
    :members:
+```
+
+The lower-level KRAKEN tools, for writing environment files, running the programs and reading
+their output, are in `bluepebble.models.propagation.kraken`:
+
+```{eval-rst}
+.. automodule:: bluepebble.models.propagation.kraken
+   :members:
+   :exclude-members: AcousticsToolboxBinaries, KrakenEnvironment, ModeSet
 ```

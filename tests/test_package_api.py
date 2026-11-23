@@ -79,3 +79,29 @@ def test_unknown_detector_attribute_still_raises_attributeerror() -> None:
 
     with pytest.raises(AttributeError, match="has no attribute"):
         getattr(detector_pkg, unknown_name)
+
+
+def test_stonesoup_property_modules_do_not_postpone_annotations() -> None:
+    """Stone Soup reads property types from ``__annotate__`` on Python 3.14.
+
+    ``from __future__ import annotations`` leaves a class without one, so every property in
+    the module fails with "Type was not specified", but only on 3.14 and later.
+    """
+    import ast
+    from pathlib import Path
+
+    package_root = Path(bluepebble.__file__).parent
+    offenders = []
+    for path in sorted(package_root.rglob("*.py")):
+        source = path.read_text()
+        if "Property(" not in source:
+            continue
+        tree = ast.parse(source)
+        if any(
+            isinstance(node, ast.ImportFrom)
+            and node.module == "__future__"
+            and any(alias.name == "annotations" for alias in node.names)
+            for node in tree.body
+        ):
+            offenders.append(str(path.relative_to(package_root)))
+    assert offenders == []

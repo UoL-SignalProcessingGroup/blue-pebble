@@ -645,6 +645,104 @@ class Linear(SoundSpeedProfile):
         return c
 
 
+class TabulatedSoundSpeedProfile(SoundSpeedProfile):
+    """Range-independent sound speed profile from tabulated measurements, e.g. a CTD cast.
+
+    Sound speed is interpolated linearly in depth between the tabulated points and held
+    at the end values above the shallowest and below the deepest, so a cast that stops
+    short of the seabed extends isovelocity to it.
+
+    Attributes
+    ----------
+    depths_m : array-like
+        Measurement depths in metres, positive down. Need not be sorted.
+    speeds_m_s : array-like
+        Sound speed at each depth, in m/s.
+
+    """
+
+    depths_m: np.ndarray = Property(doc="Measurement depths in meters (positive down)")
+    speeds_m_s: np.ndarray = Property(doc="Sound speed at each depth in m/s")
+
+    def __init__(self, *args: object, **kwargs: object) -> None:
+        """Validate and sort the table."""
+        super().__init__(*args, **kwargs)
+        depths = np.abs(np.asarray(self.depths_m, dtype=float).ravel())
+        speeds = np.asarray(self.speeds_m_s, dtype=float).ravel()
+        if depths.size == 0 or depths.shape != speeds.shape:
+            raise ValueError(
+                "depths_m and speeds_m_s must be non-empty and the same length, got "
+                f"{depths.size} and {speeds.size}"
+            )
+        if not np.all(np.isfinite(depths)) or not np.all(np.isfinite(speeds)):
+            raise ValueError("depths_m and speeds_m_s must be finite")
+        order = np.argsort(depths, kind="stable")
+        depths, speeds = depths[order], speeds[order]
+        unique_depths, first = np.unique(depths, return_index=True)
+        self._depths = unique_depths
+        self._speeds = speeds[first]
+
+    @classmethod
+    def from_file(
+        cls,
+        file_path: str | Path,
+        depth_column: int = 0,
+        speed_column: int = 3,
+    ) -> "TabulatedSoundSpeedProfile":
+        """Read a whitespace-delimited table such as a SWellEx-96 ``.prn`` CTD file.
+
+        Parameters
+        ----------
+        file_path : str or pathlib.Path
+            The table. Lines that do not parse as numbers are skipped.
+        depth_column, speed_column : int, optional
+            Zero-based columns holding depth and sound speed. The defaults suit the
+            SWellEx-96 CTD files (depth, temperature, salinity, sound speed, sigma-t).
+
+        Returns
+        -------
+        TabulatedSoundSpeedProfile
+            The profile.
+
+        """
+        rows = []
+        for line in Path(file_path).read_text().splitlines():
+            fields = line.split()
+            try:
+                rows.append((float(fields[depth_column]), float(fields[speed_column])))
+            except (IndexError, ValueError):
+                continue
+        if not rows:
+            raise ValueError(f"No numeric rows found in {file_path}")
+        table = np.asarray(rows)
+        return cls(depths_m=table[:, 0], speeds_m_s=table[:, 1])
+
+    @property
+    def max_depth_m(self) -> float:
+        """Deepest tabulated depth, in metres."""
+        return float(self._depths[-1])
+
+    def calculate(self, depth: DepthInput) -> SpeedOutput:
+        """Interpolate the sound speed at ``depth``.
+
+        Parameters
+        ----------
+        depth : DepthInput
+            Depth in meters; negative z-coordinates are treated as depths below surface.
+
+        Returns
+        -------
+        SpeedOutput
+            Sound speed in m/s.
+
+        """
+        depth_array = np.abs(np.asarray(depth, dtype=float))
+        speed = np.interp(depth_array, self._depths, self._speeds)
+        if depth_array.ndim == 0:
+            return float(speed)
+        return np.asarray(speed, dtype=float)
+
+
 class Arctan(SoundSpeedProfile):
     """Arctan sound speed profile model.
 
