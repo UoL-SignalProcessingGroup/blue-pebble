@@ -577,6 +577,7 @@ class rtrsAcousticPropagationModel(AcousticPropagationModel, SpectrumPropagation
         self,
         source_position: ArrayLike,
         receiver_position: ArrayLike,
+        minimum_width_deg: float | None = None,
     ) -> list[float]:
         """Calculate launch azimuth angles to ensure rays cross the receiver.
 
@@ -586,6 +587,9 @@ class rtrsAcousticPropagationModel(AcousticPropagationModel, SpectrumPropagation
             3D position vector of the source.
         receiver_position : array-like
             3D position vector of the receiver.
+        minimum_width_deg : float, optional
+            Widen the fan to at least this many degrees, for a receiver with extent.
+            Defaults to ``azimuth_search_width`` alone.
 
         Returns
         -------
@@ -605,8 +609,11 @@ class rtrsAcousticPropagationModel(AcousticPropagationModel, SpectrumPropagation
         direct_azimuth = np.degrees(np.arctan2(dy, dx))
 
         # Generate azimuth angles around the direct path
-        half_width = self.azimuth_search_width / 2.0
-        num_angles = int(self.azimuth_search_width / self.azimuth_resolution) + 1
+        width = float(self.azimuth_search_width)
+        if minimum_width_deg is not None:
+            width = max(width, float(minimum_width_deg))
+        half_width = width / 2.0
+        num_angles = int(width / self.azimuth_resolution) + 1
 
         azimuths = np.linspace(
             direct_azimuth - half_width, direct_azimuth + half_width, num_angles
@@ -764,7 +771,7 @@ class rtrsAcousticPropagationModel(AcousticPropagationModel, SpectrumPropagation
                 "position": [
                     float(source_pos[0]),
                     float(source_pos[1]),
-                    float(-source_pos[2]),
+                    abs(float(source_pos[2])),
                 ],
                 "freq_hz": frequencies,
                 "launch_elev_deg": launch_elevations,
@@ -774,7 +781,7 @@ class rtrsAcousticPropagationModel(AcousticPropagationModel, SpectrumPropagation
                 "config_type": "array",
                 "x_rcvr_m": [float(array_pos[0])],
                 "y_rcvr_m": [float(array_pos[1])],
-                "z_rcvr_m": [-float(array_pos[2])],
+                "z_rcvr_m": [abs(float(array_pos[2]))],
             },
             "beam": {
                 "step_m": float(self.step_m),
@@ -872,8 +879,17 @@ class rtrsAcousticPropagationModel(AcousticPropagationModel, SpectrumPropagation
         distance = float(np.linalg.norm(source_pos - array_ref_pos))
         max_steps, max_range_m = self._calculate_max_steps_and_range(distance)
 
-        # Calculate launch angles
-        launch_azimuths = self._calculate_launch_azimuths(source_pos, array_ref_pos)
+        # The fan has to reach every sensor, so aim it at the array centre and widen it to the
+        # angle the aperture subtends, with a 50% margin. Aimed at the reference sensor with a
+        # fixed width, it leaves distant sensors unlit at short range and they get no arrival.
+        array_centre = np.mean(array_position, axis=1).flatten()
+        horizontal_offsets_m = array_position[:2, :] - array_centre[:2, np.newaxis]
+        aperture_radius_m = float(np.max(np.linalg.norm(horizontal_offsets_m, axis=0)))
+        centre_range_m = max(float(np.linalg.norm(source_pos[:2] - array_centre[:2])), 1e-6)
+        aperture_half_angle_deg = float(np.degrees(np.arctan2(aperture_radius_m, centre_range_m)))
+        launch_azimuths = self._calculate_launch_azimuths(
+            source_pos, array_centre, minimum_width_deg=2.0 * 1.5 * aperture_half_angle_deg
+        )
 
         num_elev = (
             int((self.elevation_range[1] - self.elevation_range[0]) / self.elevation_resolution)
@@ -932,10 +948,12 @@ class rtrsAcousticPropagationModel(AcousticPropagationModel, SpectrumPropagation
                 "bottom_model": self._resolved_bottom_model(),
             },
             "source": {
+                # rtrs takes depth positive down. Pass the magnitude so a platform using +z
+                # for depth works as well as one using -z.
                 "position": [
                     float(source_pos[0]),
                     float(source_pos[1]),
-                    float(-source_pos[2]),
+                    abs(float(source_pos[2])),
                 ],
                 "freq_hz": np.asarray(frequencies_hz, dtype=float).tolist(),
                 "launch_elev_deg": launch_elevations,
@@ -945,7 +963,7 @@ class rtrsAcousticPropagationModel(AcousticPropagationModel, SpectrumPropagation
                 "config_type": "array",
                 "x_rcvr_m": array_position[0, :].tolist(),
                 "y_rcvr_m": array_position[1, :].tolist(),
-                "z_rcvr_m": (-array_position[2, :]).tolist(),  # Negate for rtrs convention
+                "z_rcvr_m": np.abs(array_position[2, :]).tolist(),  # rtrs is positive down
             },
             "beam": {
                 "step_m": float(self.step_m),

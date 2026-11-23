@@ -497,3 +497,107 @@ def test_rtrs_propagate_spectrum_runs_with_real_backend(monkeypatch) -> None:
     assert sensor_delays_s.shape == (2,)
     assert np.isfinite(sensor_delays_s).all()
     assert np.all(sensor_delays_s > 0.0)
+
+
+def _short_range_line_array(depth_m: float) -> SimpleNamespace:
+    """Return a 16-element, 0.45 m line array along x, referenced at its first element."""
+    positions = np.vstack([0.45 * np.arange(16), np.zeros(16), np.full(16, depth_m)])
+    return SimpleNamespace(
+        array=SimpleNamespace(state_vector=positions, ref_state_vector=positions[:, [0]])
+    )
+
+
+def _short_range_source(depth_m: float) -> SimpleNamespace:
+    """Return a source abeam the middle of the short-range line array."""
+    return SimpleNamespace(
+        state_vector=np.array([[3.4], [2.0], [depth_m]]),
+        metadata={"position_mapping": [0, 1, 2]},
+    )
+
+
+def _capture_spectrum_config(monkeypatch, propagation, platform, source) -> dict:
+    """Run a mocked spectrum propagation and return the config passed to rtrs."""
+    captured = {}
+    num_sensors = platform.array.state_vector.shape[1]
+
+    def fake_run_simulation(env_config):
+        captured["env_config"] = env_config
+        return {
+            "pressure_field": {
+                "shape": [1, num_sensors, 1, 1],
+                "pressure_re": [1.0] * num_sensors,
+                "pressure_im": [0.0] * num_sensors,
+                "delay_s": [0.01] * num_sensors,
+            }
+        }
+
+    fake_rtrs = ModuleType("rtrs")
+    fake_rtrs.run_simulation = fake_run_simulation
+    monkeypatch.setitem(sys.modules, "rtrs", fake_rtrs)
+
+    model = propagation.rtrsAcousticPropagationModel(
+        ssp=GridSSP(1500.0),
+        bathymetry=FlatNegativeBathymetry(-20.0),
+        azimuth_search_width=1.0,
+        azimuth_resolution=0.25,
+    )
+    model.propagate_spectrum(platform, source, frequencies_hz=np.array([1000.0]))
+    return captured["env_config"]
+
+
+def test_rtrs_launch_fan_covers_every_sensor_at_short_range(monkeypatch) -> None:
+    """The launch fan should span the azimuth to every sensor, not just the reference."""
+    propagation = _load_propagation_module(monkeypatch)
+    platform = _short_range_line_array(-3.0)
+    source = _short_range_source(-2.0)
+
+    env_config = _capture_spectrum_config(monkeypatch, propagation, platform, source)
+
+    fan = np.asarray(env_config["source"]["launch_azim_deg"])
+    offsets = platform.array.state_vector[:2, :] - source.state_vector[:2, :]
+    # Blue Pebble's anticlockwise-from-+x azimuths, in rtrs's clockwise-from-+y convention.
+    sensor_azimuths = 90.0 - np.degrees(np.arctan2(offsets[1], offsets[0]))
+    assert np.all(sensor_azimuths >= fan.min())
+    assert np.all(sensor_azimuths <= fan.max())
+
+
+def test_rtrs_spectrum_depths_are_positive_down_for_either_z_sign(monkeypatch) -> None:
+    """A platform using +z for depth should give rtrs the same depths as one using -z."""
+    propagation = _load_propagation_module(monkeypatch)
+
+    negative = _capture_spectrum_config(
+        monkeypatch, propagation, _short_range_line_array(-3.0), _short_range_source(-2.0)
+    )
+    positive = _capture_spectrum_config(
+        monkeypatch, propagation, _short_range_line_array(3.0), _short_range_source(2.0)
+    )
+
+    assert negative["source"]["position"][2] == pytest.approx(2.0)
+    assert positive["source"]["position"][2] == pytest.approx(2.0)
+    assert negative["receivers"]["z_rcvr_m"] == [3.0] * 16
+    assert positive["receivers"]["z_rcvr_m"] == [3.0] * 16
+
+
+def test_rtrs_reaches_every_sensor_at_short_range_with_real_backend(monkeypatch) -> None:
+    """With the real backend, every sensor of a short-range array should get an arrival."""
+    pytest.importorskip("rtrs")
+    propagation = _load_propagation_module(monkeypatch)
+    model = propagation.rtrsAcousticPropagationModel(
+        ssp=GridSSP(1500.0),
+        bathymetry=FlatNegativeBathymetry(-20.0),
+        bottom_model={"model": "rigid"},
+        step_m=5.0,
+        elevation_range=(-30.0, 30.0),
+        elevation_resolution=0.25,
+        azimuth_search_width=1.0,
+        azimuth_resolution=0.25,
+    )
+
+    transfer, sensor_delays_s = model.propagate_spectrum(
+        _short_range_line_array(-3.0),
+        _short_range_source(-2.0),
+        frequencies_hz=np.array([1000.0, 1200.0]),
+    )
+
+    assert np.all(np.abs(transfer).max(axis=1) > 0.0)
+    assert np.isfinite(sensor_delays_s).all()
