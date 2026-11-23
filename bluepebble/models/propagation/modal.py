@@ -1,7 +1,5 @@
 """Normal-mode propagation in a range-independent waveguide, from KRAKEN or KRAKENC."""
 
-from __future__ import annotations
-
 import warnings
 from collections.abc import Sequence
 from dataclasses import dataclass
@@ -310,7 +308,7 @@ class KrakenModalPropagationModel(AcousticPropagationModel, SpectrumPropagationM
     # Transfer functions
     # ----------------------------------------------------------------------------------
     def geometry(
-        self, platform: PlatformState, source: State
+        self, platform: "PlatformState", source: "State"
     ) -> tuple[FloatArray, FloatArray, float]:
         """Horizontal ranges and depths of each sensor, and the source depth.
 
@@ -349,7 +347,7 @@ class KrakenModalPropagationModel(AcousticPropagationModel, SpectrumPropagationM
         return ranges, np.abs(sensors[2]), abs(float(source_position[2]))
 
     def propagate_spectrum(
-        self, platform: PlatformState, source: State, frequencies_hz: ArrayLike
+        self, platform: "PlatformState", source: "State", frequencies_hz: ArrayLike
     ) -> SpectrumResult:
         """Per-sensor transfer functions from a mode sum.
 
@@ -377,7 +375,7 @@ class KrakenModalPropagationModel(AcousticPropagationModel, SpectrumPropagationM
         c_ref = self.dispersion(modes, source_depth, float(ranges.max())).reference_speed_m_s
         return transfer, ranges / c_ref
 
-    def propagate(self, platform: PlatformState, source: State) -> tuple[float, float]:
+    def propagate(self, platform: "PlatformState", source: "State") -> tuple[float, float]:
         """Transmission loss to the reference sensor at ``nominal_frequency_hz``.
 
         Parameters
