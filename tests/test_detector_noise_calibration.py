@@ -220,6 +220,25 @@ def test_calibration_mismatch_raises_naming_the_setting(monkeypatch, change, mat
         detector.detect(np.ones((64, 2)))
 
 
+def test_calibration_from_an_older_signature_is_rejected_with_a_message(monkeypatch) -> None:
+    """A calibration whose signature lacks frame_integration names the cause, not a zip error.
+
+    Calibrations built before frame_integration joined the signature hold five fields; one
+    restored from a pickle must be rejected with a readable mismatch, prompting recalibration.
+    """
+    algorithms, calibration_module = _load(monkeypatch)
+    calibration = _small_calibration(
+        algorithms, calibration_module, _make_detector(algorithms, "ca")
+    )
+    older = dataclasses.replace(calibration, detector_signature=calibration.detector_signature[:5])
+    detector = _make_detector(algorithms, "ca", noise_calibration=older)
+
+    message = older.matches(detector, 2)
+    assert message is not None and "another version" in message
+    with pytest.raises(ValueError, match="Recalibrate"):
+        detector.detect(np.ones((64, 2)))
+
+
 @pytest.mark.parametrize("name", ["ca", "os"])
 @pytest.mark.parametrize(
     "change, match",
