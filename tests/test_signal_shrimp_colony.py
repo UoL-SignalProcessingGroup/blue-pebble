@@ -77,9 +77,25 @@ def _negative_bin_fraction(waveform):
 
 def test_snap_rate_fit_gives_34_snaps_per_second_at_20_degrees(bp):
     """(137 * 20 - 685) / 60 = 34.25 snaps per second, and none at or below 5 degrees."""
-    assert bp.snap_rate_from_temperature(20.0) == pytest.approx(34.25)
-    assert bp.snap_rate_from_temperature(5.0) == 0.0
-    assert bp.snap_rate_from_temperature(0.0) == 0.0
+    with pytest.warns(DeprecationWarning, match="snap_rate_from_temperature"):
+        assert bp.snap_rate_from_temperature(20.0) == pytest.approx(34.25)
+    with pytest.warns(DeprecationWarning):
+        assert bp.snap_rate_from_temperature(5.0) == 0.0
+    with pytest.warns(DeprecationWarning):
+        assert bp.snap_rate_from_temperature(0.0) == 0.0
+
+
+def test_default_alpha_lies_in_the_measured_range(bp):
+    """The default exponent is inside the 1.6-1.9 fitted to shrimp-dominated noise."""
+    model = bp.SnappingShrimpColonySignal(
+        duration_s=1.0,
+        sampling_rate_hz=FS,
+        snap_rate_hz=100.0,
+        median_source_level_db=LEVEL_DB,
+        band_hz=BAND_HZ,
+        calibration_window_s=WINDOW_S,
+    )
+    assert 1.6 <= model.alpha <= 1.9
 
 
 @pytest.mark.parametrize(

@@ -27,7 +27,7 @@ from stonesoup.types.groundtruth import GroundTruthState
 
 import bluepebble
 from bluepebble.plotter import plot_spectrogram
-from bluepebble.signal import SnappingShrimpColonySignal, snap_rate_from_temperature
+from bluepebble.signal import SnappingShrimpColonySignal
 from bluepebble.signal.anthropogenic import (
     RecordedAnthropogenicSignal,
     SyntheticAnthropogenicSignal,
@@ -230,7 +230,7 @@ shrimp_source = GroundTruthState(
 shrimp_signal_model = SnappingShrimpColonySignal(
     duration_s=signal_duration_s,
     sampling_rate_hz=sampling_rate_Hz,
-    snap_rate_hz=snap_rate_from_temperature(25.0),
+    snap_rate_hz=30.0,  # 1800 per minute, within the summer rates measured at one reef
     median_source_level_db=180.0,
     band_hz=(1500.0, 10000.0),
     calibration_window_s=1.0,

@@ -39,9 +39,9 @@ cheaper, but only as accurate as the Gamma model for the data at hand.
 
 Calibration is specific to everything that shapes the ratio distribution: array, shading,
 beamformer domain and band, ambient spectrum, scan length (num_frames), and the detector's
-guard/training window, rank and edge handling. The detector checks the parts it can see
-(num_frames and its own window settings) and raises on a mismatch; the rest is the caller's
-responsibility.
+guard/training window, rank, edge handling and frame integration. The detector checks the
+parts it can see (num_frames and its own window and integration settings) and raises on a
+mismatch; the rest is the caller's responsibility.
 
 Frame counts need not match exactly. Continuous simulators emit a final scan that runs to the
 end of the padded synthesis buffer, up to a whole STFT frame longer than the others, and a
@@ -147,8 +147,8 @@ def detector_signature(detector: Any) -> tuple:
     Returns
     -------
     tuple
-        ``(detector type, num_guard_cells, num_training_cells, rank, circular)``, with
-        ``rank`` ``None`` for detectors that have none.
+        ``(detector type, num_guard_cells, num_training_cells, rank, circular,
+        frame_integration)``, with ``rank`` ``None`` for detectors that have none.
 
     """
     return (
@@ -157,10 +157,18 @@ def detector_signature(detector: Any) -> tuple:
         int(detector.num_training_cells),
         None if getattr(detector, "rank", None) is None else int(detector.rank),
         bool(detector.circular),
+        str(getattr(detector, "frame_integration", "mean")),
     )
 
 
-_SIGNATURE_FIELDS = ("detector type", "num_guard_cells", "num_training_cells", "rank", "circular")
+_SIGNATURE_FIELDS = (
+    "detector type",
+    "num_guard_cells",
+    "num_training_cells",
+    "rank",
+    "circular",
+    "frame_integration",
+)
 
 
 def _ratios_and_frame_counts(
