@@ -340,6 +340,14 @@ class NoiseCalibration:
                 f"(accepting {lowest:.0f}-{highest:.0f}) but the data has {num_frames}"
             )
         current = detector_signature(detector)
+        if len(self.detector_signature) != len(current):
+            # A calibration from a release whose signature had other fields, for example one
+            # restored from a pickle made before frame_integration joined it.
+            return (
+                f"calibrated with a detector signature of {len(self.detector_signature)} fields "
+                f"but this version of Blue Pebble uses {len(current)} "
+                f"({', '.join(_SIGNATURE_FIELDS)}), so it was built by another version"
+            )
         for name, calibrated, actual in zip(
             _SIGNATURE_FIELDS, self.detector_signature, current, strict=True
         ):
