@@ -199,16 +199,18 @@ output = simulator.render(include_noise=False)
 # -----------------------
 # The received spectrogram shows the waveguide-invariant striations: the modes interfere,
 # and the frequency of each fade changes smoothly with range. The output is one-sided, so its
-# spectrogram is taken two-sided and only the positive frequencies are shown.
+# spectrogram is taken two-sided and only the positive frequencies are shown. The first 2 s are
+# left out, while the channel filter fills.
 frequencies_hz, times_s, power = scipy_signal.spectrogram(
     output[0], fs=fs, nperseg=1024, noverlap=768, return_onesided=False
 )
 band = (frequencies_hz >= 100) & (frequencies_hz <= 450)
+settled = times_s >= 2.0
 figure = go.Figure(
     go.Heatmap(
         x=frequencies_hz[band],
-        y=times_s,
-        z=10 * np.log10(power[band].T + 1e-30),
+        y=times_s[settled],
+        z=10 * np.log10(power[np.ix_(band, settled)].T + 1e-30),
         colorscale="Viridis",
         colorbar={"title": {"text": "dB", "side": "right"}},
     )
