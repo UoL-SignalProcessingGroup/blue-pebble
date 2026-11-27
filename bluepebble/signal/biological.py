@@ -114,13 +114,21 @@ _CALIBRATION_CHUNK_SNAPS = 2_000_000
 def snap_rate_from_temperature(temperature_celsius: float) -> float:
     """Return a colony's mean snap rate, in snaps per second, at a water temperature.
 
+    .. deprecated:: 0.10.0
+        The fit has no source for its intercept, and the record it is attributed to counts
+        snaps detected at one hydrophone, not a colony's emission rate. Set
+        ``snap_rate_hz`` directly; [SR1]_ measured rates from fewer than 100 snaps per minute
+        in winter to 1500-2000 in summer at one site (p. 1).
+
     ``rate = max(0, 137 * T - 685) / 60`` with ``T`` in degrees Celsius, which is zero at and
     below 5 degrees and 34.2 snaps per second at 20 degrees.
 
-    The fit is attributed to the annual record of one oyster-reef site in [SR1]_, Fig. 5b, where
-    snap rate (detections per minute at one hydrophone) is linear in water temperature with a
-    correlation of 0.93. The slope and intercept are only printed in that figure; the values
-    here are the ones this package has always used and were not re-read from it.
+    The slope is the "1/slope = 137" printed in [SR1]_, Fig. 5b (p. 10), for the annual record
+    of one oyster-reef site, where detections per minute at one hydrophone are linear in water
+    temperature with a correlation of 0.93. No intercept is printed. The -685 used here has no
+    source: the plotted line reaches zero near 11 degrees, not 5. The paper also fits
+    temperature on rate and inverts the slope, so 137 is steeper than a fit of rate on
+    temperature would give.
 
     Parameters
     ----------
@@ -139,6 +147,12 @@ def snap_rate_from_temperature(temperature_celsius: float) -> float:
        sub-tidal oyster reef habitat." PLoS ONE 11(1), e0143691, 2016.
 
     """
+    warnings.warn(
+        "snap_rate_from_temperature() is deprecated: its intercept has no source and its data "
+        "count detected snaps, not a colony's emission. Set snap_rate_hz directly.",
+        DeprecationWarning,
+        stacklevel=2,
+    )
     return _get_snap_rate_from_temp(
         temperature_celsius, SNAP_RATE_SLOPE_PER_MIN, SNAP_RATE_INTERCEPT_PER_MIN
     )
@@ -417,8 +431,9 @@ class SnappingShrimpColonySignal(BiologicalSignal):
     Calibration
     -----------
     For ``alpha < 2`` the mean of ``A^2`` does not exist, so the level is set on a median
-    rather than a mean. ``median_source_level_db`` ``L`` is the band level, in dB re 1 µPa²
-    at 1 m, of the median window of length ``T = calibration_window_s``:
+    rather than a mean. ``median_source_level_db`` ``L`` is the colony's source level over the
+    median window of length ``T = calibration_window_s``: the level of the window's mean-square
+    pressure at 1 m, in dB re 1 µPa² m²:
 
     ``s^2 = 10^(L / 10) * T / median(sum of A_i^2 over a window)``
 
@@ -426,20 +441,20 @@ class SnappingShrimpColonySignal(BiologicalSignal):
     on the right is over windows holding a Poisson number of snaps of mean
     ``snap_rate_hz * T``. It is estimated once by simulating windows with a fixed seed (about
     a second for a new set of parameters), so the scale is a constant of the parameters and
-    repeats from run to run. At 5 kHz sampling, a 500 to 2000 Hz band, 34.2 snaps per second
-    and ``T = 30 s``, the median level of 2880 windows was 0.06 dB below ``L`` uncapped
-    (standard error 0.07 dB) and within 0.01 dB of it with a cap of 31.6 (0.02 dB). Other
-    settings are only covered by the tests, to 0.2 dB.
+    repeats from run to run. At 5 kHz sampling, a 500 to 2000 Hz band, 34.2 snaps per second,
+    ``T = 30 s`` and ``alpha = 1.7``, the median level of 2880 windows (24 h in 30 min runs of
+    independent seed) was 0.02 dB above ``L`` uncapped (standard error 0.05 dB) and 0.01 dB
+    below it with a cap of 31.6 (0.02 dB). Other settings are only covered by the tests, to
+    0.2 dB.
 
     Amplitude cap
     -------------
     ``amplitude_cap`` has no physically grounded default. Uncapped, the SαS law gives a long
-    run a few very large snaps. In one 3.85 h waveform at the settings above (about 470,000
-    snaps), 30 s levels sat -3.0, +6.5 and +18 dB from the median at the 10th, 90th and 99th
-    percentiles, with a maximum of +28 dB; the maximum is set by the largest single snap and
-    varies widely from run to run. A cap of 31.6 (30 dB above the unit scale) narrowed those
-    to -1.1, +1.1, +1.8 and +2.6 dB, which removes most of the impulsiveness at that time
-    scale.
+    run a few very large snaps. In the 24 h of waveform above (about 3 million snaps), 30 s
+    levels sat -1.7, +4.6 and +16 dB from the median at the 10th, 90th and 99th percentiles,
+    with a maximum of +43 dB; the maximum is set by the largest single snap and varies widely
+    from run to run. A cap of 31.6 (30 dB above the unit scale) narrowed those to -1.2, +1.3,
+    +2.3 and +3.2 dB, which removes most of the impulsiveness at that time scale.
 
     Assumptions
     -----------
@@ -469,19 +484,18 @@ class SnappingShrimpColonySignal(BiologicalSignal):
 
     """
 
-    snap_rate_hz: float = Property(
-        doc="Mean snap rate of the colony, in snaps per second; see "
-        ":func:`snap_rate_from_temperature`"
-    )
+    snap_rate_hz: float = Property(doc="Mean snap rate of the colony, in snaps per second")
     median_source_level_db: float = Property(
-        doc="Band level of the median calibration window, in dB re 1 µPa² at 1 m"
+        doc="Source level of the colony over the median calibration window, in dB re 1 µPa² m²"
     )
     band_hz: tuple[float, float] = Property(doc="Pass band of each snap, in Hz")
     calibration_window_s: float = Property(
         default=30.0, doc="Length of the window the median level refers to, in seconds"
     )
     alpha: float = Property(
-        default=1.5, doc="Characteristic exponent of the SαS amplitude law, in (0, 2]"
+        default=1.7,
+        doc="Characteristic exponent of the SαS amplitude law, in (0, 2]. The default lies in "
+        "the range 1.6-1.9 that Chitre et al. (2006) fit to shrimp-dominated noise",
     )
     amplitude_cap: float | None = Property(
         default=None,
