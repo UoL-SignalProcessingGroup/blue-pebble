@@ -1136,3 +1136,81 @@ def test_unconsolidated_detect_reports_every_cell_above_the_threshold(monkeypatc
     np.testing.assert_array_equal(np.diff(raw_indices), np.ones(len(raw_indices) - 1))
     assert raw_indices.min() >= 18 and raw_indices.max() <= 22
     assert merged_indices[0] in raw_indices
+
+
+# --------------------------------------------------------------------------
+# Frame integration
+# --------------------------------------------------------------------------
+
+
+def _impulsive_scan(num_beams: int = 21, num_frames: int = 9) -> np.ndarray:
+    """Return unit power everywhere, except one frame of power 1000 on the centre beam."""
+    power = np.ones((num_beams, num_frames))
+    power[num_beams // 2, 0] = 1000.0
+    return power
+
+
+@pytest.mark.parametrize("integration", ["mean", "median"])
+def test_frame_integration_reduces_each_beam_by_its_mean_or_median(
+    monkeypatch, integration
+) -> None:
+    """The integrated power is the per-beam mean or median of the frames' power."""
+    algorithms = _load_detector_algorithms(monkeypatch)
+    detector = algorithms.CACFARDetector(
+        num_guard_cells=1,
+        num_training_cells=3,
+        threshold_factor=5.0,
+        frame_integration=integration,
+    )
+    data = np.random.default_rng(0).exponential(size=(30, 7))
+
+    power, _ = detector._power_and_noise(data)
+
+    np.testing.assert_allclose(power, getattr(np, integration)(data, axis=1))
+
+
+def test_default_frame_integration_is_the_mean(monkeypatch) -> None:
+    """Detectors built without frame_integration keep the incoherent average."""
+    algorithms = _load_detector_algorithms(monkeypatch)
+    detector = algorithms.CACFARDetector(
+        num_guard_cells=1, num_training_cells=3, threshold_factor=5.0
+    )
+    assert detector.frame_integration == "mean"
+
+
+def test_median_integration_ignores_one_impulsive_frame(monkeypatch) -> None:
+    """One loud frame on a beam crosses the threshold under the mean but not the median."""
+    algorithms = _load_detector_algorithms(monkeypatch)
+    settings = {"num_guard_cells": 1, "num_training_cells": 3, "threshold_factor": 5.0}
+    mean_detector = algorithms.CACFARDetector(**settings, frame_integration="mean")
+    median_detector = algorithms.CACFARDetector(**settings, frame_integration="median")
+
+    assert mean_detector.detect(_impulsive_scan()).shape[0] == 1
+    assert median_detector.detect(_impulsive_scan()).shape[0] == 0
+
+
+def test_frame_integration_rejects_unknown_names(monkeypatch) -> None:
+    """Only "mean" and "median" are accepted."""
+    algorithms = _load_detector_algorithms(monkeypatch)
+    with pytest.raises(ValueError, match="frame_integration"):
+        algorithms.CACFARDetector(
+            num_guard_cells=1,
+            num_training_cells=3,
+            threshold_factor=5.0,
+            frame_integration="max",
+        )
+
+
+def test_calibration_from_mean_integration_is_rejected_by_a_median_detector(
+    monkeypatch,
+) -> None:
+    """frame_integration is part of the calibration signature, so a mismatch raises."""
+    algorithms, calibration = _load_detector_algorithms_and_calibration(monkeypatch)
+    settings = {"num_guard_cells": 1, "num_training_cells": 4, "target_pfa": 0.01}
+    mean_detector = algorithms.CACFARDetector(**settings)
+    median_detector = algorithms.CACFARDetector(**settings, frame_integration="median")
+    median_detector.noise_calibration = _calibrate(mean_detector, calibration, num_frames=5)
+
+    scan = np.random.default_rng(1).exponential(size=(200, 5))
+    with pytest.raises(ValueError, match="frame_integration"):
+        median_detector.detect(scan)

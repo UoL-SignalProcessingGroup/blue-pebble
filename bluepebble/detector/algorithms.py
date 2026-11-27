@@ -23,6 +23,9 @@ DetectionArray: TypeAlias = NDArray[np.float64]
 # Shared floor to keep log10/division finite at zero power without biasing real signals.
 _EPS = np.finfo(np.float64).eps
 
+# Reductions over a timestep's frames, by frame_integration.
+_FRAME_INTEGRATIONS = {"mean": np.mean, "median": np.median}
+
 
 def _stack_detections(indices: IntArray, data: ArrayLike) -> DetectionArray:
     """Create a ``(N, 2)`` matrix with detection indices and values."""
@@ -147,8 +150,9 @@ class DetectionAlgorithm(Base, ABC):
 class _CFARDetectorBase(DetectionAlgorithm, ABC):
     """Shared implementation of the CFAR detectors on beamformed data.
 
-    A cell is detected when its power, averaged over the frames of one timestep, exceeds a
-    multiple (alpha) of the local noise estimate from the training cells either side of it::
+    A cell is detected when its power, integrated over the frames of one timestep (by their
+    mean, or their median: see Frame integration), exceeds a multiple (alpha) of the local noise
+    estimate from the training cells either side of it::
 
         power > alpha * noise_estimate
 
@@ -188,6 +192,26 @@ class _CFARDetectorBase(DetectionAlgorithm, ABC):
         Desired noise-only probability of false alarm, for calibrated mode. See Threshold modes.
     noise_calibration : NoiseCalibration, optional
         Empirical calibration from noise-only scans, for calibrated mode. See Noise calibration.
+    frame_integration : {"mean", "median"}
+        How each beam's power is combined over the frames of one timestep. See Frame
+        integration.
+
+    Frame integration
+    -----------------
+    ``"mean"`` (the default) averages each beam's power over the frames: the incoherent
+    integration the sonar equation assumes, and the most efficient choice in Gaussian noise.
+    ``"median"`` takes each beam's median power over the frames instead. In impulsive noise,
+    such as snapping shrimp, a few frames can hold most of a scan's energy; the mean follows
+    them and the noise estimate and threshold jump from scan to scan, while the median ignores
+    any minority of frames. The cost is a loss of efficiency in Gaussian noise, where the
+    median of the frames scatters more than their mean.
+
+    The two give different ratio distributions, so a calibration applies only to the
+    integration it was measured with; ``frame_integration`` is part of the calibration
+    signature and a mismatch raises at detection time. :mod:`.calibration` refers ratios
+    between frame counts by ``1 / sqrt(frames)``, the scaling of an average; the sample median
+    concentrates at the same rate for many frames, but that referral has been measured only
+    with the mean. :func:`~.metrics.estimate_effective_looks_per_frame` assumes the mean.
 
     Threshold modes
     ---------------
@@ -369,6 +393,11 @@ class _CFARDetectorBase(DetectionAlgorithm, ABC):
         "Must match this detector's window, rank, edge handling and the data's frame count. "
         "Required with target_pfa; must be None when threshold_factor is set.",
     )
+    frame_integration: Literal["mean", "median"] = Property(
+        default="mean",
+        doc="How each beam's power is combined over a timestep's frames: \"mean\" (incoherent "
+        'averaging) or "median" (robust to impulsive frames). See Frame integration.',
+    )
 
     def __init__(self, *args: object, **kwargs: object) -> None:
         # Caught before Stone Soup's Base sees them: an unknown kwarg there surfaces as
@@ -392,6 +421,11 @@ class _CFARDetectorBase(DetectionAlgorithm, ABC):
             raise ValueError(f"num_guard_cells ({self.num_guard_cells}) must be >= 0")
         if self.num_training_cells < 1:
             raise ValueError(f"num_training_cells ({self.num_training_cells}) must be >= 1")
+        if self.frame_integration not in _FRAME_INTEGRATIONS:
+            raise ValueError(
+                f"frame_integration ({self.frame_integration!r}) must be one of "
+                f"{', '.join(repr(name) for name in _FRAME_INTEGRATIONS)}"
+            )
         if self.threshold_factor is not None:
             if not self.threshold_factor > 0:
                 raise ValueError(f"threshold_factor ({self.threshold_factor}) must be > 0")
@@ -514,10 +548,11 @@ class _CFARDetectorBase(DetectionAlgorithm, ABC):
         ...
 
     def _power_and_noise(self, data: ArrayLike) -> tuple[np.ndarray, np.ndarray]:
-        # Power per beam, averaged (incoherently) across looks/frames. See
-        # _directional_power for why this isn't simply |data|**2.
+        # Power per beam, integrated (incoherently) across looks/frames by their mean or median.
+        # See _directional_power for why this isn't simply |data|**2.
         data_array = _as_beamformed_2d(data)
-        directional_power = np.mean(_directional_power(data_array), axis=1)
+        integrate = _FRAME_INTEGRATIONS[self.frame_integration]
+        directional_power = integrate(_directional_power(data_array), axis=1)
         noise_estimate = self._local_noise_floor(directional_power)
         return directional_power, noise_estimate
 
