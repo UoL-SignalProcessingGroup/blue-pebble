@@ -397,9 +397,10 @@ class SnappingShrimpColonySignal(BiologicalSignal):
     ``x(t) = s * sum_i A_i * h(t - t_i)``
 
     - ``t_i`` are the snap times, a homogeneous Poisson process of rate ``snap_rate_hz``.
-    - ``A_i`` are the snap amplitudes, independent draws from a symmetric alpha-stable (SαS)
-      law with characteristic exponent ``alpha``, zero skew and unit scale, clipped to
-      ``±amplitude_cap`` when a cap is set.
+    - ``A_i`` are the snap amplitudes, the magnitudes of independent draws from a symmetric
+      alpha-stable (SαS) law with characteristic exponent ``alpha``, zero skew and unit scale,
+      clipped to ``amplitude_cap`` when a cap is set. Taking the magnitude gives every snap the
+      same polarity; ``A_i^2``, and so every energy and level below, is unchanged by it.
     - ``h`` is a zero-phase Butterworth band-pass pulse over ``band_hz`` with unit energy,
       ``integral of h(t)^2 dt = 1 s``, so snap ``i`` carries an energy of ``(s * A_i)^2`` in
       µPa²·s at 1 m.
@@ -447,9 +448,10 @@ class SnappingShrimpColonySignal(BiologicalSignal):
     - Snaps add incoherently, so a window's level is the sum of its snaps' energies.
     - Each snap's spectrum is flat within ``band_hz``, up to the Butterworth roll-off.
     - Snap times are Poisson: no clustering, and no diurnal or tidal change of rate.
-    - The alpha-stable law describes each snap's amplitude. [SC1]_ fits it to the samples of
-      snapping-shrimp-dominated ambient noise, not to individual snaps; carrying it over to
-      snap amplitudes is this model's assumption.
+    - The alpha-stable law describes the magnitude of each snap's amplitude. [SC1]_ fits it to
+      the samples of snapping-shrimp-dominated ambient noise, not to individual snaps; carrying
+      it over to snap amplitudes is this model's assumption.
+    - Every snap has the same polarity.
 
     Raises
     ------
@@ -483,7 +485,7 @@ class SnappingShrimpColonySignal(BiologicalSignal):
     )
     amplitude_cap: float | None = Property(
         default=None,
-        doc="Clip each snap amplitude to this many unit scales; ``None`` leaves the SαS tail "
+        doc="Cap each snap amplitude at this many unit scales; ``None`` leaves the SαS tail "
         "uncapped (see Amplitude cap)",
     )
     filter_order: int = Property(
@@ -578,8 +580,9 @@ class SnappingShrimpColonySignal(BiologicalSignal):
                 levy_stable.rvs(self.alpha, 0.0, size=snap_samples.size, random_state=self._rng),
                 dtype=np.float64,
             )
+            amplitudes = np.abs(amplitudes)  # snap strengths are positive: no random polarity
             if self.amplitude_cap is not None:
-                amplitudes = np.clip(amplitudes, -self.amplitude_cap, self.amplitude_cap)
+                amplitudes = np.minimum(amplitudes, self.amplitude_cap)
             np.add.at(snap_train, snap_samples, self._amplitude_scale() * amplitudes)
         sos, pulse_gain = self._unit_energy_filter()
         return analytic_signal(pulse_gain * signal.sosfiltfilt(sos, snap_train))

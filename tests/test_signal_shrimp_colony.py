@@ -135,7 +135,8 @@ def test_real_part_is_the_snap_pressure_over_root_two(bp):
     """The real part of one snap is its zero-phase Butterworth pulse over ``sqrt(2)``.
 
     The pulse is built here from the band alone and scaled to the snap's energy, so the
-    comparison covers the shape and the ``1 / sqrt(2)`` together. The snap's sign is random.
+    comparison covers the shape, the ``1 / sqrt(2)`` and the polarity together: snap
+    amplitudes are magnitudes, so the snap has the pulse's own sign.
     """
 
     class OneSnap(bp.SnappingShrimpColonySignal):
@@ -158,11 +159,37 @@ def test_real_part_is_the_snap_pressure_over_root_two(bp):
     sos = sp_signal.butter(8, BAND_HZ, btype="bandpass", fs=FS, output="sos")
     pulse = sp_signal.sosfiltfilt(sos, impulse)
     pressure = pulse * np.sqrt(np.sum(np.abs(waveform) ** 2) / np.sum(pulse**2))
-    sign = np.sign(waveform.real[np.argmax(np.abs(pulse))] * pulse[np.argmax(np.abs(pulse))])
 
     np.testing.assert_allclose(
-        waveform.real, sign * pressure / np.sqrt(2.0), atol=1e-9 * np.abs(pressure).max()
+        waveform.real, pressure / np.sqrt(2.0), atol=1e-9 * np.abs(pressure).max()
     )
+
+
+def test_every_snap_has_positive_polarity(bp):
+    """Snap amplitudes are magnitudes, so every snap's central peak is positive.
+
+    Snaps are spaced far apart so their pulses do not overlap; the real waveform at each snap
+    sample is then that snap's central peak, positive whatever the draw.
+    """
+    spacing = 2_000
+
+    class Sparse(bp.SnappingShrimpColonySignal):
+        def _snap_samples(self):
+            return np.arange(spacing, self.num_samples - spacing, spacing)
+
+    model = Sparse(
+        duration_s=20.0,
+        sampling_rate_hz=FS,
+        snap_rate_hz=100.0,
+        median_source_level_db=LEVEL_DB,
+        band_hz=BAND_HZ,
+        calibration_window_s=WINDOW_S,
+        seed=3,
+    )
+    waveform = model.get_source_waveform(SOURCE)
+    peaks = waveform.real[model._snap_samples()]
+    assert peaks.size > 10
+    assert np.all(peaks > 0)
 
 
 def test_power_lies_in_the_pass_band(bp):
