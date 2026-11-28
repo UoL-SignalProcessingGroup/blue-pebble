@@ -10,7 +10,10 @@ from .anthropogenic import (
 )
 from .base import Signal, SourceSignal
 from .biological import (
+    AlphaStableAmplitudes,
+    AmplitudeDistribution,
     BiologicalSignal,
+    LognormalAmplitudes,
     SnappingShrimpColonySignal,
     snap_rate_from_temperature,
 )
@@ -23,6 +26,9 @@ __all__ = [
     "ActiveSignal",
     "CWSignal",
     "LFMSignal",
+    "AmplitudeDistribution",
+    "AlphaStableAmplitudes",
+    "LognormalAmplitudes",
     "BiologicalSignal",
     "SnappingShrimpColonySignal",
     "snap_rate_from_temperature",

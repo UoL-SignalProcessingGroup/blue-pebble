@@ -2,12 +2,13 @@
 
 import warnings
 from abc import ABC, abstractmethod
+from dataclasses import dataclass
 from functools import lru_cache
 from typing import TYPE_CHECKING, TypedDict
 
 import numpy as np
 from numpy.typing import ArrayLike, NDArray
-from scipy import interpolate, signal
+from scipy import fft, interpolate, signal
 from scipy.stats import levy_stable
 from stonesoup.base import Property
 
@@ -158,25 +159,170 @@ def snap_rate_from_temperature(temperature_celsius: float) -> float:
     )
 
 
+# The log-rate is held constant over cells this many times shorter than its correlation time.
+_RATE_CELLS_PER_CORRELATION = 16
+# Bounds on the cells in a calibration window, and on the rate values one chunk holds at once.
+_CALIBRATION_RATE_CELL_BOUNDS = (16, 8192)
+_CALIBRATION_RATE_CHUNK_VALUES = 4_000_000
+# Samples of silence either side of the waveform while the spectral slope is applied, so that
+# the sloped pulse does not wrap around the ends.
+_SLOPE_PAD_SAMPLES = 4096
+
+
+class AmplitudeDistribution(ABC):
+    """Distribution of the snap amplitudes of :class:`SnappingShrimpColonySignal`.
+
+    The colony accepts only the distributions defined in this module, each of which has a
+    source or a comparison with measured snaps. Draws have unit scale; the colony takes
+    their magnitudes.
+    """
+
+    @abstractmethod
+    def draw(self, rng: np.random.Generator, size: int) -> NDArray[np.float64]:
+        """Draw ``size`` amplitudes."""
+
+
+@dataclass(frozen=True)
+class AlphaStableAmplitudes(AmplitudeDistribution):
+    """Symmetric alpha-stable (SαS) amplitudes with zero skew and unit scale.
+
+    The tail is a power of the amplitude with exponent ``alpha``. [AD1]_ fit this
+    distribution to the samples of snapping-shrimp-dominated ambient noise, with ``alpha``
+    from 1.6 to 1.9, not to individual snaps; carrying it over to snap amplitudes is an
+    assumption.
+
+    Parameters
+    ----------
+    alpha : float
+        Characteristic exponent, in (0, 2]. The default lies in the range that [AD1]_ fit.
+
+    Raises
+    ------
+    ValueError
+        If ``alpha`` is outside ``(0, 2]``.
+
+    References
+    ----------
+    .. [AD1] Chitre, M. A., Potter, J. R. and Ong, S.-H. "Optimal and near-optimal signal
+       detection in snapping shrimp dominated ambient noise." IEEE Journal of Oceanic
+       Engineering 31(2), 497-503, 2006.
+
+    """
+
+    alpha: float = 1.7
+
+    def __post_init__(self) -> None:
+        """Check the exponent."""
+        if not 0 < self.alpha <= 2:
+            raise ValueError(f"alpha must be in (0, 2], got {self.alpha}")
+
+    def draw(self, rng: np.random.Generator, size: int) -> NDArray[np.float64]:
+        """Draw ``size`` signed amplitudes."""
+        draws = levy_stable.rvs(self.alpha, 0.0, size=size, random_state=rng)
+        return np.asarray(draws, dtype=np.float64)
+
+
+@dataclass(frozen=True)
+class LognormalAmplitudes(AmplitudeDistribution):
+    """Lognormal amplitudes: snap levels normal in dB, with a median at the unit scale.
+
+    The tail is lighter than any power of the amplitude. [AD2]_ report standard deviations
+    of snap source level of 4.5 and 7.6 dB at two sites (p. 2711).
+
+    Parameters
+    ----------
+    spread_db : float
+        Standard deviation of the snap level, in dB.
+
+    Raises
+    ------
+    ValueError
+        If ``spread_db`` is not positive.
+
+    References
+    ----------
+    .. [AD2] Koay, T. B., Tan, E. T., Chitre, M. and Potter, J. R. "Estimating the spatial
+       and temporal distribution of snapping shrimp using a portable, broadband
+       3-dimensional acoustic array." Proceedings of Oceans 2003 Marine Technology and
+       Ocean Science Conference (MTS/IEEE), San Diego, CA, 2706-2713, 2003.
+
+    """
+
+    spread_db: float
+
+    def __post_init__(self) -> None:
+        """Check the spread."""
+        if not self.spread_db > 0:
+            raise ValueError(f"spread_db must be positive, got {self.spread_db}")
+
+    def draw(self, rng: np.random.Generator, size: int) -> NDArray[np.float64]:
+        """Draw ``size`` positive amplitudes."""
+        return np.asarray(10 ** (rng.normal(0.0, self.spread_db, size) / 20), dtype=np.float64)
+
+
+_AMPLITUDE_DISTRIBUTIONS = (AlphaStableAmplitudes, LognormalAmplitudes)
+
+
+def _relative_rate(
+    rng: np.random.Generator,
+    num_paths: int,
+    num_cells: int,
+    cell_per_correlation: float,
+    log_sd: float,
+) -> NDArray[np.float64]:
+    """Return paths of the snap rate over its mean, one value per cell, of unit mean.
+
+    The log of the rate is a stationary Ornstein-Uhlenbeck (OU) process of standard deviation
+    ``log_sd`` whose autocorrelation falls to ``1 / e`` over ``1 / cell_per_correlation``
+    cells. The rate is ``exp(log_sd * g - log_sd^2 / 2)`` for a unit-variance OU path ``g``,
+    which has a mean of one.
+    """
+    decay = np.exp(-cell_per_correlation)
+    steps = rng.normal(size=(num_paths, num_cells))
+    steps[:, 1:] *= np.sqrt(1 - decay**2)
+    path = np.asarray(signal.lfilter([1.0], [1.0, -decay], steps, axis=1))
+    return np.exp(log_sd * path - log_sd**2 / 2)
+
+
 @lru_cache(maxsize=32)
-def _median_window_energy(alpha: float, mean_snaps: float, amplitude_cap: float | None) -> float:
+def _median_window_energy(
+    distribution: AmplitudeDistribution,
+    mean_snaps: float,
+    amplitude_cap: float | None,
+    rate_log_sd: float = 0.0,
+    correlation_windows: float | None = None,
+) -> float:
     """Return the median, over calibration windows, of the summed squared snap amplitudes.
 
-    A window holds a Poisson number of snaps of mean ``mean_snaps``, each with a unit-scale
-    symmetric alpha-stable amplitude clipped at ``amplitude_cap``. The median is taken over
-    simulated windows: enough to draw about ``_CALIBRATION_SNAPS`` snaps, which at 1000 snaps
-    per window left the result within 0.02 dB (one standard deviation) across seeds.
+    A window holds a Poisson number of snaps of mean ``mean_snaps``, each with an amplitude
+    drawn from ``distribution`` and clipped at ``amplitude_cap``. With ``rate_log_sd`` above
+    zero the mean of each window's count is multiplied by the window average of the relative
+    rate, whose correlation time is ``correlation_windows`` windows. The median is taken over
+    simulated windows:
+    enough to draw about ``_CALIBRATION_SNAPS`` snaps, which at 1000 snaps per window left
+    the result within 0.02 dB (one standard deviation) across seeds.
     """
     rng = np.random.default_rng(_CALIBRATION_SEED)
     num_windows = int(np.clip(_CALIBRATION_SNAPS / mean_snaps, *_CALIBRATION_WINDOW_BOUNDS))
     windows_per_chunk = max(1, int(_CALIBRATION_CHUNK_SNAPS / max(mean_snaps, 1.0)))
+    cells = 0
+    if rate_log_sd > 0 and correlation_windows is not None:
+        cells = int(
+            np.clip(
+                np.ceil(_RATE_CELLS_PER_CORRELATION / correlation_windows),
+                *_CALIBRATION_RATE_CELL_BOUNDS,
+            )
+        )
+        windows_per_chunk = min(windows_per_chunk, max(1, _CALIBRATION_RATE_CHUNK_VALUES // cells))
     energies = np.empty(num_windows)
     for start in range(0, num_windows, windows_per_chunk):
-        counts = rng.poisson(mean_snaps, min(windows_per_chunk, num_windows - start))
-        amplitudes = np.asarray(
-            levy_stable.rvs(alpha, 0.0, size=int(counts.sum()), random_state=rng),
-            dtype=np.float64,
-        )
+        size = min(windows_per_chunk, num_windows - start)
+        if cells and correlation_windows is not None:
+            rate = _relative_rate(rng, size, cells, 1 / (cells * correlation_windows), rate_log_sd)
+            counts = rng.poisson(mean_snaps * rate.mean(axis=1))
+        else:
+            counts = rng.poisson(mean_snaps, size)
+        amplitudes = distribution.draw(rng, int(counts.sum()))
         if amplitude_cap is not None:
             amplitudes = np.clip(amplitudes, -amplitude_cap, amplitude_cap)
         window_of_snap = np.repeat(np.arange(counts.size), counts)
@@ -410,14 +556,17 @@ class SnappingShrimpColonySignal(BiologicalSignal):
 
     ``x(t) = s * sum_i A_i * h(t - t_i)``
 
-    - ``t_i`` are the snap times, a homogeneous Poisson process of rate ``snap_rate_hz``.
-    - ``A_i`` are the snap amplitudes, the magnitudes of independent draws from a symmetric
-      alpha-stable (SαS) law with characteristic exponent ``alpha``, zero skew and unit scale,
-      clipped to ``amplitude_cap`` when a cap is set. Taking the magnitude gives every snap the
-      same polarity; ``A_i^2``, and so every energy and level below, is unchanged by it.
+    - ``t_i`` are the snap times, a Poisson process of mean rate ``snap_rate_hz``:
+      homogeneous by default, or with a fluctuating rate (see Snap timing).
+    - ``A_i`` are the snap amplitudes, the magnitudes of independent draws from a
+      distribution, clipped to ``amplitude_cap`` when a cap is set (see Amplitude
+      distribution).
+      Every snap has the same polarity; ``A_i^2``, and so every energy and level below, does
+      not depend on it.
     - ``h`` is a zero-phase Butterworth band-pass pulse over ``band_hz`` with unit energy,
       ``integral of h(t)^2 dt = 1 s``, so snap ``i`` carries an energy of ``(s * A_i)^2`` in
-      µPa²·s at 1 m.
+      µPa²·s at 1 m. Its spectrum is flat in the band by default, or sloped (see Pulse
+      spectrum).
     - ``s`` is the scale that sets the level (see Calibration).
 
     ``x`` is the real pressure. The waveform the model returns is its one-sided form
@@ -428,29 +577,59 @@ class SnappingShrimpColonySignal(BiologicalSignal):
     any sampling rate whose Nyquist frequency lies above the band. The source's position comes
     from the ground-truth path; nothing else is read from the source state.
 
+    Amplitude distribution
+    ----------------------
+    ``amplitude_distribution`` is :class:`AlphaStableAmplitudes`, the default, or
+    :class:`LognormalAmplitudes`; no other distribution is accepted. The distribution's unit
+    scale is the one ``amplitude_cap`` counts in.
+
+    Snap timing
+    -----------
+    With ``rate_log_sd`` above zero the snaps cluster: the process is doubly stochastic, with
+    rate ``snap_rate_hz * exp(rate_log_sd * g(t) - rate_log_sd^2 / 2)``, where ``g`` is a
+    unit-variance Ornstein-Uhlenbeck (OU) process with autocorrelation
+    ``exp(-|u| / rate_correlation_s)``. The mean rate stays ``snap_rate_hz``. [SC2]_ fit an
+    OU-driven doubly stochastic Poisson process to measured snap times; theirs drives the rate
+    itself, which a Gaussian process can make negative, where this one drives its log. The
+    rate is held constant over cells of one sixteenth of ``rate_correlation_s``.
+
+    The Fano factor (variance over mean) of the snap count in a time ``T`` is
+
+    ``1 + (2 * snap_rate_hz / T) * integral_0^T (T - u) * (exp(rate_log_sd^2 * exp(-u /
+    rate_correlation_s)) - 1) du``
+
+    which is one for a homogeneous Poisson process.
+
+    Pulse spectrum
+    --------------
+    ``spectral_slope_db_per_octave`` multiplies the pulse's amplitude spectrum by a power of
+    frequency, so that its level changes by that many dB per octave across the band. The pulse
+    stays zero-phase and keeps unit energy.
+
     Calibration
     -----------
-    For ``alpha < 2`` the mean of ``A^2`` does not exist, so the level is set on a median
-    rather than a mean. ``median_source_level_db`` ``L`` is the colony's source level over the
-    median window of length ``T = calibration_window_s``: the level of the window's mean-square
-    pressure at 1 m, in dB re 1 µPa² m²:
+    The mean of ``A^2`` does not exist for alpha-stable amplitudes with an exponent below 2,
+    so the level is set on a median rather than a mean, for either distribution.
+    ``median_source_level_db`` ``L`` is the colony's source level over the median window of
+    length ``T = calibration_window_s``: the level of the window's mean-square pressure at
+    1 m, in dB re 1 µPa² m²:
 
     ``s^2 = 10^(L / 10) * T / median(sum of A_i^2 over a window)``
 
-    Set ``T`` to the scan interval, so that ``L`` is the level of the median scan. The median
-    on the right is over windows holding a Poisson number of snaps of mean
-    ``snap_rate_hz * T``. It is estimated once by simulating windows with a fixed seed (about
-    a second for a new set of parameters), so the scale is a constant of the parameters and
-    repeats from run to run. At 5 kHz sampling, a 500 to 2000 Hz band, 34.2 snaps per second,
-    ``T = 30 s`` and ``alpha = 1.7``, the median level of 2880 windows (24 h in 30 min runs of
-    independent seed) was 0.02 dB above ``L`` uncapped (standard error 0.05 dB) and 0.01 dB
-    below it with a cap of 31.6 (0.02 dB). Other settings are only covered by the tests, to
-    0.2 dB.
+    Set ``T`` to the scan interval, so that ``L`` is the level of the median scan. The median on
+    the right is over windows holding a Poisson number of snaps of mean ``snap_rate_hz * T``, times
+    the window average of the relative rate when the rate fluctuates. It is estimated once by
+    simulating windows with a fixed seed (about a second for a new set of parameters), so the scale
+    is a constant of the parameters and repeats from run to run. At 5 kHz sampling, a 500 to 2000
+    Hz band, 34.2 snaps per second, ``T = 30 s`` and the default amplitudes, the median level of
+    2880 windows (24 h in 30 min runs of independent seed) was 0.02 dB above ``L`` uncapped
+    (standard error 0.05 dB) and 0.01 dB below it with a cap of 31.6 (0.02 dB). Other settings are
+    only covered by the tests, to 0.2 dB.
 
     Amplitude cap
     -------------
-    ``amplitude_cap`` has no physically grounded default. Uncapped, the SαS law gives a long
-    run a few very large snaps. In the 24 h of waveform above (about 3 million snaps), 30 s
+    ``amplitude_cap`` has no physically grounded default. Uncapped, the SαS distribution gives
+    a long run a few very large snaps. In the 24 h of waveform above (about 3 million snaps), 30 s
     levels sat -1.7, +4.6 and +16 dB from the median at the 10th, 90th and 99th percentiles,
     with a maximum of +43 dB; the maximum is set by the largest single snap and varies widely
     from run to run. A cap of 31.6 (30 dB above the unit scale) narrowed those to -1.2, +1.3,
@@ -461,26 +640,34 @@ class SnappingShrimpColonySignal(BiologicalSignal):
     - The colony is a point source: the array does not resolve it. A colony 100 m across at
       10 km subtends 0.6 degrees.
     - Snaps add incoherently, so a window's level is the sum of its snaps' energies.
-    - Each snap's spectrum is flat within ``band_hz``, up to the Butterworth roll-off.
-    - Snap times are Poisson: no clustering, and no diurnal or tidal change of rate.
-    - The alpha-stable law describes the magnitude of each snap's amplitude. [SC1]_ fits it to
-      the samples of snapping-shrimp-dominated ambient noise, not to individual snaps; carrying
-      it over to snap amplitudes is this model's assumption.
+    - Every snap has the same pulse, whatever its amplitude: flat within ``band_hz`` up to
+      the Butterworth roll-off, or with one slope.
+    - By default snap times are Poisson with no clustering. No setting gives a diurnal or
+      tidal change of rate.
+    - Amplitudes are independent of each other and of the snap times.
+    - The default alpha-stable distribution describes the magnitude of each snap's amplitude.
+      [SC1]_ fits it to the samples of snapping-shrimp-dominated ambient noise, not to
+      individual snaps; carrying it over to snap amplitudes is this model's assumption.
     - Every snap has the same polarity.
 
     Raises
     ------
     ValueError
-        If ``band_hz`` is not inside ``(0, Nyquist)``, ``alpha`` is outside ``(0, 2]``,
-        ``snap_rate_hz`` is negative, ``calibration_window_s``, ``filter_order`` or
-        ``amplitude_cap`` is not positive, or the calibration window holds too few snaps for
-        its median level to be above zero.
+        If ``band_hz`` is not inside ``(0, Nyquist)``,
+        ``snap_rate_hz`` or ``rate_log_sd`` is negative, ``calibration_window_s``,
+        ``filter_order`` or ``amplitude_cap`` is not positive, ``amplitude_distribution`` is
+        not one of the two accepted, a fluctuating rate has no positive ``rate_correlation_s``,
+        ``spectral_slope_db_per_octave`` is not finite, or the calibration window holds too
+        few snaps for its median level to be above zero.
 
     References
     ----------
     .. [SC1] Chitre, M. A., Potter, J. R. and Ong, S.-H. "Optimal and near-optimal signal
        detection in snapping shrimp dominated ambient noise." IEEE Journal of Oceanic
        Engineering 31(2), 497-503, 2006.
+    .. [SC2] Legg, M. W., Duncan, A. J., Zaknich, A. and Greening, M. V. "Analysis of
+       impulsive biological noise due to snapping shrimp as a point process in time." IEEE,
+       2007.
 
     """
 
@@ -492,15 +679,30 @@ class SnappingShrimpColonySignal(BiologicalSignal):
     calibration_window_s: float = Property(
         default=30.0, doc="Length of the window the median level refers to, in seconds"
     )
-    alpha: float = Property(
-        default=1.7,
-        doc="Characteristic exponent of the SαS amplitude law, in (0, 2]. The default lies in "
-        "the range 1.6-1.9 that Chitre et al. (2006) fit to shrimp-dominated noise",
+    amplitude_distribution: AmplitudeDistribution = Property(
+        default=AlphaStableAmplitudes(),
+        doc="Distribution of the snap amplitudes: ``AlphaStableAmplitudes`` or "
+        "``LognormalAmplitudes`` (see Amplitude distribution)",
     )
     amplitude_cap: float | None = Property(
         default=None,
-        doc="Cap each snap amplitude at this many unit scales; ``None`` leaves the SαS tail "
+        doc="Cap each snap amplitude at this many unit scales; ``None`` leaves the tail "
         "uncapped (see Amplitude cap)",
+    )
+    rate_log_sd: float = Property(
+        default=0.0,
+        doc="Standard deviation of the natural log of the snap rate; zero gives a homogeneous "
+        "Poisson process (see Snap timing)",
+    )
+    rate_correlation_s: float | None = Property(
+        default=None,
+        doc="Correlation time of the log of the snap rate, in seconds; needed when "
+        "``rate_log_sd`` is above zero",
+    )
+    spectral_slope_db_per_octave: float = Property(
+        default=0.0,
+        doc="Change of each snap's spectrum level across the band, in dB per octave; zero is "
+        "flat (see Pulse spectrum)",
     )
     filter_order: int = Property(
         default=8, doc="Order of the Butterworth band-pass; zero-phase filtering doubles it"
@@ -516,8 +718,6 @@ class SnappingShrimpColonySignal(BiologicalSignal):
                 f"band_hz must satisfy 0 < low < high < Nyquist ({nyquist_hz} Hz), "
                 f"got {self.band_hz}"
             )
-        if not 0 < self.alpha <= 2:
-            raise ValueError(f"alpha must be in (0, 2], got {self.alpha}")
         if self.snap_rate_hz < 0:
             raise ValueError(f"snap_rate_hz must be non-negative, got {self.snap_rate_hz}")
         if self.calibration_window_s <= 0:
@@ -528,6 +728,25 @@ class SnappingShrimpColonySignal(BiologicalSignal):
             raise ValueError(f"filter_order must be at least 1, got {self.filter_order}")
         if self.amplitude_cap is not None and self.amplitude_cap <= 0:
             raise ValueError(f"amplitude_cap must be positive, got {self.amplitude_cap}")
+        if not isinstance(self.amplitude_distribution, _AMPLITUDE_DISTRIBUTIONS):
+            raise ValueError(
+                "amplitude_distribution must be AlphaStableAmplitudes or LognormalAmplitudes, "
+                f"got {self.amplitude_distribution!r}"
+            )
+        if self.rate_log_sd < 0:
+            raise ValueError(f"rate_log_sd must be non-negative, got {self.rate_log_sd}")
+        if self.rate_log_sd > 0 and not (
+            self.rate_correlation_s is not None and self.rate_correlation_s > 0
+        ):
+            raise ValueError(
+                "rate_correlation_s must be positive when rate_log_sd is above zero, "
+                f"got {self.rate_correlation_s}"
+            )
+        if not np.isfinite(self.spectral_slope_db_per_octave):
+            raise ValueError(
+                "spectral_slope_db_per_octave must be finite, "
+                f"got {self.spectral_slope_db_per_octave}"
+            )
         self._amplitude_scale()
 
     def _amplitude_scale(self) -> float:
@@ -535,7 +754,14 @@ class SnappingShrimpColonySignal(BiologicalSignal):
         mean_snaps = self.snap_rate_hz * self.calibration_window_s
         if mean_snaps == 0:
             return 0.0
-        median_energy = _median_window_energy(self.alpha, mean_snaps, self.amplitude_cap)
+        correlation_s = self.rate_correlation_s if self.rate_log_sd > 0 else None
+        median_energy = _median_window_energy(
+            self.amplitude_distribution,
+            mean_snaps,
+            self.amplitude_cap,
+            self.rate_log_sd,
+            None if correlation_s is None else correlation_s / self.calibration_window_s,
+        )
         if median_energy == 0:
             raise ValueError(
                 f"A {self.calibration_window_s} s calibration window holds {mean_snaps:g} snaps "
@@ -559,17 +785,50 @@ class SnappingShrimpColonySignal(BiologicalSignal):
         )
         impulse = np.zeros(1 << 14)
         impulse[impulse.size // 2] = 1.0
-        pulse = signal.sosfiltfilt(sos, impulse)
+        pulse = self._apply_spectral_slope(signal.sosfiltfilt(sos, impulse))
         return sos, float(np.sqrt(self.sampling_rate_hz / np.sum(pulse**2)))
+
+    def _apply_spectral_slope(self, waveform: NDArray[np.float64]) -> NDArray[np.float64]:
+        """Tilt a band-passed waveform's spectrum by ``spectral_slope_db_per_octave``.
+
+        The amplitude spectrum is multiplied by ``(f / f_c)^(slope / (20 log10 2))``, with
+        ``f_c`` the geometric centre of the band, which leaves the phase alone.
+        """
+        if self.spectral_slope_db_per_octave == 0:
+            return waveform
+        num_fft = fft.next_fast_len(waveform.size + 2 * _SLOPE_PAD_SAMPLES, real=True)
+        spectrum = fft.rfft(np.pad(waveform, _SLOPE_PAD_SAMPLES), num_fft)
+        frequency_hz = fft.rfftfreq(num_fft, 1 / self.sampling_rate_hz)
+        weight = np.zeros_like(frequency_hz)
+        weight[1:] = (frequency_hz[1:] / np.sqrt(np.prod(self.band_hz))) ** (
+            self.spectral_slope_db_per_octave / (20 * np.log10(2))
+        )
+        sloped = fft.irfft(spectrum * weight, num_fft)
+        return sloped[_SLOPE_PAD_SAMPLES : _SLOPE_PAD_SAMPLES + waveform.size]
 
     def _snap_samples(self) -> NDArray[np.int64]:
         """Return the sample index of each snap, in ascending order.
 
-        Override this to change when the colony snaps, for example to cluster snaps; the
-        amplitudes and the calibration assume nothing about the times beyond their mean rate.
+        Override this to change when the colony snaps; the amplitudes assume nothing about the
+        times, and the calibration only their count in a window.
         """
-        count = self._rng.poisson(self.snap_rate_hz * self.duration_s)
-        return np.sort(self._rng.integers(0, self.num_samples, count))
+        correlation_s = self.rate_correlation_s
+        if self.rate_log_sd == 0 or correlation_s is None:
+            count = self._rng.poisson(self.snap_rate_hz * self.duration_s)
+            return np.sort(self._rng.integers(0, self.num_samples, count))
+        cell = max(1, int(correlation_s * self.sampling_rate_hz / _RATE_CELLS_PER_CORRELATION))
+        starts = np.arange(0, self.num_samples, cell)
+        sizes = np.minimum(cell, self.num_samples - starts)
+        rate = _relative_rate(
+            self._rng,
+            1,
+            starts.size,
+            cell / (correlation_s * self.sampling_rate_hz),
+            self.rate_log_sd,
+        )[0]
+        counts = self._rng.poisson(self.snap_rate_hz / self.sampling_rate_hz * sizes * rate)
+        offsets = self._rng.random(int(counts.sum())) * np.repeat(sizes, counts)
+        return np.sort(np.repeat(starts, counts) + offsets.astype(np.int64))
 
     def _generate_base_signal(self, source: "State") -> ComplexArray:
         """Generate the colony's source waveform.
@@ -590,16 +849,14 @@ class SnappingShrimpColonySignal(BiologicalSignal):
         snap_train = np.zeros(self.num_samples)
         snap_samples = self._snap_samples()
         if snap_samples.size:
-            amplitudes = np.asarray(
-                levy_stable.rvs(self.alpha, 0.0, size=snap_samples.size, random_state=self._rng),
-                dtype=np.float64,
-            )
+            amplitudes = self.amplitude_distribution.draw(self._rng, snap_samples.size)
             amplitudes = np.abs(amplitudes)  # snap strengths are positive: no random polarity
             if self.amplitude_cap is not None:
                 amplitudes = np.minimum(amplitudes, self.amplitude_cap)
             np.add.at(snap_train, snap_samples, self._amplitude_scale() * amplitudes)
         sos, pulse_gain = self._unit_energy_filter()
-        return analytic_signal(pulse_gain * signal.sosfiltfilt(sos, snap_train))
+        pressure = self._apply_spectral_slope(signal.sosfiltfilt(sos, snap_train))
+        return analytic_signal(pulse_gain * pressure)
 
 
 class PointSourceSnappingShrimpSignal(BiologicalSignal):
