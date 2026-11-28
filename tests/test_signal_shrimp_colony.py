@@ -2,7 +2,8 @@
 
 Oracles are closed forms and published values, not the model's own output: the level
 definition (median window level equals ``median_source_level_db``), the unit-energy pulse,
-the pass band, Poisson counting statistics, and the snap-rate fit's value at 20 degrees.
+the pass band, Poisson counting statistics, the doubly stochastic Fano factor, the lognormal
+level spread, the pulse's spectral slope, and the snap-rate fit's value at 20 degrees.
 """
 
 from __future__ import annotations
@@ -12,6 +13,7 @@ from types import SimpleNamespace
 import numpy as np
 import pytest
 from scipy import signal as sp_signal
+from scipy.stats import levy_stable, lognorm
 from stonesoup.types.groundtruth import GroundTruthState
 
 from .support import isolate_real_bluepebble_imports, restore_real_bluepebble_imports
@@ -31,7 +33,12 @@ def bp():
     for the file and not once per test.
     """
     snapshot = isolate_real_bluepebble_imports()
-    from bluepebble.signal import SnappingShrimpColonySignal, snap_rate_from_temperature
+    from bluepebble.signal import (
+        AlphaStableAmplitudes,
+        LognormalAmplitudes,
+        SnappingShrimpColonySignal,
+        snap_rate_from_temperature,
+    )
     from bluepebble.signal.biological import (
         DiffuseSnappingShrimpSignal,
         PointSourceSnappingShrimpSignal,
@@ -40,6 +47,8 @@ def bp():
     yield SimpleNamespace(
         DiffuseSnappingShrimpSignal=DiffuseSnappingShrimpSignal,
         PointSourceSnappingShrimpSignal=PointSourceSnappingShrimpSignal,
+        AlphaStableAmplitudes=AlphaStableAmplitudes,
+        LognormalAmplitudes=LognormalAmplitudes,
         SnappingShrimpColonySignal=SnappingShrimpColonySignal,
         snap_rate_from_temperature=snap_rate_from_temperature,
     )
@@ -95,7 +104,7 @@ def test_default_alpha_lies_in_the_measured_range(bp):
         band_hz=BAND_HZ,
         calibration_window_s=WINDOW_S,
     )
-    assert 1.6 <= model.alpha <= 1.9
+    assert 1.6 <= model.amplitude_distribution.alpha <= 1.9
 
 
 @pytest.mark.parametrize(
@@ -261,18 +270,166 @@ def test_a_window_that_is_sometimes_empty_still_calibrates(bp):
     assert _median_window_level_db(waveform) == pytest.approx(LEVEL_DB, abs=0.5)
 
 
+def test_default_colony_is_poisson_times_alpha_stable_amplitudes_and_a_flat_pulse(bp):
+    """With no option set, the waveform is the 0.10.0 model, rebuilt here from its draws.
+
+    From one generator state the model draws a Poisson count, uniform snap samples and
+    alpha-stable amplitudes, in that order, and passes the train through the band-pass alone.
+    """
+    model = _colony(bp, duration_s=20.0)
+    model._rng = np.random.default_rng(7)
+    waveform = model.get_source_waveform(SOURCE)
+
+    rng = np.random.default_rng(7)
+    count = rng.poisson(100.0 * 20.0)
+    samples = np.sort(rng.integers(0, model.num_samples, count))
+    amplitudes = np.abs(levy_stable.rvs(1.7, 0.0, size=count, random_state=rng))
+    train = np.zeros(model.num_samples)
+    np.add.at(train, samples, model._amplitude_scale() * amplitudes)
+    sos, gain = model._unit_energy_filter()
+    pressure = gain * sp_signal.sosfiltfilt(sos, train)
+
+    # The one-sided form treats the 0 Hz and Nyquist bins on their own, so compare the rest.
+    spectrum = np.fft.rfft(np.sqrt(2.0) * waveform.real)[1:-1]
+    expected = np.fft.rfft(pressure)[1:-1]
+    np.testing.assert_allclose(spectrum, expected, atol=1e-9 * np.abs(expected).max())
+
+
+def test_lognormal_snap_levels_have_the_requested_spread(bp):
+    """Lognormal snap levels are normal in dB about the unit scale, with the set deviation.
+
+    Snaps are spaced so their pulses do not overlap, so the waveform at each snap sample is
+    that snap's amplitude times one constant. With 4999 snaps the standard error of the
+    deviation is 0.06 dB and that of the median 0.1 dB.
+    """
+    spacing = 400
+
+    class Sparse(bp.SnappingShrimpColonySignal):
+        def _snap_samples(self):
+            return np.arange(spacing, self.num_samples - spacing, spacing)
+
+    model = Sparse(
+        duration_s=1000.0,
+        sampling_rate_hz=FS,
+        snap_rate_hz=100.0,
+        median_source_level_db=LEVEL_DB,
+        band_hz=BAND_HZ,
+        calibration_window_s=WINDOW_S,
+        amplitude_distribution=bp.LognormalAmplitudes(6.0),
+        seed=3,
+    )
+    waveform = model.get_source_waveform(SOURCE)
+    sos, gain = model._unit_energy_filter()
+    impulse = np.zeros(4096)
+    impulse[2048] = 1.0
+    unit_peak = model._amplitude_scale() * gain * sp_signal.sosfiltfilt(sos, impulse)[2048]
+
+    levels_db = 20 * np.log10(np.sqrt(2.0) * waveform.real[model._snap_samples()] / unit_peak)
+
+    assert levels_db.std() == pytest.approx(6.0, abs=0.25)
+    assert np.median(levels_db) == pytest.approx(0.0, abs=0.4)
+
+
+def _fano_factor_theory(rate_hz, log_sd, correlation_s, counting_s):
+    """Fano factor of a Poisson process whose log-rate is an OU process (class docstring)."""
+    u = np.linspace(0.0, counting_s, 20_001)
+    covariance = np.exp(log_sd**2 * np.exp(-u / correlation_s)) - 1
+    return 1 + 2 * rate_hz / counting_s * np.trapezoid((counting_s - u) * covariance, u)
+
+
+@pytest.mark.parametrize("counting_s", [0.25, 1.0, 4.0])
+def test_fluctuating_rate_keeps_the_mean_rate_and_gives_the_theoretical_fano_factor(
+    bp, counting_s
+):
+    """Snap counts keep their mean and take the doubly stochastic variance.
+
+    Two hours at 100 snaps per second, a log-rate deviation of 0.3 and a correlation time of
+    0.5 s. Over eight seeds the Fano factor averaged within 1% of the closed form and
+    scattered by 1.2%, 2.3% and 5.0% at the three counting times, so 16% is at least three
+    standard deviations; the mean count scattered by 0.36%.
+    """
+    model = _colony(bp, duration_s=7200.0, rate_log_sd=0.3, rate_correlation_s=0.5)
+
+    snap_samples = model._snap_samples()
+
+    samples_per_window = int(counting_s * FS)
+    num_windows = model.num_samples // samples_per_window
+    counts = np.bincount(snap_samples // samples_per_window)[:num_windows]
+    assert counts.mean() == pytest.approx(100.0 * counting_s, rel=0.015)
+    assert counts.var(ddof=1) / counts.mean() == pytest.approx(
+        _fano_factor_theory(100.0, 0.3, 0.5, counting_s), rel=0.16
+    )
+    assert np.all(np.diff(snap_samples) >= 0)
+    assert snap_samples.min() >= 0
+    assert snap_samples.max() < model.num_samples
+
+
+@pytest.mark.parametrize(
+    ("spread_db", "options"),
+    [
+        (10.0, {}),
+        (None, {"rate_log_sd": 0.8, "rate_correlation_s": 2.0}),
+        (None, {"spectral_slope_db_per_octave": -3.0}),
+        (
+            10.0,
+            {"rate_log_sd": 0.8, "rate_correlation_s": 2.0, "spectral_slope_db_per_octave": -3.0},
+        ),
+    ],
+)
+def test_median_window_level_holds_under_each_option(bp, spread_db, options):
+    """Each option, and all three together, leave the median window at the requested level.
+
+    The first and last cases draw lognormal amplitudes of 10 dB spread.
+
+    The fluctuating rate has a correlation time four times the window, so whole windows are
+    busy or quiet; the calibration draws its window counts from the same process. Over eight
+    seeds the median scattered by 0.02 to 0.11 dB about a mean within 0.05 dB of the requested
+    level, so 0.35 dB is at least three standard deviations.
+    """
+    if spread_db is not None:
+        options = options | {"amplitude_distribution": bp.LognormalAmplitudes(spread_db)}
+    waveform = _colony(bp, duration_s=7200.0, **options).get_source_waveform(SOURCE)
+
+    assert _median_window_level_db(waveform) == pytest.approx(LEVEL_DB, abs=0.35)
+
+
+def test_alpha_is_not_an_argument_of_the_colony(bp):
+    """The exponent belongs to ``AlphaStableAmplitudes``; the colony no longer takes it."""
+    with pytest.raises(TypeError, match="alpha"):
+        _colony(bp, alpha=1.9)
+
+
+@pytest.mark.parametrize("distribution", ["lognormal", lognorm(s=1.0), 1.7])
+def test_only_the_two_amplitude_distributions_are_accepted(bp, distribution):
+    """A name, a SciPy distribution or a number is rejected, with the accepted two named."""
+    with pytest.raises(ValueError, match="AlphaStableAmplitudes or LognormalAmplitudes"):
+        _colony(bp, amplitude_distribution=distribution)
+
+
+def test_amplitude_distributions_check_their_parameters(bp):
+    """An exponent outside (0, 2] and a spread of zero or less are rejected."""
+    with pytest.raises(ValueError, match="alpha"):
+        bp.AlphaStableAmplitudes(2.5)
+    with pytest.raises(ValueError, match="alpha"):
+        bp.AlphaStableAmplitudes(0.0)
+    with pytest.raises(ValueError, match="spread_db"):
+        bp.LognormalAmplitudes(0.0)
+
+
 @pytest.mark.parametrize(
     ("kwargs", "message"),
     [
         ({"band_hz": (300.0, 1200.0)}, "Nyquist"),
         ({"band_hz": (800.0, 300.0)}, "band_hz"),
         ({"band_hz": (0.0, 500.0)}, "band_hz"),
-        ({"alpha": 0.0}, "alpha"),
-        ({"alpha": 2.5}, "alpha"),
         ({"snap_rate_hz": -1.0}, "snap_rate_hz"),
         ({"calibration_window_s": 0.0}, "calibration_window_s"),
         ({"filter_order": 0}, "filter_order"),
         ({"amplitude_cap": 0.0}, "amplitude_cap"),
+        ({"rate_log_sd": -0.1}, "rate_log_sd"),
+        ({"rate_log_sd": 0.5}, "rate_correlation_s"),
+        ({"rate_log_sd": 0.5, "rate_correlation_s": 0.0}, "rate_correlation_s"),
+        ({"spectral_slope_db_per_octave": float("nan")}, "spectral_slope_db_per_octave"),
         ({"snap_rate_hz": 0.2}, "too few"),
     ],
 )
